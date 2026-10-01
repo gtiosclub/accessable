@@ -50,6 +50,18 @@ protocol SceneDescribing: Sendable {
 
 // MARK: - Maps + Location (2.x)
 
+/// Supplies validated location fixes with metres, seconds, and true-north course units.
+protocol LocationProvider: Sendable {
+    func locationSamples() -> AsyncStream<LocationSample>
+}
+
+/// Computes a route without starting navigation or delivering speech.
+protocol RoutingService: Sendable {
+    /// Inputs: valid WGS84 origin/destination coordinates in decimal degrees.
+    /// Output: ordered geometry and maneuvers, distances in metres, duration in seconds.
+    func route(from origin: GeoCoordinate, to destination: GeoCoordinate) async throws -> NavigationRoute
+}
+
 protocol TripStateProviding: Sendable {
     func tripStates() -> AsyncStream<TripState>
     func pauseTrip() async
