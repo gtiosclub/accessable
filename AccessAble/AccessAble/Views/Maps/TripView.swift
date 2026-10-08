@@ -30,6 +30,17 @@ struct TripView: View {
                 ) {
                     Task { await viewModel.endTrip() }
                 }
+            } else {
+                NavigationLink {
+                    DestinationSearchView()
+                } label: {
+                    Label("Choose destination", systemImage: "magnifyingglass")
+                        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                        .padding(.horizontal)
+                }
+                .buttonStyle(.bordered)
+                .font(.title3)
+                .accessibilityHint("Search for a place or address to walk to")
             }
 
             Spacer()
