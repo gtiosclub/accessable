@@ -39,6 +39,16 @@ struct HomeView: View {
                 .accessibilityHint("Announces obstacles as you walk")
 
                 NavigationLink {
+                    LiveSceneView(services: app.services)
+                } label: {
+                    Label("Live detection", systemImage: "viewfinder.rectangular")
+                        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                        .padding(.horizontal)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityHint("Shows what the camera detects right now. Needs a LiDAR device.")
+
+                NavigationLink {
                     TripView(services: app.services)
                 } label: {
                     Label("Trip", systemImage: "figure.walk")
