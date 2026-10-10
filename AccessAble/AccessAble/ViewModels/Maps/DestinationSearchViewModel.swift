@@ -9,6 +9,7 @@ private let log = Logger(subsystem: "AccessAble", category: "Search")
 final class DestinationSearchViewModel {
     var query = ""
     private(set) var suggestions: [SearchSuggestion] = []
+    private(set) var selectedSuggestionID: SearchSuggestion.ID?
     private(set) var selectedDestination: Destination?
 
     @ObservationIgnored private let services: AppServices
@@ -26,6 +27,7 @@ final class DestinationSearchViewModel {
 
     func queryChanged() {
         selectionTask?.cancel()
+        selectedSuggestionID = nil
         selectedDestination = nil
         services.destinationSearch.update(query: query)
     }
@@ -33,6 +35,8 @@ final class DestinationSearchViewModel {
     // cancels any in-flight lookup so a stale result can't overwrite a newer pick
     func select(_ suggestion: SearchSuggestion) {
         selectionTask?.cancel()
+        selectedSuggestionID = suggestion.id
+        selectedDestination = nil
         selectionTask = Task {
             do {
                 let destination = try await services.destinationSearch.resolve(suggestion)
