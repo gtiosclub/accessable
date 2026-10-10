@@ -72,7 +72,7 @@ protocol RoutingService: Sendable {
     ) async throws -> NavigationRoute
 }
 
-/// Destination autocomplete and lookup. Main actor because MKLocalSearchCompleter is.
+/// Main actor because MKLocalSearchCompleter is.
 @MainActor
 protocol DestinationSearching: Sendable {
     func suggestions() -> AsyncStream<[SearchSuggestion]>

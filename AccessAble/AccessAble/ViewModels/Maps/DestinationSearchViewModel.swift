@@ -24,7 +24,6 @@ final class DestinationSearchViewModel {
         }
     }
 
-    // clears previous selection on a new search
     func queryChanged() {
         selectionTask?.cancel()
         selectedPlace = nil

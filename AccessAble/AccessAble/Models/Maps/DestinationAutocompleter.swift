@@ -33,7 +33,6 @@ final class DestinationAutocompleter: NSObject, DestinationSearching {
 
     func update(query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        // empty query clears results
         guard !trimmed.isEmpty else {
             completer.cancel()
             setResults([])
@@ -42,7 +41,6 @@ final class DestinationAutocompleter: NSObject, DestinationSearching {
         completer.queryFragment = trimmed
     }
 
-    // looks up the full place behind a suggestion
     func resolve(_ suggestion: SearchSuggestion) async throws -> MKMapItem {
         guard let completion = completions[suggestion.id] else {
             throw DestinationSearchError.staleSuggestion

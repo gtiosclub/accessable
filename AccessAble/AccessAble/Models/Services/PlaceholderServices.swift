@@ -126,13 +126,11 @@ struct PlaceholderDestinationSearch: DestinationSearching {
         results.stream()
     }
 
-    // matches samples by title
     func update(query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         results.send(trimmed.isEmpty ? [] : Self.samples.filter { $0.title.localizedCaseInsensitiveContains(trimmed) })
     }
 
-    // every sample resolves to the shared sample destination
     func resolve(_ suggestion: SearchSuggestion) async throws -> MKMapItem {
         let coordinate = MapsSamples.destination.coordinate
         let place = MKMapItem(location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude), address: nil)
