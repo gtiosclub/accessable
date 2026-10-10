@@ -4,6 +4,11 @@ import os
 
 private let log = Logger(subsystem: "AccessAble", category: "Search")
 
+enum SearchProblem: Equatable {
+    case suggestionsUnavailable
+    case lookupFailed(SearchSuggestion)
+}
+
 @MainActor
 @Observable
 final class DestinationSearchViewModel {
@@ -11,6 +16,9 @@ final class DestinationSearchViewModel {
     private(set) var suggestions: [SearchSuggestion] = []
     private(set) var selectedSuggestionID: SearchSuggestion.ID?
     private(set) var selectedDestination: Destination?
+    private(set) var isSearching = false
+    private(set) var isResolving = false
+    private(set) var problem: SearchProblem?
 
     @ObservationIgnored private let services: AppServices
     @ObservationIgnored private var selectionTask: Task<Void, Never>?
@@ -19,9 +27,25 @@ final class DestinationSearchViewModel {
         self.services = services
     }
 
+    var trimmedQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var showsNoResults: Bool {
+        !trimmedQuery.isEmpty && !isSearching && problem == nil && suggestions.isEmpty
+    }
+
     func start() async {
-        for await suggestions in services.destinationSearch.suggestions() {
-            self.suggestions = suggestions
+        for await result in services.destinationSearch.suggestions() {
+            isSearching = false
+            switch result {
+            case .success(let suggestions):
+                self.suggestions = suggestions
+                if problem == .suggestionsUnavailable { problem = nil }
+            case .failure:
+                suggestions = []
+                problem = .suggestionsUnavailable
+            }
         }
     }
 
@@ -29,6 +53,9 @@ final class DestinationSearchViewModel {
         selectionTask?.cancel()
         selectedSuggestionID = nil
         selectedDestination = nil
+        isResolving = false
+        problem = nil
+        isSearching = !trimmedQuery.isEmpty
         services.destinationSearch.update(query: query)
     }
 
@@ -37,6 +64,8 @@ final class DestinationSearchViewModel {
         selectionTask?.cancel()
         selectedSuggestionID = suggestion.id
         selectedDestination = nil
+        isResolving = true
+        problem = nil
         selectionTask = Task {
             do {
                 let destination = try await services.destinationSearch.resolve(suggestion)
@@ -45,7 +74,10 @@ final class DestinationSearchViewModel {
             } catch {
                 guard !Task.isCancelled else { return }
                 log.error("Resolving suggestion failed: \(error.localizedDescription, privacy: .public)")
+                selectedSuggestionID = nil
+                problem = .lookupFailed(suggestion)
             }
+            isResolving = false
         }
     }
 }

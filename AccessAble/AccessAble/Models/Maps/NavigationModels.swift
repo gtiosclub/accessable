@@ -85,6 +85,7 @@ struct SearchSuggestion: Identifiable, Equatable, Sendable {
 enum DestinationSearchError: Error, Equatable, Sendable {
     case staleSuggestion
     case noMatch
+    case suggestionsUnavailable
 }
 
 struct RouteOptions: Equatable, Sendable {

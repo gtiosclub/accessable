@@ -74,7 +74,7 @@ protocol RoutingService: Sendable {
 /// Main actor because MKLocalSearchCompleter is.
 @MainActor
 protocol DestinationSearching: Sendable {
-    func suggestions() -> AsyncStream<[SearchSuggestion]>
+    func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>>
     func update(query: String)
     func resolve(_ suggestion: SearchSuggestion) async throws -> Destination
 }

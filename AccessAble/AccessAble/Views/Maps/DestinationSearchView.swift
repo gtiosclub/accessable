@@ -9,6 +9,12 @@ struct DestinationSearchView: View {
 
     var body: some View {
         List {
+            if let problem = viewModel.problem {
+                Section {
+                    problemView(problem)
+                }
+            }
+
             if let destination = viewModel.selectedDestination {
                 Section("Selected") {
                     VStack(alignment: .leading, spacing: 4) {
@@ -28,6 +34,13 @@ struct DestinationSearchView: View {
             }
 
             Section {
+                if viewModel.isSearching && viewModel.suggestions.isEmpty {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text("Searching…")
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 ForEach(viewModel.suggestions) { suggestion in
                     Button {
                         viewModel.select(suggestion)
@@ -44,8 +57,12 @@ struct DestinationSearchView: View {
                             }
                             Spacer(minLength: 8)
                             if suggestion.id == viewModel.selectedSuggestionID {
-                                Image(systemName: "checkmark")
-                                    .font(.body.weight(.semibold))
+                                if viewModel.isResolving {
+                                    ProgressView()
+                                } else {
+                                    Image(systemName: "checkmark")
+                                        .font(.body.weight(.semibold))
+                                }
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -65,7 +82,26 @@ struct DestinationSearchView: View {
         .autocorrectionDisabled()
         .onChange(of: viewModel.query) { viewModel.queryChanged() }
         .navigationTitle("Destination")
+        .overlay {
+            if viewModel.showsNoResults {
+                ContentUnavailableView.search(text: viewModel.trimmedQuery)
+            }
+        }
         .task { await viewModel.start() }
+    }
+
+    @ViewBuilder
+    private func problemView(_ problem: SearchProblem) -> some View {
+        switch problem {
+        case .suggestionsUnavailable:
+            Label("Couldn't load suggestions. Check your connection and keep typing.", systemImage: "wifi.exclamationmark")
+        case .lookupFailed(let suggestion):
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Couldn't get details for \(suggestion.title).", systemImage: "exclamationmark.triangle")
+                Button("Try again") { viewModel.select(suggestion) }
+                    .minimumTapTarget()
+            }
+        }
     }
 
     // 5 decimal places ≈ 1 m precision
