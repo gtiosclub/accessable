@@ -29,7 +29,9 @@ struct DestinationSearchView: View {
                             .font(.subheadline.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
-                    .accessibilityElement(children: .combine)
+                    // raw coordinates aren't useful read aloud
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(selectedLabel(destination))
                 }
             }
 
@@ -42,8 +44,10 @@ struct DestinationSearchView: View {
                         Text("Searching…")
                             .foregroundStyle(.secondary)
                     }
+                    .accessibilityElement(children: .combine)
                 }
                 ForEach(viewModel.suggestions) { suggestion in
+                    let isSelected = suggestion.id == viewModel.selectedSuggestionID
                     Button {
                         viewModel.select(suggestion)
                     } label: {
@@ -58,19 +62,24 @@ struct DestinationSearchView: View {
                                 }
                             }
                             Spacer(minLength: 8)
-                            if suggestion.id == viewModel.selectedSuggestionID {
-                                if viewModel.isResolving {
-                                    ProgressView()
-                                } else {
-                                    Image(systemName: "checkmark")
-                                        .font(.body.weight(.semibold))
+                            if isSelected {
+                                Group {
+                                    if viewModel.isResolving {
+                                        ProgressView()
+                                    } else {
+                                        Image(systemName: "checkmark")
+                                            .font(.body.weight(.semibold))
+                                    }
                                 }
+                                .accessibilityHidden(true)
                             }
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .minimumTapTarget()
                     }
                     .tint(.primary)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                    .accessibilityValue(isSelected && viewModel.isResolving ? "Loading details" : "")
                     .accessibilityHint("Selects this destination")
                 }
             }
@@ -89,6 +98,15 @@ struct DestinationSearchView: View {
                 ContentUnavailableView.search(text: viewModel.trimmedQuery)
             }
         }
+        // VoiceOver doesn't read changes outside the focused row, so say them out loud
+        .onChange(of: viewModel.selectedDestination) { _, destination in
+            guard let destination else { return }
+            AccessibilityNotification.Announcement(selectedLabel(destination)).post()
+        }
+        .onChange(of: viewModel.problem) { _, problem in
+            guard let problem else { return }
+            AccessibilityNotification.Announcement(problemMessage(problem)).post()
+        }
         .task { await viewModel.start() }
     }
 
@@ -96,14 +114,30 @@ struct DestinationSearchView: View {
     private func problemView(_ problem: SearchProblem) -> some View {
         switch problem {
         case .suggestionsUnavailable:
-            Label("Couldn't load suggestions. Check your connection and keep typing.", systemImage: "wifi.exclamationmark")
+            Label(problemMessage(problem), systemImage: "wifi.exclamationmark")
         case .lookupFailed(let suggestion):
             VStack(alignment: .leading, spacing: 8) {
-                Label("Couldn't get details for \(suggestion.title).", systemImage: "exclamationmark.triangle")
+                Label(problemMessage(problem), systemImage: "exclamationmark.triangle")
                 Button("Try again") { viewModel.select(suggestion) }
                     .minimumTapTarget()
+                    .accessibilityHint("Looks up \(suggestion.title) again")
             }
         }
+    }
+
+    private func problemMessage(_ problem: SearchProblem) -> String {
+        switch problem {
+        case .suggestionsUnavailable:
+            "Couldn't load suggestions. Check your connection and keep typing."
+        case .lookupFailed(let suggestion):
+            "Couldn't get details for \(suggestion.title)."
+        }
+    }
+
+    private func selectedLabel(_ destination: Destination) -> String {
+        ["Selected destination: \(destination.name)", destination.address]
+            .compactMap { $0 }
+            .joined(separator: ", ")
     }
 
     // 5 decimal places ≈ 1 m precision
