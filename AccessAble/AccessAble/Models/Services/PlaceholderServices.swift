@@ -1,6 +1,5 @@
 import CoreGraphics
 import Foundation
-import MapKit
 import os
 
 // Stand-in implementations of every protocol in ServiceProtocols.swift.
@@ -131,11 +130,8 @@ struct PlaceholderDestinationSearch: DestinationSearching {
         results.send(trimmed.isEmpty ? [] : Self.samples.filter { $0.title.localizedCaseInsensitiveContains(trimmed) })
     }
 
-    func resolve(_ suggestion: SearchSuggestion) async throws -> MKMapItem {
-        let coordinate = MapsSamples.destination.coordinate
-        let place = MKMapItem(location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude), address: nil)
-        place.name = suggestion.title
-        return place
+    func resolve(_ suggestion: SearchSuggestion) async throws -> Destination {
+        Destination(name: suggestion.title, coordinate: MapsSamples.destination.coordinate, address: suggestion.subtitle)
     }
 }
 

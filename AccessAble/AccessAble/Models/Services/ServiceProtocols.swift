@@ -1,5 +1,4 @@
 import Foundation
-import MapKit
 
 // The interfaces between subteams. Each subteam implements its own protocol(s) and only
 // talks to the others through these. Placeholder implementations live in PlaceholderServices.swift
@@ -77,7 +76,7 @@ protocol RoutingService: Sendable {
 protocol DestinationSearching: Sendable {
     func suggestions() -> AsyncStream<[SearchSuggestion]>
     func update(query: String)
-    func resolve(_ suggestion: SearchSuggestion) async throws -> MKMapItem
+    func resolve(_ suggestion: SearchSuggestion) async throws -> Destination
 }
 
 protocol TripStateProviding: Sendable {
