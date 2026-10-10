@@ -2,9 +2,12 @@ import SwiftUI
 
 struct DestinationSearchView: View {
     @State private var viewModel: DestinationSearchViewModel
+    @Environment(\.dismiss) private var dismiss
+    private let onConfirm: (Destination) -> Void
 
-    init(services: AppServices) {
+    init(services: AppServices, onConfirm: @escaping (Destination) -> Void) {
         _viewModel = State(initialValue: DestinationSearchViewModel(services: services))
+        self.onConfirm = onConfirm
     }
 
     var body: some View {
@@ -32,6 +35,17 @@ struct DestinationSearchView: View {
                     // raw coordinates aren't useful read aloud
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(selectedLabel(destination))
+
+                    Button {
+                        onConfirm(destination)
+                        dismiss()
+                    } label: {
+                        Label("Use this destination", systemImage: "figure.walk")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .minimumTapTarget()
+                    }
+                    .accessibilityHint("Returns to trip planning with \(destination.name)")
                 }
             }
 
@@ -151,6 +165,6 @@ struct DestinationSearchView: View {
     var services = AppServices.preview
     services.destinationSearch = PlaceholderDestinationSearch()
     return NavigationStack {
-        DestinationSearchView(services: services)
+        DestinationSearchView(services: services) { _ in }
     }
 }

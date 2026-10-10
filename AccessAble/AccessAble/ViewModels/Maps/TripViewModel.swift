@@ -6,11 +6,16 @@ import Observation
 @Observable
 final class TripViewModel {
     private(set) var tripState: TripState = .idle
+    private(set) var destination: Destination?
 
     @ObservationIgnored private let services: AppServices
 
     init(services: AppServices) {
         self.services = services
+    }
+
+    func setDestination(_ destination: Destination) {
+        self.destination = destination
     }
 
     var nextInstruction: String {
