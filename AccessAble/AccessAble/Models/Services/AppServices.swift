@@ -27,7 +27,7 @@ struct AppServices: Sendable {
             sceneDescriber: scene,                          // TODO(CV 1.3)
             location: PlaceholderLocationProvider(),        // TODO(Maps 2.1): CoreLocationProvider
             routing: PlaceholderRoutingService(),           // TODO(Maps 2.2): ValhallaRoutingService
-            destinationSearch: DestinationAutocompleter(),
+            destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
             locationContext: trip                           // TODO(Maps 2.1)
         )
