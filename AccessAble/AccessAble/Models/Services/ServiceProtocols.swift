@@ -1,4 +1,5 @@
 import Foundation
+import MapKit
 
 // The interfaces between subteams. Each subteam implements its own protocol(s) and only
 // talks to the others through these. Placeholder implementations live in PlaceholderServices.swift
@@ -69,6 +70,14 @@ protocol RoutingService: Sendable {
     func route(
         from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
     ) async throws -> NavigationRoute
+}
+
+/// Destination autocomplete and lookup. Main actor because MKLocalSearchCompleter is.
+@MainActor
+protocol DestinationSearching: Sendable {
+    func suggestions() -> AsyncStream<[SearchSuggestion]>
+    func update(query: String)
+    func resolve(_ suggestion: SearchSuggestion) async throws -> MKMapItem
 }
 
 protocol TripStateProviding: Sendable {

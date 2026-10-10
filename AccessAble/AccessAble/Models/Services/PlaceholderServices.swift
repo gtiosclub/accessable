@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import MapKit
 import os
 
 // Stand-in implementations of every protocol in ServiceProtocols.swift.
@@ -108,6 +109,35 @@ struct PlaceholderRoutingService: RoutingService {
         from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
     ) async throws -> NavigationRoute {
         MapsSamples.route
+    }
+}
+
+/// Hardcoded campus places so previews don't call MapKit.
+struct PlaceholderDestinationSearch: DestinationSearching {
+    static let samples = [
+        SearchSuggestion(title: "Georgia Tech Library", subtitle: "260 Fourth St NW, Atlanta, GA"),
+        SearchSuggestion(title: "John Lewis Student Center", subtitle: "351 Ferst Dr NW, Atlanta, GA"),
+        SearchSuggestion(title: "Campus Recreation Center", subtitle: "750 Ferst Dr NW, Atlanta, GA"),
+    ]
+
+    private let results = Broadcaster<[SearchSuggestion]>()
+
+    func suggestions() -> AsyncStream<[SearchSuggestion]> {
+        results.stream()
+    }
+
+    // matches samples by title
+    func update(query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        results.send(trimmed.isEmpty ? [] : Self.samples.filter { $0.title.localizedCaseInsensitiveContains(trimmed) })
+    }
+
+    // every sample resolves to the shared sample destination
+    func resolve(_ suggestion: SearchSuggestion) async throws -> MKMapItem {
+        let coordinate = MapsSamples.destination.coordinate
+        let place = MKMapItem(location: CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude), address: nil)
+        place.name = suggestion.title
+        return place
     }
 }
 

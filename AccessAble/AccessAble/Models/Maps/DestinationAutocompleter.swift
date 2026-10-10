@@ -1,10 +1,9 @@
 import MapKit
-import Observation
 import os
 
 private let log = Logger(subsystem: "AccessAble", category: "Search")
 
-struct SearchSuggestion: Identifiable {
+struct SearchSuggestion: Identifiable, Sendable {
     let title: String
     let subtitle: String
 
@@ -17,12 +16,10 @@ enum DestinationSearchError: Error {
 }
 
 @MainActor
-@Observable
-final class DestinationAutocompleter: NSObject {
-    private(set) var suggestions: [SearchSuggestion] = []
-
-    @ObservationIgnored private let completer = MKLocalSearchCompleter()
-    @ObservationIgnored private var completions: [SearchSuggestion.ID: MKLocalSearchCompletion] = [:]
+final class DestinationAutocompleter: NSObject, DestinationSearching {
+    private let results = Broadcaster<[SearchSuggestion]>()
+    private let completer = MKLocalSearchCompleter()
+    private var completions: [SearchSuggestion.ID: MKLocalSearchCompletion] = [:]
 
     override init() {
         super.init()
@@ -30,8 +27,13 @@ final class DestinationAutocompleter: NSObject {
         completer.resultTypes = [.address, .pointOfInterest]
     }
 
+    func suggestions() -> AsyncStream<[SearchSuggestion]> {
+        results.stream()
+    }
+
     func update(query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // empty query clears results
         guard !trimmed.isEmpty else {
             completer.cancel()
             setResults([])
@@ -40,6 +42,7 @@ final class DestinationAutocompleter: NSObject {
         completer.queryFragment = trimmed
     }
 
+    // looks up the full place behind a suggestion
     func resolve(_ suggestion: SearchSuggestion) async throws -> MKMapItem {
         guard let completion = completions[suggestion.id] else {
             throw DestinationSearchError.staleSuggestion
@@ -51,15 +54,17 @@ final class DestinationAutocompleter: NSObject {
         return place
     }
 
-    private func setResults(_ results: [MKLocalSearchCompletion]) {
+    // dedupes results and keeps each completion for resolve
+    private func setResults(_ newResults: [MKLocalSearchCompletion]) {
         var completions: [SearchSuggestion.ID: MKLocalSearchCompletion] = [:]
-        suggestions = results.compactMap { result in
+        let suggestions = newResults.compactMap { result -> SearchSuggestion? in
             let suggestion = SearchSuggestion(title: result.title, subtitle: result.subtitle)
             guard completions[suggestion.id] == nil else { return nil }
             completions[suggestion.id] = result
             return suggestion
         }
         self.completions = completions
+        results.send(suggestions)
     }
 }
 
@@ -69,7 +74,7 @@ extension DestinationAutocompleter: MKLocalSearchCompleterDelegate {
     }
 
     func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: any Error) {
-        log.error("Autocomplete failed: \(error.localizedDescription)")
+        log.error("Autocomplete failed: \(error.localizedDescription, privacy: .public)")
         setResults([])
     }
 }

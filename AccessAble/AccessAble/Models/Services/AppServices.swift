@@ -10,6 +10,7 @@ struct AppServices: Sendable {
     var sceneDescriber: any SceneDescribing
     var location: any LocationProvider
     var routing: any RoutingService
+    var destinationSearch: any DestinationSearching
     var trip: any TripStateProviding
     var locationContext: any LocationContextProviding
 
@@ -26,6 +27,7 @@ struct AppServices: Sendable {
             sceneDescriber: scene,                          // TODO(CV 1.3)
             location: PlaceholderLocationProvider(),        // TODO(Maps 2.1): CoreLocationProvider
             routing: PlaceholderRoutingService(),           // TODO(Maps 2.2): ValhallaRoutingService
+            destinationSearch: DestinationAutocompleter(),
             trip: trip,
             locationContext: trip                           // TODO(Maps 2.1)
         )
