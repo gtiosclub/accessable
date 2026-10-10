@@ -76,6 +76,41 @@ struct PlaceholderSceneProvider: SceneObservationProviding, SceneDescribing {
     }
 }
 
+/// Emits one sample fix, heading, and granted permission so UI work can proceed without GPS. Replaced by 2.1.
+struct PlaceholderLocationProvider: LocationProvider {
+    func locationSamples() -> AsyncStream<LocationSample> {
+        AsyncStream { continuation in
+            continuation.yield(MapsSamples.location)
+            continuation.finish()
+        }
+    }
+
+    func headingSamples() -> AsyncStream<HeadingSample> {
+        AsyncStream { continuation in
+            continuation.yield(MapsSamples.heading)
+            continuation.finish()
+        }
+    }
+
+    func authorizationStates() -> AsyncStream<LocationAuthorization> {
+        AsyncStream { continuation in
+            continuation.yield(.authorized(preciseAccuracy: true))
+            continuation.finish()
+        }
+    }
+
+    func requestAuthorization() async {}
+}
+
+/// Returns the sample route for any request. Replaced by 2.2 (Valhalla).
+struct PlaceholderRoutingService: RoutingService {
+    func route(
+        from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
+    ) async throws -> NavigationRoute {
+        MapsSamples.route
+    }
+}
+
 struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
     func tripStates() -> AsyncStream<TripState> {
         AsyncStream { continuation in
