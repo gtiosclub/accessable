@@ -41,7 +41,7 @@ final class DestinationAutocompleter: NSObject, DestinationSearching {
         completer.queryFragment = trimmed
     }
 
-    func resolve(_ suggestion: SearchSuggestion) async throws -> MKMapItem {
+    func resolve(_ suggestion: SearchSuggestion) async throws -> Destination {
         guard let completion = completions[suggestion.id] else {
             throw DestinationSearchError.staleSuggestion
         }
@@ -49,7 +49,7 @@ final class DestinationAutocompleter: NSObject, DestinationSearching {
         guard let place = response.mapItems.first else {
             throw DestinationSearchError.noMatch
         }
-        return place
+        return Destination(mapItem: place, fallbackName: suggestion.title)
     }
 
     // dedupes results and keeps each completion for resolve

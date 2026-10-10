@@ -1,4 +1,3 @@
-import MapKit
 import SwiftUI
 
 struct DestinationSearchView: View {
@@ -10,12 +9,17 @@ struct DestinationSearchView: View {
 
     var body: some View {
         List {
-            if let place = viewModel.selectedPlace {
+            if let destination = viewModel.selectedDestination {
                 Section("Selected") {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(place.name ?? "Unnamed place")
+                        Text(destination.name)
                             .font(.headline)
-                        Text(coordinateText(place.location.coordinate))
+                        if let address = destination.address {
+                            Text(address)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(coordinateText(destination.coordinate))
                             .font(.subheadline.monospacedDigit())
                             .foregroundStyle(.secondary)
                     }
@@ -54,7 +58,7 @@ struct DestinationSearchView: View {
     }
 
     // 5 decimal places ≈ 1 m precision
-    private func coordinateText(_ coordinate: CLLocationCoordinate2D) -> String {
+    private func coordinateText(_ coordinate: GeoCoordinate) -> String {
         let format = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(5))
         return "\(coordinate.latitude.formatted(format)), \(coordinate.longitude.formatted(format))"
     }

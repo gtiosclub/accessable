@@ -1,4 +1,4 @@
-import MapKit
+import Foundation
 import Observation
 import os
 
@@ -9,7 +9,7 @@ private let log = Logger(subsystem: "AccessAble", category: "Search")
 final class DestinationSearchViewModel {
     var query = ""
     private(set) var suggestions: [SearchSuggestion] = []
-    private(set) var selectedPlace: MKMapItem?
+    private(set) var selectedDestination: Destination?
 
     @ObservationIgnored private let services: AppServices
     @ObservationIgnored private var selectionTask: Task<Void, Never>?
@@ -26,7 +26,7 @@ final class DestinationSearchViewModel {
 
     func queryChanged() {
         selectionTask?.cancel()
-        selectedPlace = nil
+        selectedDestination = nil
         services.destinationSearch.update(query: query)
     }
 
@@ -35,9 +35,9 @@ final class DestinationSearchViewModel {
         selectionTask?.cancel()
         selectionTask = Task {
             do {
-                let place = try await services.destinationSearch.resolve(suggestion)
+                let destination = try await services.destinationSearch.resolve(suggestion)
                 guard !Task.isCancelled else { return }
-                selectedPlace = place
+                selectedDestination = destination
             } catch {
                 guard !Task.isCancelled else { return }
                 log.error("Resolving suggestion failed: \(error.localizedDescription, privacy: .public)")
