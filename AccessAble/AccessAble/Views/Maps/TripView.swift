@@ -3,8 +3,10 @@ import SwiftUI
 /// Owner: Maps + Location (2.x). Placeholder UI — add search, route preview, and the map here.
 struct TripView: View {
     @State private var viewModel: TripViewModel
+    private let services: AppServices
 
     init(services: AppServices) {
+        self.services = services
         _viewModel = State(initialValue: TripViewModel(services: services))
     }
 
@@ -32,7 +34,7 @@ struct TripView: View {
                 }
             } else {
                 NavigationLink {
-                    DestinationSearchView()
+                    DestinationSearchView(services: services)
                 } label: {
                     Label("Choose destination", systemImage: "magnifyingglass")
                         .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
