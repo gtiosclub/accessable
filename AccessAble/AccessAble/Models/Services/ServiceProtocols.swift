@@ -50,16 +50,25 @@ protocol SceneDescribing: Sendable {
 
 // MARK: - Maps + Location (2.x)
 
-/// Supplies validated location fixes with metres, seconds, and true-north course units.
+/// Tracking runs while any stream has a subscriber, so ending a trip stops it. Location and heading streams
+/// stay silent without permission and drop invalid readings. Publish through `Broadcaster`; it doesn't report
+/// when its last subscriber leaves, so count subscribers yourself.
 protocol LocationProvider: Sendable {
     func locationSamples() -> AsyncStream<LocationSample>
+    func headingSamples() -> AsyncStream<HeadingSample>
+    /// Emits the current permission immediately, then every change.
+    func authorizationStates() -> AsyncStream<LocationAuthorization>
+    /// Prompts for When In Use access if undetermined. Returns immediately; the result arrives on
+    /// `authorizationStates()`.
+    func requestAuthorization() async
 }
 
 /// Computes a route without starting navigation or delivering speech.
 protocol RoutingService: Sendable {
-    /// Inputs: valid WGS84 origin/destination coordinates in decimal degrees.
-    /// Output: ordered geometry and maneuvers, distances in metres, duration in seconds.
-    func route(from origin: GeoCoordinate, to destination: GeoCoordinate) async throws -> NavigationRoute
+    /// - Throws: `RoutingError`, or `CancellationError` if the task is cancelled.
+    func route(
+        from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
+    ) async throws -> NavigationRoute
 }
 
 protocol TripStateProviding: Sendable {

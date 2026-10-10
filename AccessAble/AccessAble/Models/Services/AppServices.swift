@@ -8,6 +8,8 @@ struct AppServices: Sendable {
     var performance: any PerformanceModeProviding
     var scene: any SceneObservationProviding
     var sceneDescriber: any SceneDescribing
+    var location: any LocationProvider
+    var routing: any RoutingService
     var trip: any TripStateProviding
     var locationContext: any LocationContextProviding
 
@@ -22,6 +24,8 @@ struct AppServices: Sendable {
             performance: performance,
             scene: scene,
             sceneDescriber: scene,                          // TODO(CV 1.3)
+            location: PlaceholderLocationProvider(),        // TODO(Maps 2.1): CoreLocationProvider
+            routing: PlaceholderRoutingService(),           // TODO(Maps 2.2): ValhallaRoutingService
             trip: trip,
             locationContext: trip                           // TODO(Maps 2.1)
         )
