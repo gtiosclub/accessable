@@ -32,15 +32,24 @@ struct DestinationSearchView: View {
                     Button {
                         viewModel.select(suggestion)
                     } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(suggestion.title)
-                                .font(.headline)
-                            if !suggestion.subtitle.isEmpty {
-                                Text(suggestion.subtitle)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
+                        HStack {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(suggestion.title)
+                                    .font(.headline)
+                                if !suggestion.subtitle.isEmpty {
+                                    Text(suggestion.subtitle)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer(minLength: 8)
+                            if suggestion.id == viewModel.selectedSuggestionID {
+                                Image(systemName: "checkmark")
+                                    .font(.body.weight(.semibold))
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .minimumTapTarget()
                     }
                     .tint(.primary)
                     .accessibilityHint("Selects this destination")
@@ -52,6 +61,8 @@ struct DestinationSearchView: View {
             placement: .navigationBarDrawer(displayMode: .always),
             prompt: "Search for a place or address"
         )
+        // autocorrect rewrites place names like "Ferst" into real words
+        .autocorrectionDisabled()
         .onChange(of: viewModel.query) { viewModel.queryChanged() }
         .navigationTitle("Destination")
         .task { await viewModel.start() }
