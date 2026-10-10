@@ -36,7 +36,9 @@ struct DestinationSearchView: View {
             Section {
                 if viewModel.isSearching && viewModel.suggestions.isEmpty {
                     HStack(spacing: 12) {
+                        // new identity per query; List can redisplay a reused spinner as blank
                         ProgressView()
+                            .id(viewModel.trimmedQuery)
                         Text("Searching…")
                             .foregroundStyle(.secondary)
                     }

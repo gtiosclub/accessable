@@ -22,6 +22,7 @@ final class DestinationSearchViewModel {
 
     @ObservationIgnored private let services: AppServices
     @ObservationIgnored private var selectionTask: Task<Void, Never>?
+    @ObservationIgnored private var lastSearchedQuery = ""
 
     init(services: AppServices) {
         self.services = services
@@ -50,6 +51,9 @@ final class DestinationSearchViewModel {
     }
 
     func queryChanged() {
+        // whitespace-only edits don't change the search, and MapKit never calls back for a repeat fragment
+        guard trimmedQuery != lastSearchedQuery else { return }
+        lastSearchedQuery = trimmedQuery
         selectionTask?.cancel()
         selectedSuggestionID = nil
         selectedDestination = nil
