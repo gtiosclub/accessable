@@ -75,6 +75,18 @@ struct Destination: Codable, Equatable, Sendable {
     var address: String? = nil
 }
 
+struct SearchSuggestion: Identifiable, Equatable, Sendable {
+    let title: String
+    let subtitle: String
+
+    var id: String { "\(title)\n\(subtitle)" }
+}
+
+enum DestinationSearchError: Error, Equatable, Sendable {
+    case staleSuggestion
+    case noMatch
+}
+
 struct RouteOptions: Equatable, Sendable {
     /// Metres per second, greater than 0. Valhalla takes km/h, so its client converts.
     var walkingSpeed: Double = 1.2

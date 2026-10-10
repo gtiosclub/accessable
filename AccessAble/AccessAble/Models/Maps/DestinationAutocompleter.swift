@@ -3,18 +3,6 @@ import os
 
 private let log = Logger(subsystem: "AccessAble", category: "Search")
 
-struct SearchSuggestion: Identifiable, Sendable {
-    let title: String
-    let subtitle: String
-
-    var id: String { "\(title)\n\(subtitle)" }
-}
-
-enum DestinationSearchError: Error {
-    case staleSuggestion
-    case noMatch
-}
-
 @MainActor
 final class DestinationAutocompleter: NSObject, DestinationSearching {
     private let results = Broadcaster<[SearchSuggestion]>()
