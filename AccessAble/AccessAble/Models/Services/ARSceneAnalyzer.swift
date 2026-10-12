@@ -9,6 +9,7 @@ import simd
 /// Owner: Computer Vision (1.4). Drives the 1.1 detectors off a live ARKit session.
 ///
 /// One ARKit session feeds everything: `capturedImage` goes to Vision for people (T14),
+/// while LiDAR depth is enabled and selected (T2),
 /// and `sceneDepth` is unprojected into a point cloud for the floor fit (T10), geometric
 /// obstacles (T11) and the ground profile behind kerb detection (T12).
 ///
@@ -83,10 +84,23 @@ final class ARSceneAnalyzer: NSObject, SceneObservationProviding, @unchecked Sen
         configuration.worldAlignment = .gravity
         configuration.planeDetection = []
 
-        let depthSupported = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
-        if depthSupported {
+        // T2 - enable LiDAR dept modes supported by the current device.
+        let sceneDepthSupported = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
+        
+        let smoothedDepthSupported =
+            ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth)
+        
+        if sceneDepthSupported {
             configuration.frameSemantics.insert(.sceneDepth)
-        } else {
+        }
+        
+        if smoothedDepthSupported {
+            configuration.frameSemantics.insert(.smoothedSceneDepth)
+        }
+        
+        let depthSupported = sceneDepthSupported || smoothedDepthSupported
+    
+        if !depthSupported {
             // Not fatal. People detection still works; the geometry tasks go quiet and
             // `hasMetricDepth` stays false, which is the fallback the shared contract
             // already documents for non-LiDAR devices.
@@ -149,12 +163,15 @@ extension ARSceneAnalyzer: ARSessionDelegate {
             state.frameCounter += 1
             return state.frameCounter % state.frameStride == 0
         }
+        
         guard shouldAnalyze else { return }
         broadcaster.send(analyze(frame))
+        
     }
-
     func session(_ session: ARSession, didFailWithError error: Error) {
-        log.error("ARKit session failed: \(error.localizedDescription, privacy: .public)")
+        log.error(
+            "ARKit session failed: \(error.localizedDescription, privacy: .public)"
+        )
     }
 }
 
@@ -183,7 +200,8 @@ private extension ARSceneAnalyzer {
         var hasMetricDepth = false
         var hazards: [ElevationHazard] = []
 
-        if let depth = frame.sceneDepth {
+        // T2 - prefer smoothed depth, with regular scene depth as a fallback
+        if let depth = frame.smoothedSceneDepth ?? frame.sceneDepth {
             hasMetricDepth = true
             let cloud = pointCloud(from: depth, camera: frame.camera)
             let corridor = corridor(for: frame.camera)
