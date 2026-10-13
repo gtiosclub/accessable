@@ -183,7 +183,7 @@ private extension ARSceneAnalyzer {
             )
         }
         
-        // T17 - OCR
+        // T17 - Add OCR for signs and nearby text
         var recognizedTexts: [RecognizedText] = []
         
         do {
@@ -195,10 +195,6 @@ private extension ARSceneAnalyzer {
             log.error(
                 "text detection failed: \(error.localizedDescription, privacy: .public)"
             )
-        }
-        
-        if !recognizedTexts.isEmpty {
-            print("[T17] OCR:", recognizedTexts.map { $0.string })
         }
 
         var ground = GroundSurface.unknown
