@@ -8,11 +8,20 @@ final class DestinationAutocompleter: NSObject, DestinationSearching {
     private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
     private let completer = MKLocalSearchCompleter()
     private var completions: [SearchSuggestion.ID: MKLocalSearchCompletion] = [:]
+    private let region: MKCoordinateRegion
 
-    override init() {
+    init(region: SearchRegion) {
+        // MKCoordinateRegion takes a full width/height, so double the radius
+        self.region = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: region.center.latitude, longitude: region.center.longitude),
+            latitudinalMeters: region.radius * 2,
+            longitudinalMeters: region.radius * 2
+        )
         super.init()
         completer.delegate = self
         completer.resultTypes = [.address, .pointOfInterest]
+        completer.region = self.region
+        completer.regionPriority = .required
     }
 
     func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
@@ -33,7 +42,10 @@ final class DestinationAutocompleter: NSObject, DestinationSearching {
         guard let completion = completions[suggestion.id] else {
             throw DestinationSearchError.staleSuggestion
         }
-        let response = try await MKLocalSearch(request: MKLocalSearch.Request(completion: completion)).start()
+        let request = MKLocalSearch.Request(completion: completion)
+        request.region = region
+        request.regionPriority = .required
+        let response = try await MKLocalSearch(request: request).start()
         guard let place = response.mapItems.first else {
             throw DestinationSearchError.noMatch
         }
