@@ -36,6 +36,15 @@ final class DestinationSearchViewModel {
         !trimmedQuery.isEmpty && !isSearching && problem == nil && suggestions.isEmpty
     }
 
+    var resultsAnnouncement: String? {
+        guard !isSearching, problem == nil, selectedSuggestionID == nil, !trimmedQuery.isEmpty else { return nil }
+        switch suggestions.count {
+        case 0: return "No results for \(trimmedQuery)"
+        case 1: return "1 result for \(trimmedQuery)"
+        default: return "\(suggestions.count) results for \(trimmedQuery)"
+        }
+    }
+
     func start() async {
         for await result in services.destinationSearch.suggestions() {
             isSearching = false
@@ -58,7 +67,8 @@ final class DestinationSearchViewModel {
         selectedSuggestionID = nil
         selectedDestination = nil
         isResolving = false
-        problem = nil
+        // an offline failure would just be re-set (and re-announced) on every keystroke; start() clears it on success
+        if case .lookupFailed = problem { problem = nil }
         isSearching = !trimmedQuery.isEmpty
         services.destinationSearch.update(query: query)
     }
