@@ -32,12 +32,10 @@ print("See it on a map: https://www.openstreetmap.org/?minlon=\(westLon)&minlat=
 
 // Step 2: Overpass query
 
-// Build the text of the Overpass query.
 func makeQuery() -> String {
-    // Overpass needs the box in this format: south, west, north, east
     let box = "\(southLat),\(westLon),\(northLat),\(eastLon)"
 
-    // JSON query
+    // Overpass query returning JSON format
     let query = """
     [out:json][timeout:60];
     (
@@ -46,11 +44,14 @@ func makeQuery() -> String {
       way["footway"="crossing"](\(box));
       // Audible signals: any node that has the traffic_signals:sound tag
       node["traffic_signals:sound"](\(box));
+      // Vibrating crossing buttons
+      node["traffic_signals:vibration"](\(box));
       // Tactile paving: any node or way that has the tactile_paving tag
       node["tactile_paving"](\(box));
       way["tactile_paving"](\(box));
-      // Curbs: nodes tagged barrier=kerb, or any node with a kerb tag
+      // Curbs: nodes tagged barrier=kerb, lines tagged barrier=kerb, or any node with a kerb tag
       node["barrier"="kerb"](\(box));
+      way["barrier"="kerb"](\(box));
       node["kerb"](\(box));
       // Elevators: nodes tagged highway=elevator
       node["highway"="elevator"](\(box));
