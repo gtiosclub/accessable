@@ -3,21 +3,9 @@ import os
 
 private let log = Logger(subsystem: "AccessAble", category: "Search")
 
-struct SearchSuggestion: Identifiable, Sendable {
-    let title: String
-    let subtitle: String
-
-    var id: String { "\(title)\n\(subtitle)" }
-}
-
-enum DestinationSearchError: Error {
-    case staleSuggestion
-    case noMatch
-}
-
 @MainActor
 final class DestinationAutocompleter: NSObject, DestinationSearching {
-    private let results = Broadcaster<[SearchSuggestion]>()
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
     private let completer = MKLocalSearchCompleter()
     private var completions: [SearchSuggestion.ID: MKLocalSearchCompletion] = [:]
 
@@ -27,7 +15,7 @@ final class DestinationAutocompleter: NSObject, DestinationSearching {
         completer.resultTypes = [.address, .pointOfInterest]
     }
 
-    func suggestions() -> AsyncStream<[SearchSuggestion]> {
+    func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
         results.stream()
     }
 
@@ -62,7 +50,7 @@ final class DestinationAutocompleter: NSObject, DestinationSearching {
             return suggestion
         }
         self.completions = completions
-        results.send(suggestions)
+        results.send(.success(suggestions))
     }
 }
 
@@ -72,7 +60,13 @@ extension DestinationAutocompleter: MKLocalSearchCompleterDelegate {
     }
 
     func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: any Error) {
+        // MapKit reports "nothing matched" as an error; show it as an empty list instead
+        if (error as? MKError)?.code == .placemarkNotFound {
+            setResults([])
+            return
+        }
         log.error("Autocomplete failed: \(error.localizedDescription, privacy: .public)")
-        setResults([])
+        completions = [:]
+        results.send(.failure(.suggestionsUnavailable))
     }
 }

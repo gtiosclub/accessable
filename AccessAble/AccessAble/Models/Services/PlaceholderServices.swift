@@ -119,15 +119,15 @@ struct PlaceholderDestinationSearch: DestinationSearching {
         SearchSuggestion(title: "Campus Recreation Center", subtitle: "750 Ferst Dr NW, Atlanta, GA"),
     ]
 
-    private let results = Broadcaster<[SearchSuggestion]>()
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
 
-    func suggestions() -> AsyncStream<[SearchSuggestion]> {
+    func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
         results.stream()
     }
 
     func update(query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        results.send(trimmed.isEmpty ? [] : Self.samples.filter { $0.title.localizedCaseInsensitiveContains(trimmed) })
+        results.send(.success(trimmed.isEmpty ? [] : Self.samples.filter { $0.title.localizedCaseInsensitiveContains(trimmed) }))
     }
 
     func resolve(_ suggestion: SearchSuggestion) async throws -> Destination {
