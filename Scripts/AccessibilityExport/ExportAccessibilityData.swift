@@ -42,3 +42,46 @@ print("South: \(southLat)  West: \(westLon)  North: \(northLat)  East: \(eastLon
 print("Center: \(centerLat), \(centerLon)")
 print("Size: about \(String(format: "%.1f", widthKm)) km wide by \(String(format: "%.1f", heightKm)) km tall")
 print("See it on a map: https://www.openstreetmap.org/?minlon=\(westLon)&minlat=\(southLat)&maxlon=\(eastLon)&maxlat=\(northLat)&box=yes")
+
+
+// Step 2: Overpass query
+
+// Builds the text of the Overpass query.
+// Overpass is the tool that lets us ask OpenStreetMap for specific features.
+func makeQuery() -> String {
+    // Overpass needs the box in this format: south, west, north, east
+    let box = "\(southLat),\(westLon),\(northLat),\(eastLon)"
+
+    // This is the JSON query.
+    // ( ) is a union, so we get anything as long as it matches any line.
+    // [ ] are filters on the tags of each OSM element.
+    // node is a single point, while way is a line.
+    let query = """
+    [out:json][timeout:60];
+    (
+      // Crossings: points tagged highway=crossing, and lines tagged footway=crossing
+      node["highway"="crossing"](\(box));
+      way["footway"="crossing"](\(box));
+      // Audible signals: any node that has the traffic_signals:sound tag
+      node["traffic_signals:sound"](\(box));
+      // Tactile paving: any node or way that has the tactile_paving tag
+      node["tactile_paving"](\(box));
+      way["tactile_paving"](\(box));
+      // Curbs: nodes tagged barrier=kerb, or any node with a kerb tag
+      node["barrier"="kerb"](\(box));
+      node["kerb"](\(box));
+      // Elevators: nodes tagged highway=elevator
+      node["highway"="elevator"](\(box));
+      // Entrances: any node with the entrance tag
+      node["entrance"](\(box));
+    );
+    out center;
+    """
+    return query
+}
+
+// Build the query and print it so we can copy it into overpass-turbo.eu to test it
+let query = makeQuery()
+print("")
+print("Overpass query:")
+print(query)
