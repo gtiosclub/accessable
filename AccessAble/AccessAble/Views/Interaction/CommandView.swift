@@ -1,3 +1,11 @@
+//
+//  CommandView.swift
+//  AccessAble
+//
+//  Created by narwhal on 10/13/26.
+//
+
+
 import SwiftUI
  
 /// Owner: User Interaction (3.1). Type a command or question; the reply is spoken and shown.

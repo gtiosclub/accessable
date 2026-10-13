@@ -24,18 +24,6 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Channels") {
-                channelToggle("Speech", .speech)
-                channelToggle("Haptics", .haptics)
-                channelToggle("Spatial audio", .spatialAudio)
-                LabeledContent("Speech rate") {
-                    Slider(value: $viewModel.profile.speechRate, in: 0.3...0.7)
-                }
-                LabeledContent("Haptic intensity") {
-                    Slider(value: $viewModel.profile.hapticIntensity, in: 0...1)
-                }
-            }
-
             Section("Announcements") {
                 ForEach(AnnouncementCategory.allCases, id: \.self) { category in
                     Toggle(category.rawValue.capitalized, isOn: Binding(
@@ -46,13 +34,19 @@ struct SettingsView: View {
             }
 
             Section {
-                Picker("Performance", selection: $viewModel.performanceSetting) {
-                    Text("Automatic").tag(PerformanceModeSetting.automatic)
-                    Text("Best quality").tag(PerformanceModeSetting.normal)
-                    Text("Save battery").tag(PerformanceModeSetting.battery)
+                channelToggle("Speech", .speech)
+                channelToggle("Haptics", .haptics)
+                channelToggle("Spatial audio", .spatialAudio)
+                LabeledContent("Speech rate") {
+                    Slider(value: $viewModel.profile.speechRate, in: 0.3...0.7)
                 }
+                LabeledContent("Haptic intensity") {
+                    Slider(value: $viewModel.profile.hapticIntensity, in: 0...1)
+                }
+            } header: {
+                Text("Channels")
             } footer: {
-                Text("Currently: \(viewModel.currentPerformanceMode == .battery ? "saving battery" : "best quality")")
+                Text("When VoiceOver is on, announcements use it for speech.")
             }
         }
         .navigationTitle("Settings")

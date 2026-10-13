@@ -1,3 +1,11 @@
+//
+//  CommandViewModel.swift
+//  AccessAble
+//
+//  Created by narwhal on 10/13/26.
+//
+
+
 import Foundation
 import Observation
  
