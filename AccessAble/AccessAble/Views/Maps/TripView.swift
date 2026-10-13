@@ -33,10 +33,26 @@ struct TripView: View {
                     Task { await viewModel.endTrip() }
                 }
             } else {
+                if let destination = viewModel.destination {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Destination")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Text(destination.name)
+                            .font(.title3.weight(.semibold))
+                        if let address = destination.address {
+                            Text(address)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .combine)
+                }
+
                 NavigationLink {
-                    DestinationSearchView(services: services)
+                    DestinationSearchView(services: services) { viewModel.setDestination($0) }
                 } label: {
-                    Label("Choose destination", systemImage: "magnifyingglass")
+                    Label(viewModel.destination == nil ? "Choose destination" : "Change destination", systemImage: "magnifyingglass")
                         .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
                         .padding(.horizontal)
                 }
