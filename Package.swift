@@ -21,7 +21,6 @@ let package = Package(
             // stops warning about files it can see but isn't compiling.
             exclude: [
                 "Services",
-                "Formatting",
                 "Core/AnnouncementEvent.swift",
                 "Core/GuidanceProfile.swift",
                 "Core/HapticID.swift",
@@ -30,6 +29,8 @@ let package = Package(
             ],
             sources: [
                 "Vision",
+		"Formatting/SpokenPhrasing.swift",
+		"Formatting/SceneDescriptionBuilder.swift",
                 "Core/SceneObservation.swift",
                 "Core/RelativeBearing.swift",
             ],
