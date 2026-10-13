@@ -19,6 +19,26 @@ enum GeoMath {
         return 2 * earthRadius * asin(min(1, sqrt(a)))
     }
 
+    /// Direction to head from `start` to reach `end`, in degrees clockwise from true north, 0..<360.
+    /// Returns 0 when the points are the same.
+    static func bearing(from start: GeoCoordinate, to end: GeoCoordinate) -> Double {
+        let startLatitude = radians(start.latitude)
+        let endLatitude = radians(end.latitude)
+        let longitudeDelta = radians(end.longitude - start.longitude)
+
+        let y = sin(longitudeDelta) * cos(endLatitude)
+        let x = cos(startLatitude) * sin(endLatitude) - sin(startLatitude) * cos(endLatitude) * cos(longitudeDelta)
+        return normalizedBearing(atan2(y, x) * 180 / .pi)
+    }
+
+    /// Wraps any angle in degrees into 0..<360. `RelativeBearing` covers -180...180.
+    static func normalizedBearing(_ angle: Double) -> Double {
+        let wrapped = angle.truncatingRemainder(dividingBy: 360)
+        let positive = wrapped < 0 ? wrapped + 360 : wrapped
+        // -1e-14 rounds up to exactly 360, and -360 leaves -0
+        return positive == 360 || positive == 0 ? 0 : positive
+    }
+
     private static func radians(_ degrees: Double) -> Double {
         degrees * .pi / 180
     }
