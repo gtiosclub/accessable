@@ -147,18 +147,10 @@ struct NavigationRoute: Codable, Equatable, Sendable {
             }
         }
 
-        var distances: [Double] = [0]
-        var total = 0.0
-        for (start, end) in zip(coordinates, coordinates.dropFirst()) {
-            total += CLLocation(latitude: start.latitude, longitude: start.longitude)
-                .distance(from: CLLocation(latitude: end.latitude, longitude: end.longitude))
-            distances.append(total)
-        }
-
         self.coordinates = coordinates
         self.steps = steps
         self.estimatedDuration = estimatedDuration
-        self.cumulativeDistances = distances
+        self.cumulativeDistances = GeoMath.cumulativeDistances(along: coordinates)
     }
 
     /// Metres.

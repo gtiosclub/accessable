@@ -19,6 +19,19 @@ enum GeoMath {
         return 2 * earthRadius * asin(min(1, sqrt(a)))
     }
 
+    /// Metres from the first coordinate to each coordinate, following the path in order.
+    /// Same count as `coordinates`; starts at 0. Empty when `coordinates` is empty.
+    static func cumulativeDistances(along coordinates: [GeoCoordinate]) -> [Double] {
+        guard !coordinates.isEmpty else { return [] }
+        var distances: [Double] = [0]
+        var total = 0.0
+        for (start, end) in zip(coordinates, coordinates.dropFirst()) {
+            total += distance(from: start, to: end)
+            distances.append(total)
+        }
+        return distances
+    }
+
     /// Direction to head from `start` to reach `end`, in degrees clockwise from true north, 0..<360.
     /// Returns 0 when the points are the same.
     static func bearing(from start: GeoCoordinate, to end: GeoCoordinate) -> Double {
