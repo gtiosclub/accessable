@@ -105,7 +105,16 @@ struct DestinationSearchView: View {
         }
         .onChange(of: viewModel.problem) { _, problem in
             guard let problem else { return }
-            AccessibilityNotification.Announcement(problemMessage(problem)).post()
+            // high priority so VoiceOver doesn't cut it off while reading the row's "Loading details" value
+            var message = AttributedString(problemMessage(problem))
+            message.accessibilitySpeechAnnouncementPriority = .high
+            AccessibilityNotification.Announcement(message).post()
+        }
+        // debounced so the count doesn't talk over typing; cancellation means a newer value arrived
+        .task(id: viewModel.resultsAnnouncement) {
+            guard let announcement = viewModel.resultsAnnouncement else { return }
+            do { try await Task.sleep(for: .seconds(1)) } catch { return }
+            AccessibilityNotification.Announcement(announcement).post()
         }
         .task { await viewModel.start() }
     }
