@@ -85,3 +85,236 @@ let query = makeQuery()
 print("")
 print("Overpass query:")
 print(query)
+
+
+// Step 3: Count feature types and document coverage gaps
+
+// Folder where the output files get saved (relative to where you run the script)
+let outputFolder = "Data/AccessibilityExport"
+
+// Overpass server we ask for the data
+let overpassURL = "https://overpass-api.de/api/interpreter"
+
+// Feature types we care about. Used for counting.
+let allFeatureTypes = ["crossing", "audible_signal", "tactile_paving", "curb", "elevator", "entrance"]
+
+struct OverpassResponse: Codable {
+    let elements: [OverpassElement]
+}
+
+struct OverpassElement: Codable {
+    let type: String
+    let id: Int
+    let lat: Double?
+    let lon: Double?
+    let center: OverpassCenter?
+    let tags: [String: String]?
+}
+
+// The center point of a way
+struct OverpassCenter: Codable {
+    let lat: Double
+    let lon: Double
+}
+
+// Here, I'm looking at the tags of an element and deciding which feature types it has.
+func findFeatureTypes(tags: [String: String]) -> [String] {
+    var types: [String] = []
+    
+    if tags["highway"] == "crossing" || tags["footway"] == "crossing" {
+        types.append("crossing")
+    }
+
+    if tags["traffic_signals:sound"] != nil {
+        types.append("audible_signal")
+    }
+    
+    if tags["tactile_paving"] != nil {
+        types.append("tactile_paving")
+    }
+
+    if tags["barrier"] == "kerb" || tags["kerb"] != nil {
+        types.append("curb")
+    }
+
+    if tags["highway"] == "elevator" {
+        types.append("elevator")
+    }
+
+    if tags["entrance"] != nil {
+        types.append("entrance")
+    }
+
+    return types
+}
+
+// Send the query to Overpass and give back the raw answer.
+func fetchFromOverpass(query: String) async -> Data? {
+    // Make a URL object out of the string
+    guard let url = URL(string: overpassURL) else {
+        print("The Overpass URL is not valid")
+        return nil
+    }
+    
+    var request = URLRequest(url: url)
+    request.httpMethod = "POST"
+    request.timeoutInterval = 90
+    request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+    request.setValue("AccessAble-student-project", forHTTPHeaderField: "User-Agent")
+
+    let encodedQuery = query.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? ""
+    request.httpBody = "data=\(encodedQuery)".data(using: .utf8)
+
+    do {
+        let (data, response) = try await URLSession.shared.data(for: request)
+        
+        if let httpResponse = response as? HTTPURLResponse {
+            if httpResponse.statusCode != 200 {
+                print("Overpass gave status code \(httpResponse.statusCode). Try again in a minute.")
+                return nil
+            }
+        }
+        return data
+    } catch {
+        print("The request failed: \(error)")
+        return nil
+    }
+}
+
+// Turn the raw JSON data into our OverpassResponse struct
+func decodeResponse(data: Data) -> OverpassResponse? {
+    do {
+        let decoder = JSONDecoder()
+        let response = try decoder.decode(OverpassResponse.self, from: data)
+        return response
+    } catch {
+        print("Could not read the Overpass JSON: \(error)")
+        return nil
+    }
+}
+
+func countType(elements: [OverpassElement], type: String) -> Int {
+    var count = 0
+    for element in elements {
+        let tags = element.tags ?? [:]
+        let types = findFeatureTypes(tags: tags)
+        if types.contains(type) {
+            count += 1
+        }
+    }
+    return count
+}
+
+func countTypeWithTag(elements: [OverpassElement], type: String, tag: String) -> Int {
+    var count = 0
+    for element in elements {
+        let tags = element.tags ?? [:]
+        let types = findFeatureTypes(tags: tags)
+        if types.contains(type) && tags[tag] != nil {
+            count += 1
+        }
+    }
+    return count
+}
+
+func percent(part: Int, whole: Int) -> String {
+    if whole == 0 {
+        return "n/a"
+    }
+    let value = Double(part) / Double(whole) * 100
+    return String(format: "%.0f%%", value)
+}
+
+// Write the coverage summary
+func makeSummary(elements: [OverpassElement]) -> String {
+    var text = "# Accessibility Data Coverage Summary\n\n"
+    text += "- Test area: \(testAreaName)\n"
+    text += "- Bounding box (south, west, north, east): \(southLat), \(westLon), \(northLat), \(eastLon)\n"
+    text += "- Total elements found: \(elements.count)\n\n"
+
+    // Table with the count for each feature type.
+    text += "## Feature counts\n\n| Feature type | Count |\n|---|---|\n"
+    var emptyTypes: [String] = []
+    for type in allFeatureTypes {
+        let count = countType(elements: elements, type: type)
+        text += "| \(type) | \(count) |\n"
+        if count == 0 {
+            emptyTypes.append(type)
+        }
+    }
+    
+    text += "\n## Coverage gaps\n\n"
+    let gapChecks = [
+        ("crossing", "tactile_paving"),
+        ("crossing", "kerb"),
+        ("entrance", "wheelchair"),
+        ("elevator", "wheelchair")
+    ]
+    for (type, tag) in gapChecks {
+        let total = countType(elements: elements, type: type)
+        let withTag = countTypeWithTag(elements: elements, type: type, tag: tag)
+        text += "- \(type)s with a \(tag) tag: \(withTag) of \(total) (\(percent(part: withTag, whole: total)))\n"
+    }
+
+    var signalCrossings = 0
+    var signalCrossingsWithSound = 0
+    for element in elements {
+        let tags = element.tags ?? [:]
+        if findFeatureTypes(tags: tags).contains("crossing") && tags["crossing"] == "traffic_signals" {
+            signalCrossings += 1
+            if tags["traffic_signals:sound"] != nil {
+                signalCrossingsWithSound += 1
+            }
+        }
+    }
+    text += "- signalized crossings with a traffic_signals:sound tag: \(signalCrossingsWithSound) of \(signalCrossings) (\(percent(part: signalCrossingsWithSound, whole: signalCrossings)))\n"
+
+    text += "\n## Feature types with nothing found\n\n"
+    if emptyTypes.isEmpty {
+        text += "- None, every feature type has at least one feature\n"
+    }
+    for type in emptyTypes {
+        text += "- \(type): no features found in the test area\n"
+    }
+
+    text += "\n## Notes\n\n"
+    text += "- A missing tag means nobody has mapped it yet. It does NOT mean the feature is not accessible.\n"
+    text += "- Lines (ways) are counted as one feature each.\n"
+
+    return text
+}
+
+// Run step 3
+
+// Ask Overpass for the data using the query from step 2
+print("")
+print("Asking Overpass for the data (this can take a bit)...")
+
+Task {
+    guard let data = await fetchFromOverpass(query: query) else {
+        print("No data was received, so there is nothing to count.")
+        exit(1)
+    }
+
+    guard let response = decodeResponse(data: data) else {
+        exit(1)
+    }
+    print("Overpass sent back \(response.elements.count) elements")
+
+    let summary = makeSummary(elements: response.elements)
+    print("")
+    print(summary)
+
+    // Save the summary to a file
+    do {
+        try FileManager.default.createDirectory(atPath: outputFolder, withIntermediateDirectories: true)
+        try summary.write(toFile: "\(outputFolder)/coverage_summary.md", atomically: true, encoding: .utf8)
+        print("Saved the summary in \(outputFolder)/coverage_summary.md")
+    } catch {
+        print("Could not save the summary: \(error)")
+        exit(1)
+    }
+}
+
+// Keep the script running long enough for the async Task to finish
+RunLoop.main.run()
