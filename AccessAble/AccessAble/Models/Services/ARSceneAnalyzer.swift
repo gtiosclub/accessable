@@ -23,6 +23,7 @@ final class ARSceneAnalyzer: NSObject, SceneObservationProviding, @unchecked Sen
     let session = ARSession()
 
     private let peopleDetector: PeopleDetector
+    private let textDetector: TextDetector
     private let corridorWidth: Float
     private let corridorDistance: Float
     private let performance: any PerformanceModeProviding
@@ -54,11 +55,13 @@ final class ARSceneAnalyzer: NSObject, SceneObservationProviding, @unchecked Sen
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
+        textDetector: TextDetector = TextDetector(),
         performance: any PerformanceModeProviding,
         corridorWidth: Float = WalkingCorridor.default.width,
         corridorDistance: Float = WalkingCorridor.default.maxDistance
     ) {
         self.peopleDetector = peopleDetector
+        self.textDetector = textDetector
         self.performance = performance
         self.corridorWidth = corridorWidth
         self.corridorDistance = corridorDistance
@@ -176,7 +179,26 @@ private extension ARSceneAnalyzer {
                 orientation: snapshot.0
             )
         } catch {
-            log.error("people detection failed: \(error.localizedDescription, privacy: .public)")
+            log.error("people detection failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        
+        // T17 - OCR
+        var recognizedTexts: [RecognizedText] = []
+        
+        do {
+            recognizedTexts = try textDetector.detectText(
+                pixelBuffer: frame.capturedImage,
+                orientation: snapshot.0
+            )
+        } catch {
+            log.error(
+                "text detection failed: \(error.localizedDescription, privacy: .public)"
+            )
+        }
+        
+        if !recognizedTexts.isEmpty {
+            print("[T17] OCR:", recognizedTexts.map { $0.string })
         }
 
         var ground = GroundSurface.unknown
@@ -220,7 +242,7 @@ private extension ARSceneAnalyzer {
             timestamp: .now,
             detections: detections,
             ground: ground,
-            recognizedText: [],
+            recognizedText: recognizedTexts,
             hasMetricDepth: hasMetricDepth
         )
     }
@@ -415,3 +437,4 @@ enum ARSceneAnalyzerError: LocalizedError {
         }
     }
 }
+

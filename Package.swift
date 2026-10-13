@@ -39,6 +39,9 @@ let package = Package(
             name: "SceneGeometryTests",
             dependencies: ["SceneGeometry"],
             path: "Tests/SceneGeometryTests",
+            resources: [
+            	.process("Resources")
+	    ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]
