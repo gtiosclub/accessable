@@ -1,10 +1,9 @@
 import MapKit
 import SwiftUI
 
-/// Owner: Maps + Location (2.x). Placeholder UI — add search and route preview here.
+/// Owner: Maps + Location (2.x). Trip planning and active-trip screen.
 struct TripView: View {
     @State private var viewModel: TripViewModel
-    @State private var cameraPosition: MapCameraPosition = .automatic
     private let services: AppServices
 
     init(services: AppServices) {
@@ -14,7 +13,7 @@ struct TripView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            TripMapView(tripState: viewModel.tripState, cameraPosition: $cameraPosition)
+            TripMapView(tripState: viewModel.tripState)
                 .frame(minHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
@@ -75,16 +74,19 @@ struct TripView: View {
     }
 }
 
-/// Shows the upcoming maneuver on a map. No live user-location dot yet — that needs a wired-up
-/// `LocationProvider` (TODO(Maps 2.1)) plus an `NSLocationWhenInUseUsageDescription` entry.
+/// Shows the upcoming maneuver on a map. The user-location dot comes with MAP-5.
 private struct TripMapView: View {
     let tripState: TripState
-    @Binding var cameraPosition: MapCameraPosition
+    // .automatic zooms out to the whole continent when there's nothing on the map yet
+    @State private var cameraPosition: MapCameraPosition = .region(
+        MKCoordinateRegion(center: SearchRegion.georgiaTech.center.clCoordinate,
+                           latitudinalMeters: 1_500, longitudinalMeters: 1_500)
+    )
 
     var body: some View {
         Map(position: $cameraPosition, interactionModes: [.pan, .zoom]) {
             if let maneuver = tripState.nextManeuver {
-                Marker(tripState.destinationName ?? maneuver.instruction,
+                Marker(maneuver.instruction,
                        systemImage: maneuver.kind.mapSymbolName,
                        coordinate: maneuver.coordinate.clCoordinate)
             }
@@ -93,7 +95,7 @@ private struct TripMapView: View {
             MapCompass()
             MapScaleView()
         }
-        .onChange(of: tripState.nextManeuver) { _, maneuver in
+        .onChange(of: tripState.nextManeuver, initial: true) { _, maneuver in
             guard let maneuver else { return }
             withAnimation {
                 cameraPosition = .region(
@@ -150,10 +152,6 @@ private extension ManeuverKind {
                 ),
                 distanceToNextManeuver: 42,
                 distanceRemaining: 111
-            ),
-            cameraPosition: .constant(
-                .region(MKCoordinateRegion(center: MapsSamples.origin.clCoordinate,
-                                            latitudinalMeters: 400, longitudinalMeters: 400))
             )
         )
         .navigationTitle("Trip")
