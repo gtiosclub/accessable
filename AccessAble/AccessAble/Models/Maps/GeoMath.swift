@@ -1,4 +1,5 @@
 import Foundation
+import simd
 
 /// Geographic calculations for routing and the navigation tracker. Treats the Earth as a sphere.
 ///
@@ -64,6 +65,128 @@ enum GeoMath {
             distances.append(total)
         }
         return distances
+    }
+
+    /// Closest point to `point` on the path through `coordinates`, searching only `segments`. Segment `i` joins
+    /// `coordinates[i]` to `coordinates[i + 1]`, and `cumulativeDistances` must be
+    /// `cumulativeDistances(along: coordinates)`. `NavigationRoute.projection(of:segments:)` states the contract.
+    static func project(
+        _ point: GeoCoordinate,
+        onto coordinates: [GeoCoordinate],
+        cumulativeDistances: [Double],
+        segments: Range<Int>
+    ) -> RouteProjection {
+        precondition(!segments.isEmpty, "No segments to project onto")
+        precondition(segments.lowerBound >= 0 && segments.upperBound < coordinates.count,
+                     "Segments \(segments) out of bounds for \(coordinates.count) coordinates")
+        guard point.latitude.isFinite, point.longitude.isFinite else {
+            return RouteProjection(coordinate: point, segmentIndex: segments.lowerBound,
+                                   distanceAlongRoute: .nan, sideOffset: .nan)
+        }
+
+        let target = unitVector(point)
+        var bestIndex = segments.lowerBound
+        var best = SegmentProjection(foot: .start, angle: .infinity, isLeft: false)
+        var start = unitVector(coordinates[segments.lowerBound])
+        for index in segments {
+            let end = unitVector(coordinates[index + 1])
+            let candidate = project(target, from: start, to: end)
+            // strict, so ties keep the lowest segment index
+            if candidate.angle < best.angle {
+                best = candidate
+                bestIndex = index
+            }
+            start = end
+        }
+
+        let coordinate: GeoCoordinate
+        let distanceAlongRoute: Double
+        switch best.foot {
+        case .start:
+            coordinate = coordinates[bestIndex]
+            distanceAlongRoute = cumulativeDistances[bestIndex]
+        case .end:
+            coordinate = coordinates[bestIndex + 1]
+            distanceAlongRoute = cumulativeDistances[bestIndex + 1]
+        case .interior(let foot):
+            coordinate = self.coordinate(from: foot)
+            distanceAlongRoute = cumulativeDistances[bestIndex]
+                + earthRadius * angle(between: unitVector(coordinates[bestIndex]), and: foot)
+        }
+        // `distance` rather than the cross-track angle, so `abs(sideOffset)` matches it exactly.
+        let offset = distance(from: point, to: coordinate)
+        return RouteProjection(coordinate: coordinate, segmentIndex: bestIndex,
+                               distanceAlongRoute: distanceAlongRoute, sideOffset: best.isLeft ? -offset : offset)
+    }
+
+    /// About 1 mm of arc in radians. Segments shorter than this have a normal made mostly of rounding noise, and
+    /// feet this close to a vertex snap to it so progress there equals `cumulativeDistances` exactly.
+    private static let pointTolerance = 1e-3 / earthRadius
+
+    private enum Foot {
+        case start
+        case end
+        case interior(SIMD3<Double>)
+    }
+
+    private struct SegmentProjection {
+        let foot: Foot
+        /// Radians from the projected point to its foot.
+        let angle: Double
+        let isLeft: Bool
+    }
+
+    /// Projects unit vector `point` onto the arc from `start` to `end`, all on the unit sphere.
+    private static func project(
+        _ point: SIMD3<Double>,
+        from start: SIMD3<Double>,
+        to end: SIMD3<Double>
+    ) -> SegmentProjection {
+        let normal = cross(start, end)
+        // No direction of travel, so no side.
+        guard length(normal) > pointTolerance else {
+            return SegmentProjection(foot: .start, angle: angle(between: point, and: start), isLeft: false)
+        }
+        let unitNormal = normalize(normal)
+        // The normal points to the left of travel, since start × end follows the right-hand rule.
+        let side = dot(point, unitNormal)
+        let isLeft = side > 0
+        // Can be NaN when the point is at or near a pole of the great circle; the arc test then fails and the
+        // nearer endpoint wins.
+        let foot = normalize(point - side * unitNormal)
+
+        if dot(cross(start, foot), unitNormal) >= 0, dot(cross(foot, end), unitNormal) >= 0 {
+            if angle(between: start, and: foot) <= pointTolerance {
+                return SegmentProjection(foot: .start, angle: angle(between: point, and: start), isLeft: isLeft)
+            }
+            if angle(between: foot, and: end) <= pointTolerance {
+                return SegmentProjection(foot: .end, angle: angle(between: point, and: end), isLeft: isLeft)
+            }
+            return SegmentProjection(foot: .interior(foot), angle: angle(between: point, and: foot), isLeft: isLeft)
+        }
+        let toStart = angle(between: point, and: start)
+        let toEnd = angle(between: point, and: end)
+        return toStart <= toEnd
+            ? SegmentProjection(foot: .start, angle: toStart, isLeft: isLeft)
+            : SegmentProjection(foot: .end, angle: toEnd, isLeft: isLeft)
+    }
+
+    /// Radians between two unit vectors. atan2 stays accurate for the tiny angles of short segments, where acos of
+    /// the dot product rounds to 0.
+    private static func angle(between first: SIMD3<Double>, and second: SIMD3<Double>) -> Double {
+        atan2(length(cross(first, second)), dot(first, second))
+    }
+
+    /// Earth-centred, Earth-fixed position on the unit sphere: x through (0, 0), z through the north pole.
+    private static func unitVector(_ coordinate: GeoCoordinate) -> SIMD3<Double> {
+        let latitude = radians(coordinate.latitude)
+        let longitude = radians(coordinate.longitude)
+        return SIMD3(cos(latitude) * cos(longitude), cos(latitude) * sin(longitude), sin(latitude))
+    }
+
+    private static func coordinate(from vector: SIMD3<Double>) -> GeoCoordinate {
+        GeoCoordinate(latitude: atan2(vector.z, hypot(vector.x, vector.y)) * 180 / .pi,
+                      longitude: atan2(vector.y, vector.x) * 180 / .pi)
     }
 
     private static func radians(_ degrees: Double) -> Double {

@@ -180,6 +180,44 @@ struct NavigationRoute: Codable, Equatable, Sendable {
     }
 }
 
+/// Where a point falls on a `NavigationRoute`.
+struct RouteProjection: Equatable, Sendable {
+    /// Closest point on the route.
+    let coordinate: GeoCoordinate
+    /// The segment holding `coordinate`, from `coordinates[segmentIndex]` to `coordinates[segmentIndex + 1]`.
+    let segmentIndex: Int
+    /// Metres from the route start to `coordinate`.
+    let distanceAlongRoute: Double
+    /// Metres from `coordinate` to the point: negative left of the direction of travel, positive right.
+    let sideOffset: Double
+}
+
+extension NavigationRoute {
+    /// Closest point on the route to `point`, exact on `GeoMath`'s sphere.
+    ///
+    /// - `segments` restricts the search to those segment indices; it defaults to the whole route. It must be
+    ///   non-empty and within `0..<coordinates.count - 1`, or this traps.
+    /// - Before the start or past the end of the searched segments, the projection clamps to the endpoint.
+    /// - When the foot (where the point lands on the route) is within about 1 mm of a vertex, the projection is that
+    ///   vertex: `distanceAlongRoute` equals its `cumulativeDistances` entry exactly, and `sideOffset` is the distance
+    ///   to it.
+    /// - `abs(sideOffset)` equals `GeoMath.distance(from: point, to: coordinate)` exactly, signed by the side of the
+    ///   chosen segment's great circle the point is on, even when clamped. A segment under about 1 mm long counts
+    ///   as its start point and has no side, so its offset is never negative.
+    /// - Treat the sign as unreliable when `sideOffset` is tiny or the foot is a vertex: at a corner it comes from
+    ///   whichever segment won.
+    /// - Only exactly equal distances (identical geometry) tie, and resolve to the lowest index; near-ties go to
+    ///   whichever segment rounding favours.
+    /// - Past the end of a route whose last segment is under about 1 mm, `distanceAlongRoute` can fall up to 1 mm
+    ///   short of `totalDistance`, so compare arrival with a tolerance.
+    /// - A NaN or infinite point gives NaN `distanceAlongRoute` and `sideOffset`, `coordinate` equal to the point and
+    ///   `segmentIndex` equal to the first searched segment; check `isFinite` before using the result.
+    func projection(of point: GeoCoordinate, segments: Range<Int>? = nil) -> RouteProjection {
+        GeoMath.project(point, onto: coordinates, cumulativeDistances: cumulativeDistances,
+                        segments: segments ?? 0..<coordinates.count - 1)
+    }
+}
+
 /// Fixtures for previews, placeholder services, and tests.
 enum MapsSamples {
     static let origin = GeoCoordinate(latitude: 33.775, longitude: -84.399)
