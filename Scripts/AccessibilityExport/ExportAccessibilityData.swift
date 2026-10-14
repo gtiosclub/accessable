@@ -72,7 +72,7 @@ print(query)
 
 let outputFolder = "Data/AccessibilityExport"
 let overpassURL = "https://overpass-api.de/api/interpreter"
-let allFeatureTypes = ["crossing", "audible_signal", "tactile_paving", "curb", "elevator", "entrance"]
+let allFeatureTypes = ["crossing", "audible_signal", "vibrating_signal", "tactile_paving", "curb", "elevator", "entrance"]
 
 struct OverpassResponse: Codable {
     let elements: [OverpassElement]
@@ -92,25 +92,34 @@ struct OverpassCenter: Codable {
     let lon: Double
 }
 
+// A tag set to "no" means the feature is absent, so it isn't counted as present.
+func isPresent(_ tags: [String: String], _ key: String) -> Bool {
+    guard let value = tags[key] else { return false }
+    return value != "no"
+}
+
 func findFeatureTypes(tags: [String: String]) -> [String] {
     var types: [String] = []
-    
+
     if tags["highway"] == "crossing" || tags["footway"] == "crossing" {
         types.append("crossing")
     }
-    if tags["traffic_signals:sound"] != nil || tags["traffic_signals:vibration"] != nil {
+    if isPresent(tags, "traffic_signals:sound") {
         types.append("audible_signal")
     }
-    if tags["tactile_paving"] != nil {
+    if isPresent(tags, "traffic_signals:vibration") {
+        types.append("vibrating_signal")
+    }
+    if isPresent(tags, "tactile_paving") {
         types.append("tactile_paving")
     }
-    if tags["barrier"] == "kerb" || tags["kerb"] != nil {
+    if tags["barrier"] == "kerb" || isPresent(tags, "kerb") {
         types.append("curb")
     }
     if tags["highway"] == "elevator" {
         types.append("elevator")
     }
-    if tags["entrance"] != nil {
+    if isPresent(tags, "entrance") {
         types.append("entrance")
     }
 
@@ -187,6 +196,7 @@ func makeSummary(elements: [OverpassElement]) -> String {
     var text = "# Accessibility Data Coverage Summary\n\n"
     text += "- Test area: \(testAreaName)\n"
     text += "- Bounding box (south, west, north, east): \(southLat), \(westLon), \(northLat), \(eastLon)\n"
+    text += "- Source: OpenStreetMap via the Overpass API, fetched \(Date().formatted(date: .abbreviated, time: .omitted))\n"
     text += "- Total elements found: \(elements.count)\n\n"
 
     text += "## Feature counts\n\n| Feature type | Count |\n|---|---|\n"
@@ -214,7 +224,8 @@ func makeSummary(elements: [OverpassElement]) -> String {
     var signalCrossingsWithSound = 0
     for element in elements {
         let tags = element.tags ?? [:]
-        if findFeatureTypes(tags: tags).contains("crossing") && tags["crossing"] == "traffic_signals" {
+        let isSignalized = tags["crossing"] == "traffic_signals" || tags["crossing:signals"] == "yes"
+        if findFeatureTypes(tags: tags).contains("crossing") && isSignalized {
             signalCrossings += 1
             if tags["traffic_signals:sound"] != nil || tags["traffic_signals:vibration"] != nil {
                 signalCrossingsWithSound += 1
@@ -233,7 +244,9 @@ func makeSummary(elements: [OverpassElement]) -> String {
 
     text += "\n## Notes\n\n"
     text += "- A missing tag means nobody has mapped it yet. It does NOT mean the feature is not accessible.\n"
-    text += "- Lines (ways) are counted as one feature each.\n"
+    text += "- Lines (ways) are counted as one feature each. A crossing mapped as both a road node and a footway line is counted twice.\n"
+    text += "- Curb details are usually on separate kerb nodes at each end of a crossing, so few crossings carry a kerb tag themselves.\n"
+    text += "- Feature counts skip tags set to \"no\"; the coverage gaps count any tag, including \"no\".\n"
 
     return text
 }
@@ -241,30 +254,26 @@ func makeSummary(elements: [OverpassElement]) -> String {
 print("")
 print("Asking Overpass for the data (this can take a bit)...")
 
-Task {
-    guard let data = await fetchFromOverpass(query: query) else {
-        print("No data was received.")
-        exit(1)
-    }
-
-    guard let response = decodeResponse(data: data) else {
-        exit(1)
-    }
-    print("Overpass sent back \(response.elements.count) elements")
-
-    let summary = makeSummary(elements: response.elements)
-    print("")
-    print(summary)
-
-    do {
-        try FileManager.default.createDirectory(atPath: outputFolder, withIntermediateDirectories: true)
-        try summary.write(toFile: "\(outputFolder)/coverage_summary.md", atomically: true, encoding: .utf8)
-        print("Saved the summary in \(outputFolder)/coverage_summary.md")
-    } catch {
-        print("Could not save the summary: \(error)")
-        exit(1)
-    }
+guard let data = await fetchFromOverpass(query: query) else {
+    print("No data was received.")
+    exit(1)
 }
 
-RunLoop.main.run()
+guard let response = decodeResponse(data: data) else {
+    exit(1)
+}
+print("Overpass sent back \(response.elements.count) elements")
+
+let summary = makeSummary(elements: response.elements)
+print("")
+print(summary)
+
+do {
+    try FileManager.default.createDirectory(atPath: outputFolder, withIntermediateDirectories: true)
+    try summary.write(toFile: "\(outputFolder)/coverage_summary.md", atomically: true, encoding: .utf8)
+    print("Saved the summary in \(outputFolder)/coverage_summary.md")
+} catch {
+    print("Could not save the summary: \(error)")
+    exit(1)
+}
 
