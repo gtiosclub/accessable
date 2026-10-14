@@ -25,6 +25,7 @@ final class TripViewModel {
     }
 
     func start() async {
+        await services.location.requestAuthorization()
         for await state in services.trip.tripStates() {
             tripState = state
         }
