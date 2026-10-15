@@ -4,10 +4,8 @@ import Testing
 
 struct ValhallaUnitsTests {
     private func fixture() throws -> Data {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        return try Data(contentsOf: root.appendingPathComponent(
-            "AccessAble/Models/Maps/valhalla-route-sample.json"))
+        let url = try #require(Bundle.main.url(forResource: "valhalla-route-sample", withExtension: "json"))
+            return try Data(contentsOf: url)
     }
 
     private func modifiedTrip(_ edit: (inout [String: Any]) -> Void) throws -> Data {

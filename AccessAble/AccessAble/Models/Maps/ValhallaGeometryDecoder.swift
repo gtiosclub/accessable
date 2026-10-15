@@ -30,7 +30,7 @@ enum ValhallaGeometryDecoder {
         let steps: [RouteStep]
     }
 
-    /// ROUTE-3: decode geometry and instructions together using the same response schema.
+    /// Decodes geometry and instructions together; step indices are local to each leg.
     static func decodeLegsWithManeuvers(from data: Data) throws -> [DecodedLeg] {
         let response = try JSONDecoder().decode(Response.self, from: data)
         return try decodeManeuverLegs(response)
@@ -69,7 +69,7 @@ enum ValhallaGeometryDecoder {
         }
     }
 
-    /// ROUTE-4 values use explicit unit names to prevent accidental double conversion.
+    /// Units are in the property names so values never get converted twice.
     struct Metrics {
         let distanceMetres: Double
         let durationSeconds: Double
@@ -84,7 +84,7 @@ enum ValhallaGeometryDecoder {
 
     struct NormalizedTrip {
         let legs: [NormalizedLeg]
-        /// Valhalla's reported total; geometry-derived distance is calculated in ROUTE-5/6.
+        /// Valhalla's reported total; route distances come from the geometry via GeoMath.
         let metrics: Metrics
     }
 
@@ -128,8 +128,9 @@ enum ValhallaGeometryDecoder {
         return Metrics(distanceMetres: metres, durationSeconds: time)
     }
 
-    /// Collapse directional variants into the shared vocabulary. Reject unsupported
-    /// types rather than silently issuing an incorrect straight-ahead cue.
+    /// Collapse directional variants into the shared vocabulary. Stairs, elevators, escalators, buildings and
+    /// roundabouts have no ManeuverKind yet, so they map to straight; their instruction text still names them.
+    /// Anything else is rejected rather than guessed.
     private static func maneuverKind(for type: Int) throws -> ManeuverKind {
         switch type {
         case 1, 2, 3: return .depart
@@ -220,7 +221,7 @@ enum ValhallaGeometryDecoder {
     private struct Leg: Decodable {
         let shape: String
         let summary: Summary?
-        // Optional preserves ROUTE-2's geometry-only API for responses without directions.
+        // Optional so geometry-only responses (no directions) still decode.
         let maneuvers: [ValhallaManeuver]?
     }
 
