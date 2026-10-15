@@ -7,6 +7,10 @@ enum ValhallaGeometryDecoder {
         case missingGeometry
         case malformedPolyline
         case invalidCoordinate
+        case missingManeuvers
+        case invalidManeuverIndex
+        case maneuversOutOfOrder
+        case unsupportedManeuverType(Int)
     }
 
     /// Returns one coordinate array per leg; maneuver indices are local to each leg.
@@ -15,6 +19,65 @@ enum ValhallaGeometryDecoder {
         guard response.trip.status == 0 else { throw DecodeError.unsuccessfulRoute }
         guard !response.trip.legs.isEmpty else { throw DecodeError.missingGeometry }
         return try response.trip.legs.map { try decodePolyline($0.shape) }
+    }
+
+    /// A leg's steps index into this leg's coordinates, not a flattened trip.
+    struct DecodedLeg {
+        let coordinates: [GeoCoordinate]
+        let steps: [RouteStep]
+    }
+
+    /// ROUTE-3: decode geometry and instructions together using the same response schema.
+    static func decodeLegsWithManeuvers(from data: Data) throws -> [DecodedLeg] {
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        guard response.trip.status == 0 else { throw DecodeError.unsuccessfulRoute }
+        guard !response.trip.legs.isEmpty else { throw DecodeError.missingGeometry }
+        return try response.trip.legs.map { leg in
+            let coordinates = try decodePolyline(leg.shape)
+            guard let maneuvers = leg.maneuvers, !maneuvers.isEmpty else {
+                throw DecodeError.missingManeuvers
+            }
+            var previousIndex = -1
+            let steps = try maneuvers.map { maneuver in
+                guard coordinates.indices.contains(maneuver.beginShapeIndex),
+                      coordinates.indices.contains(maneuver.endShapeIndex),
+                      maneuver.endShapeIndex >= maneuver.beginShapeIndex else {
+                    throw DecodeError.invalidManeuverIndex
+                }
+                guard maneuver.beginShapeIndex >= previousIndex else {
+                    throw DecodeError.maneuversOutOfOrder
+                }
+                previousIndex = maneuver.beginShapeIndex
+                let verbal = maneuver.verbalPreTransitionInstruction?
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return RouteStep(
+                    kind: try maneuverKind(for: maneuver.type),
+                    coordinateIndex: maneuver.beginShapeIndex,
+                    instruction: maneuver.instruction,
+                    spokenInstruction: verbal.flatMap { $0.isEmpty ? nil : $0 }
+                        ?? maneuver.instruction
+                )
+            }
+            return DecodedLeg(coordinates: coordinates, steps: steps)
+        }
+    }
+
+    /// Collapse directional variants into the shared vocabulary. Reject unsupported
+    /// types rather than silently issuing an incorrect straight-ahead cue.
+    private static func maneuverKind(for type: Int) throws -> ManeuverKind {
+        switch type {
+        case 1, 2, 3: return .depart
+        case 4, 5, 6: return .arrive
+        case 7, 8, 17, 22: return .straight
+        // No ManeuverKind for these yet; the instruction text still names them (e.g. "Take the stairs").
+        case 25, 26, 27, 39, 40, 41, 42, 43: return .straight
+        case 9, 23: return .slightRight
+        case 10, 11, 18, 20, 37: return .turnRight
+        case 12, 13: return .uTurn
+        case 14, 15, 19, 21, 38: return .turnLeft
+        case 16, 24: return .slightLeft
+        default: throw DecodeError.unsupportedManeuverType(type)
+        }
     }
 
     static func decodePolyline(_ shape: String) throws -> [GeoCoordinate] {
@@ -83,5 +146,22 @@ enum ValhallaGeometryDecoder {
 
     private struct Leg: Decodable {
         let shape: String
+        // Optional preserves ROUTE-2's geometry-only API for responses without directions.
+        let maneuvers: [ValhallaManeuver]?
+    }
+
+    private struct ValhallaManeuver: Decodable {
+        let type: Int
+        let instruction: String
+        let beginShapeIndex: Int
+        let endShapeIndex: Int
+        let verbalPreTransitionInstruction: String?
+
+        private enum CodingKeys: String, CodingKey {
+            case type, instruction
+            case beginShapeIndex = "begin_shape_index"
+            case endShapeIndex = "end_shape_index"
+            case verbalPreTransitionInstruction = "verbal_pre_transition_instruction"
+        }
     }
 }
