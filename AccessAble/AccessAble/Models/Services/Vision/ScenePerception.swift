@@ -11,7 +11,7 @@ import simd
 /// one filtered `DepthMap` (T6) that places those detections in the world (T5, T7) and is
 /// unprojected into a point cloud for the floor fit (T10), geometric obstacles (T11) and
 /// the ground profile behind kerb detection (T12). Obstacles that match a recognized object
-/// take its label.
+/// take its label, and every detection gets a stable track ID (T15).
 ///
 /// Call `analyze` from one queue at a time — `ARSceneAnalyzer` calls it from its
 /// latest-only processing queue. State that outlives a frame, or that the UI reads, lives
@@ -36,6 +36,7 @@ final class ScenePerception: Sendable {
     }
 
     private let diagnosticsState = Mutex(Diagnostics())
+    private let tracker = Mutex(ObjectTracker())
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
@@ -122,11 +123,13 @@ final class ScenePerception: Sendable {
             }
         }
 
+        let fused = fuse(obstacles: obstacles, recognized: recognized)
+        let detections = tracker.withLock { $0.update(fused, at: frame.timestamp) }
         diagnosticsState.withLock { $0 = diagnostics }
 
         return SceneObservation(
             timestamp: .now,
-            detections: fuse(obstacles: obstacles, recognized: recognized),
+            detections: detections,
             ground: ground,
             recognizedText: [],
             hasMetricDepth: depthMap != nil
@@ -184,7 +187,7 @@ private extension ScenePerception {
         ) else { return nil }
 
         return Detection(
-            label: "obstacle",
+            label: Detection.obstacleLabel,
             confidence: 1,
             boundingBox: box,
             distance: Double(obstacle.nearestDistance),

@@ -1,133 +1,91 @@
 import CoreGraphics
 import Foundation
 
-/// Maintains stable object identities across consecutive detection frames.
+/// Gives detections stable identities across frames. Owner: Computer Vision (1.1 / task T15).
 ///
-/// Matching is deliberately simple for the first implementation: detections must share a
-/// label and meet the IoU threshold, then the highest-IoU pairs win greedily. Feed every
-/// analyzed frame to `track(_:at:)`; the returned objects correspond to detections visible
-/// in that frame, while briefly missing objects remain in `activeTracks` for recovery.
+/// Each frame's detections are matched to existing tracks by label and box overlap; matched
+/// detections inherit the track's ID in `Detection.trackID`, unmatched ones start new
+/// tracks, and tracks not seen for `maximumAge` are dropped. Stable IDs are what let
+/// announcements fire once per object instead of once per frame.
+///
+/// Matching is greedy on IoU: the best-overlapping pairs are taken first, with ties broken
+/// deterministically. Labels must agree, except that the generic geometric "obstacle"
+/// label is compatible with any other. Whether a geometric obstacle gets a model label
+/// depends on the model seeing it that frame, and a missed frame must not turn a chair into
+/// a new object. A track keeps the most specific label it has seen.
+///
+/// Feed frames in timestamp order.
 struct ObjectTracker: Sendable {
-    /// Tracks retained between calls, keyed by their persistent identities.
-    private(set) var activeTracks: [UUID: TrackedObject] = [:]
+    /// Boxes must overlap at least this much (IoU) to be the same object.
+    var minimumIoU: CGFloat = 0.3
+    /// A track not seen for this long, in seconds, is dropped. Covers a few missed frames at
+    /// the analysis rate without keeping objects that have left the view.
+    var maximumAge: TimeInterval = 0.6
 
-    let minimumIoU: CGFloat
-    let maximumMissedFrames: Int
-
-    private var missedFrames: [UUID: Int] = [:]
-    private var latestProcessedTimestamp: Date?
-
-    init(minimumIoU: CGFloat = 0.3, maximumMissedFrames: Int = 5) {
-        self.minimumIoU = min(max(minimumIoU, 0), 1)
-        self.maximumMissedFrames = max(maximumMissedFrames, 0)
+    private struct Track {
+        var label: String
+        var boundingBox: CGRect
+        var lastSeen: TimeInterval
     }
 
-    /// Matches one frame of detections against active tracks and returns its tracked objects.
+    private var tracks: [UUID: Track] = [:]
+
+    init() {}
+
+    /// IDs of the objects currently being tracked, including ones briefly out of view.
+    var activeTrackIDs: Set<UUID> { Set(tracks.keys) }
+
+    /// Matches one frame's detections against the active tracks.
     ///
-    /// Unmatched tracks are retained until they have missed more than `maximumMissedFrames`
-    /// consecutive input frames. A frame with a non-increasing timestamp is discarded
-    /// entirely, so it cannot regress tracks, create stale tracks, or age other tracks.
-    mutating func track(_ detections: [Detection], at timestamp: Date) -> [TrackedObject] {
-        if let latestProcessedTimestamp, timestamp <= latestProcessedTimestamp {
-            return []
-        }
-        latestProcessedTimestamp = timestamp
+    /// - Parameter timestamp: The frame's capture time in seconds, e.g. `ARFrame.timestamp`.
+    /// - Returns: `detections` in the same order, each with `trackID` set and, for a generic
+    ///   obstacle on a labelled track, the track's label.
+    mutating func update(_ detections: [Detection], at timestamp: TimeInterval) -> [Detection] {
+        tracks = tracks.filter { timestamp - $0.value.lastSeen <= maximumAge }
 
-        struct Candidate {
-            let trackID: UUID
-            let detectionIndex: Int
-            let iou: CGFloat
-        }
-
-        var candidates: [Candidate] = []
-        for (trackID, trackedObject) in activeTracks {
-            for (detectionIndex, detection) in detections.enumerated()
-            where trackedObject.label == detection.label {
-                let iou = intersectionOverUnion(trackedObject.boundingBox, detection.boundingBox)
-                // A zero threshold means any actual overlap is acceptable, not that two
-                // disjoint objects of the same class may inherit one another's identity.
+        var candidates: [(iou: CGFloat, trackID: UUID, index: Int)] = []
+        for (trackID, track) in tracks {
+            for (index, detection) in detections.enumerated() where labelsMatch(track.label, detection.label) {
+                let iou = track.boundingBox.intersectionOverUnion(with: detection.boundingBox)
                 if iou > 0, iou >= minimumIoU {
-                    candidates.append(Candidate(
-                        trackID: trackID,
-                        detectionIndex: detectionIndex,
-                        iou: iou
-                    ))
+                    candidates.append((iou, trackID, index))
                 }
             }
         }
-
         candidates.sort {
             if $0.iou != $1.iou { return $0.iou > $1.iou }
             if $0.trackID != $1.trackID { return $0.trackID.uuidString < $1.trackID.uuidString }
-            return $0.detectionIndex < $1.detectionIndex
+            return $0.index < $1.index
         }
 
-        var matchedTrackIDs = Set<UUID>()
-        var matchedDetectionIndices = Set<Int>()
         var trackForDetection: [Int: UUID] = [:]
-
+        var matchedTracks = Set<UUID>()
         for candidate in candidates
-        where !matchedTrackIDs.contains(candidate.trackID)
-            && !matchedDetectionIndices.contains(candidate.detectionIndex) {
-            matchedTrackIDs.insert(candidate.trackID)
-            matchedDetectionIndices.insert(candidate.detectionIndex)
-            trackForDetection[candidate.detectionIndex] = candidate.trackID
+        where trackForDetection[candidate.index] == nil && !matchedTracks.contains(candidate.trackID) {
+            trackForDetection[candidate.index] = candidate.trackID
+            matchedTracks.insert(candidate.trackID)
         }
 
-        for trackID in activeTracks.keys where !matchedTrackIDs.contains(trackID) {
-            let misses = missedFrames[trackID, default: 0] + 1
-            if misses > maximumMissedFrames {
-                activeTracks.removeValue(forKey: trackID)
-                missedFrames.removeValue(forKey: trackID)
-            } else {
-                missedFrames[trackID] = misses
+        return detections.enumerated().map { index, detection in
+            let id = trackForDetection[index] ?? UUID()
+            var tracked = detection
+            var label = detection.label
+            if detection.label == Detection.obstacleLabel, let previous = tracks[id]?.label {
+                label = previous
             }
+            tracked.trackID = id
+            tracked.label = label
+            tracks[id] = Track(label: label, boundingBox: detection.boundingBox, lastSeen: timestamp)
+            return tracked
         }
-
-        var trackedDetections: [TrackedObject] = []
-        for (detectionIndex, detection) in detections.enumerated() {
-            if let trackID = trackForDetection[detectionIndex], let previous = activeTracks[trackID] {
-                let elapsed = timestamp.timeIntervalSince(previous.lastSeen)
-                let previousCenter = CGPoint(x: previous.boundingBox.midX, y: previous.boundingBox.midY)
-                let newCenter = CGPoint(x: detection.boundingBox.midX, y: detection.boundingBox.midY)
-                let velocity = CGVector(
-                    dx: (newCenter.x - previousCenter.x) / elapsed,
-                    dy: (newCenter.y - previousCenter.y) / elapsed
-                )
-
-                let updated = TrackedObject(
-                    id: trackID,
-                    label: detection.label,
-                    boundingBox: detection.boundingBox,
-                    confidence: detection.confidence,
-                    imageVelocity: velocity,
-                    lastSeen: timestamp
-                )
-                activeTracks[trackID] = updated
-                missedFrames[trackID] = 0
-                trackedDetections.append(updated)
-            } else {
-                let newTrack = TrackedObject(
-                    label: detection.label,
-                    boundingBox: detection.boundingBox,
-                    confidence: detection.confidence,
-                    lastSeen: timestamp
-                )
-                activeTracks[newTrack.id] = newTrack
-                missedFrames[newTrack.id] = 0
-                trackedDetections.append(newTrack)
-            }
-        }
-
-        return trackedDetections
     }
 
-    private func intersectionOverUnion(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
-        let intersection = lhs.intersection(rhs)
-        guard !intersection.isNull, !intersection.isEmpty else { return 0 }
-
-        let union = lhs.width * lhs.height + rhs.width * rhs.height
-            - intersection.width * intersection.height
-        return union > 0 ? intersection.width * intersection.height / union : 0
+    private func labelsMatch(_ a: String, _ b: String) -> Bool {
+        a == b || a == Detection.obstacleLabel || b == Detection.obstacleLabel
     }
+}
+
+extension Detection {
+    /// The label of a geometric obstacle no model has recognized.
+    static let obstacleLabel = "obstacle"
 }

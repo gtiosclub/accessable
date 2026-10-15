@@ -14,7 +14,7 @@ struct Detection: Identifiable, Equatable, Sendable {
 
     let id: UUID
     /// Stable across frames when tracked, so announcements fire on entry/threshold crossings only.
-    var trackID: Int?
+    var trackID: UUID?
     /// e.g. "person", "chair", "door", "obstacle", "drop-off".
     var label: String
     var confidence: Float
@@ -29,7 +29,7 @@ struct Detection: Identifiable, Equatable, Sendable {
 
     init(
         id: UUID = UUID(),
-        trackID: Int? = nil,
+        trackID: UUID? = nil,
         label: String,
         confidence: Float,
         boundingBox: CGRect,
