@@ -200,13 +200,15 @@ struct NavigationRoute: Codable, Equatable, Sendable {
 
 /// Where a point falls on a `NavigationRoute`.
 struct RouteProjection: Equatable, Sendable {
+    /// The GPS coordinate that was projected, unchanged. Snap, clamp, and vertex rounding only affect `coordinate`.
+    let originalCoordinate: GeoCoordinate
     /// Closest point on the route.
     let coordinate: GeoCoordinate
     /// The segment holding `coordinate`, from `coordinates[segmentIndex]` to `coordinates[segmentIndex + 1]`.
     let segmentIndex: Int
     /// Metres from the route start to `coordinate`.
     let distanceAlongRoute: Double
-    /// Metres from `coordinate` to the point: negative left of the direction of travel, positive right.
+    /// Metres from `coordinate` to the original point: negative left of the direction of travel, positive right.
     let sideOffset: Double
 }
 
@@ -228,8 +230,10 @@ extension NavigationRoute {
     ///   whichever segment rounding favours.
     /// - Past the end of a route whose last segment is under about 1 mm, `distanceAlongRoute` can fall up to 1 mm
     ///   short of `totalDistance`, so compare arrival with a tolerance.
-    /// - A NaN or infinite point gives NaN `distanceAlongRoute` and `sideOffset`, `coordinate` equal to the point and
-    ///   `segmentIndex` equal to the first searched segment; check `isFinite` before using the result.
+    /// - `originalCoordinate` is always `point`, including after snap, clamp, and vertex rounding.
+    /// - A NaN or infinite point gives NaN `distanceAlongRoute` and `sideOffset`, `originalCoordinate` and
+    ///   `coordinate` equal to the point, and `segmentIndex` equal to the first searched segment; check `isFinite`
+    ///   before using the result.
     func projection(of point: GeoCoordinate, segments: Range<Int>? = nil) -> RouteProjection {
         GeoMath.project(point, onto: coordinates, cumulativeDistances: cumulativeDistances,
                         segments: segments ?? 0..<coordinates.count - 1)

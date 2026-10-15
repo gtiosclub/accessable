@@ -135,6 +135,8 @@ enum ValhallaGeometryDecoder {
         case 1, 2, 3: return .depart
         case 4, 5, 6: return .arrive
         case 7, 8, 17, 22: return .straight
+        // No ManeuverKind for these yet; the instruction text still names them (e.g. "Take the stairs").
+        case 25, 26, 27, 39, 40, 41, 42, 43: return .straight
         case 9, 23: return .slightRight
         case 10, 11, 18, 20, 37: return .turnRight
         case 12, 13: return .uTurn

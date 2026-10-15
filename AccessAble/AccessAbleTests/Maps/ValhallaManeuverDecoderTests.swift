@@ -4,10 +4,8 @@ import Testing
 
 struct ValhallaManeuverDecoderTests {
     private func fixture() throws -> Data {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        return try Data(contentsOf: root.appendingPathComponent(
-            "AccessAble/Models/Maps/valhalla-route-sample.json"))
+        let url = try #require(Bundle.main.url(forResource: "valhalla-route-sample", withExtension: "json"))
+        return try Data(contentsOf: url)
     }
 
     @Test
@@ -67,5 +65,12 @@ struct ValhallaManeuverDecoderTests {
         #expect(throws: ValhallaGeometryDecoder.DecodeError.unsupportedManeuverType(999)) {
             try ValhallaGeometryDecoder.decodeLegsWithManeuvers(from: data)
         }
+    }
+    
+    @Test(arguments: [39, 40, 41, 42, 43])
+    func keepsPedestrianManeuvers(_ type: Int) throws {
+        let data = try alteredFixture { $0[1]["type"] = type }
+        let legs = try ValhallaGeometryDecoder.decodeLegsWithManeuvers(from: data)
+        #expect(legs[0].steps[1].kind == .straight)
     }
 }
