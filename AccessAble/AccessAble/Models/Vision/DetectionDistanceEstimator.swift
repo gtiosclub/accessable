@@ -1,123 +1,86 @@
 import CoreGraphics
-import CoreVideo
 import Foundation
 
 // Estimating an object's distance from the LiDAR readings inside its detection box (T7).
-// The box is expected to be normalized to the depth map, with a top-left origin. T5 owns
-// converting a detection from the RGB camera's coordinate system into that space.
 
-/// Knobs for robust per-detection depth estimation.
+/// Knobs for `estimateDistance`.
 struct DistanceEstimationTuning: Sendable {
-    /// Readings outside this usable LiDAR range are ignored, in metres.
-    var depthRange: ClosedRange<Float> = 0.2 ... 6.0
-    /// Do not report a distance unless this many readings survive all filtering.
+    /// Do not report a distance unless this many readings survive outlier rejection.
     var minimumValidSampleCount: Int = 9
-    /// Samples farther than this many robust standard deviations from the initial median
-    /// are treated as outliers.
+    /// Samples farther than this many robust standard deviations from the median are
+    /// treated as outliers.
     var outlierMADMultiplier: Float = 3
-    /// Keeps nearly-identical readings from making the outlier threshold exactly zero.
+    /// Keeps nearly identical readings from making the outlier threshold exactly zero.
     var minimumOutlierDeviation: Float = 0.02
+    /// Fraction of the box's width and height, centred, that is sampled first. A detection
+    /// box also contains background (between a chair's legs, beside a person's arms); its
+    /// centre is much more likely to be the object. The whole box is only used when the
+    /// centre has too few readings.
+    var coreFraction: CGFloat = 0.5
 
     static let `default` = DistanceEstimationTuning()
 
     init() {}
 }
 
-/// Estimates an object's distance from the Float32 depth samples in its bounding box.
+/// Estimates how far away the object in `region` is.
 ///
 /// - Parameters:
-///   - boundingBox: Normalized depth-map coordinates, with a top-left origin. Values
-///     outside the frame are clipped before sampling.
-///   - depthMap: A Float32 metric-depth `CVPixelBuffer`, such as `ARDepthData.depthMap`.
-///   - tuning: Valid depth range, sample-count, and outlier-rejection settings.
-/// - Returns: A median distance plus reliability information, or `nil` when the box has
-///   too little usable depth data.
+///   - region: The object's box in normalized depth-map coordinates (top-left origin), as
+///     produced by `sensorRect(fromUpright:)`. Parts outside the map are ignored.
+///   - depth: The filtered depth map.
+/// - Returns: The median depth along the optical axis in metres, with how many readings
+///   supported it and how much they agreed; nil when the box has too little usable depth.
 func estimateDistance(
-    boundingBox: CGRect,
-    depthMap: CVPixelBuffer,
+    region: CGRect,
+    in depth: DepthMap,
     tuning: DistanceEstimationTuning = .default
 ) -> DistanceEstimate? {
-    let width = CVPixelBufferGetWidth(depthMap)
-    let height = CVPixelBufferGetHeight(depthMap)
-    guard width > 0, height > 0,
-          tuning.minimumValidSampleCount > 0,
-          tuning.outlierMADMultiplier >= 0,
-          tuning.minimumOutlierDeviation >= 0,
-          tuning.depthRange.lowerBound > 0,
-          tuning.depthRange.lowerBound <= tuning.depthRange.upperBound
-    else { return nil }
+    let fraction = min(max(tuning.coreFraction, 0), 1)
+    let core = region.insetBy(dx: region.width * (1 - fraction) / 2, dy: region.height * (1 - fraction) / 2)
 
-    let frame = CGRect(x: 0, y: 0, width: 1, height: 1)
-    let clippedBox = boundingBox.standardized.intersection(frame)
-    guard !clippedBox.isNull, !clippedBox.isEmpty else { return nil }
+    return robustDistance(depthSamples(in: core, of: depth), tuning: tuning)
+        ?? robustDistance(depthSamples(in: region, of: depth), tuning: tuning)
+}
 
-    let startColumn = max(0, min(width, Int(floor(clippedBox.minX * CGFloat(width)))))
-    let endColumn = max(0, min(width, Int(ceil(clippedBox.maxX * CGFloat(width)))))
-    let startRow = max(0, min(height, Int(floor(clippedBox.minY * CGFloat(height)))))
-    let endRow = max(0, min(height, Int(ceil(clippedBox.maxY * CGFloat(height)))))
-    guard startColumn < endColumn, startRow < endRow else { return nil }
+/// Every reliable reading whose pixel overlaps `region`.
+private func depthSamples(in region: CGRect, of depth: DepthMap) -> [Float] {
+    let clipped = region.standardized.intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+    guard !clipped.isNull, !clipped.isEmpty else { return [] }
 
-    guard CVPixelBufferLockBaseAddress(depthMap, .readOnly) == kCVReturnSuccess else { return nil }
-    defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
-    guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else { return nil }
-
-    let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
-    guard bytesPerRow >= width * MemoryLayout<Float32>.stride else { return nil }
+    let columns = pixelRange(clipped.minX, clipped.maxX, count: depth.width)
+    let rows = pixelRange(clipped.minY, clipped.maxY, count: depth.height)
 
     var samples: [Float] = []
-    samples.reserveCapacity((endColumn - startColumn) * (endRow - startRow))
-
-    for row in startRow ..< endRow {
-        for column in startColumn ..< endColumn {
-            let depth = baseAddress
-                .advanced(by: row * bytesPerRow + column * MemoryLayout<Float32>.stride)
-                .assumingMemoryBound(to: Float32.self)
-                .pointee
-            guard depth.isFinite, tuning.depthRange.contains(depth) else { continue }
-            samples.append(depth)
+    samples.reserveCapacity(columns.count * rows.count)
+    for row in rows {
+        for column in columns {
+            if let value = depth[column, row] { samples.append(value) }
         }
     }
-
-    return robustDistanceEstimate(samples: samples, tuning: tuning)
+    return samples
 }
 
-private func robustDistanceEstimate(
-    samples: [Float],
-    tuning: DistanceEstimationTuning
-) -> DistanceEstimate? {
+private func pixelRange(_ lower: CGFloat, _ upper: CGFloat, count: Int) -> Range<Int> {
+    let start = max(0, min(count, Int((lower * CGFloat(count)).rounded(.down))))
+    let end = max(start, min(count, Int((upper * CGFloat(count)).rounded(.up))))
+    return start ..< end
+}
+
+/// Median after median-absolute-deviation outlier rejection, with the interquartile range
+/// of what remains as the spread.
+private func robustDistance(_ samples: [Float], tuning: DistanceEstimationTuning) -> DistanceEstimate? {
     guard samples.count >= tuning.minimumValidSampleCount else { return nil }
 
-    let initialMedian = distanceMedian(samples)
-    let deviations = samples.map { abs($0 - initialMedian) }
-    let medianAbsoluteDeviation = distanceMedian(deviations)
-    let robustDeviation = max(
-        medianAbsoluteDeviation * 1.4826,
-        tuning.minimumOutlierDeviation
-    )
-    let maximumDeviation = tuning.outlierMADMultiplier * robustDeviation
-    let retained = samples.filter { abs($0 - initialMedian) <= maximumDeviation }
-
+    let initialMedian = quantile(samples, 0.5)
+    let deviation = max(quantile(samples.map { abs($0 - initialMedian) }, 0.5) * 1.4826, tuning.minimumOutlierDeviation)
+    let limit = tuning.outlierMADMultiplier * deviation
+    let retained = samples.filter { abs($0 - initialMedian) <= limit }
     guard retained.count >= tuning.minimumValidSampleCount else { return nil }
-    let sorted = retained.sorted()
 
     return DistanceEstimate(
-        meters: distanceMedian(sorted),
-        validSampleCount: sorted.count,
-        spread: distanceQuantile(sorted, 0.75) - distanceQuantile(sorted, 0.25)
+        meters: quantile(retained, 0.5),
+        validSampleCount: retained.count,
+        spread: quantile(retained, 0.75) - quantile(retained, 0.25)
     )
-}
-
-/// Median of non-empty values. For an even count, averages the two central readings.
-private func distanceMedian(_ values: [Float]) -> Float {
-    distanceQuantile(values.sorted(), 0.5)
-}
-
-/// Linearly interpolated quantile for an already sorted, non-empty collection.
-private func distanceQuantile(_ sortedValues: [Float], _ fraction: Float) -> Float {
-    let position = min(max(fraction, 0), 1) * Float(sortedValues.count - 1)
-    let lower = Int(floor(position))
-    let upper = Int(ceil(position))
-    guard lower != upper else { return sortedValues[lower] }
-    let remainder = position - Float(lower)
-    return sortedValues[lower] + (sortedValues[upper] - sortedValues[lower]) * remainder
 }

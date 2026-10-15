@@ -7,9 +7,10 @@ import simd
 
 /// Owner: Computer Vision (1.1, 1.4). Turns one `ARFrame` into a `SceneObservation`.
 ///
-/// `capturedImage` goes to Vision for people (T14); `sceneDepth` becomes a filtered
-/// `DepthMap` (T6) and a point cloud for the floor fit (T10), geometric obstacles (T11)
-/// and the ground profile behind kerb detection (T12).
+/// `capturedImage` goes to Vision for people (T14). `sceneDepth` becomes one filtered
+/// `DepthMap` (T6) that places those detections in the world (T5, T7) and is unprojected
+/// into a point cloud for the floor fit (T10), geometric obstacles (T11) and the ground
+/// profile behind kerb detection (T12).
 ///
 /// Call `analyze` from one queue at a time — `ARSceneAnalyzer` calls it from its
 /// latest-only processing queue. State that outlives a frame, or that the UI reads, lives
@@ -61,11 +62,29 @@ final class ScenePerception: Sendable {
         }
 
         var ground = GroundSurface.unknown
-        let hasMetricDepth = frame.sceneDepth != nil
+        let depthMap = frame.sceneDepth.flatMap { DepthMap(depth: $0.depthMap, confidence: $0.confidenceMap) }
 
-        if let depth = frame.sceneDepth {
-            let cloud = pointCloud(from: depth, camera: frame.camera)
-            let corridor = corridor(for: frame.camera)
+        if let depthMap {
+            let camera = frame.camera
+            let intrinsics = depthIntrinsics(for: camera, depth: depthMap)
+            let corridor = corridor(for: camera)
+            // Gravity-aligned world space, so flattening onto world up gives a level heading
+            // for bearings even before a floor has been found.
+            let heading = corridor.flattened(ontoFloorNormal: [0, 1, 0]) ?? corridor
+
+            // T5 + T7 — distance and direction for each recognized object.
+            detections = detections.map { detection in
+                let region = imageOrientation.sensorRect(fromUpright: detection.boundingBox)
+                guard let position = worldPosition(
+                    ofRegion: region, in: depthMap, intrinsics: intrinsics, cameraTransform: camera.transform
+                ) else { return detection }
+                var located = detection
+                located.distance = Double(heading.distance(to: position))
+                located.bearing = heading.bearing(to: position)
+                return located
+            }
+
+            let cloud = unprojectDepthMap(depthMap, intrinsics: intrinsics, cameraTransform: camera.transform)
 
             // T10 — the floor everything else is measured against.
             if let fit = detectFloorPlane(points: cloud) {
@@ -78,8 +97,8 @@ final class ScenePerception: Sendable {
                     .filter(\.intersectsWalkingCorridor)
                     .compactMap {
                         detection(
-                            for: $0, floor: fit.plane, corridor: corridor,
-                            camera: frame.camera, orientation: interfaceOrientation, viewportSize: upright
+                            for: $0, floor: fit.plane, heading: heading,
+                            camera: camera, orientation: interfaceOrientation, viewportSize: upright
                         )
                     }
 
@@ -97,7 +116,7 @@ final class ScenePerception: Sendable {
             detections: detections,
             ground: ground,
             recognizedText: [],
-            hasMetricDepth: hasMetricDepth
+            hasMetricDepth: depthMap != nil
         )
     }
 }
@@ -123,20 +142,17 @@ private extension ScenePerception {
         )
     }
 
-    func pointCloud(from depth: ARDepthData, camera: ARCamera) -> [SIMD3<Float>] {
-        guard let depthMap = DepthMap(depth: depth.depthMap, confidence: depth.confidenceMap) else { return [] }
-        // ARKit's intrinsics describe the captured image, which is far larger than the
-        // depth map — rescale or the cloud comes out subtly wrong.
-        let intrinsics = CameraIntrinsics(
+    /// ARKit's intrinsics describe the captured image, which is far larger than the depth
+    /// map. Using them unscaled gives a point cloud that looks plausible and is quietly wrong.
+    func depthIntrinsics(for camera: ARCamera, depth: DepthMap) -> CameraIntrinsics {
+        CameraIntrinsics(
             focalX: camera.intrinsics[0][0],
             focalY: camera.intrinsics[1][1],
             principalX: camera.intrinsics[2][0],
             principalY: camera.intrinsics[2][1],
             imageWidth: Int(camera.imageResolution.width),
             imageHeight: Int(camera.imageResolution.height)
-        ).scaled(toWidth: depthMap.width, height: depthMap.height)
-
-        return unprojectDepthMap(depthMap, intrinsics: intrinsics, cameraTransform: camera.transform)
+        ).scaled(toWidth: depth.width, height: depth.height)
     }
 
     /// Wraps a geometric obstacle as a `Detection`, projecting its 3D extent back into
@@ -144,26 +160,22 @@ private extension ScenePerception {
     func detection(
         for obstacle: GeometricObstacle,
         floor: Plane3D,
-        corridor: WalkingCorridor,
+        heading: WalkingCorridor,
         camera: ARCamera,
         orientation: UIInterfaceOrientation,
         viewportSize: CGSize
     ) -> Detection? {
         guard let box = projectedBoundingBox(
-            obstacle: obstacle, floor: floor, corridor: corridor,
+            obstacle: obstacle, floor: floor, corridor: heading,
             camera: camera, orientation: orientation, viewportSize: viewportSize
         ) else { return nil }
-
-        let offset = obstacle.center - corridor.origin
-        let along = simd_dot(offset, corridor.forward)
-        let lateral = simd_dot(offset, corridor.right)
 
         return Detection(
             label: "obstacle",
             confidence: 1,
             boundingBox: box,
             distance: Double(obstacle.nearestDistance),
-            bearing: RelativeBearing(degrees: Double(atan2(lateral, max(along, 0.01)) * 180 / .pi)),
+            bearing: heading.bearing(to: obstacle.center),
             origin: .geometric,
             isHazard: true
         )
