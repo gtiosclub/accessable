@@ -17,7 +17,8 @@ AccessAble/                              Xcode project folder
     │   │   ├── GuidanceProfile.swift    vision level, channels, verbosity, speech rate, haptic intensity, categories
     │   │   ├── HapticID.swift           haptic vocabulary v1 (one AHAP file per case)
     │   │   ├── TripState.swift          trip phase, next maneuver, distances, GeoCoordinate
-    │   │   ├── SceneObservation.swift   detections, ground surface, recognized text
+    │   │   ├── SceneObservation.swift   detections, ground surface, recognized text, elevation hazards
+    │   │   ├── ElevationHazard.swift    stepUp / stepDown / dropOff / unknown
     │   │   ├── PerformanceMode.swift    normal / battery
     │   │   └── RelativeBearing.swift    direction relative to the user's facing
     │   ├── Services/
@@ -26,28 +27,39 @@ AccessAble/                              Xcode project folder
     │   │   ├── PlaceholderServices.swift  stand-ins so the app builds and previews on day one
     │   │   ├── PerformanceModeMonitor.swift  Low Power Mode + thermal → PerformanceMode
     │   │   ├── Broadcaster.swift        one-to-many AsyncStream helper (latest value by default)
-    │   │   └── ARSceneAnalyzer.swift    ARKit session driving the 1.1 detectors (needs a device)
+    │   │   └── Vision/                  CV runtime: ARKit, Vision and Core ML (needs a device)
+    │   │       ├── ARSessionManager.swift   the app's only ARSession (T1, T2)
+    │   │       ├── ARSceneAnalyzer.swift    services.scene: frames → perception → observations + announcements
+    │   │       ├── ScenePerception.swift    one frame → SceneObservation + obstacle announcements
+    │   │       ├── TextReader.swift         OCR at ≤1 Hz beside the safety loop (T17)
+    │   │       └── CameraImageOrientation.swift  interface orientation → image orientation (T4)
     │   ├── Formatting/
-    │   │   └── SpokenPhrasing.swift     shared speech rules ("about 2 metres", "on your left")
-    │   └── Vision/                      Subteam 1 — Computer Vision detectors
-    │       ├── Plane3D.swift            a plane + signed distanceFromPlane()
-    │       ├── DepthPointCloud.swift    depth map → world point cloud (ARKit-free)
-    │       ├── GroundProfiler.swift     point cloud → [GroundSample] for T12
-    │       ├── BoundingBoxLayout.swift  normalized box → aspect fill/fit preview rect
-    │       ├── FloorPlaneDetector.swift RANSAC floor fit from a point cloud (T10)
-    │       ├── WalkingCorridor.swift    the strip of space ahead of the user
-    │       ├── GeometricObstacle.swift  one thing standing up off the floor
+    │   │   ├── SpokenPhrasing.swift     shared speech rules ("about 2 metres", "on your left")
+    │   │   └── SceneDescriptionBuilder.swift  "Describe my surroundings", offline (T18)
+    │   └── Vision/                      CV algorithms; no ARKit or UIKit, tested with `swift test`
+    │       ├── LatestOnlyProcessor.swift    newest-frame-only processing queue (T3)
+    │       ├── DepthMap.swift           filtered LiDAR depth, one copy per frame (T6)
+    │       ├── DepthCoordinateMapping.swift  upright boxes → depth-map coordinates (T5)
+    │       ├── DetectionDistanceEstimator.swift  robust distance inside a box (T7)
+    │       ├── ObjectLocation.swift     box + depth → world position, distance, bearing
+    │       ├── DepthPointCloud.swift    depth map → world point cloud
+    │       ├── FloorPlaneDetector.swift RANSAC floor fit (T10)
+    │       ├── WalkingCorridor.swift    the strip of space ahead of the user (T9)
     │       ├── GeometricObstacleDetector.swift  obstacles by geometry, no labels (T11)
-    │       ├── GroundSample.swift       one height reading of the surface ahead
-    │       ├── ElevationHazard.swift    stepUp / stepDown / dropOff / unknown
-    │       ├── ElevationHazardDetector.swift  curbs, steps and drop-offs (T12)
-    │       ├── PeopleDetection.swift    Vision → Detection conversion, no Vision import
-    │       └── PeopleDetector.swift     VNDetectHumanRectanglesRequest (T14)
+    │       ├── GroundProfiler.swift, ElevationHazardDetector.swift  kerbs, steps, drop-offs (T12)
+    │       ├── PeopleDetector.swift, PeopleDetection.swift  Vision people detection (T14)
+    │       ├── ObjectDetector.swift     Core ML object detection, YOLO11n (T13)
+    │       ├── DetectionFusion.swift    labels geometric obstacles with recognized objects
+    │       ├── ObjectTracker.swift      stable track IDs across frames (T15)
+    │       ├── ObstacleAnnouncer.swift  when to announce what (T16)
+    │       ├── TextDetector.swift, RecognizedTextMemory.swift  OCR and de-duplication (T17)
+    │       ├── FrameHealthCheck.swift   session acceptance checks (T1)
+    │       └── Evaluation/              precision/recall, distance error, FPS/latency, test set (T8, T20)
     ├── ViewModels/                      @MainActor @Observable classes. No SwiftUI imports.
     │   ├── AppViewModel.swift           app-wide state (profile, onboarding, services)
     │   ├── HomeViewModel.swift          reference example of the view model pattern
     │   ├── Vision/                      Subteam 1 — Computer Vision
-    │   │   ├── LiveSceneViewModel.swift owns its own ARSceneAnalyzer, not services.scene
+    │   │   ├── LiveSceneViewModel.swift debug view of the shared services.scene pipeline
     │   │   └── PhotoDetectionViewModel.swift  T14 against a still image (works in the Simulator)
     │   ├── Maps/                        Subteam 2 — Maps + Location
     │   └── Interaction/                 Subteam 3 — User Interaction
@@ -75,7 +87,8 @@ AccessAble/                              Xcode project folder
 ## Testing the geometry modules
 
 `Models/Vision/` holds pure algorithms, so they are tested on the Mac rather than in a
-simulator. `Package.swift` at the repo root is a test-only SwiftPM harness that compiles
+simulator. Keep ARKit and UIKit out of it: anything that needs them goes in
+`Models/Services/Vision/`, which the test harness does not compile. `Package.swift` at the repo root is a test-only SwiftPM harness that compiles
 the same source files the app target does — it is not a dependency of the app, and the
 Xcode project does not know it exists.
 
@@ -96,22 +109,23 @@ whole `Vision` directory.
 
 ## Seeing the detectors run
 
-Home → **Live detection** opens `LiveSceneView`: the ARKit camera feed with boxes drawn
-over it (green = people from Vision, orange = geometric obstacles) plus a readout of the
-fitted floor and any kerbs or drop-offs ahead.
+Home → **Camera guidance** runs the real pipeline and announces obstacles through the
+announcement engine. Home → **Live detection** opens `LiveSceneView`, a debug view of the
+same pipeline: the ARKit camera feed with boxes drawn over it (green = recognized objects
+and people, orange = geometric obstacles, relabelled when a model recognizes them), the
+fitted floor, any kerbs or drop-offs ahead, measured analysis FPS and latency, and the
+ARKit tracking state.
 
-It needs a **physical device** — ARKit world tracking does not run in the Simulator — and
-a **LiDAR device** (iPhone 12 Pro or newer) for the floor, obstacle and kerb readouts.
-In the Simulator the screen says so and offers **Detect people in a photo** instead, which
-runs the real Vision request over a photo from the library and draws the boxes it returns.
-That is T14's own acceptance path ("test against saved images or videos") and the only
-part of this that can be checked without hardware.
-Without LiDAR you still get people boxes, `hasMetricDepth` stays false, and the geometry
-readouts stay empty; that is the non-LiDAR fallback the shared contract already describes.
+Both need a **physical device** — ARKit world tracking does not run in the Simulator — and
+a **LiDAR device** (iPhone 12 Pro or newer) for distances, the floor, obstacles and kerbs.
+In the Simulator `AppServices.live` falls back to `PlaceholderSceneProvider`, and Live
+detection offers **Detect people in a photo** instead, which runs the real Vision request
+over a photo from the library.
+Without LiDAR you still get recognized objects and people, `hasMetricDepth` stays false,
+and nothing distance-based is announced.
 
-This screen owns its own `ARSceneAnalyzer` rather than reading `services.scene`, so
-`AppServices.live` still uses `PlaceholderSceneProvider` and nothing else in the app
-changes. Swapping the placeholder for the real provider is task 1.4.
+See [docs/ComputerVision.md](docs/ComputerVision.md) for the CV architecture, data
+contracts and task status.
 
 ## Accessibility baseline (every PR)
 
