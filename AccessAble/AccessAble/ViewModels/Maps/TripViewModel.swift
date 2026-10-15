@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 import Observation
 
@@ -10,6 +11,7 @@ final class TripViewModel {
     private(set) var route: NavigationRoute?
 
     @ObservationIgnored private let services: AppServices
+    @ObservationIgnored private let locationManager = CLLocationManager()
 
     /// `destination` and `route` let a caller that already resolved both (e.g. a shared trip) open
     /// straight into a planned trip instead of starting from nothing.
@@ -41,6 +43,10 @@ final class TripViewModel {
     }
 
     func start() async {
+        // Prompts if undetermined; otherwise a no-op. The map shows the user's location dot once this
+        // resolves to an authorized status — no callback needed here.
+        locationManager.requestWhenInUseAuthorization()
+
         for await state in services.trip.tripStates() {
             tripState = state
         }

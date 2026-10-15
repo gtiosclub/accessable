@@ -14,7 +14,10 @@ struct TripView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            TripMapView(tripState: viewModel.tripState, route: viewModel.route, cameraPosition: $cameraPosition)
+            TripMapView(
+                tripState: viewModel.tripState, route: viewModel.route, destination: viewModel.destination,
+                cameraPosition: $cameraPosition
+            )
                 .frame(minHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
@@ -68,18 +71,24 @@ struct TripView: View {
     }
 }
 
-/// Shows the upcoming maneuver on a map. No live user-location dot yet — that needs a wired-up
-/// `LocationProvider` (TODO(Maps 2.1)) plus an `NSLocationWhenInUseUsageDescription` entry.
+/// Shows the upcoming maneuver, the destination, and the route on a map. The blue user-location dot
+/// appears once `TripViewModel.start()` requests authorization and the person grants it.
 private struct TripMapView: View {
     let tripState: TripState
     let route: NavigationRoute?
+    let destination: Destination?
     @Binding var cameraPosition: MapCameraPosition
 
     var body: some View {
         Map(position: $cameraPosition, interactionModes: [.pan, .zoom]) {
+            UserAnnotation()
             if let route {
                 MapPolyline(coordinates: route.coordinates.map(\.clCoordinate))
                     .stroke(.blue, lineWidth: 4)
+            }
+            if let destination {
+                Marker(destination.name, systemImage: "flag.checkered", coordinate: destination.coordinate.clCoordinate)
+                    .tint(.green)
             }
             if let maneuver = tripState.nextManeuver {
                 Marker(tripState.destinationName ?? maneuver.instruction,
@@ -156,6 +165,7 @@ private extension ManeuverKind {
                 distanceRemaining: 111
             ),
             route: MapsSamples.route,
+            destination: MapsSamples.destination,
             cameraPosition: .constant(
                 .region(MKCoordinateRegion(center: MapsSamples.origin.clCoordinate,
                                             latitudinalMeters: 400, longitudinalMeters: 400))
