@@ -11,6 +11,9 @@ enum ValhallaGeometryDecoder {
         case invalidManeuverIndex
         case maneuversOutOfOrder
         case unsupportedManeuverType(Int)
+        case unsupportedUnits
+        case missingMetrics
+        case invalidMetrics
     }
 
     /// Returns one coordinate array per leg; maneuver indices are local to each leg.
@@ -30,6 +33,10 @@ enum ValhallaGeometryDecoder {
     /// ROUTE-3: decode geometry and instructions together using the same response schema.
     static func decodeLegsWithManeuvers(from data: Data) throws -> [DecodedLeg] {
         let response = try JSONDecoder().decode(Response.self, from: data)
+        return try decodeManeuverLegs(response)
+    }
+
+    private static func decodeManeuverLegs(_ response: Response) throws -> [DecodedLeg] {
         guard response.trip.status == 0 else { throw DecodeError.unsuccessfulRoute }
         guard !response.trip.legs.isEmpty else { throw DecodeError.missingGeometry }
         return try response.trip.legs.map { leg in
@@ -60,6 +67,65 @@ enum ValhallaGeometryDecoder {
             }
             return DecodedLeg(coordinates: coordinates, steps: steps)
         }
+    }
+
+    /// ROUTE-4 values use explicit unit names to prevent accidental double conversion.
+    struct Metrics {
+        let distanceMetres: Double
+        let durationSeconds: Double
+    }
+
+    struct NormalizedLeg {
+        let geometry: DecodedLeg
+        let metrics: Metrics
+        /// Same order and count as geometry.steps.
+        let maneuverMetrics: [Metrics]
+    }
+
+    struct NormalizedTrip {
+        let legs: [NormalizedLeg]
+        /// Valhalla's reported total; geometry-derived distance is calculated in ROUTE-5/6.
+        let metrics: Metrics
+    }
+
+    static func decodeNormalizedTrip(from data: Data) throws -> NormalizedTrip {
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        let geometry = try decodeManeuverLegs(response)
+        let metresPerUnit: Double
+        switch response.trip.units {
+        case "kilometers": metresPerUnit = 1_000
+        case "miles": metresPerUnit = 1_609.344
+        default: throw DecodeError.unsupportedUnits
+        }
+        let tripMetrics = try normalize(response.trip.summary, metresPerUnit: metresPerUnit)
+        let legs = try zip(response.trip.legs, geometry).map { leg, decoded in
+            let metrics = try normalize(leg.summary, metresPerUnit: metresPerUnit)
+            // decodeManeuverLegs has already required a nonempty maneuver array.
+            guard let maneuvers = leg.maneuvers else { throw DecodeError.missingManeuvers }
+            let maneuverMetrics = try maneuvers.map { maneuver in
+                try normalizeValues(length: maneuver.length, time: maneuver.time,
+                                    metresPerUnit: metresPerUnit)
+            }
+            return NormalizedLeg(geometry: decoded, metrics: metrics,
+                                 maneuverMetrics: maneuverMetrics)
+        }
+        return NormalizedTrip(legs: legs, metrics: tripMetrics)
+    }
+
+    private static func normalize(_ summary: Summary?, metresPerUnit: Double) throws -> Metrics {
+        guard let summary else { throw DecodeError.missingMetrics }
+        return try normalizeValues(length: summary.length, time: summary.time,
+                                   metresPerUnit: metresPerUnit)
+    }
+
+    private static func normalizeValues(length: Double?, time: Double?,
+                                        metresPerUnit: Double) throws -> Metrics {
+        guard let length, let time else { throw DecodeError.missingMetrics }
+        let metres = length * metresPerUnit
+        guard length.isFinite, length >= 0, metres.isFinite,
+              time.isFinite, time >= 0 else { throw DecodeError.invalidMetrics }
+        // Valhalla time is already in seconds: never multiply by 60.
+        return Metrics(distanceMetres: metres, durationSeconds: time)
     }
 
     /// Collapse directional variants into the shared vocabulary. Reject unsupported
@@ -140,15 +206,25 @@ enum ValhallaGeometryDecoder {
     private struct Trip: Decodable {
         let status: Int
         let legs: [Leg]
+        let units: String?
+        let summary: Summary?
+    }
+
+    private struct Summary: Decodable {
+        let length: Double
+        let time: Double
     }
 
     private struct Leg: Decodable {
         let shape: String
+        let summary: Summary?
         // Optional preserves ROUTE-2's geometry-only API for responses without directions.
         let maneuvers: [ValhallaManeuver]?
     }
 
     private struct ValhallaManeuver: Decodable {
+        let length: Double?
+        let time: Double?
         let type: Int
         let instruction: String
         let beginShapeIndex: Int
@@ -156,7 +232,7 @@ enum ValhallaGeometryDecoder {
         let verbalPreTransitionInstruction: String?
 
         private enum CodingKeys: String, CodingKey {
-            case type, instruction
+            case type, instruction, length, time
             case beginShapeIndex = "begin_shape_index"
             case endShapeIndex = "end_shape_index"
             case verbalPreTransitionInstruction = "verbal_pre_transition_instruction"
