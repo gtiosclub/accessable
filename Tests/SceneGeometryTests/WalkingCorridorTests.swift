@@ -7,7 +7,9 @@ struct WalkingCorridorTests {
     private let corridor = WalkingCorridor(
         origin: .zero,
         forward: [0, 0, -2],
-        right: [3, 0, 0]
+        right: [3, 0, 0],
+        width: 1,
+        maxDistance: 4
     )
 
     @Test("the suggested initializer supplies a one-metre, four-metre corridor")
@@ -20,19 +22,19 @@ struct WalkingCorridorTests {
 
     @Test("accepts points in front, including every rectangle boundary")
     func pointsInsideAndOnBoundaries() {
-        #expect(contains(point: [0, 0, 0], corridor: corridor))
-        #expect(contains(point: [0, 3, -2], corridor: corridor))
-        #expect(contains(point: [-0.5, 0, -2], corridor: corridor))
-        #expect(contains(point: [0.5, 0, -2], corridor: corridor))
-        #expect(contains(point: [0, 0, -4], corridor: corridor))
+        #expect(corridor.contains([0, 0, 0]))
+        #expect(corridor.contains([0, 3, -2]))
+        #expect(corridor.contains([-0.5, 0, -2]))
+        #expect(corridor.contains([0.5, 0, -2]))
+        #expect(corridor.contains([0, 0, -4]))
     }
 
     @Test("rejects points behind, beyond range, and outside the sides")
     func pointsOutside() {
-        #expect(!contains(point: [0, 0, 0.01], corridor: corridor))
-        #expect(!contains(point: [0, 0, -4.01], corridor: corridor))
-        #expect(!contains(point: [-0.51, 0, -2], corridor: corridor))
-        #expect(!contains(point: [0.51, 0, -2], corridor: corridor))
+        #expect(!corridor.contains([0, 0, 0.01]))
+        #expect(!corridor.contains([0, 0, -4.01]))
+        #expect(!corridor.contains([-0.51, 0, -2]))
+        #expect(!corridor.contains([0.51, 0, -2]))
     }
 
     @Test("invalid geometry and non-finite points do not produce containment")
@@ -41,8 +43,8 @@ struct WalkingCorridorTests {
             origin: .zero, forward: [0, 0, -1], right: [1, 0, 0], width: 0, maxDistance: 4
         )
 
-        #expect(!contains(point: [0, 0, -1], corridor: invalidSize))
-        #expect(!contains(point: [Float.nan, 0, -1], corridor: corridor))
+        #expect(!invalidSize.contains([0, 0, -1]))
+        #expect(!corridor.contains([Float.nan, 0, -1]))
     }
 
     @Test("skewed lateral axes are made perpendicular to forward")
@@ -50,11 +52,13 @@ struct WalkingCorridorTests {
         let skewed = WalkingCorridor(
             origin: .zero,
             forward: [0, 0, -1],
-            right: [1, 0, -1]
+            right: [1, 0, -1],
+            width: 1,
+            maxDistance: 4
         )
 
         #expect(abs(simd_dot(skewed.forward, skewed.right)) < 1e-6)
-        #expect(contains(point: [0, 0, -1], corridor: skewed))
+        #expect(skewed.contains([0, 0, -1]))
     }
 
     @Test("parallel axes receive a perpendicular lateral fallback")
@@ -62,11 +66,13 @@ struct WalkingCorridorTests {
         let parallel = WalkingCorridor(
             origin: .zero,
             forward: [0, 0, -1],
-            right: [0, 0, -1]
+            right: [0, 0, -1],
+            width: 1,
+            maxDistance: 4
         )
 
         #expect(abs(simd_dot(parallel.forward, parallel.right)) < 1e-6)
-        #expect(contains(point: [0, 0, -1], corridor: parallel))
-        #expect(!contains(point: [0.51, 0, -1], corridor: parallel))
+        #expect(parallel.contains([0, 0, -1]))
+        #expect(!parallel.contains([0.51, 0, -1]))
     }
 }

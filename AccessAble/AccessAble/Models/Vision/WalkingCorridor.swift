@@ -3,7 +3,7 @@ import simd
 
 /// The slab of space the user is about to walk through. All lengths in metres, in the
 /// same coordinate space as the point cloud being tested against it.
-/// Owner: Computer Vision (1.1 / task T11).
+/// Owner: Computer Vision (1.1 / tasks T9, T11).
 struct WalkingCorridor: Sendable {
     /// Where the user is — normally the camera position.
     let origin: SIMD3<Float>
@@ -20,8 +20,8 @@ struct WalkingCorridor: Sendable {
         origin: SIMD3<Float>,
         forward: SIMD3<Float>,
         right: SIMD3<Float>,
-        width: Float = 1.0,
-        maxDistance: Float = 4.0
+        width: Float,
+        maxDistance: Float
     ) {
         self.origin = origin
         let normalizedForward = isFinite(forward) && simd_length(forward) > 1e-6
@@ -83,31 +83,21 @@ struct WalkingCorridor: Sendable {
     }
 }
 
-/// Returns whether `point` lies inside the corridor's forward rectangular prism.
-///
-/// The prism is unbounded vertically: this test only considers distance along the path and
-/// lateral offset. Points on each boundary are included. Call `flattened(ontoFloorNormal:)`
-/// first when camera axes need to be interpreted relative to a known floor plane.
-func contains(point: SIMD3<Float>, corridor: WalkingCorridor) -> Bool {
-    guard isFinite(point),
-          isFinite(corridor.origin),
-          isFinite(corridor.forward),
-          isFinite(corridor.right),
-          corridor.width.isFinite,
-          corridor.maxDistance.isFinite,
-          corridor.width > 0,
-          corridor.maxDistance > 0
-    else {
-        return false
+extension WalkingCorridor {
+    /// Whether `point` lies inside the corridor: ahead of the origin, no further than
+    /// `maxDistance` along `forward`, and within `width / 2` of the centre line.
+    ///
+    /// The region is unbounded vertically, and points on its boundary count as inside.
+    /// Call `flattened(ontoFloorNormal:)` first when the axes come from a tilted camera.
+    func contains(_ point: SIMD3<Float>) -> Bool {
+        guard isFinite(point), isFinite(origin), width.isFinite, maxDistance.isFinite,
+              width > 0, maxDistance > 0
+        else { return false }
+
+        let offset = point - origin
+        let along = simd_dot(offset, forward)
+        return along >= 0 && along <= maxDistance && abs(simd_dot(offset, right)) <= width / 2
     }
-
-    let offset = point - corridor.origin
-    let forwardDistance = simd_dot(offset, corridor.forward)
-    let lateralDistance = simd_dot(offset, corridor.right)
-
-    return forwardDistance >= 0
-        && forwardDistance <= corridor.maxDistance
-        && abs(lateralDistance) <= corridor.width / 2
 }
 
 private func isFinite(_ vector: SIMD3<Float>) -> Bool {
