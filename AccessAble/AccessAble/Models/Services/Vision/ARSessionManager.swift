@@ -4,47 +4,39 @@ import Foundation
 import Synchronization
 import os
 
-/// Owner: Computer Vision (1.4 / task T1). The one shared ARKit camera session.
+/// Owner: Computer Vision (1.4 / tasks T1, T2). The app's one ARKit session.
 ///
-/// Every CV module that needs camera frames or the device pose subscribes here instead of
-/// running its own `ARSession`. iOS only gives the camera to one session at a time, so two
-/// sessions would fight over it.
+/// iOS gives the camera to one session at a time, so every module that needs camera frames
+/// or the device pose subscribes here rather than running its own `ARSession`.
 ///
-/// What it does:
-/// - starts and stops a world-tracking session (`start()` / `stop()`)
-/// - hands every `ARFrame` to whoever subscribed with `addFrameHandler(_:)`
-/// - keeps a running `FrameHealthReport` so the T1 checks can be read off a device
+/// The session runs gravity-aligned world tracking (world +Y is up, which the floor fit and
+/// walking corridor assume) and, on LiDAR devices, `sceneDepth` (T2). Smoothed scene depth
+/// is deliberately not requested: it averages several frames, so it lags behind anything
+/// moving toward the user, and nothing in the pipeline needs it.
 ///
-/// What it does NOT do: depth. Turning on `.sceneDepth` / `.smoothedSceneDepth` is T2's
-/// job. T2 adds it through the `configure` hook on `start(configure:)`, so the depth code
-/// stays in T2's files and this one does not change.
+/// Threading: frames arrive on a private serial queue, one at a time and in order, and
+/// handlers run on that queue. Handlers must return quickly and must not keep the `ARFrame`
+/// — ARKit reuses a small pool of frame buffers and stalls when they are retained. Heavy
+/// work belongs behind `LatestOnlyProcessor`.
 ///
-/// Threading: frames arrive on `frameQueue`, one at a time, in order. Handlers run on that
-/// queue too, so a slow handler delays the next frame. Anything heavier than reading a few
-/// fields belongs behind T3's latest-frame-only queue.
-///
-/// `@unchecked Sendable` for the same reason as `ARSceneAnalyzer`: `ARSession` and
-/// `ARFrame` are not `Sendable`. The invariants that make it safe are that all mutable
-/// state sits behind a `Mutex`, the session is only configured from the main actor, and
-/// frames are only delivered on `frameQueue`.
+/// `@unchecked Sendable` because `ARSession` and `ARFrame` are not `Sendable`. It is safe
+/// because all mutable state is behind a `Mutex`, the session is only configured from the
+/// main actor, and frames are only delivered on `frameQueue`.
 final class ARSessionManager: NSObject, @unchecked Sendable {
-    /// Receives every frame. Runs on `frameQueue`.
-    ///
-    /// Do not hold on to the `ARFrame` after returning. ARKit reuses a small pool of
-    /// frame buffers, and keeping old frames alive starves it ("delegate is retaining N
-    /// ARFrames" in the console), which drops the frame rate. Copy out what you need.
     typealias FrameHandler = @Sendable (ARFrame) -> Void
 
-    /// Lets a subscriber unsubscribe later.
     struct Subscription: Hashable, Sendable {
         fileprivate let id: UUID
     }
 
-    /// Exposed so a preview view (`ARSCNView`, `ARView`) can render this exact session.
-    /// Touch it only from the main actor.
+    /// Exposed so a preview view (`ARSCNView`) can render this exact session. Touch it only
+    /// from the main actor.
     let session = ARSession()
 
-    private let frameQueue = DispatchQueue(label: "AccessAble.ARSessionManager.frames")
+    /// True on devices with a LiDAR scanner, where frames carry `sceneDepth`.
+    let isDepthSupported = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
+
+    private let frameQueue = DispatchQueue(label: "AccessAble.ARSessionManager.frames", qos: .userInteractive)
     private let handlers = Mutex<[UUID: FrameHandler]>([:])
     private let health = Mutex(FrameHealthCheck())
     private let runningState = Mutex(false)
@@ -53,45 +45,41 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    /// Starts world tracking. Safe to call again; the session restarts from scratch.
-    ///
-    /// - Parameter configure: a chance to adjust the configuration before it runs. T2 uses
-    ///   this to insert depth frame semantics.
+    /// Starts world tracking. Calling it while running restarts tracking from scratch.
     @MainActor
-    func start(configure: (ARWorldTrackingConfiguration) -> Void = { _ in }) throws {
+    func start() throws {
         guard ARWorldTrackingConfiguration.isSupported else {
             throw ARSessionManagerError.worldTrackingUnsupported
         }
 
         let configuration = ARWorldTrackingConfiguration()
-        // World +Y points up (against gravity). The floor fit (T10) and the walking
-        // corridor (T9) both assume this.
         configuration.worldAlignment = .gravity
         configuration.planeDetection = []
-        configure(configuration)
+        if isDepthSupported {
+            configuration.frameSemantics.insert(.sceneDepth)
+        } else {
+            log.notice("sceneDepth unsupported; running without LiDAR depth")
+        }
 
         health.withLock { $0.reset() }
         session.delegate = self
         session.delegateQueue = frameQueue
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
         runningState.withLock { $0 = true }
-        log.info("ARKit session started")
     }
 
-    /// Pauses the session. Subscribers stay registered and resume getting frames on the
-    /// next `start()`.
+    /// Pauses the session. Subscribers stay registered and get frames again after `start()`.
     @MainActor
     func stop() {
         session.pause()
         runningState.withLock { $0 = false }
-        log.info("ARKit session paused")
     }
 
     var isRunning: Bool { runningState.withLock { $0 } }
 
     // MARK: - Subscribing to frames
 
-    /// Calls `handler` with every new frame until the subscription is removed.
+    /// Calls `handler` on the frame queue with every new frame until the subscription is removed.
     @discardableResult
     func addFrameHandler(_ handler: @escaping FrameHandler) -> Subscription {
         let id = UUID()
@@ -103,10 +91,10 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         handlers.withLock { $0[subscription.id] = nil }
     }
 
-    // MARK: - T1 checks
+    // MARK: - Diagnostics
 
-    /// Running totals for the T1 acceptance checks. Read it from a debug screen or log it
-    /// after walking around for a few seconds; `passes` should become true.
+    /// Running totals for the T1 acceptance checks; `passes` becomes true once frames are
+    /// flowing and the camera has moved.
     var healthReport: FrameHealthReport { health.withLock { $0.report } }
 
     /// ARKit's latest tracking state in words, e.g. "normal" or "limited: initializing".
@@ -126,8 +114,8 @@ extension ARSessionManager: ARSessionDelegate {
             )
         }
 
-        // Copy the handlers out so none of them runs while the lock is held. A handler
-        // that subscribes or unsubscribes would otherwise deadlock.
+        // Copied out so no handler runs while the lock is held; a handler that
+        // unsubscribes would otherwise deadlock.
         let current = handlers.withLock { Array($0.values) }
         for handler in current {
             handler(frame)
@@ -153,7 +141,6 @@ extension ARSessionManager: ARSessionDelegate {
     }
 
     func sessionWasInterrupted(_ session: ARSession) {
-        // Usually the app went to the background or another app took the camera.
         log.notice("ARKit session interrupted")
     }
 
@@ -168,7 +155,7 @@ enum ARSessionManagerError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .worldTrackingUnsupported:
-            "This device does not support ARKit world tracking."
+            "This device does not support ARKit world tracking, so camera guidance is unavailable."
         }
     }
 }

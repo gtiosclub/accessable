@@ -25,7 +25,7 @@ final class LiveSceneViewModel {
     @ObservationIgnored let analyzer: ARSceneAnalyzer
 
     init(services: AppServices) {
-        analyzer = ARSceneAnalyzer(performance: services.performance)
+        analyzer = ARSceneAnalyzer(sessionManager: ARSessionManager(), performance: services.performance)
     }
 
     func start() async {

@@ -6,22 +6,17 @@ import UIKit
 import os
 import simd
 
-/// Owner: Computer Vision (1.4). Drives the 1.1 detectors off a live ARKit session.
+/// Owner: Computer Vision (1.4). Runs the perception pipeline on frames from the shared
+/// `ARSessionManager` and publishes a `SceneObservation` per analyzed frame.
 ///
-/// One ARKit session feeds everything: `capturedImage` goes to Vision for people (T14),
-/// while LiDAR depth is enabled and selected (T2),
-/// and `sceneDepth` is unprojected into a point cloud for the floor fit (T10), geometric
-/// obstacles (T11) and the ground profile behind kerb detection (T12).
+/// `capturedImage` goes to Vision for people (T14), and `sceneDepth` is unprojected into a
+/// point cloud for the floor fit (T10), geometric obstacles (T11) and the ground profile
+/// behind kerb detection (T12).
 ///
-/// `@unchecked Sendable` because `ARSession` and `ARFrame` are not `Sendable`. The
-/// invariants that make it safe: every mutable field lives behind `state`, the session is
-/// only configured from the main actor, and all frame analysis happens on `analysisQueue`,
-/// which is also the session's delegate queue — so frames are handled one at a time and
-/// never escape it.
-final class ARSceneAnalyzer: NSObject, SceneObservationProviding, @unchecked Sendable {
-    /// Exposed so a preview view can render this exact session. Touch it only from the
-    /// main actor.
-    let session = ARSession()
+/// `@unchecked Sendable` because `ARFrame` is not `Sendable`. It is safe because every
+/// mutable field lives behind a `Mutex` and frames never leave the queue they arrive on.
+final class ARSceneAnalyzer: SceneObservationProviding, @unchecked Sendable {
+    let sessionManager: ARSessionManager
 
     private let peopleDetector: PeopleDetector
     private let corridorWidth: Float
@@ -29,7 +24,6 @@ final class ARSceneAnalyzer: NSObject, SceneObservationProviding, @unchecked Sen
     private let performance: any PerformanceModeProviding
 
     private let broadcaster = Broadcaster<SceneObservation>(replaysLatest: true)
-    private let analysisQueue = DispatchQueue(label: "AccessAble.ARSceneAnalyzer.analysis")
     private let log = Logger(subsystem: "AccessAble", category: "ARSceneAnalyzer")
 
     private struct State {
@@ -47,23 +41,24 @@ final class ARSceneAnalyzer: NSObject, SceneObservationProviding, @unchecked Sen
         /// width / height of the frame once rotated upright. Overlays need it to map a
         /// normalized box onto an aspect-filled preview.
         var uprightAspectRatio: Float = 3.0 / 4.0
-        var hasDepth = false
+        var subscription: ARSessionManager.Subscription?
+        var modeTask: Task<Void, Never>?
     }
 
     private let state = Mutex(State())
-    private let modeTask = Mutex<Task<Void, Never>?>(nil)
 
     init(
+        sessionManager: ARSessionManager,
         peopleDetector: PeopleDetector = PeopleDetector(),
         performance: any PerformanceModeProviding,
         corridorWidth: Float = WalkingCorridor.default.width,
         corridorDistance: Float = WalkingCorridor.default.maxDistance
     ) {
+        self.sessionManager = sessionManager
         self.peopleDetector = peopleDetector
         self.performance = performance
         self.corridorWidth = corridorWidth
         self.corridorDistance = corridorDistance
-        super.init()
     }
 
     // MARK: - SceneObservationProviding
@@ -73,60 +68,39 @@ final class ARSceneAnalyzer: NSObject, SceneObservationProviding, @unchecked Sen
     }
 
     func start() async throws {
-        guard ARWorldTrackingConfiguration.isSupported else {
-            throw ARSceneAnalyzerError.worldTrackingUnsupported
-        }
+        try await MainActor.run { try sessionManager.start() }
 
-        let configuration = ARWorldTrackingConfiguration()
-        // Gravity alignment puts world +Y along "up", which is exactly the assumption
-        // `FloorDetectionTuning.upHint` makes. Without it the floor fit has no idea which
-        // way is down.
-        configuration.worldAlignment = .gravity
-        configuration.planeDetection = []
-
-        // T2 - enable LiDAR dept modes supported by the current device.
-        let sceneDepthSupported = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
-        
-        let smoothedDepthSupported =
-            ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth)
-        
-        if sceneDepthSupported {
-            configuration.frameSemantics.insert(.sceneDepth)
+        let subscription = sessionManager.addFrameHandler { [weak self] frame in
+            self?.receive(frame)
         }
-        
-        if smoothedDepthSupported {
-            configuration.frameSemantics.insert(.smoothedSceneDepth)
-        }
-        
-        let depthSupported = sceneDepthSupported || smoothedDepthSupported
-    
-        if !depthSupported {
-            // Not fatal. People detection still works; the geometry tasks go quiet and
-            // `hasMetricDepth` stays false, which is the fallback the shared contract
-            // already documents for non-LiDAR devices.
-            log.notice("sceneDepth unsupported — running without geometry")
-        }
-        state.withLock { $0.hasDepth = depthSupported }
-
-        await MainActor.run {
-            session.delegate = self
-            session.delegateQueue = analysisQueue
-            session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
-        }
-
         // Adapt the frame stride to the global performance mode (owned by 3.3).
-        let task = Task { [weak self] in
-            guard let self else { return }
+        let modeTask = Task { [weak self, performance] in
             for await mode in performance.modes() {
-                state.withLock { $0.frameStride = max(1, mode.detectionFrameStride) }
+                self?.state.withLock { $0.frameStride = max(1, mode.detectionFrameStride) }
             }
         }
-        modeTask.withLock { $0?.cancel(); $0 = task }
+        let previous = state.withLock { state in
+            defer {
+                state.subscription = subscription
+                state.modeTask = modeTask
+            }
+            return (state.subscription, state.modeTask)
+        }
+        if let subscription = previous.0 { sessionManager.removeFrameHandler(subscription) }
+        previous.1?.cancel()
     }
 
     func stop() async {
-        modeTask.withLock { $0?.cancel(); $0 = nil }
-        await MainActor.run { session.pause() }
+        let (subscription, modeTask) = state.withLock { state in
+            defer {
+                state.subscription = nil
+                state.modeTask = nil
+            }
+            return (state.subscription, state.modeTask)
+        }
+        if let subscription { sessionManager.removeFrameHandler(subscription) }
+        modeTask?.cancel()
+        await MainActor.run { sessionManager.stop() }
     }
 
     // MARK: - Demo/overlay accessors
@@ -137,7 +111,7 @@ final class ARSceneAnalyzer: NSObject, SceneObservationProviding, @unchecked Sen
     var latestFloor: Plane3D? { state.withLock { $0.floor } }
     var cameraHeightAboveFloor: Float? { state.withLock { $0.cameraHeight } }
     var uprightAspectRatio: Float { state.withLock { $0.uprightAspectRatio } }
-    var isDepthAvailable: Bool { state.withLock { $0.hasDepth } }
+    var isDepthAvailable: Bool { sessionManager.isDepthSupported }
 
     /// Tell the analyzer how the device is held, so Vision gets the right orientation and
     /// projected boxes land in the right place.
@@ -153,25 +127,16 @@ final class ARSceneAnalyzer: NSObject, SceneObservationProviding, @unchecked Sen
             }
         }
     }
-}
 
-// MARK: - ARSessionDelegate
+    // MARK: - Frames
 
-extension ARSceneAnalyzer: ARSessionDelegate {
-    func session(_ session: ARSession, didUpdate frame: ARFrame) {
+    private func receive(_ frame: ARFrame) {
         let shouldAnalyze = state.withLock { state -> Bool in
             state.frameCounter += 1
             return state.frameCounter % state.frameStride == 0
         }
-        
         guard shouldAnalyze else { return }
         broadcaster.send(analyze(frame))
-        
-    }
-    func session(_ session: ARSession, didFailWithError error: Error) {
-        log.error(
-            "ARKit session failed: \(error.localizedDescription, privacy: .public)"
-        )
     }
 }
 
@@ -200,8 +165,7 @@ private extension ARSceneAnalyzer {
         var hasMetricDepth = false
         var hazards: [ElevationHazard] = []
 
-        // T2 - prefer smoothed depth, with regular scene depth as a fallback
-        if let depth = frame.smoothedSceneDepth ?? frame.sceneDepth {
+        if let depth = frame.sceneDepth {
             hasMetricDepth = true
             let cloud = pointCloud(from: depth, camera: frame.camera)
             let corridor = corridor(for: frame.camera)
@@ -419,17 +383,6 @@ private extension ARSceneAnalyzer {
         switch orientation {
         case .landscapeLeft, .landscapeRight: resolution
         default: CGSize(width: resolution.height, height: resolution.width)
-        }
-    }
-}
-
-enum ARSceneAnalyzerError: LocalizedError {
-    case worldTrackingUnsupported
-
-    var errorDescription: String? {
-        switch self {
-        case .worldTrackingUnsupported:
-            "This device does not support ARKit world tracking, so camera guidance is unavailable."
         }
     }
 }

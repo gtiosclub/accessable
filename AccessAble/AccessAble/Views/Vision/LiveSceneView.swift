@@ -32,7 +32,7 @@ struct LiveSceneView: View {
     private var preview: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
-                ARCameraPreview(session: viewModel.analyzer.session)
+                ARCameraPreview(session: viewModel.analyzer.sessionManager.session)
 
                 ForEach(viewModel.observation.detections) { detection in
                     DetectionBox(
