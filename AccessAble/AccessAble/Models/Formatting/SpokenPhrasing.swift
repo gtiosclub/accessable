@@ -40,4 +40,19 @@ enum SpokenPhrasing {
         }
         return "\(label) \(side), \(shortDistance(distance))."
     }
+
+    /// "Drop-off", "Step up"…
+    static func name(of hazard: ElevationHazardType) -> String {
+        switch hazard {
+        case .stepUp: "Step up"
+        case .stepDown: "Step down"
+        case .dropOff: "Drop-off"
+        case .unknown: "Uneven ground"
+        }
+    }
+
+    /// "Drop-off 2 metres ahead."
+    static func describe(_ hazard: ElevationHazard) -> String {
+        "\(name(of: hazard.type)) \(shortDistance(Double(hazard.distance))) ahead."
+    }
 }

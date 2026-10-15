@@ -82,6 +82,8 @@ struct SceneObservation: Equatable, Sendable {
     var detections: [Detection]
     var ground: GroundSurface
     var recognizedText: [RecognizedText]
+    /// Kerbs, steps and drop-offs in the walking surface ahead, nearest first. Empty without LiDAR.
+    var elevationHazards: [ElevationHazard]
     /// False when distances came from relative depth or were unavailable.
     var hasMetricDepth: Bool
 
@@ -90,12 +92,14 @@ struct SceneObservation: Equatable, Sendable {
         detections: [Detection] = [],
         ground: GroundSurface = .unknown,
         recognizedText: [RecognizedText] = [],
+        elevationHazards: [ElevationHazard] = [],
         hasMetricDepth: Bool = false
     ) {
         self.timestamp = timestamp
         self.detections = detections
         self.ground = ground
         self.recognizedText = recognizedText
+        self.elevationHazards = elevationHazards
         self.hasMetricDepth = hasMetricDepth
     }
 

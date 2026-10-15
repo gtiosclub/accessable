@@ -5,23 +5,24 @@ import UIKit
 import os
 import simd
 
-/// Owner: Computer Vision (1.1, 1.4). Turns one `ARFrame` into a `SceneObservation`.
+/// Owner: Computer Vision (1.1, 1.4). Turns one `ARFrame` into a `SceneObservation` and
+/// the obstacle announcements it calls for.
 ///
 /// `capturedImage` goes to Vision for people (T14) and objects (T13). `sceneDepth` becomes
 /// one filtered `DepthMap` (T6) that places those detections in the world (T5, T7) and is
 /// unprojected into a point cloud for the floor fit (T10), geometric obstacles (T11) and
 /// the ground profile behind kerb detection (T12). Obstacles that match a recognized object
-/// take its label, and every detection gets a stable track ID (T15).
+/// take its label, every detection gets a stable track ID (T15), and the announcer (T16)
+/// decides what in the walking corridor (T9) the user should hear about.
 ///
 /// Call `analyze` from one queue at a time — `ARSceneAnalyzer` calls it from its
 /// latest-only processing queue. State that outlives a frame, or that the UI reads, lives
 /// behind a `Mutex`.
 final class ScenePerception: Sendable {
-    private let peopleDetector: PeopleDetector
-    private let objectDetector: ObjectDetector?
-    private let corridorWidth: Float
-    private let corridorDistance: Float
-    private let log = Logger(subsystem: "AccessAble", category: "ScenePerception")
+    struct Analysis: Sendable {
+        let observation: SceneObservation
+        let announcements: [AnnouncementEvent]
+    }
 
     /// What the live debug screen shows besides the observation itself.
     struct Diagnostics: Sendable {
@@ -29,14 +30,20 @@ final class ScenePerception: Sendable {
         /// Signed height of the camera above the fitted floor, in metres. A good live
         /// sanity check on T10: held normally it should read roughly 1.1 to 1.5 m.
         var cameraHeight: Float?
-        var hazards: [ElevationHazard] = []
         /// width / height of the frame once rotated upright. Overlays need it to map a
         /// normalized box onto an aspect-filled preview.
         var uprightAspectRatio: Float = 3.0 / 4.0
     }
 
+    private let peopleDetector: PeopleDetector
+    private let objectDetector: ObjectDetector?
+    private let corridorWidth: Float
+    private let corridorDistance: Float
+    private let log = Logger(subsystem: "AccessAble", category: "ScenePerception")
+
     private let diagnosticsState = Mutex(Diagnostics())
     private let tracker = Mutex(ObjectTracker())
+    private let announcer = Mutex(ObstacleAnnouncer())
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
@@ -52,39 +59,24 @@ final class ScenePerception: Sendable {
 
     var diagnostics: Diagnostics { diagnosticsState.withLock { $0 } }
 
-    func analyze(_ frame: ARFrame, interfaceOrientation: UIInterfaceOrientation) -> SceneObservation {
+    func analyze(_ frame: ARFrame, interfaceOrientation: UIInterfaceOrientation) -> Analysis {
         let imageOrientation = CGImagePropertyOrientation(cameraImageIn: interfaceOrientation)
         let upright = uprightSize(for: frame.camera.imageResolution, orientation: interfaceOrientation)
         var diagnostics = Diagnostics(uprightAspectRatio: Float(upright.width / upright.height))
 
-        var recognized: [Detection] = []
+        var recognized = recognizeObjects(in: frame.capturedImage, orientation: imageOrientation)
         var obstacles: [Detection] = []
-
-        // T14 — people.
-        do {
-            recognized += try peopleDetector.detect(pixelBuffer: frame.capturedImage, orientation: imageOrientation)
-        } catch {
-            log.error("people detection failed: \(error.localizedDescription, privacy: .public)")
-        }
-
-        // T13 — everything else the model knows.
-        if let objectDetector {
-            do {
-                recognized += try objectDetector.detect(pixelBuffer: frame.capturedImage, orientation: imageOrientation)
-            } catch {
-                log.error("object detection failed: \(error.localizedDescription, privacy: .public)")
-            }
-        }
-
-        var ground = GroundSurface.unknown
+        var hazards: [ElevationHazard] = []
+        /// `Detection.id`s of everything inside the walking corridor this frame.
+        var inPath = Set<UUID>()
         let depthMap = frame.sceneDepth.flatMap { DepthMap(depth: $0.depthMap, confidence: $0.confidenceMap) }
 
         if let depthMap {
             let camera = frame.camera
             let intrinsics = depthIntrinsics(for: camera, depth: depthMap)
             let corridor = corridor(for: camera)
-            // Gravity-aligned world space, so flattening onto world up gives a level heading
-            // for bearings even before a floor has been found.
+            // World space is gravity-aligned, so flattening onto world up gives a level
+            // heading for bearings and the path test even before a floor has been found.
             let heading = corridor.flattened(ontoFloorNormal: [0, 1, 0]) ?? corridor
 
             // T5 + T7 — distance and direction for each recognized object.
@@ -96,6 +88,11 @@ final class ScenePerception: Sendable {
                 var located = detection
                 located.distance = Double(heading.distance(to: position))
                 located.bearing = heading.bearing(to: position)
+                // Only things a walker can collide with are path hazards; a recognized cup
+                // on a table is left to the geometry to judge.
+                if heading.contains(position), detection.isHazard || detection.label == "person" {
+                    inPath.insert(detection.id)
+                }
                 return located
             }
 
@@ -115,31 +112,58 @@ final class ScenePerception: Sendable {
                             camera: camera, orientation: interfaceOrientation, viewportSize: upright
                         )
                     }
+                inPath.formUnion(obstacles.map(\.id))
 
                 // T12 — kerbs and drop-offs in the surface itself.
                 let profile = groundProfile(points: cloud, floor: fit.plane, corridor: corridor)
-                diagnostics.hazards = detectElevationHazards(samples: profile)
-                ground = groundSurface(for: diagnostics.hazards)
+                hazards = detectElevationHazards(samples: profile)
             }
         }
 
-        let fused = fuse(obstacles: obstacles, recognized: recognized)
-        let detections = tracker.withLock { $0.update(fused, at: frame.timestamp) }
+        let detections = tracker.withLock {
+            $0.update(fuse(obstacles: obstacles, recognized: recognized), at: frame.timestamp)
+        }
+        let announcements = announcer.withLock {
+            $0.announcements(
+                for: detections.map { ObstacleAlertInput(detection: $0, isInPath: inPath.contains($0.id)) },
+                hazards: hazards,
+                at: frame.timestamp
+            )
+        }
         diagnosticsState.withLock { $0 = diagnostics }
 
-        return SceneObservation(
+        let observation = SceneObservation(
             timestamp: .now,
             detections: detections,
-            ground: ground,
+            ground: groundSurface(for: hazards),
             recognizedText: [],
+            elevationHazards: hazards,
             hasMetricDepth: depthMap != nil
         )
+        return Analysis(observation: observation, announcements: announcements)
     }
 }
 
 // MARK: - Helpers
 
 private extension ScenePerception {
+    /// People (T14) and everything else the object model knows (T13), in upright coordinates.
+    func recognizeObjects(in image: CVPixelBuffer, orientation: CGImagePropertyOrientation) -> [Detection] {
+        var detections: [Detection] = []
+        do {
+            detections += try peopleDetector.detect(pixelBuffer: image, orientation: orientation)
+        } catch {
+            log.error("people detection failed: \(error.localizedDescription, privacy: .public)")
+        }
+        guard let objectDetector else { return detections }
+        do {
+            detections += try objectDetector.detect(pixelBuffer: image, orientation: orientation)
+        } catch {
+            log.error("object detection failed: \(error.localizedDescription, privacy: .public)")
+        }
+        return detections
+    }
+
     /// The corridor straight ahead of the camera. The detectors re-orthogonalize these
     /// axes onto the floor plane themselves, so passing the raw camera axes is fine.
     func corridor(for camera: ARCamera) -> WalkingCorridor {

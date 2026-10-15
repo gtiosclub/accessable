@@ -27,7 +27,11 @@ final class LiveSceneViewModel {
     @ObservationIgnored let analyzer: ARSceneAnalyzer
 
     init(services: AppServices) {
-        analyzer = ARSceneAnalyzer(sessionManager: ARSessionManager(), performance: services.performance)
+        analyzer = ARSceneAnalyzer(
+            sessionManager: ARSessionManager(),
+            performance: services.performance,
+            announcements: services.announcements
+        )
     }
 
     func start() async {
@@ -44,7 +48,7 @@ final class LiveSceneViewModel {
         for await observation in analyzer.observations() {
             let diagnostics = analyzer.perception.diagnostics
             self.observation = observation
-            hazards = diagnostics.hazards
+            hazards = observation.elevationHazards
             cameraHeight = diagnostics.cameraHeight
             imageAspectRatio = CGFloat(diagnostics.uprightAspectRatio)
         }
@@ -81,7 +85,7 @@ final class LiveSceneViewModel {
     var spokenSummary: String {
         var parts: [String] = []
         if let hazard = hazards.first {
-            parts.append("\(hazardLabel(hazard.type)) \(SpokenPhrasing.shortDistance(Double(hazard.distance))) ahead.")
+            parts.append(SpokenPhrasing.describe(hazard))
         }
         parts += observation.prioritizedDetections.map(SpokenPhrasing.describe)
         return parts.isEmpty ? "Nothing detected." : parts.joined(separator: " ")
@@ -90,17 +94,8 @@ final class LiveSceneViewModel {
     /// "Drop-off at 2.0 m, -0.18 m". A heightChange of 0 means the magnitude was never
     /// measured (the surface simply stopped returning depth), so it is left off.
     func hazardLine(_ hazard: ElevationHazard) -> String {
-        let head = String(format: "%@ at %.1f m", hazardLabel(hazard.type), hazard.distance)
+        let head = String(format: "%@ at %.1f m", SpokenPhrasing.name(of: hazard.type), hazard.distance)
         guard hazard.heightChange != 0 else { return head }
         return head + String(format: ", %+.2f m", hazard.heightChange)
-    }
-
-    func hazardLabel(_ type: ElevationHazardType) -> String {
-        switch type {
-        case .stepUp: "Step up"
-        case .stepDown: "Step down"
-        case .dropOff: "Drop-off"
-        case .unknown: "Uneven ground"
-        }
     }
 }
