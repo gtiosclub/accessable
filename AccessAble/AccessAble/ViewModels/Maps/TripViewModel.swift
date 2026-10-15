@@ -7,6 +7,7 @@ import Observation
 final class TripViewModel {
     private(set) var tripState: TripState = .idle
     private(set) var destination: Destination?
+    private(set) var locationAuthorization: LocationAuthorization = .notDetermined
 
     @ObservationIgnored private let services: AppServices
 
@@ -23,11 +24,35 @@ final class TripViewModel {
         guard let distance = tripState.distanceToNextManeuver else { return maneuver.instruction }
         return "In \(SpokenPhrasing.shortDistance(distance)), \(maneuver.instruction)"
     }
+    
+    var needsLocationAccess: Bool {
+        switch locationAuthorization {
+        case .notDetermined:
+            false
+        case .restricted:
+            true
+        case .denied:
+            true
+        case .authorized:
+            false
+        }
+    }
 
     func start() async {
         await services.location.requestAuthorization()
-        for await state in services.trip.tripStates() {
-            tripState = state
+        
+        await withDiscardingTaskGroup { group in
+            group.addTask { [services] in
+                for await state in services.trip.tripStates() {
+                    await self.receive(state)
+                }
+            }
+            group.addTask { [services] in
+                for await authorization in services.location.authorizationStates() {
+                    await self.receive(authorization)
+                }
+            }
+            
         }
     }
 
@@ -42,4 +67,7 @@ final class TripViewModel {
     func endTrip() async {
         await services.trip.endTrip()
     }
+    
+    private func receive(_ state: TripState) {tripState = state}
+    private func receive(_ authorization: LocationAuthorization) { locationAuthorization = authorization}
 }
