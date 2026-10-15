@@ -1,7 +1,7 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-// Test harness for the Computer Vision geometry modules (1.1 / tasks T10-T12, T14).
+// Test harness for the Computer Vision modules (1.1).
 //
 // This package exists ONLY so `swift test` can exercise the algorithms headlessly on a
 // Mac. It compiles the same source files the app target does — it is not a dependency of
@@ -12,7 +12,7 @@ import PackageDescription
 // paths outside the package root.
 let package = Package(
     name: "SceneGeometry",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     targets: [
         .target(
             name: "SceneGeometry",
@@ -21,17 +21,18 @@ let package = Package(
             // stops warning about files it can see but isn't compiling.
             exclude: [
                 "Services",
-                "Formatting",
-                "Core/AnnouncementEvent.swift",
                 "Core/GuidanceProfile.swift",
-                "Core/HapticID.swift",
                 "Core/PerformanceMode.swift",
                 "Core/TripState.swift",
             ],
             sources: [
                 "Vision",
-                "Core/SceneObservation.swift",
+                "Formatting",
+                "Core/AnnouncementEvent.swift",
+                "Core/ElevationHazard.swift",
+                "Core/HapticID.swift",
                 "Core/RelativeBearing.swift",
+                "Core/SceneObservation.swift",
             ],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
@@ -39,6 +40,7 @@ let package = Package(
             name: "SceneGeometryTests",
             dependencies: ["SceneGeometry"],
             path: "Tests/SceneGeometryTests",
+            resources: [.process("Resources")],
             swiftSettings: [.swiftLanguageMode(.v6)]
         ),
     ]

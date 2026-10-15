@@ -20,7 +20,11 @@ struct LiveSceneView: View {
                 unavailable(error)
             } else {
                 preview
-                readout
+                VStack(spacing: 0) {
+                    fieldTestControls
+                    Spacer()
+                    readout
+                }
             }
         }
         .navigationTitle("Live detection")
@@ -32,7 +36,9 @@ struct LiveSceneView: View {
     private var preview: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
-                ARCameraPreview(session: viewModel.analyzer.session)
+                if let analyzer = viewModel.analyzer {
+                    ARCameraPreview(session: analyzer.sessionManager.session)
+                }
 
                 ForEach(viewModel.observation.detections) { detection in
                     DetectionBox(
@@ -52,6 +58,50 @@ struct LiveSceneView: View {
         .ignoresSafeArea()
     }
 
+    /// Record / mark / speak controls for running the device validation checklist.
+    private var fieldTestControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button {
+                    viewModel.toggleRecording()
+                } label: {
+                    Label(viewModel.isRecording ? "Stop" : "Record", systemImage: viewModel.isRecording ? "stop.circle.fill" : "record.circle")
+                }
+                .tint(viewModel.isRecording ? .red : .accentColor)
+
+                Menu {
+                    ForEach(LiveSceneViewModel.checklistMarks, id: \.self) { label in
+                        Button(label) { viewModel.mark(label) }
+                    }
+                } label: {
+                    Label("Mark step", systemImage: "flag")
+                }
+                .disabled(!viewModel.isRecording)
+
+                Spacer()
+
+                Toggle(isOn: $viewModel.speaksAnnouncements) {
+                    Image(systemName: viewModel.speaksAnnouncements ? "speaker.wave.2.fill" : "speaker.slash")
+                }
+                .toggleStyle(.button)
+                .accessibilityLabel("Speak warnings")
+            }
+            .buttonStyle(.bordered)
+
+            if viewModel.isRecording, let name = viewModel.recordingName {
+                Text("● \(name)" + (viewModel.lastMark.map { " — \($0)" } ?? ""))
+                    .font(.caption2.monospacedDigit())
+                    .lineLimit(2)
+            }
+            if let event = viewModel.lastAnnouncement {
+                AnnouncementBanner(event: event)
+            }
+        }
+        .padding(10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal)
+    }
+
     private var readout: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(viewModel.floorDescription)
@@ -66,6 +116,16 @@ struct LiveSceneView: View {
 
             Text(viewModel.countsDescription)
                 .font(.subheadline)
+
+            if let performance = viewModel.performanceDescription {
+                Text(performance)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            Text(viewModel.sessionDescription)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
@@ -130,7 +190,7 @@ private struct DetectionBox: View {
     }
 }
 
-/// Renders the analyzer's own ARKit session, so the preview and the detections come from
+/// Renders the app's shared ARKit session, so the preview and the detections come from
 /// the same frames.
 private struct ARCameraPreview: UIViewRepresentable {
     let session: ARSession

@@ -48,10 +48,9 @@ struct DepthPipelineTests {
     @Test("a constant depth map under a downward camera unprojects to a flat floor")
     func unprojectsToFloor() throws {
         let points = unprojectDepthMap(
-            width: 64, height: 48,
+            .uniform(1.4, width: 64, height: 48),
             intrinsics: intrinsics,
-            cameraTransform: downwardCamera(),
-            depthAt: { _, _ in 1.4 }
+            cameraTransform: downwardCamera()
         )
 
         #expect(points.count == 16 * 12)
@@ -64,45 +63,25 @@ struct DepthPipelineTests {
         #expect(abs(plane.point.y) < 1e-3)
     }
 
-    @Test("pixels with no return or low confidence are skipped")
-    func filtersBadPixels() {
-        // Half the map has no depth at all, and of the rest only every other row is confident.
-        let points = unprojectDepthMap(
-            width: 64, height: 48,
-            intrinsics: intrinsics,
-            cameraTransform: downwardCamera(),
-            depthAt: { column, _ in column < 32 ? 1.4 : .nan },
-            isConfident: { _, row in row.isMultiple(of: 8) }
-        )
+    @Test("pixels the depth map marks unreliable are skipped")
+    func skipsUnreliablePixels() {
+        // The right half of the map has no reliable reading.
+        let depth = DepthMap(width: 64, height: 48) { column, _ in column < 32 ? 1.4 : .nan }
+        let points = unprojectDepthMap(depth, intrinsics: intrinsics, cameraTransform: downwardCamera())
 
-        #expect(points.count == 8 * 6)
+        #expect(points.count == 8 * 12)
         #expect(points.allSatisfy { $0.x.isFinite && $0.y.isFinite && $0.z.isFinite })
-    }
-
-    @Test("depth outside the usable range is discarded")
-    func clampsDepthRange() {
-        let tooClose = unprojectDepthMap(
-            width: 64, height: 48, intrinsics: intrinsics,
-            cameraTransform: downwardCamera(), depthAt: { _, _ in 0.05 }
-        )
-        let tooFar = unprojectDepthMap(
-            width: 64, height: 48, intrinsics: intrinsics,
-            cameraTransform: downwardCamera(), depthAt: { _, _ in 25 }
-        )
-
-        #expect(tooClose.isEmpty)
-        #expect(tooFar.isEmpty)
     }
 
     @Test("a box on the floor survives the whole pipeline as an obstacle")
     func depthToObstacle() throws {
         // Every depth pixel this time, so the floor has the few thousand points a real
         // LiDAR map yields rather than being outnumbered by the box.
-        var dense = DepthUnprojectionTuning.default
-        dense.sampleStride = 1
         var points = unprojectDepthMap(
-            width: 64, height: 48, intrinsics: intrinsics,
-            cameraTransform: downwardCamera(), tuning: dense, depthAt: { _, _ in 1.4 }
+            .uniform(1.4, width: 64, height: 48),
+            intrinsics: intrinsics,
+            cameraTransform: downwardCamera(),
+            sampleStride: 1
         )
         points += boxSurfacePoints(centerX: 0.1, centerZ: -1.8, width: 0.6, depth: 0.2, height: 0.8)
 

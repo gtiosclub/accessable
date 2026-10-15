@@ -121,3 +121,21 @@ struct StubHumanObservation: HumanRectangleObservation {
     var boundingBox: CGRect
     var confidence: Float
 }
+
+extension DepthMap {
+    /// A depth map whose pixel values come from `valueAt(column, row)`; NaN means unreliable.
+    init(width: Int, height: Int, valueAt: (Int, Int) -> Float) {
+        var values: [Float] = []
+        values.reserveCapacity(width * height)
+        for row in 0 ..< height {
+            for column in 0 ..< width {
+                values.append(valueAt(column, row))
+            }
+        }
+        self.init(width: width, height: height, values: values)
+    }
+
+    static func uniform(_ depth: Float, width: Int, height: Int) -> DepthMap {
+        DepthMap(width: width, height: height, values: [Float](repeating: depth, count: width * height))
+    }
+}

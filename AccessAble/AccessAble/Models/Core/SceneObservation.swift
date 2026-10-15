@@ -14,7 +14,7 @@ struct Detection: Identifiable, Equatable, Sendable {
 
     let id: UUID
     /// Stable across frames when tracked, so announcements fire on entry/threshold crossings only.
-    var trackID: Int?
+    var trackID: UUID?
     /// e.g. "person", "chair", "door", "obstacle", "drop-off".
     var label: String
     var confidence: Float
@@ -29,7 +29,7 @@ struct Detection: Identifiable, Equatable, Sendable {
 
     init(
         id: UUID = UUID(),
-        trackID: Int? = nil,
+        trackID: UUID? = nil,
         label: String,
         confidence: Float,
         boundingBox: CGRect,
@@ -82,6 +82,8 @@ struct SceneObservation: Equatable, Sendable {
     var detections: [Detection]
     var ground: GroundSurface
     var recognizedText: [RecognizedText]
+    /// Kerbs, steps and drop-offs in the walking surface ahead, nearest first. Empty without LiDAR.
+    var elevationHazards: [ElevationHazard]
     /// False when distances came from relative depth or were unavailable.
     var hasMetricDepth: Bool
 
@@ -90,12 +92,14 @@ struct SceneObservation: Equatable, Sendable {
         detections: [Detection] = [],
         ground: GroundSurface = .unknown,
         recognizedText: [RecognizedText] = [],
+        elevationHazards: [ElevationHazard] = [],
         hasMetricDepth: Bool = false
     ) {
         self.timestamp = timestamp
         self.detections = detections
         self.ground = ground
         self.recognizedText = recognizedText
+        self.elevationHazards = elevationHazards
         self.hasMetricDepth = hasMetricDepth
     }
 

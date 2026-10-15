@@ -3,9 +3,8 @@ import simd
 
 // Turning a depth map into the point cloud that T10 and T11 consume (1.1).
 //
-// Kept free of ARKit and CoreVideo: the depth map is read through a closure, so this can
-// be driven from an ARKit `sceneDepth` buffer in the app and from a synthetic buffer in a
-// test. That is the seam that makes the whole geometry path verifiable on a Mac.
+// Kept free of ARKit: the input is a `DepthMap`, which the app fills from `sceneDepth` and a
+// test builds directly. That is the seam that makes the geometry path verifiable on a Mac.
 
 /// Pinhole camera intrinsics, in pixels, for an image of `imageWidth` x `imageHeight`.
 struct CameraIntrinsics: Sendable {
@@ -46,65 +45,44 @@ struct CameraIntrinsics: Sendable {
     }
 }
 
-/// Knobs for `unprojectDepthMap`.
-struct DepthUnprojectionTuning: Sendable {
-    /// Take every Nth pixel in each axis. 4 turns a 256x192 map into ~3000 points, which
-    /// is plenty for plane fitting and clustering and keeps the per-frame cost small.
-    var sampleStride: Int = 4
-    /// Depth values outside this range are discarded, in metres. Below the near limit is
-    /// usually the user's own hand or body; beyond the far limit LiDAR returns get too
-    /// sparse and noisy to cluster.
-    var depthRange: ClosedRange<Float> = 0.2 ... 6.0
-
-    static let `default` = DepthUnprojectionTuning()
-
-    init() {}
-}
-
 /// Unprojects a depth map into world-space points.
 ///
 /// - Parameters:
-///   - width: Depth map width in pixels.
-///   - height: Depth map height in pixels.
-///   - intrinsics: Intrinsics already scaled to `width` x `height` via `scaled(toWidth:height:)`.
+///   - depth: The filtered depth map; unreliable pixels are skipped.
+///   - intrinsics: Intrinsics already scaled to the depth map's size via `scaled(toWidth:height:)`.
 ///   - cameraTransform: Camera-space to world-space. ARKit's camera space is +X right,
 ///     +Y up, -Z forward, which is what the maths below assumes.
-///   - depthAt: Depth in metres along the optical axis at a depth-map pixel, `(column, row)`
-///     from the top-left. Return a non-finite value for a pixel with no return.
-///   - isConfident: Optional per-pixel filter, for ARKit's confidence map.
+///   - sampleStride: Take every Nth pixel in each axis. 4 turns a 256x192 map into ~3000
+///     points, plenty for plane fitting and clustering at a small per-frame cost.
 func unprojectDepthMap(
-    width: Int,
-    height: Int,
+    _ depth: DepthMap,
     intrinsics: CameraIntrinsics,
     cameraTransform: simd_float4x4,
-    tuning: DepthUnprojectionTuning = .default,
-    depthAt: (Int, Int) -> Float,
-    isConfident: ((Int, Int) -> Bool)? = nil
+    sampleStride: Int = 4
 ) -> [SIMD3<Float>] {
-    guard width > 0, height > 0, tuning.sampleStride > 0 else { return [] }
-    guard intrinsics.focalX != 0, intrinsics.focalY != 0 else { return [] }
+    guard sampleStride > 0, intrinsics.focalX != 0, intrinsics.focalY != 0 else { return [] }
 
     var points: [SIMD3<Float>] = []
-    points.reserveCapacity((width / tuning.sampleStride) * (height / tuning.sampleStride))
+    points.reserveCapacity((depth.width / sampleStride) * (depth.height / sampleStride))
 
-    for row in stride(from: 0, to: height, by: tuning.sampleStride) {
-        for column in stride(from: 0, to: width, by: tuning.sampleStride) {
-            let depth = depthAt(column, row)
-            guard depth.isFinite, tuning.depthRange.contains(depth) else { continue }
-            if let isConfident, !isConfident(column, row) { continue }
-
-            // Pinhole unprojection. Image rows run downwards and camera +Y runs up, hence
-            // the negated Y; camera -Z is forward, hence the negated depth.
-            let cameraPoint = SIMD4<Float>(
-                (Float(column) - intrinsics.principalX) / intrinsics.focalX * depth,
-                -(Float(row) - intrinsics.principalY) / intrinsics.focalY * depth,
-                -depth,
-                1
-            )
-            let world = cameraTransform * cameraPoint
+    for row in stride(from: 0, to: depth.height, by: sampleStride) {
+        for column in stride(from: 0, to: depth.width, by: sampleStride) {
+            guard let z = depth[column, row] else { continue }
+            let world = cameraTransform * SIMD4(cameraPoint(column: Float(column), row: Float(row), depth: z, intrinsics: intrinsics), 1)
             points.append(SIMD3(world.x, world.y, world.z))
         }
     }
 
     return points
+}
+
+/// Pinhole unprojection of a depth-map pixel into ARKit camera space. Image rows run
+/// downwards and camera +Y runs up, hence the negated Y; camera -Z is forward, hence the
+/// negated depth.
+func cameraPoint(column: Float, row: Float, depth: Float, intrinsics: CameraIntrinsics) -> SIMD3<Float> {
+    SIMD3(
+        (column - intrinsics.principalX) / intrinsics.focalX * depth,
+        -(row - intrinsics.principalY) / intrinsics.focalY * depth,
+        -depth
+    )
 }

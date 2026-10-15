@@ -3,7 +3,7 @@ import simd
 
 /// The slab of space the user is about to walk through. All lengths in metres, in the
 /// same coordinate space as the point cloud being tested against it.
-/// Owner: Computer Vision (1.1 / task T11).
+/// Owner: Computer Vision (1.1 / tasks T9, T11).
 struct WalkingCorridor: Sendable {
     /// Where the user is — normally the camera position.
     let origin: SIMD3<Float>
@@ -24,8 +24,20 @@ struct WalkingCorridor: Sendable {
         maxDistance: Float
     ) {
         self.origin = origin
-        self.forward = simd_length(forward) > 1e-6 ? simd_normalize(forward) : [0, 0, -1]
-        self.right = simd_length(right) > 1e-6 ? simd_normalize(right) : [1, 0, 0]
+        let normalizedForward = isFinite(forward) && simd_length(forward) > 1e-6
+            ? simd_normalize(forward)
+            : [0, 0, -1]
+        self.forward = normalizedForward
+
+        // A rectangular corridor needs perpendicular axes. Camera axes are normally
+        // orthogonal, but arbitrary development inputs may not be; remove any forward
+        // component before normalizing the lateral axis.
+        let lateral = isFinite(right)
+            ? right - normalizedForward * simd_dot(right, normalizedForward)
+            : .zero
+        self.right = isFinite(lateral) && simd_length(lateral) > 1e-6
+            ? simd_normalize(lateral)
+            : perpendicular(to: normalizedForward)
         self.width = width
         self.maxDistance = maxDistance
     }
@@ -56,9 +68,10 @@ struct WalkingCorridor: Sendable {
 
         let f = simd_normalize(projected)
         // Derive `right` from the cross product rather than projecting the caller's own
-        // right vector: that guarantees an orthonormal, right-handed basis even when the
-        // input axes were skewed.
-        let r = simd_cross(n, f)
+        // right vector: that guarantees an orthonormal basis even when the input axes were
+        // skewed, or — as for a portrait camera, whose +X runs vertically — unusable.
+        // forward x up points right (e.g. -Z x +Y = +X), matching ARKit's camera axes.
+        let r = simd_cross(f, n)
         guard simd_length(r) > 1e-6 else { return nil }
 
         return WalkingCorridor(
@@ -69,4 +82,31 @@ struct WalkingCorridor: Sendable {
             maxDistance: maxDistance
         )
     }
+}
+
+extension WalkingCorridor {
+    /// Whether `point` lies inside the corridor: ahead of the origin, no further than
+    /// `maxDistance` along `forward`, and within `width / 2` of the centre line.
+    ///
+    /// The region is unbounded vertically, and points on its boundary count as inside.
+    /// Call `flattened(ontoFloorNormal:)` first when the axes come from a tilted camera.
+    func contains(_ point: SIMD3<Float>) -> Bool {
+        guard isFinite(point), isFinite(origin), width.isFinite, maxDistance.isFinite,
+              width > 0, maxDistance > 0
+        else { return false }
+
+        let offset = point - origin
+        let along = simd_dot(offset, forward)
+        return along >= 0 && along <= maxDistance && abs(simd_dot(offset, right)) <= width / 2
+    }
+}
+
+private func isFinite(_ vector: SIMD3<Float>) -> Bool {
+    vector.x.isFinite && vector.y.isFinite && vector.z.isFinite
+}
+
+/// Produces a stable unit vector perpendicular to an already-normalized direction.
+private func perpendicular(to direction: SIMD3<Float>) -> SIMD3<Float> {
+    let reference: SIMD3<Float> = abs(direction.y) < 0.9 ? [0, 1, 0] : [1, 0, 0]
+    return simd_normalize(simd_cross(direction, reference))
 }
