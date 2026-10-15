@@ -6,11 +6,32 @@ import Observation
 @Observable
 final class TripViewModel {
     private(set) var tripState: TripState = .idle
+    private(set) var destination: Destination?
+    private(set) var route: NavigationRoute?
 
     @ObservationIgnored private let services: AppServices
 
-    init(services: AppServices) {
+    /// `destination` and `route` let a caller that already resolved both (e.g. a shared trip) open
+    /// straight into a planned trip instead of starting from nothing.
+    init(services: AppServices, destination: Destination? = nil, route: NavigationRoute? = nil) {
         self.services = services
+        self.destination = destination
+        self.route = route
+    }
+
+    /// Accepts a destination together with its already-computed route, e.g. handed over from
+    /// another screen that resolved both. Replaces whatever destination/route was set before.
+    func accept(destination: Destination, route: NavigationRoute) {
+        self.destination = destination
+        self.route = route
+    }
+
+    /// Short, VoiceOver-friendly summary of the planned route, e.g. "about 400 metres, about 6 minutes".
+    var routeSummary: String? {
+        guard let route else { return nil }
+        let minutes = max(1, Int((route.estimatedDuration / 60).rounded()))
+        let minuteWord = minutes == 1 ? "minute" : "minutes"
+        return "\(SpokenPhrasing.distance(route.totalDistance)), about \(minutes) \(minuteWord)"
     }
 
     var nextInstruction: String {

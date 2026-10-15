@@ -6,8 +6,10 @@ struct TripView: View {
     @State private var viewModel: TripViewModel
     @State private var cameraPosition: MapCameraPosition = .automatic
 
-    init(services: AppServices) {
-        _viewModel = State(initialValue: TripViewModel(services: services))
+    /// `destination` and `route` let a caller that already resolved both (e.g. a shared trip) open
+    /// straight into a planned trip instead of starting from nothing.
+    init(services: AppServices, destination: Destination? = nil, route: NavigationRoute? = nil) {
+        _viewModel = State(initialValue: TripViewModel(services: services, destination: destination, route: route))
     }
 
     var body: some View {
@@ -15,6 +17,26 @@ struct TripView: View {
             TripMapView(tripState: viewModel.tripState, cameraPosition: $cameraPosition)
                 .frame(minHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
+            if let destination = viewModel.destination {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Destination")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    Text(destination.name)
+                        .font(.title3.weight(.semibold))
+                    if let address = destination.address {
+                        Text(address)
+                            .foregroundStyle(.secondary)
+                    }
+                    if let routeSummary = viewModel.routeSummary {
+                        Text(routeSummary)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .combine)
+            }
 
             Text(viewModel.nextInstruction)
                 .font(.title2.weight(.semibold))
@@ -105,6 +127,12 @@ private extension ManeuverKind {
 #Preview {
     NavigationStack {
         TripView(services: .preview)
+    }
+}
+
+#Preview("Shared destination and route") {
+    NavigationStack {
+        TripView(services: .preview, destination: MapsSamples.destination, route: MapsSamples.route)
     }
 }
 
