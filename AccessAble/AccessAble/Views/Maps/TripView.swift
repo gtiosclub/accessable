@@ -14,7 +14,7 @@ struct TripView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            TripMapView(tripState: viewModel.tripState, cameraPosition: $cameraPosition)
+            TripMapView(tripState: viewModel.tripState, route: viewModel.route, cameraPosition: $cameraPosition)
                 .frame(minHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
@@ -72,10 +72,15 @@ struct TripView: View {
 /// `LocationProvider` (TODO(Maps 2.1)) plus an `NSLocationWhenInUseUsageDescription` entry.
 private struct TripMapView: View {
     let tripState: TripState
+    let route: NavigationRoute?
     @Binding var cameraPosition: MapCameraPosition
 
     var body: some View {
         Map(position: $cameraPosition, interactionModes: [.pan, .zoom]) {
+            if let route {
+                MapPolyline(coordinates: route.coordinates.map(\.clCoordinate))
+                    .stroke(.blue, lineWidth: 4)
+            }
             if let maneuver = tripState.nextManeuver {
                 Marker(tripState.destinationName ?? maneuver.instruction,
                        systemImage: maneuver.kind.mapSymbolName,
@@ -150,6 +155,7 @@ private extension ManeuverKind {
                 distanceToNextManeuver: 42,
                 distanceRemaining: 111
             ),
+            route: MapsSamples.route,
             cameraPosition: .constant(
                 .region(MKCoordinateRegion(center: MapsSamples.origin.clCoordinate,
                                             latitudinalMeters: 400, longitudinalMeters: 400))
