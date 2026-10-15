@@ -1,12 +1,12 @@
 import CoreLocation
-import os
 
 @MainActor
 final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerDelegate {
     private let manager = CLLocationManager()
     
-    private nonisolated let authorizationUpdates = Broadcaster<LocationAuthorization>()
-    private nonisolated let latestAuthorization = OSAllocatedUnfairLock<LocationAuthorization>(initialState: .notDetermined)
+    private nonisolated let authorizationUpdates = Broadcaster<LocationAuthorization>(replaysLatest: true)
+    
+    private var lastAuthorization: LocationAuthorization?
     
     override init() {
         super.init()
@@ -24,21 +24,7 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
     }
     
     nonisolated func authorizationStates() -> AsyncStream<LocationAuthorization> {
-        let updates = authorizationUpdates.stream()
-        let current = latestAuthorization.withLock { $0 }
-        
-        return AsyncStream { continuation in
-            continuation.yield(current)
-            let task = Task {
-                var last = current
-                for await state in updates where state != last {
-                    last = state
-                    continuation.yield(state)
-                }
-                continuation.finish()
-            }
-            continuation.onTermination = {_ in task.cancel()}
-        }
+        authorizationUpdates.stream()
     }
     
     nonisolated func requestAuthorization() async {
@@ -58,7 +44,8 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
     
     private func publishAuthorization() {
         let state = currentAuthorization()
-        latestAuthorization.withLock {$0 = state}
+        guard state != lastAuthorization else {return}
+        lastAuthorization = state
         authorizationUpdates.send(state)
     }
     
