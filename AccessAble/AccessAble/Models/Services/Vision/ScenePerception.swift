@@ -7,16 +7,18 @@ import simd
 
 /// Owner: Computer Vision (1.1, 1.4). Turns one `ARFrame` into a `SceneObservation`.
 ///
-/// `capturedImage` goes to Vision for people (T14). `sceneDepth` becomes one filtered
-/// `DepthMap` (T6) that places those detections in the world (T5, T7) and is unprojected
-/// into a point cloud for the floor fit (T10), geometric obstacles (T11) and the ground
-/// profile behind kerb detection (T12).
+/// `capturedImage` goes to Vision for people (T14) and objects (T13). `sceneDepth` becomes
+/// one filtered `DepthMap` (T6) that places those detections in the world (T5, T7) and is
+/// unprojected into a point cloud for the floor fit (T10), geometric obstacles (T11) and
+/// the ground profile behind kerb detection (T12). Obstacles that match a recognized object
+/// take its label.
 ///
 /// Call `analyze` from one queue at a time — `ARSceneAnalyzer` calls it from its
 /// latest-only processing queue. State that outlives a frame, or that the UI reads, lives
 /// behind a `Mutex`.
 final class ScenePerception: Sendable {
     private let peopleDetector: PeopleDetector
+    private let objectDetector: ObjectDetector?
     private let corridorWidth: Float
     private let corridorDistance: Float
     private let log = Logger(subsystem: "AccessAble", category: "ScenePerception")
@@ -37,10 +39,12 @@ final class ScenePerception: Sendable {
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
+        objectDetector: ObjectDetector? = ObjectDetector(),
         corridorWidth: Float = WalkingCorridor.default.width,
         corridorDistance: Float = WalkingCorridor.default.maxDistance
     ) {
         self.peopleDetector = peopleDetector
+        self.objectDetector = objectDetector
         self.corridorWidth = corridorWidth
         self.corridorDistance = corridorDistance
     }
@@ -52,13 +56,23 @@ final class ScenePerception: Sendable {
         let upright = uprightSize(for: frame.camera.imageResolution, orientation: interfaceOrientation)
         var diagnostics = Diagnostics(uprightAspectRatio: Float(upright.width / upright.height))
 
-        var detections: [Detection] = []
+        var recognized: [Detection] = []
+        var obstacles: [Detection] = []
 
-        // T14 — people, with real bounding boxes.
+        // T14 — people.
         do {
-            detections += try peopleDetector.detect(pixelBuffer: frame.capturedImage, orientation: imageOrientation)
+            recognized += try peopleDetector.detect(pixelBuffer: frame.capturedImage, orientation: imageOrientation)
         } catch {
             log.error("people detection failed: \(error.localizedDescription, privacy: .public)")
+        }
+
+        // T13 — everything else the model knows.
+        if let objectDetector {
+            do {
+                recognized += try objectDetector.detect(pixelBuffer: frame.capturedImage, orientation: imageOrientation)
+            } catch {
+                log.error("object detection failed: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
         var ground = GroundSurface.unknown
@@ -73,7 +87,7 @@ final class ScenePerception: Sendable {
             let heading = corridor.flattened(ontoFloorNormal: [0, 1, 0]) ?? corridor
 
             // T5 + T7 — distance and direction for each recognized object.
-            detections = detections.map { detection in
+            recognized = recognized.map { detection in
                 let region = imageOrientation.sensorRect(fromUpright: detection.boundingBox)
                 guard let position = worldPosition(
                     ofRegion: region, in: depthMap, intrinsics: intrinsics, cameraTransform: camera.transform
@@ -92,8 +106,7 @@ final class ScenePerception: Sendable {
                 diagnostics.cameraHeight = distanceFromPlane(point: corridor.origin, plane: fit.plane)
 
                 // T11 — obstacles by geometry, no labels needed.
-                let obstacles = detectObstacles(points: cloud, floor: fit.plane, corridor: corridor)
-                detections += obstacles
+                obstacles = detectObstacles(points: cloud, floor: fit.plane, corridor: corridor)
                     .filter(\.intersectsWalkingCorridor)
                     .compactMap {
                         detection(
@@ -113,7 +126,7 @@ final class ScenePerception: Sendable {
 
         return SceneObservation(
             timestamp: .now,
-            detections: detections,
+            detections: fuse(obstacles: obstacles, recognized: recognized),
             ground: ground,
             recognizedText: [],
             hasMetricDepth: depthMap != nil
