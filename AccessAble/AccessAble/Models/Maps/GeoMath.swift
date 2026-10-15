@@ -80,7 +80,8 @@ enum GeoMath {
         precondition(segments.lowerBound >= 0 && segments.upperBound < coordinates.count,
                      "Segments \(segments) out of bounds for \(coordinates.count) coordinates")
         guard point.latitude.isFinite, point.longitude.isFinite else {
-            return RouteProjection(coordinate: point, segmentIndex: segments.lowerBound,
+            return RouteProjection(originalCoordinate: point, coordinate: point,
+                                   segmentIndex: segments.lowerBound,
                                    distanceAlongRoute: .nan, sideOffset: .nan)
         }
 
@@ -115,7 +116,7 @@ enum GeoMath {
         }
         // `distance` rather than the cross-track angle, so `abs(sideOffset)` matches it exactly.
         let offset = distance(from: point, to: coordinate)
-        return RouteProjection(coordinate: coordinate, segmentIndex: bestIndex,
+        return RouteProjection(originalCoordinate: point, coordinate: coordinate, segmentIndex: bestIndex,
                                distanceAlongRoute: distanceAlongRoute, sideOffset: best.isLeft ? -offset : offset)
     }
 
