@@ -7,6 +7,7 @@ import Observation
 final class TripViewModel {
     private(set) var tripState: TripState = .idle
     private(set) var destination: Destination?
+    private(set) var locationAuthorization: LocationAuthorization = .notDetermined
 
     @ObservationIgnored private let services: AppServices
 
@@ -24,10 +25,29 @@ final class TripViewModel {
         return "In \(SpokenPhrasing.shortDistance(distance)), \(maneuver.instruction)"
     }
 
+    /// Turn-by-turn guidance can't place the user at each turn without Precise Location, so reduced accuracy
+    /// counts as missing access.
+    var needsLocationAccess: Bool {
+        switch locationAuthorization {
+        case .restricted, .denied, .authorized(preciseAccuracy: false): true
+        case .notDetermined, .authorized(preciseAccuracy: true): false
+        }
+    }
+
     func start() async {
         await services.location.requestAuthorization()
-        for await state in services.trip.tripStates() {
-            tripState = state
+
+        await withDiscardingTaskGroup { group in
+            group.addTask { [services] in
+                for await state in services.trip.tripStates() {
+                    await self.receive(state)
+                }
+            }
+            group.addTask { [services] in
+                for await authorization in services.location.authorizationStates() {
+                    await self.receive(authorization)
+                }
+            }
         }
     }
 
@@ -42,4 +62,7 @@ final class TripViewModel {
     func endTrip() async {
         await services.trip.endTrip()
     }
+
+    private func receive(_ state: TripState) { tripState = state }
+    private func receive(_ authorization: LocationAuthorization) { locationAuthorization = authorization }
 }

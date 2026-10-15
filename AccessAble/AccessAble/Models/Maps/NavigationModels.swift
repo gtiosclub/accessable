@@ -69,6 +69,24 @@ enum LocationAuthorization: Equatable, Sendable {
     case authorized(preciseAccuracy: Bool)
 }
 
+extension LocationAuthorization {
+    init(status: CLAuthorizationStatus, accuracy: CLAccuracyAuthorization) {
+        switch status {
+        case .notDetermined:
+            self = .notDetermined
+        case .restricted:
+            self = .restricted
+        case .denied:
+            self = .denied
+        case .authorizedWhenInUse, .authorizedAlways:
+            self = .authorized(preciseAccuracy: accuracy == .fullAccuracy)
+        @unknown default:
+            // Safest reading of a status we don't know yet: don't proceed as if location works.
+            self = .denied
+        }
+    }
+}
+
 struct Destination: Codable, Equatable, Sendable {
     var name: String
     var coordinate: GeoCoordinate

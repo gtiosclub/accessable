@@ -13,6 +13,9 @@ struct TripView: View {
 
     var body: some View {
         VStack(spacing: 16) {
+            if viewModel.needsLocationAccess {
+                LocationAccessNotice(authorization: viewModel.locationAuthorization)
+            }
             TripMapView(tripState: viewModel.tripState)
                 .frame(minHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
