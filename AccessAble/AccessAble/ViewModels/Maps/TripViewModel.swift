@@ -25,10 +25,12 @@ final class TripViewModel {
         return "In \(SpokenPhrasing.shortDistance(distance)), \(maneuver.instruction)"
     }
 
+    /// Turn-by-turn guidance can't place the user at each turn without Precise Location, so reduced accuracy
+    /// counts as missing access.
     var needsLocationAccess: Bool {
         switch locationAuthorization {
-        case .restricted, .denied: true
-        case .notDetermined, .authorized: false
+        case .restricted, .denied, .authorized(preciseAccuracy: false): true
+        case .notDetermined, .authorized(preciseAccuracy: true): false
         }
     }
 

@@ -30,7 +30,7 @@ struct TripViewModelTests {
         (.restricted, true),
         (.denied, true),
         (.authorized(preciseAccuracy: true), false),
-        (.authorized(preciseAccuracy: false), false),
+        (.authorized(preciseAccuracy: false), true),
     ])
     func needsLocationAccess(_ authorization: LocationAuthorization, expected: Bool) async {
         var services = AppServices.preview

@@ -12,11 +12,11 @@ struct LocationAccessNotice: View {
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(message(spoken: true))
 
-            if authorization == .denied {
+            if authorization != .restricted {
                 AccessibleActionButton(
                     title: "Open Settings",
                     systemImage: "gear",
-                    hint: "Opens AccessAble's settings so you can allow location access"
+                    hint: "Opens AccessAble's settings so you can change location access"
                 ) {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         openURL(url)
@@ -34,6 +34,11 @@ struct LocationAccessNotice: View {
         switch authorization {
         case .restricted:
             return "Location access is blocked by a device restriction. Ask whoever manages this device to allow it."
+        case .authorized(preciseAccuracy: false):
+            let path = spoken
+                ? "Settings, AccessAble, Location, Precise Location"
+                : "Settings › AccessAble › Location › Precise Location"
+            return "Precise Location is off, and turn-by-turn guidance needs it to know when you reach each turn. Turn it on in \(path)."
         default:
             let appPath = spoken ? "Settings, AccessAble, Location" : "Settings › AccessAble › Location"
             let systemPath = spoken
@@ -51,5 +56,10 @@ struct LocationAccessNotice: View {
 
 #Preview("Restricted") {
     LocationAccessNotice(authorization: .restricted)
+        .padding()
+}
+
+#Preview("Precise Location off") {
+    LocationAccessNotice(authorization: .authorized(preciseAccuracy: false))
         .padding()
 }
