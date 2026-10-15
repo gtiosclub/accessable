@@ -14,6 +14,7 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
     override init() {
         super.init()
         manager.delegate = self
+        manager.activityType = .fitness
         publishAuthorization()
     }
 
