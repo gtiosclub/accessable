@@ -2,13 +2,13 @@ import Foundation
 import Observation
 import UIKit
 
-/// Owner: Computer Vision (1.1). Drives the live ARKit screen that shows what the
-/// detectors are actually finding — people boxes (T14), geometric obstacles (T11), the
-/// fitted floor (T10) and elevation hazards (T12).
+/// Owner: Computer Vision (1.1). Drives the live ARKit debug screen that shows what the
+/// pipeline is actually finding — recognized objects and people (T13, T14), geometric
+/// obstacles (T11), the fitted floor (T10), elevation hazards (T12) and measured
+/// performance (T20).
 ///
-/// Deliberately owns its own `ARSceneAnalyzer` instead of reading `services.scene`, so
-/// turning this screen on cannot disturb the rest of the app or collide with whoever
-/// wires the real provider into `AppServices` (1.4).
+/// It runs the app's shared `ARSceneAnalyzer` (`services.scene`), so what it shows is what
+/// guidance uses. Where ARKit is unavailable that is a placeholder, and the screen says so.
 @MainActor
 @Observable
 final class LiveSceneViewModel {
@@ -26,17 +26,18 @@ final class LiveSceneViewModel {
     /// Measured analysis rate and latency (T20); nil until a few frames have been timed.
     private(set) var performance: PerformanceMetrics?
 
-    @ObservationIgnored let analyzer: ARSceneAnalyzer
+    /// nil where ARKit world tracking is unavailable.
+    @ObservationIgnored let analyzer: ARSceneAnalyzer?
 
     init(services: AppServices) {
-        analyzer = ARSceneAnalyzer(
-            sessionManager: ARSessionManager(),
-            performance: services.performance,
-            announcements: services.announcements
-        )
+        analyzer = services.scene as? ARSceneAnalyzer
     }
 
     func start() async {
+        guard let analyzer else {
+            errorMessage = ARSessionManagerError.worldTrackingUnsupported.localizedDescription
+            return
+        }
         analyzer.setInterfaceOrientation(.portrait)
         do {
             try await analyzer.start()
@@ -59,7 +60,7 @@ final class LiveSceneViewModel {
 
     func stop() async {
         isRunning = false
-        await analyzer.stop()
+        await analyzer?.stop()
     }
 
     var people: [Detection] {

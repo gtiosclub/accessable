@@ -33,6 +33,9 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// from the main actor.
     let session = ARSession()
 
+    /// False in the Simulator and on devices without world tracking.
+    static var isSupported: Bool { ARWorldTrackingConfiguration.isSupported }
+
     /// True on devices with a LiDAR scanner, where frames carry `sceneDepth`.
     let isDepthSupported = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
 

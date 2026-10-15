@@ -14,17 +14,28 @@ struct AppServices: Sendable {
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
     static func live(performance: PerformanceModeMonitor) -> AppServices {
-        let scene = PlaceholderSceneProvider()      // TODO(CV 1.4): CameraSessionManager + SceneAnalyzer
+        let announcements = PlaceholderAnnouncementEngine() // TODO(UI 3.3): AnnouncementEngine
+        let scene = liveScene(performance: performance, announcements: announcements)
         let trip = PlaceholderTripProvider()        // TODO(Maps 2.2): TripManager / RouteProgressTracker
         return AppServices(
-            announcements: PlaceholderAnnouncementEngine(), // TODO(UI 3.3): AnnouncementEngine
+            announcements: announcements,
             haptics: PlaceholderHaptics(),                  // TODO(UI 3.2): CoreHapticsRenderer
             performance: performance,
             scene: scene,
-            sceneDescriber: scene,                          // TODO(CV 1.3)
+            sceneDescriber: scene,
             trip: trip,
             locationContext: trip                           // TODO(Maps 2.1)
         )
+    }
+
+    /// The camera pipeline where ARKit world tracking runs; the sample scene elsewhere
+    /// (the Simulator, previews).
+    private static func liveScene(
+        performance: PerformanceModeMonitor,
+        announcements: any AnnouncementSink
+    ) -> any SceneObservationProviding & SceneDescribing {
+        guard ARSessionManager.isSupported else { return PlaceholderSceneProvider() }
+        return ARSceneAnalyzer(sessionManager: ARSessionManager(), performance: performance, announcements: announcements)
     }
 
     /// For SwiftUI previews and unit tests.

@@ -32,7 +32,9 @@ struct LiveSceneView: View {
     private var preview: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
-                ARCameraPreview(session: viewModel.analyzer.sessionManager.session)
+                if let analyzer = viewModel.analyzer {
+                    ARCameraPreview(session: analyzer.sessionManager.session)
+                }
 
                 ForEach(viewModel.observation.detections) { detection in
                     DetectionBox(
@@ -136,7 +138,7 @@ private struct DetectionBox: View {
     }
 }
 
-/// Renders the analyzer's own ARKit session, so the preview and the detections come from
+/// Renders the app's shared ARKit session, so the preview and the detections come from
 /// the same frames.
 private struct ARCameraPreview: UIViewRepresentable {
     let session: ARSession
