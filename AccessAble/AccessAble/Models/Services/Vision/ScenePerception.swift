@@ -77,7 +77,7 @@ final class ScenePerception: Sendable {
         var recognized = recognizeObjects(in: frame.capturedImage, orientation: imageOrientation)
         var obstacles: [Detection] = []
         var hazards: [ElevationHazard] = []
-        /// `Detection.id`s of everything inside the walking corridor this frame.
+        // `Detection.id`s of everything inside the walking corridor this frame.
         var inPath = Set<UUID>()
         let depthMap = frame.sceneDepth.flatMap { DepthMap(depth: $0.depthMap, confidence: $0.confidenceMap) }
 

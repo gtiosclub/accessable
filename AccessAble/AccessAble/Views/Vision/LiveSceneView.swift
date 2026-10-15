@@ -74,6 +74,10 @@ struct LiveSceneView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+
+            Text(viewModel.sessionDescription)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()

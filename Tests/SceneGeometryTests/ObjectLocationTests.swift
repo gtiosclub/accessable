@@ -49,3 +49,18 @@ struct ObjectLocationTests {
         ) == nil)
     }
 }
+
+@Suite("Corridor handedness")
+struct CorridorHandednessTests {
+    @Test("flattening keeps the lateral axis pointing to the user's right")
+    func flattenedRightPointsRight() throws {
+        // A portrait camera tilted down: forward is -Z and downwards, and the camera's own
+        // +X runs along the phone's long edge, i.e. vertically.
+        let tilted = WalkingCorridor(origin: .zero, forward: [0, -0.5, -1], right: [0, 1, 0], width: 0.9, maxDistance: 4)
+        let heading = try #require(tilted.flattened(ontoFloorNormal: [0, 1, 0]))
+
+        #expect(abs(heading.right.x - 1) < 1e-5)
+        #expect(heading.bearing(to: [1, 0, -1]).side == .right)
+        #expect(heading.bearing(to: [-1, 0, -1]).side == .left)
+    }
+}

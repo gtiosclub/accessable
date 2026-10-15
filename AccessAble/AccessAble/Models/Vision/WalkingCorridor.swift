@@ -68,9 +68,10 @@ struct WalkingCorridor: Sendable {
 
         let f = simd_normalize(projected)
         // Derive `right` from the cross product rather than projecting the caller's own
-        // right vector: that guarantees an orthonormal, right-handed basis even when the
-        // input axes were skewed.
-        let r = simd_cross(n, f)
+        // right vector: that guarantees an orthonormal basis even when the input axes were
+        // skewed, or — as for a portrait camera, whose +X runs vertically — unusable.
+        // forward x up points right (e.g. -Z x +Y = +X), matching ARKit's camera axes.
+        let r = simd_cross(f, n)
         guard simd_length(r) > 1e-6 else { return nil }
 
         return WalkingCorridor(

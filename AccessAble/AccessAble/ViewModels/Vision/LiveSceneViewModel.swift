@@ -15,7 +15,6 @@ final class LiveSceneViewModel {
     private(set) var observation: SceneObservation = .empty
     private(set) var hazards: [ElevationHazard] = []
     private(set) var errorMessage: String?
-    private(set) var isRunning = false
     /// False on a device without LiDAR. People detection still works; the geometry tasks
     /// have nothing to work with.
     private(set) var isDepthAvailable = false
@@ -25,6 +24,8 @@ final class LiveSceneViewModel {
     private(set) var cameraHeight: Float?
     /// Measured analysis rate and latency (T20); nil until a few frames have been timed.
     private(set) var performance: PerformanceMetrics?
+    /// ARKit tracking state and camera frame rate, for checking the session on a device (T1).
+    private(set) var sessionDescription = ""
 
     /// nil where ARKit world tracking is unavailable.
     @ObservationIgnored let analyzer: ARSceneAnalyzer?
@@ -45,7 +46,6 @@ final class LiveSceneViewModel {
             errorMessage = error.localizedDescription
             return
         }
-        isRunning = true
         isDepthAvailable = analyzer.sessionManager.isDepthSupported
 
         for await observation in analyzer.observations() {
@@ -54,12 +54,15 @@ final class LiveSceneViewModel {
             hazards = observation.elevationHazards
             cameraHeight = diagnostics.cameraHeight
             performance = diagnostics.performance
+            sessionDescription = Self.describe(
+                tracking: analyzer.sessionManager.trackingStateDescription,
+                health: analyzer.sessionManager.healthReport
+            )
             imageAspectRatio = CGFloat(diagnostics.uprightAspectRatio)
         }
     }
 
     func stop() async {
-        isRunning = false
         await analyzer?.stop()
     }
 
@@ -84,6 +87,12 @@ final class LiveSceneViewModel {
         performance.map {
             String(format: "%.0f fps, %.0f ms (p95 %.0f ms)", $0.averageFPS, $0.averageLatencyMilliseconds, $0.p95LatencyMilliseconds)
         }
+    }
+
+    private static func describe(tracking: String, health: FrameHealthReport) -> String {
+        let fps = health.averageFPS.map { String(format: ", camera %.0f fps", $0) } ?? ""
+        let checks = health.passes ? "" : ", move the phone to finish checks"
+        return "Tracking \(tracking)\(fps)\(checks)"
     }
 
     var countsDescription: String {

@@ -42,7 +42,6 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     private let frameQueue = DispatchQueue(label: "AccessAble.ARSessionManager.frames", qos: .userInteractive)
     private let handlers = Mutex<[UUID: FrameHandler]>([:])
     private let health = Mutex(FrameHealthCheck())
-    private let runningState = Mutex(false)
     private let trackingState = Mutex("not started")
     private let log = Logger(subsystem: "AccessAble", category: "ARSessionManager")
 
@@ -68,17 +67,13 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         session.delegate = self
         session.delegateQueue = frameQueue
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
-        runningState.withLock { $0 = true }
     }
 
     /// Pauses the session. Subscribers stay registered and get frames again after `start()`.
     @MainActor
     func stop() {
         session.pause()
-        runningState.withLock { $0 = false }
     }
-
-    var isRunning: Bool { runningState.withLock { $0 } }
 
     // MARK: - Subscribing to frames
 
@@ -97,7 +92,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     // MARK: - Diagnostics
 
     /// Running totals for the T1 acceptance checks; `passes` becomes true once frames are
-    /// flowing and the camera has moved.
+    /// flowing and the camera has moved. Shown on the Live detection screen.
     var healthReport: FrameHealthReport { health.withLock { $0.report } }
 
     /// ARKit's latest tracking state in words, e.g. "normal" or "limited: initializing".
@@ -139,7 +134,6 @@ extension ARSessionManager: ARSessionDelegate {
     }
 
     func session(_ session: ARSession, didFailWithError error: Error) {
-        runningState.withLock { $0 = false }
         log.error("ARKit session failed: \(error.localizedDescription, privacy: .public)")
     }
 
