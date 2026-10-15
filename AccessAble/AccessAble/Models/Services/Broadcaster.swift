@@ -7,7 +7,7 @@ import Synchronization
 /// only ever sees the latest value, which is what we want for camera frames and trip state (drop stale data).
 final class Broadcaster<Element: Sendable>: Sendable {
     private let continuations = Mutex<[UUID: AsyncStream<Element>.Continuation]>([:])
-    private let latest = Mutex<Element?>(nil)
+    private let latestValue = Mutex<Element?>(nil)
     private let replaysLatest: Bool
 
     /// - Parameter replaysLatest: When true, new subscribers immediately receive the most recent value.
@@ -22,14 +22,17 @@ final class Broadcaster<Element: Sendable>: Sendable {
             self?.continuations.withLock { _ = $0.removeValue(forKey: id) }
         }
         continuations.withLock { $0[id] = continuation }
-        if replaysLatest, let value = latest.withLock({ $0 }) {
+        if replaysLatest, let value = latest {
             continuation.yield(value)
         }
         return stream
     }
 
+    /// The most recently sent value. Only recorded when `replaysLatest` is true.
+    var latest: Element? { latestValue.withLock { $0 } }
+
     func send(_ value: Element) {
-        if replaysLatest { latest.withLock { $0 = value } }
+        if replaysLatest { latestValue.withLock { $0 = value } }
         let targets = continuations.withLock { Array($0.values) }
         for continuation in targets { continuation.yield(value) }
     }

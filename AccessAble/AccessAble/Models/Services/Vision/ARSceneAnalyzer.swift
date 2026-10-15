@@ -11,7 +11,7 @@ import UIKit
 /// Frames go through a `LatestOnlyProcessor` (T3), so when analysis is slower than the
 /// camera, stale frames are dropped rather than queued. `PerformanceMode` thins the input
 /// further by only offering every Nth camera frame.
-final class ARSceneAnalyzer: SceneObservationProviding, Sendable {
+final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, Sendable {
     let sessionManager: ARSessionManager
     let perception: ScenePerception
 
@@ -110,6 +110,19 @@ final class ARSceneAnalyzer: SceneObservationProviding, Sendable {
     /// orientation and boxes come back upright.
     func setInterfaceOrientation(_ orientation: UIInterfaceOrientation) {
         state.withLock { $0.interfaceOrientation = orientation }
+    }
+
+    // MARK: - SceneDescribing
+
+    /// Tier A: built from the latest observation, instantly and offline (T18).
+    func describeCurrentScene() async -> String {
+        SceneDescriptionBuilder().describe(broadcaster.latest ?? .empty)
+    }
+
+    /// Tier B, "Ask AI" (T19), is not integrated yet. It must stay outside the obstacle
+    /// pipeline when it is.
+    func ask(_ question: String, locationContext: String?) async throws -> String {
+        "Ask AI is not available yet."
     }
 
     // MARK: - Frames

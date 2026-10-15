@@ -80,15 +80,9 @@ final class LiveSceneViewModel {
         "\(people.count) person(s), \(obstacles.count) obstacle(s) in your path"
     }
 
-    /// One sentence covering the whole frame, for VoiceOver — the overlay boxes
-    /// themselves are purely visual.
+    /// What VoiceOver reads for the readout; the overlay boxes themselves are purely visual.
     var spokenSummary: String {
-        var parts: [String] = []
-        if let hazard = hazards.first {
-            parts.append(SpokenPhrasing.describe(hazard))
-        }
-        parts += observation.prioritizedDetections.map(SpokenPhrasing.describe)
-        return parts.isEmpty ? "Nothing detected." : parts.joined(separator: " ")
+        SceneDescriptionBuilder().describe(observation)
     }
 
     /// "Drop-off at 2.0 m, -0.18 m". A heightChange of 0 means the magnitude was never

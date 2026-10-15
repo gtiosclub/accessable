@@ -1,32 +1,29 @@
 import CoreGraphics
 import Foundation
 
+/// The instant, offline answer to "Describe my surroundings" (Tier A).
+/// Owner: Computer Vision (1.3 / task T18).
+///
+/// Surface hazards come first, then detections hazards-first and nearest-first, then any
+/// text in view. Only the first `maxItems` are spoken: a scene can hold dozens of things,
+/// and the user needs the few that matter, not an inventory.
 struct SceneDescriptionBuilder: Sendable {
+    var maxItems = 4
+
     func describe(_ observation: SceneObservation) -> String {
-        var sentences = observation.prioritizedDetections.map { detection in
-            SpokenPhrasing.describe(detection)
-        }
-        
-        let textSentences = observation.recognizedText.map { recognizedText in
-            let direction = horizontalDirection(
-                for: recognizedText.boundingBox.midX
-            )
-            
-            return "\(recognizedText.string) is visible \(direction)."
-        }
-        
-        sentences.append(contentsOf: textSentences)
-        
-        return sentences.joined(separator: " ")
+        let sentences = observation.elevationHazards.map(SpokenPhrasing.describe)
+            + observation.prioritizedDetections.map(SpokenPhrasing.describe)
+            + observation.recognizedText.map { "\($0.string) is visible \(direction(of: $0.boundingBox.midX))." }
+        guard !sentences.isEmpty else { return "Nothing detected nearby." }
+        return sentences.prefix(maxItems).joined(separator: " ")
     }
-    
-    private func horizontalDirection(for position: CGFloat) -> String {
-        if position < 0.33 {
-            return "on your left"
-        } else if position < 0.66 {
-            return "ahead"
-        } else {
-            return "on your right"
+
+    /// Thirds of the upright frame.
+    private func direction(of horizontalPosition: CGFloat) -> String {
+        switch horizontalPosition {
+        case ..<0.33: "on your left"
+        case ..<0.66: "ahead"
+        default: "on your right"
         }
     }
 }
