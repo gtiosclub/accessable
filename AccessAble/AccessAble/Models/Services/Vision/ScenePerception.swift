@@ -13,7 +13,8 @@ import simd
 /// unprojected into a point cloud for the floor fit (T10), geometric obstacles (T11) and
 /// the ground profile behind kerb detection (T12). Obstacles that match a recognized object
 /// take its label, every detection gets a stable track ID (T15), and the announcer (T16)
-/// decides what in the walking corridor (T9) the user should hear about.
+/// decides what in the walking corridor (T9) the user should hear about. Text (T17) is
+/// read on the side by `TextReader` and attached as it becomes available.
 ///
 /// Call `analyze` from one queue at a time — `ARSceneAnalyzer` calls it from its
 /// latest-only processing queue. State that outlives a frame, or that the UI reads, lives
@@ -37,6 +38,7 @@ final class ScenePerception: Sendable {
 
     private let peopleDetector: PeopleDetector
     private let objectDetector: ObjectDetector?
+    private let textReader: TextReader
     private let corridorWidth: Float
     private let corridorDistance: Float
     private let log = Logger(subsystem: "AccessAble", category: "ScenePerception")
@@ -48,11 +50,13 @@ final class ScenePerception: Sendable {
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
         objectDetector: ObjectDetector? = ObjectDetector(),
+        textReader: TextReader = TextReader(),
         corridorWidth: Float = WalkingCorridor.default.width,
         corridorDistance: Float = WalkingCorridor.default.maxDistance
     ) {
         self.peopleDetector = peopleDetector
         self.objectDetector = objectDetector
+        self.textReader = textReader
         self.corridorWidth = corridorWidth
         self.corridorDistance = corridorDistance
     }
@@ -64,6 +68,7 @@ final class ScenePerception: Sendable {
         let upright = uprightSize(for: frame.camera.imageResolution, orientation: interfaceOrientation)
         var diagnostics = Diagnostics(uprightAspectRatio: Float(upright.width / upright.height))
 
+        textReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp)
         var recognized = recognizeObjects(in: frame.capturedImage, orientation: imageOrientation)
         var obstacles: [Detection] = []
         var hazards: [ElevationHazard] = []
@@ -136,7 +141,7 @@ final class ScenePerception: Sendable {
             timestamp: .now,
             detections: detections,
             ground: groundSurface(for: hazards),
-            recognizedText: [],
+            recognizedText: textReader.currentText(at: frame.timestamp),
             elevationHazards: hazards,
             hasMetricDepth: depthMap != nil
         )
