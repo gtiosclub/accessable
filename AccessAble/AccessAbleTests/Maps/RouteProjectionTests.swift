@@ -80,6 +80,7 @@ struct RouteProjectionAnalyticTests {
     @Test(arguments: cases)
     func matchesTheSphere(_ known: Case) throws {
         let projection = try route(known.coordinates).projection(of: known.point)
+        #expect(projection.originalCoordinate == known.point)
         #expect(projection.segmentIndex == known.segmentIndex)
         #expect(isClose(projection.coordinate.latitude, known.foot.latitude, within: 1e-11))
         #expect(isClose(projection.coordinate.longitude, known.foot.longitude, within: 1e-11))
@@ -93,6 +94,7 @@ struct RouteProjectionCaseTests {
     func clampsBeforeTheStart() throws {
         let fix = point(0.001, -0.002)
         let projection = try route(eastbound).projection(of: fix)
+        #expect(projection.originalCoordinate == fix)
         #expect(projection.coordinate == eastbound[0])
         #expect(projection.segmentIndex == 0)
         #expect(projection.distanceAlongRoute == 0)
@@ -104,6 +106,7 @@ struct RouteProjectionCaseTests {
         let route = try route(eastbound)
         let fix = point(-0.001, 0.012)
         let projection = route.projection(of: fix)
+        #expect(projection.originalCoordinate == fix)
         #expect(projection.coordinate == eastbound[1])
         #expect(projection.segmentIndex == 0)
         #expect(projection.distanceAlongRoute == route.totalDistance)
@@ -116,6 +119,7 @@ struct RouteProjectionCaseTests {
         let route = try route([point(0, 0), point(0, 0.01), point(0.01, 0.01)])
         let fix = point(-0.001, 0.011)
         let projection = route.projection(of: fix)
+        #expect(projection.originalCoordinate == fix)
         #expect(projection.coordinate == route.coordinates[1])
         #expect(projection.segmentIndex == 0)
         #expect(projection.distanceAlongRoute == route.cumulativeDistances[1])
@@ -130,6 +134,7 @@ struct RouteProjectionCaseTests {
         let route = try route(Self.leftTurn)
         let nearCorner = point(0, 0.01 - 0.0005 / metresPerDegree)
         let projection = route.projection(of: nearCorner)
+        #expect(projection.originalCoordinate == nearCorner)
         #expect(projection.coordinate == route.coordinates[1])
         #expect(projection.distanceAlongRoute == route.cumulativeDistances[1])
     }
@@ -139,6 +144,7 @@ struct RouteProjectionCaseTests {
         let route = try route(Self.leftTurn)
         let fix = point(-0.0001, 0.0005 / metresPerDegree)
         let projection = route.projection(of: fix)
+        #expect(projection.originalCoordinate == fix)
         #expect(projection.coordinate == route.coordinates[0])
         #expect(projection.segmentIndex == 0)
         #expect(projection.distanceAlongRoute == 0)
@@ -151,6 +157,7 @@ struct RouteProjectionCaseTests {
         // About 11 m south of the route, with its foot 0.5 mm before the corner.
         let fix = point(-0.0001, 0.01 - 0.0005 / metresPerDegree)
         let projection = route.projection(of: fix)
+        #expect(projection.originalCoordinate == fix)
         #expect(projection.coordinate == route.coordinates[1])
         #expect(projection.segmentIndex == 0)
         #expect(projection.distanceAlongRoute == route.cumulativeDistances[1])
@@ -187,6 +194,7 @@ struct RouteProjectionCaseTests {
         // South-west of the corner, beside the first leg but before the start of the second.
         let fix = point(-0.0001, 0.005)
         let projection = route.projection(of: fix, segments: 1..<2)
+        #expect(projection.originalCoordinate == fix)
         #expect(projection.coordinate == route.coordinates[1])
         #expect(projection.segmentIndex == 1)
         #expect(projection.distanceAlongRoute == route.cumulativeDistances[1])
@@ -199,6 +207,7 @@ struct RouteProjectionCaseTests {
         // North-east of the corner, beside the second leg but past the end of the first.
         let fix = point(0.005, 0.0101)
         let projection = route.projection(of: fix, segments: 0..<1)
+        #expect(projection.originalCoordinate == fix)
         #expect(projection.coordinate == route.coordinates[1])
         #expect(projection.segmentIndex == 0)
         #expect(projection.distanceAlongRoute == route.cumulativeDistances[1])
@@ -263,6 +272,8 @@ struct RouteProjectionCaseTests {
     func propagatesNonFiniteInput(_ point: GeoCoordinate) throws {
         let projection = try route(Self.outAndBack).projection(of: point, segments: 1..<2)
         // Bit patterns, since NaN never equals itself.
+        #expect(projection.originalCoordinate.latitude.bitPattern == point.latitude.bitPattern)
+        #expect(projection.originalCoordinate.longitude.bitPattern == point.longitude.bitPattern)
         #expect(projection.coordinate.latitude.bitPattern == point.latitude.bitPattern)
         #expect(projection.coordinate.longitude.bitPattern == point.longitude.bitPattern)
         #expect(projection.segmentIndex == 1)
@@ -369,6 +380,20 @@ struct RouteProjectionPropertyTests {
     }
 
     @Test
+    func keepsTheOriginalGPSCoordinate() throws {
+        let route = try route(Self.campusRoute)
+        var sawSnappedAwayFromGPS = false
+        for point in Self.campusPoints {
+            let projection = route.projection(of: point)
+            #expect(projection.originalCoordinate == point, "\(point)")
+            if projection.coordinate != point {
+                sawSnappedAwayFromGPS = true
+            }
+        }
+        #expect(sawSnappedAwayFromGPS)
+    }
+
+    @Test
     func searchesTheWholeRouteByDefault() throws {
         let route = try route(Self.campusRoute)
         for point in Self.campusPoints {
@@ -381,6 +406,7 @@ struct RouteProjectionPropertyTests {
         let route = try route(Self.campusRoute)
         for (index, vertex) in route.coordinates.enumerated() {
             let projection = route.projection(of: vertex)
+            #expect(projection.originalCoordinate == vertex)
             #expect(projection.coordinate == vertex)
             #expect(projection.segmentIndex == max(index - 1, 0))
             #expect(projection.distanceAlongRoute == route.cumulativeDistances[index])
