@@ -7,6 +7,7 @@ import SwiftUI
 struct HomeView: View {
     @State private var viewModel: HomeViewModel
     @Environment(AppViewModel.self) private var app
+    private let intents = IntentsModel.shared
 
     init(services: AppServices) {
         _viewModel = State(initialValue: HomeViewModel(services: services))
@@ -63,9 +64,14 @@ struct HomeView: View {
                 .accessibilityLabel("Settings")
             }
         }
-        // Two-finger double-tap under VoiceOver.
+        // Two-finger double-tap under VoiceOver
         .accessibilityAction(.magicTap) {
             Task { await viewModel.repeatLast() }
+        }
+        .onChange(of: intents.describeRequested, initial: true) { _, requested in
+            guard requested else { return }
+            intents.describeRequested = false
+            Task { await viewModel.describeSurroundings() }
         }
         .task { await viewModel.start() }
     }
