@@ -2,6 +2,7 @@ import ARKit
 import Foundation
 import Synchronization
 import UIKit
+import QuartzCore
 import os
 import simd
 
@@ -34,6 +35,8 @@ final class ScenePerception: Sendable {
         /// width / height of the frame once rotated upright. Overlays need it to map a
         /// normalized box onto an aspect-filled preview.
         var uprightAspectRatio: Float = 3.0 / 4.0
+        /// Analysis rate and latency over the last few seconds (T20).
+        var performance: PerformanceMetrics?
     }
 
     private let peopleDetector: PeopleDetector
@@ -46,6 +49,7 @@ final class ScenePerception: Sendable {
     private let diagnosticsState = Mutex(Diagnostics())
     private let tracker = Mutex(ObjectTracker())
     private let announcer = Mutex(ObstacleAnnouncer())
+    private let frameTimer = Mutex(FrameTimer())
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
@@ -64,6 +68,7 @@ final class ScenePerception: Sendable {
     var diagnostics: Diagnostics { diagnosticsState.withLock { $0 } }
 
     func analyze(_ frame: ARFrame, interfaceOrientation: UIInterfaceOrientation) -> Analysis {
+        let start = CACurrentMediaTime()
         let imageOrientation = CGImagePropertyOrientation(cameraImageIn: interfaceOrientation)
         let upright = uprightSize(for: frame.camera.imageResolution, orientation: interfaceOrientation)
         var diagnostics = Diagnostics(uprightAspectRatio: Float(upright.width / upright.height))
@@ -134,6 +139,10 @@ final class ScenePerception: Sendable {
                 hazards: hazards,
                 at: frame.timestamp
             )
+        }
+        diagnostics.performance = frameTimer.withLock { timer in
+            timer.record(start: start, end: CACurrentMediaTime())
+            return timer.metrics
         }
         diagnosticsState.withLock { $0 = diagnostics }
 

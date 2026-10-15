@@ -66,6 +66,12 @@ struct LiveSceneView: View {
 
             Text(viewModel.countsDescription)
                 .font(.subheadline)
+
+            if let performance = viewModel.performanceDescription {
+                Text(performance)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()

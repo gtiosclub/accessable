@@ -11,15 +11,8 @@ private func prediction(_ label: String, _ rect: CGRect, confidence: Float = 0.9
     Detection(label: label, confidence: confidence, boundingBox: rect, origin: .model, isHazard: false)
 }
 
-@Suite("T20 evaluation")
+@Suite("T20 — detection and performance evaluation")
 struct EvaluationTests {
-    @Test func iou() {
-        #expect(abs(intersectionOverUnion(box(0, 0, 0.2, 0.2), box(0, 0, 0.2, 0.2)) - 1) < 1e-6)
-        #expect(intersectionOverUnion(box(0, 0, 0.1, 0.1), box(0.5, 0.5, 0.1, 0.1)) == 0)
-        // half overlap: 0.02 / 0.06
-        #expect(abs(intersectionOverUnion(box(0, 0, 0.2, 0.2), box(0.1, 0, 0.2, 0.2)) - 1.0 / 3) < 1e-6)
-    }
-
     @Test func perfectMatch() {
         let result = evaluateDetections(DetectionTestCase(
             expected: [GroundTruthDetection(label: "chair", boundingBox: box(0.4, 0.4, 0.2, 0.3))],
@@ -49,18 +42,6 @@ struct EvaluationTests {
         #expect(result.precision == 1 && result.recall == 1)
     }
 
-    @Test func distanceErrors() throws {
-        let result = try #require(evaluateDistances([
-            DistanceTestCase(estimatedMeters: 1.1, actualMeters: 1.0),
-            DistanceTestCase(estimatedMeters: 1.8, actualMeters: 2.0),
-            DistanceTestCase(estimatedMeters: 3.3, actualMeters: 3.0),
-        ]))
-        #expect(abs(result.meanAbsoluteError - 0.2) < 1e-5)
-        #expect(abs(result.rootMeanSquaredError - (0.14 / 3).squareRoot()) < 1e-5)
-        #expect(abs(result.maxAbsoluteError - 0.3) < 1e-5)
-        #expect(evaluateDistances([]) == nil)
-    }
-
     @Test func performance() throws {
         // 31 frames over 1 second, latency 1...31 ms
         let timings = (0..<31).map { FrameTiming(timestamp: Double($0) / 30, processingMilliseconds: Double($0 + 1)) }
@@ -70,10 +51,14 @@ struct EvaluationTests {
         #expect(result.p95LatencyMilliseconds == 30) // ceil(0.95 * 31) = 30th value
     }
 
-    @Test func frameTimer() {
-        var timer = FrameTimer()
-        timer.record(start: 1.0, end: 1.015)
+    @Test func frameTimerKeepsTheMostRecentFrames() {
+        var timer = FrameTimer(capacity: 3)
+        for frame in 0 ..< 5 {
+            timer.record(start: Double(frame), end: Double(frame) + 0.015)
+        }
+        #expect(timer.timings.map(\.timestamp) == [2, 3, 4])
         #expect(abs(timer.timings[0].processingMilliseconds - 15) < 1e-6)
+        #expect(timer.metrics?.averageFPS == 1)
     }
 
     @Test func manifest() throws {

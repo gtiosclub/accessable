@@ -23,6 +23,8 @@ final class LiveSceneViewModel {
     private(set) var imageAspectRatio: CGFloat = 3.0 / 4.0
     /// Camera height above the fitted floor, in metres; nil until a floor is found.
     private(set) var cameraHeight: Float?
+    /// Measured analysis rate and latency (T20); nil until a few frames have been timed.
+    private(set) var performance: PerformanceMetrics?
 
     @ObservationIgnored let analyzer: ARSceneAnalyzer
 
@@ -50,6 +52,7 @@ final class LiveSceneViewModel {
             self.observation = observation
             hazards = observation.elevationHazards
             cameraHeight = diagnostics.cameraHeight
+            performance = diagnostics.performance
             imageAspectRatio = CGFloat(diagnostics.uprightAspectRatio)
         }
     }
@@ -59,11 +62,11 @@ final class LiveSceneViewModel {
         await analyzer.stop()
     }
 
-    /// People first (they move), then everything else nearest-first.
     var people: [Detection] {
-        observation.detections.filter { $0.origin == .model }
+        observation.detections.filter { $0.label == "person" }
     }
 
+    /// Everything the geometry found in the walking corridor, labelled or not.
     var obstacles: [Detection] {
         observation.detections.filter { $0.origin == .geometric }
     }
@@ -74,6 +77,12 @@ final class LiveSceneViewModel {
         // Held normally this should read roughly 1.1 to 1.5 m. A wildly different number
         // means the floor fit latched onto something that is not the floor.
         return String(format: "Floor found, camera %.2f m above it", height)
+    }
+
+    var performanceDescription: String? {
+        performance.map {
+            String(format: "%.0f fps, %.0f ms (p95 %.0f ms)", $0.averageFPS, $0.averageLatencyMilliseconds, $0.p95LatencyMilliseconds)
+        }
     }
 
     var countsDescription: String {
