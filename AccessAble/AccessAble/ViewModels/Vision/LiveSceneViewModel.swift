@@ -21,6 +21,8 @@ final class LiveSceneViewModel {
     private(set) var isDepthAvailable = false
     /// Width / height of the upright camera image, for placing overlay boxes.
     private(set) var imageAspectRatio: CGFloat = 3.0 / 4.0
+    /// Camera height above the fitted floor, in metres; nil until a floor is found.
+    private(set) var cameraHeight: Float?
 
     @ObservationIgnored let analyzer: ARSceneAnalyzer
 
@@ -37,12 +39,14 @@ final class LiveSceneViewModel {
             return
         }
         isRunning = true
-        isDepthAvailable = analyzer.isDepthAvailable
+        isDepthAvailable = analyzer.sessionManager.isDepthSupported
 
         for await observation in analyzer.observations() {
+            let diagnostics = analyzer.perception.diagnostics
             self.observation = observation
-            hazards = analyzer.latestHazards
-            imageAspectRatio = CGFloat(analyzer.uprightAspectRatio)
+            hazards = diagnostics.hazards
+            cameraHeight = diagnostics.cameraHeight
+            imageAspectRatio = CGFloat(diagnostics.uprightAspectRatio)
         }
     }
 
@@ -62,7 +66,7 @@ final class LiveSceneViewModel {
 
     var floorDescription: String {
         guard isDepthAvailable else { return "No depth sensor on this device" }
-        guard let height = analyzer.cameraHeightAboveFloor else { return "Looking for the ground…" }
+        guard let height = cameraHeight else { return "Looking for the ground…" }
         // Held normally this should read roughly 1.1 to 1.5 m. A wildly different number
         // means the floor fit latched onto something that is not the floor.
         return String(format: "Floor found, camera %.2f m above it", height)

@@ -12,7 +12,7 @@ import PackageDescription
 // paths outside the package root.
 let package = Package(
     name: "SceneGeometry",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v15)],
     targets: [
         .target(
             name: "SceneGeometry",
