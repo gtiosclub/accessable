@@ -20,12 +20,24 @@ struct WalkingCorridor: Sendable {
         origin: SIMD3<Float>,
         forward: SIMD3<Float>,
         right: SIMD3<Float>,
-        width: Float,
-        maxDistance: Float
+        width: Float = 1.0,
+        maxDistance: Float = 4.0
     ) {
         self.origin = origin
-        self.forward = simd_length(forward) > 1e-6 ? simd_normalize(forward) : [0, 0, -1]
-        self.right = simd_length(right) > 1e-6 ? simd_normalize(right) : [1, 0, 0]
+        let normalizedForward = isFinite(forward) && simd_length(forward) > 1e-6
+            ? simd_normalize(forward)
+            : [0, 0, -1]
+        self.forward = normalizedForward
+
+        // A rectangular corridor needs perpendicular axes. Camera axes are normally
+        // orthogonal, but arbitrary development inputs may not be; remove any forward
+        // component before normalizing the lateral axis.
+        let lateral = isFinite(right)
+            ? right - normalizedForward * simd_dot(right, normalizedForward)
+            : .zero
+        self.right = isFinite(lateral) && simd_length(lateral) > 1e-6
+            ? simd_normalize(lateral)
+            : perpendicular(to: normalizedForward)
         self.width = width
         self.maxDistance = maxDistance
     }
@@ -69,4 +81,41 @@ struct WalkingCorridor: Sendable {
             maxDistance: maxDistance
         )
     }
+}
+
+/// Returns whether `point` lies inside the corridor's forward rectangular prism.
+///
+/// The prism is unbounded vertically: this test only considers distance along the path and
+/// lateral offset. Points on each boundary are included. Call `flattened(ontoFloorNormal:)`
+/// first when camera axes need to be interpreted relative to a known floor plane.
+func contains(point: SIMD3<Float>, corridor: WalkingCorridor) -> Bool {
+    guard isFinite(point),
+          isFinite(corridor.origin),
+          isFinite(corridor.forward),
+          isFinite(corridor.right),
+          corridor.width.isFinite,
+          corridor.maxDistance.isFinite,
+          corridor.width > 0,
+          corridor.maxDistance > 0
+    else {
+        return false
+    }
+
+    let offset = point - corridor.origin
+    let forwardDistance = simd_dot(offset, corridor.forward)
+    let lateralDistance = simd_dot(offset, corridor.right)
+
+    return forwardDistance >= 0
+        && forwardDistance <= corridor.maxDistance
+        && abs(lateralDistance) <= corridor.width / 2
+}
+
+private func isFinite(_ vector: SIMD3<Float>) -> Bool {
+    vector.x.isFinite && vector.y.isFinite && vector.z.isFinite
+}
+
+/// Produces a stable unit vector perpendicular to an already-normalized direction.
+private func perpendicular(to direction: SIMD3<Float>) -> SIMD3<Float> {
+    let reference: SIMD3<Float> = abs(direction.y) < 0.9 ? [0, 1, 0] : [1, 0, 0]
+    return simd_normalize(simd_cross(direction, reference))
 }

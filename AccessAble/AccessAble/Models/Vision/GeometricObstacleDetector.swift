@@ -92,8 +92,7 @@ func detectObstacles(
             maxLateral = max(maxLateral, footprint.y)
             // 7. Inside the corridor rectangle: ahead of the user, not past the horizon
             // we care about, and within half a width of the centre line.
-            if footprint.x >= 0, footprint.x <= corridor.maxDistance,
-               abs(footprint.y) <= corridor.width / 2 {
+            if contains(point: kept[index], corridor: corridor) {
                 intersects = true
             }
         }
