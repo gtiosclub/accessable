@@ -57,6 +57,9 @@ final class TextReader: Sendable {
         }
     }
 
+    /// True while a read is running on the OCR queue.
+    var isReading: Bool { state.withLock { $0.isReading } }
+
     /// Text read recently enough to still be relevant at `time`.
     func currentText(at time: TimeInterval) -> [RecognizedText] {
         state.withLock { $0.memory.current(at: time) }

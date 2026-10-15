@@ -30,8 +30,72 @@ final class LiveSceneViewModel {
     /// nil where ARKit world tracking is unavailable.
     @ObservationIgnored let analyzer: ARSceneAnalyzer?
 
+    // MARK: Field testing (device validation checklist)
+
+    /// Whether frames and announcements are being written to a field-test file.
+    private(set) var isRecording = false
+    /// Name of the file being written, shown so the tester can say which walk was which.
+    private(set) var recordingName: String?
+    /// The checklist step most recently marked.
+    private(set) var lastMark: String?
+    /// Speak delivered announcements and play their haptics here, standing in for the
+    /// announcement engine (3.3) until it lands.
+    var speaksAnnouncements = true {
+        didSet { speaksAnnouncements ? speaker.activate() : speaker.deactivate() }
+    }
+    /// The most recent delivered announcement, mirrored on screen.
+    private(set) var lastAnnouncement: AnnouncementEvent?
+
+    @ObservationIgnored private let announcements: any AnnouncementEngineProtocol
+    @ObservationIgnored private let speaker = FieldTestSpeaker()
+    @ObservationIgnored private var deliveryTask: Task<Void, Never>?
+
+    /// The device validation checklist in docs/ComputerVision.md, as markers for a recording.
+    static let checklistMarks = [
+        "1 Session: hold still, then pan",
+        "2 Performance: normal walk",
+        "3 Floor: chest height",
+        "4 Distance: chair at 1 m",
+        "4 Distance: chair at 2 m",
+        "4 Distance: chair at 3 m",
+        "5 Bearing: object on the right",
+        "5 Bearing: object on the left",
+        "6 Fusion: chair in path",
+        "7 Walk toward chair",
+        "7 Stand still facing chair",
+        "7 Person walking across",
+        "7 Person walking toward",
+        "8 Kerb / step up",
+        "8 Step down / kerb down",
+        "8 Stairs down (drop-off)",
+        "9 OCR: room sign",
+        "10 Long run (thermal)",
+    ]
+
     init(services: AppServices) {
         analyzer = services.scene as? ARSceneAnalyzer
+        announcements = services.announcements
+    }
+
+    func toggleRecording() {
+        guard let recorder = analyzer?.recorder else { return }
+        if recorder.isRecording {
+            recorder.stop()
+            isRecording = false
+            return
+        }
+        do {
+            recordingName = try recorder.start().lastPathComponent
+            isRecording = true
+            lastMark = nil
+        } catch {
+            errorMessage = "Could not start recording: \(error.localizedDescription)"
+        }
+    }
+
+    func mark(_ label: String) {
+        analyzer?.recorder.mark(label)
+        lastMark = label
     }
 
     func start() async {
@@ -47,6 +111,16 @@ final class LiveSceneViewModel {
             return
         }
         isDepthAvailable = analyzer.sessionManager.isDepthSupported
+        if speaksAnnouncements { speaker.activate() }
+        deliveryTask?.cancel()
+        deliveryTask = Task { [weak self, announcements, recorder = analyzer.recorder] in
+            for await event in announcements.deliveredEvents() {
+                recorder.recordDelivered(event)
+                guard let self else { return }
+                self.lastAnnouncement = event
+                if self.speaksAnnouncements { self.speaker.deliver(event) }
+            }
+        }
 
         for await observation in analyzer.observations() {
             let diagnostics = analyzer.perception.diagnostics
@@ -63,6 +137,11 @@ final class LiveSceneViewModel {
     }
 
     func stop() async {
+        deliveryTask?.cancel()
+        deliveryTask = nil
+        speaker.deactivate()
+        analyzer?.recorder.stop()
+        isRecording = false
         await analyzer?.stop()
     }
 

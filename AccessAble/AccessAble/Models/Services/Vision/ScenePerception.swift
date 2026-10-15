@@ -24,6 +24,12 @@ final class ScenePerception: Sendable {
     struct Analysis: Sendable {
         let observation: SceneObservation
         let announcements: [AnnouncementEvent]
+        /// `Detection.id`s of the detections inside the walking corridor this frame.
+        let inPath: Set<UUID>
+        /// Time spent in `analyze`, in milliseconds.
+        let processingMilliseconds: Double
+        /// Whether an OCR read was running while this frame was analyzed.
+        let wasReadingText: Bool
     }
 
     /// What the live debug screen shows besides the observation itself.
@@ -74,6 +80,7 @@ final class ScenePerception: Sendable {
         var diagnostics = Diagnostics(uprightAspectRatio: Float(upright.width / upright.height))
 
         textReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp)
+        let wasReadingText = textReader.isReading
         var recognized = recognizeObjects(in: frame.capturedImage, orientation: imageOrientation)
         var obstacles: [Detection] = []
         var hazards: [ElevationHazard] = []
@@ -140,8 +147,9 @@ final class ScenePerception: Sendable {
                 at: frame.timestamp
             )
         }
+        let end = CACurrentMediaTime()
         diagnostics.performance = frameTimer.withLock { timer in
-            timer.record(start: start, end: CACurrentMediaTime())
+            timer.record(start: start, end: end)
             return timer.metrics
         }
         diagnosticsState.withLock { $0 = diagnostics }
@@ -154,7 +162,13 @@ final class ScenePerception: Sendable {
             elevationHazards: hazards,
             hasMetricDepth: depthMap != nil
         )
-        return Analysis(observation: observation, announcements: announcements)
+        return Analysis(
+            observation: observation,
+            announcements: announcements,
+            inPath: inPath,
+            processingMilliseconds: (end - start) * 1000,
+            wasReadingText: wasReadingText || textReader.isReading
+        )
     }
 }
 

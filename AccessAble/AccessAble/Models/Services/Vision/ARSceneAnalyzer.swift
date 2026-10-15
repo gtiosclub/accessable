@@ -14,6 +14,8 @@ import UIKit
 final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, Sendable {
     let sessionManager: ARSessionManager
     let perception: ScenePerception
+    /// Idle unless a field test is being recorded from the Live detection screen.
+    let recorder = FieldTestRecorder()
 
     private let performance: any PerformanceModeProviding
     private let broadcaster = Broadcaster<SceneObservation>(replaysLatest: true)
@@ -54,12 +56,20 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, Sendabl
         }
 
         processor = LatestOnlyProcessor(label: "AccessAble.ARSceneAnalyzer.analysis") {
-            [perception, broadcaster, announcementQueue] captured in
+            [perception, broadcaster, announcementQueue, recorder, sessionManager] captured in
             let analysis = perception.analyze(captured.frame, interfaceOrientation: captured.interfaceOrientation)
             broadcaster.send(analysis.observation)
             for event in analysis.announcements {
                 announcementQueue.yield(event)
             }
+            recorder.record(FieldTestRecorder.FrameRecord(
+                analysis: analysis,
+                diagnostics: perception.diagnostics,
+                frameTimestamp: captured.frame.timestamp,
+                now: ProcessInfo.processInfo.systemUptime,
+                tracking: sessionManager.trackingStateDescription,
+                cameraFPS: sessionManager.healthReport.averageFPS
+            ))
         }
     }
 
