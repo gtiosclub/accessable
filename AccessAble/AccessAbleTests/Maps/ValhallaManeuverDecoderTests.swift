@@ -66,6 +66,7 @@ struct ValhallaManeuverDecoderTests {
             try ValhallaGeometryDecoder.decodeLegsWithManeuvers(from: data)
         }
     }
+    
     @Test(arguments: [39, 40, 41, 42, 43])
     func keepsPedestrianManeuvers(_ type: Int) throws {
         let data = try alteredFixture { $0[1]["type"] = type }
