@@ -22,7 +22,7 @@ future "Ask AI" feature (T19) stays outside it.
 |---|---|
 | F1 Obstacle & hazard detection | Geometric obstacles in the walking corridor (T11), kerbs, steps and drop-offs (T12), objects (T13) and people (T14), fused so a recognized obstacle is named once, tracked across frames (T15), announced on entry and threshold crossings (T16). |
 | F2 LiDAR distance estimation | Filtered depth (T6), boxes mapped into the depth map (T5), robust per-object distance and bearing (T7), calibration and error metrics (T8). No relative-depth fallback on non-LiDAR devices; see limitations. |
-| F3 Scene understanding | Instant offline "Describe my surroundings" (T18). Ask AI (T19), Maps location context, and T21–T24 are not implemented. |
+| F3 Scene understanding | Instant offline "Describe my surroundings" (T18). On-device Ask AI on a still frame (T19). Maps location context and T21–T24 are not implemented. |
 | F4 Text, signs & landmarks | OCR with confidence filtering and de-duplication (T17). Landmarks/POIs, OCR + GPS fusion and surface classification are not implemented. |
 | F5 Camera / vision infrastructure | One shared ARKit session (T1), latest-frame-only processing (T3), orientation handling (T4), performance-mode throttling, on-device FPS/latency measurement and an evaluation toolkit (T20). Battery and thermal benchmarks and the recorded test set are still to do. |
 
@@ -163,7 +163,7 @@ protocol AnnouncementSink { func submit(_ event: AnnouncementEvent) async }
 | `AlertState` | Private to `ObstacleAnnouncer`. |
 | `SceneEntity` (T18 input) | `SceneObservation`. |
 | `CalibrationSample`, `CalibrationReport` (T8) | `DistanceTestCase`, `DistanceMetrics`, shared with T20. |
-| `AIQuery`, `AIResponse` (T19) | `SceneDescribing.ask(_:locationContext:)`, already the app's contract. Add types only if T19 needs them internally. |
+| `AIQuery`, `AIResponse` (T19) | `SceneDescribing.ask(_:locationContext:)`, already the app's contract. Internally `AskAI.answer(_:imageData:)` returns `AskAIResponse` (answer, latency in ms). |
 
 ## Architectural decisions
 
@@ -214,7 +214,7 @@ a physical device by the integrator; see **Device validation**.
 | T16 Alert thresholds | Smitha | #105 | Rewritten, integrated | `ObstacleAnnouncer.swift` | Emits `AnnouncementEvent`s; exit grace period, state pruning, elevation hazards, priority and haptic mapping. |
 | T17 OCR | Smitha | #114 | Integrated | `TextDetector.swift`, `RecognizedTextMemory.swift`, `TextReader.swift` | Off the safety path at ≤1 Hz; confidence filter and de-duplication. |
 | T18 Instant descriptions | Smitha | #112 | Integrated | `SceneDescriptionBuilder.swift` | Hazards first, capped at four items, speakable empty scene; serves `describeCurrentScene()`. |
-| T19 Ask AI | Deshna, Nish | — | Not started | `ARSceneAnalyzer.ask` returns "not available" | Must stay outside the obstacle pipeline. Ownership needs settling. |
+| T19 Ask AI | Deshna, Nish | — | Implemented, not on device yet | `AskAI.swift`, `ImageFacts.swift`, `ARSceneAnalyzer.ask` | On-device only. Facts: the latest `SceneObservation` (objects, people, kerbs with distance and direction, as in T18) plus text (T17's `TextDetector`), scene labels and each object's main colour read from one still frame. Foundation Models answers from those facts, a template where Apple Intelligence is unavailable; iOS 26's model is text-only, so it never sees the image. Outside the obstacle pipeline. Camera guidance screen has an Ask AI section. |
 | T20 Test set & metrics | Deshna | #122 | Metrics integrated; data missing | `Evaluation/`, `TestSet/` | Live FPS/latency on the Live screen. `TestSet/annotations.json` has no frames yet. |
 
 ### Task descriptions that changed
@@ -293,7 +293,7 @@ Camera guidance for announcements:
 swift test --scratch-path /tmp/accessable-build
 ```
 
-135 tests in 24 suites cover everything in `Models/Vision` and the shared phrasing, including
+159 tests in 29 suites cover everything in `Models/Vision` and the shared phrasing, including
 the T5 orientation mapping against Vision for all eight orientations, T6 filtering on real
 pixel buffers, T13 and T17 against the bundled test image, and the T16 announcement rules.
 `Models/Services/Vision` is covered by the iOS build and the device checklist above.
