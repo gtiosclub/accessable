@@ -43,6 +43,17 @@ final class TripViewModel {
         }
     }
 
+    /// VoiceOver reads the map as this one element.
+    var mapAccessibilityLabel: String {
+        guard let name = destination?.name ?? tripState.destinationName else { return "Map. No destination chosen." }
+        guard let route else { return "Map showing \(name). No walking route yet." }
+        // SpokenPhrasing's half-metre precision is noise over a whole route
+        let metres = max(10, Int((route.totalDistance / 10).rounded()) * 10)
+        let minutes = max(1, Int((route.estimatedDuration / 60).rounded()))
+        let duration = minutes == 1 ? "1 minute" : "\(minutes) minutes"
+        return "Map showing a walking route to \(name), about \(metres) metres, about \(duration)."
+    }
+
     /// Reduced accuracy still shows, as an approximate area instead of a dot.
     var showsUserLocation: Bool {
         if case .authorized = locationAuthorization { true } else { false }

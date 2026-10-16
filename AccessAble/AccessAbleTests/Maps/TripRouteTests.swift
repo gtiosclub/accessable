@@ -45,12 +45,14 @@ private struct RouteRequest: Equatable {
 private actor FakeRouting: RoutingService {
     private(set) var requests: [RouteRequest] = []
     private let failure: RoutingError?
+    private let duration: Double
     private let heldDestination: GeoCoordinate?
     private var released = false
     private var held: [CheckedContinuation<Void, Never>] = []
 
-    init(failure: RoutingError? = nil, holding heldDestination: GeoCoordinate? = nil) {
+    init(failure: RoutingError? = nil, duration: Double = 60, holding heldDestination: GeoCoordinate? = nil) {
         self.failure = failure
+        self.duration = duration
         self.heldDestination = heldDestination
     }
 
@@ -68,7 +70,7 @@ private actor FakeRouting: RoutingService {
                 RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Depart", spokenInstruction: "Depart"),
                 RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "Arrive"),
             ],
-            estimatedDuration: 60
+            estimatedDuration: duration
         )
     }
 
@@ -176,5 +178,51 @@ struct TripRouteTests {
         #expect(viewModel.routeTask == nil)
         #expect(await routing.requests.isEmpty)
         #expect(viewModel.route == nil)
+    }
+
+    @Test
+    func mapLabelWithoutDestination() async {
+        let viewModel = makeViewModel(locations: [start], routing: FakeRouting())
+        await viewModel.start()
+
+        #expect(viewModel.mapAccessibilityLabel == "Map. No destination chosen.")
+    }
+
+    @Test
+    func mapLabelBeforeRoute() async {
+        let viewModel = makeViewModel(locations: [], routing: FakeRouting())
+        await viewModel.start()
+        viewModel.setDestination(library)
+
+        #expect(viewModel.mapAccessibilityLabel == "Map showing Library. No walking route yet.")
+    }
+
+    // start to the library is 311.9 m, which rounds to 310
+    @Test(arguments: [
+        (60.0, "about 1 minute"),
+        (29.0, "about 1 minute"),
+        (89.0, "about 1 minute"),
+        (91.0, "about 2 minutes"),
+        (260.0, "about 4 minutes"),
+    ])
+    func mapLabelWithRoute(duration: Double, spokenDuration: String) async {
+        let viewModel = makeViewModel(locations: [start], routing: FakeRouting(duration: duration))
+        await viewModel.start()
+        viewModel.setDestination(library)
+        await viewModel.routeTask?.value
+
+        #expect(viewModel.mapAccessibilityLabel
+            == "Map showing a walking route to Library, about 310 metres, \(spokenDuration).")
+    }
+
+    @Test
+    func mapLabelForVeryShortRouteSaysTenMetres() async {
+        let nextDoor = Destination(name: "Next door", coordinate: GeoCoordinate(latitude: 33.77502, longitude: -84.3990))
+        let viewModel = makeViewModel(locations: [start], routing: FakeRouting())
+        await viewModel.start()
+        viewModel.setDestination(nextDoor)
+        await viewModel.routeTask?.value
+
+        #expect(viewModel.mapAccessibilityLabel == "Map showing a walking route to Next door, about 10 metres, about 1 minute.")
     }
 }
