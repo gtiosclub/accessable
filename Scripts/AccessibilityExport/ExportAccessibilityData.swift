@@ -192,11 +192,13 @@ func percent(part: Int, whole: Int) -> String {
     return String(format: "%.0f%%", value)
 }
 
-func makeSummary(elements: [OverpassElement]) -> String {
+func makeSummary(elements: [OverpassElement], exportDate: String) -> String {
     var text = "# Accessibility Data Coverage Summary\n\n"
     text += "- Test area: \(testAreaName)\n"
+    text += "- Export date: \(exportDate)\n"
+    text += "- Source: OpenStreetMap contributors, through the Overpass API (\(overpassURL))\n"
+    text += "- License: ODbL (https://www.openstreetmap.org/copyright)\n"
     text += "- Bounding box (south, west, north, east): \(southLat), \(westLon), \(northLat), \(eastLon)\n"
-    text += "- Source: OpenStreetMap via the Overpass API, fetched \(Date().formatted(date: .abbreviated, time: .omitted))\n"
     text += "- Total elements found: \(elements.count)\n\n"
 
     text += "## Feature counts\n\n| Feature type | Count |\n|---|---|\n"
@@ -247,33 +249,153 @@ func makeSummary(elements: [OverpassElement]) -> String {
     text += "- Lines (ways) are counted as one feature each. A crossing mapped as both a road node and a footway line is counted twice.\n"
     text += "- Curb details are usually on separate kerb nodes at each end of a crossing, so few crossings carry a kerb tag themselves.\n"
     text += "- Feature counts skip tags set to \"no\"; the coverage gaps count any tag, including \"no\".\n"
+    text += "- The JSON export leaves out elements whose only matching tag is \"no\", so it can list fewer features than the total above.\n"
 
     return text
+}
+
+// Step 4: Export element type, ID, coordinates or relevant geometry, and original tags
+
+struct ExportFile: Codable {
+    let source: String
+    let license: String
+    let endpoint: String
+    let exportDate: String
+    let testArea: String
+    let boundingBox: [String: Double]
+    let featureCount: Int
+    let features: [ExportedFeature]
+}
+
+struct ExportedFeature: Codable {
+    let osmType: String
+    let osmId: Int
+    let featureTypes: [String]
+    let latitude: Double?
+    let longitude: Double?
+    let tactilePaving: String
+    let audibleSignal: String
+    let vibratingSignal: String
+    let kerb: String
+    let wheelchair: String
+    let tags: [String: String]
+}
+
+func convertElements(elements: [OverpassElement]) -> [ExportedFeature] {
+    var exported: [ExportedFeature] = []
+
+    for element in elements {
+        let tags = element.tags ?? [:]
+        let types = findFeatureTypes(tags: tags)
+        if types.isEmpty { continue }
+
+        // Ways have no lat/lon of their own, so use their center point
+        var latitude = element.lat
+        var longitude = element.lon
+        if let center = element.center {
+            latitude = center.lat
+            longitude = center.lon
+        }
+
+        exported.append(ExportedFeature(
+            osmType: element.type,
+            osmId: element.id,
+            featureTypes: types,
+            latitude: latitude,
+            longitude: longitude,
+            tactilePaving: valueOrUnknown(tags: tags, key: "tactile_paving"),
+            audibleSignal: valueOrUnknown(tags: tags, key: "traffic_signals:sound"),
+            vibratingSignal: valueOrUnknown(tags: tags, key: "traffic_signals:vibration"),
+            kerb: valueOrUnknown(tags: tags, key: "kerb"),
+            wheelchair: valueOrUnknown(tags: tags, key: "wheelchair"),
+            tags: tags
+        ))
+    }
+
+    return exported
+}
+
+// A missing tag becomes "unknown" rather than a guess, since unmapped doesn't mean inaccessible
+func valueOrUnknown(tags: [String: String], key: String) -> String {
+    if let value = tags[key] {
+        return value
+    }
+    return "unknown"
+}
+
+// Prints 3 features per type with a link to the OSM page,
+// so the exported tags can be compared with the source
+func printSpotCheck(features: [ExportedFeature]) {
+    print("")
+    print("Spot check:")
+
+    for type in allFeatureTypes {
+        print("")
+        print("\(type):")
+
+        var shown = 0
+        for feature in features {
+            if shown < 3 && feature.featureTypes.contains(type) {
+                print("  https://www.openstreetmap.org/\(feature.osmType)/\(feature.osmId)")
+                // sorted so the same feature prints the same way every run
+                let tagList = feature.tags.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+                print("  tags: \(tagList.joined(separator: ", "))")
+                shown += 1
+            }
+        }
+
+        if shown == 0 {
+            print("  nothing found")
+        }
+    }
 }
 
 print("")
 print("Asking Overpass for the data (this can take a bit)...")
 
-guard let data = await fetchFromOverpass(query: query) else {
-    print("No data was received.")
-    exit(1)
-}
-
-guard let response = decodeResponse(data: data) else {
+// If either step fails, the functions already printed the reason
+guard let data = await fetchFromOverpass(query: query),
+      let response = decodeResponse(data: data) else {
     exit(1)
 }
 print("Overpass sent back \(response.elements.count) elements")
 
-let summary = makeSummary(elements: response.elements)
+let exportDate = ISO8601DateFormatter().string(from: Date())
+let summary = makeSummary(elements: response.elements, exportDate: exportDate)
 print("")
 print(summary)
 
+let features = convertElements(elements: response.elements)
+print("Converted \(features.count) features")
+
+let exportFile = ExportFile(
+    source: "OpenStreetMap contributors via Overpass API",
+    license: "ODbL (https://www.openstreetmap.org/copyright)",
+    endpoint: overpassURL,
+    exportDate: exportDate,
+    testArea: testAreaName,
+    boundingBox: ["south": southLat, "west": westLon, "north": northLat, "east": eastLon],
+    featureCount: features.count,
+    features: features
+)
+
 do {
+    // sortedKeys keeps the key order stable so git diffs stay small
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    // encoded before anything is written, so a failure can't leave the two files from different runs
+    let exportData = try encoder.encode(exportFile)
+
     try FileManager.default.createDirectory(atPath: outputFolder, withIntermediateDirectories: true)
+
     try summary.write(toFile: "\(outputFolder)/coverage_summary.md", atomically: true, encoding: .utf8)
     print("Saved the summary in \(outputFolder)/coverage_summary.md")
+
+    try exportData.write(to: URL(fileURLWithPath: "\(outputFolder)/accessibility_export.json"), options: .atomic)
+    print("Saved the export in \(outputFolder)/accessibility_export.json")
 } catch {
-    print("Could not save the summary: \(error)")
+    print("Could not save the files: \(error)")
     exit(1)
 }
 
+printSpotCheck(features: features)
