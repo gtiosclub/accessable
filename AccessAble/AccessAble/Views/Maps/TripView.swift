@@ -20,7 +20,8 @@ struct TripView: View {
                 tripState: viewModel.tripState,
                 destination: viewModel.destination,
                 route: viewModel.route,
-                showsUserLocation: viewModel.showsUserLocation
+                showsUserLocation: viewModel.showsUserLocation,
+                accessibilityLabel: viewModel.mapAccessibilityLabel
             )
                 .frame(minHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -88,6 +89,7 @@ private struct TripMapView: View {
     let destination: Destination?
     let route: NavigationRoute?
     let showsUserLocation: Bool
+    let accessibilityLabel: String
     @Environment(\.colorSchemeContrast) private var contrast
     // .automatic zooms out to the whole continent when there's nothing on the map yet
     @State private var cameraPosition: MapCameraPosition = .region(
@@ -155,7 +157,7 @@ private struct TripMapView: View {
         // The spoken instruction above already conveys maneuver details; expose the map as one
         // summary element so VoiceOver users can swipe past it instead of exploring each pin.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(mapAccessibilityLabel)
+        .accessibilityLabel(accessibilityLabel)
     }
 
     // standard system blue measures under 3:1 against parts of the muted map; its Increase Contrast variant doesn't
@@ -168,11 +170,6 @@ private struct TripMapView: View {
 
     private func routeStroke(width: CGFloat) -> StrokeStyle {
         StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)
-    }
-
-    private var mapAccessibilityLabel: String {
-        guard let destinationName = tripState.destinationName else { return "Map" }
-        return "Map showing route to \(destinationName)"
     }
 }
 
@@ -212,7 +209,8 @@ private extension ManeuverKind {
             ),
             destination: MapsSamples.destination,
             route: MapsSamples.route,
-            showsUserLocation: false
+            showsUserLocation: false,
+            accessibilityLabel: "Map showing a walking route to Sample entrance, about 110 metres, about 1 minute."
         )
         .navigationTitle("Trip")
     }
