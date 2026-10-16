@@ -43,6 +43,11 @@ final class TripViewModel {
         }
     }
 
+    /// Reduced accuracy still shows, as an approximate area instead of a dot.
+    var showsUserLocation: Bool {
+        if case .authorized = locationAuthorization { true } else { false }
+    }
+
     func start() async {
         await services.location.requestAuthorization()
 

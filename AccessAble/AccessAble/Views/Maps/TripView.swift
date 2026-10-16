@@ -16,7 +16,12 @@ struct TripView: View {
             if viewModel.needsLocationAccess {
                 LocationAccessNotice(authorization: viewModel.locationAuthorization)
             }
-            TripMapView(tripState: viewModel.tripState, destination: viewModel.destination, route: viewModel.route)
+            TripMapView(
+                tripState: viewModel.tripState,
+                destination: viewModel.destination,
+                route: viewModel.route,
+                showsUserLocation: viewModel.showsUserLocation
+            )
                 .frame(minHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
@@ -77,11 +82,12 @@ struct TripView: View {
     }
 }
 
-/// Shows the route, destination, and upcoming maneuver on a map. The user-location dot comes with MAP-5.
+/// Shows the route, destination, upcoming maneuver, and the user's location when permission allows.
 private struct TripMapView: View {
     let tripState: TripState
     let destination: Destination?
     let route: NavigationRoute?
+    let showsUserLocation: Bool
     // .automatic zooms out to the whole continent when there's nothing on the map yet
     @State private var cameraPosition: MapCameraPosition = .region(
         MKCoordinateRegion(center: SearchRegion.georgiaTech.center.clCoordinate,
@@ -102,6 +108,9 @@ private struct TripMapView: View {
             }
             if let destination {
                 Marker(destination.name, systemImage: "flag.checkered", coordinate: destination.coordinate.clCoordinate)
+            }
+            if showsUserLocation {
+                UserAnnotation()
             }
         }
         .mapControls {
@@ -167,7 +176,8 @@ private extension ManeuverKind {
                 distanceRemaining: 111
             ),
             destination: MapsSamples.destination,
-            route: MapsSamples.route
+            route: MapsSamples.route,
+            showsUserLocation: false
         )
         .navigationTitle("Trip")
     }

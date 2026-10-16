@@ -44,4 +44,22 @@ struct TripViewModelTests {
         #expect(viewModel.locationAuthorization == authorization)
         #expect(viewModel.needsLocationAccess == expected)
     }
+
+    @Test(arguments: [
+        (LocationAuthorization.notDetermined, false),
+        (.restricted, false),
+        (.denied, false),
+        (.authorized(preciseAccuracy: true), true),
+        (.authorized(preciseAccuracy: false), true),
+    ])
+    func showsUserLocation(_ authorization: LocationAuthorization, expected: Bool) async {
+        var services = AppServices.preview
+        services.location = FixedAuthorizationProvider(authorization: authorization)
+        services.trip = PlaceholderTripProvider()
+        let viewModel = TripViewModel(services: services)
+
+        await viewModel.start()
+
+        #expect(viewModel.showsUserLocation == expected)
+    }
 }
