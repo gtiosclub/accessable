@@ -77,7 +77,7 @@ struct TripView: View {
     }
 }
 
-/// Shows the route and upcoming maneuver on a map. The user-location dot comes with MAP-5.
+/// Shows the route, destination, and upcoming maneuver on a map. The user-location dot comes with MAP-5.
 private struct TripMapView: View {
     let tripState: TripState
     let destination: Destination?
@@ -94,10 +94,14 @@ private struct TripMapView: View {
                 MapPolyline(coordinates: route.coordinates.map(\.clCoordinate))
                     .stroke(.blue, lineWidth: 5)
             }
-            if let maneuver = tripState.nextManeuver {
+            // the destination marker already marks where the arrive maneuver is
+            if let maneuver = tripState.nextManeuver, !(maneuver.kind == .arrive && destination != nil) {
                 Marker(maneuver.instruction,
                        systemImage: maneuver.kind.mapSymbolName,
                        coordinate: maneuver.coordinate.clCoordinate)
+            }
+            if let destination {
+                Marker(destination.name, systemImage: "flag.checkered", coordinate: destination.coordinate.clCoordinate)
             }
         }
         .mapControls {
