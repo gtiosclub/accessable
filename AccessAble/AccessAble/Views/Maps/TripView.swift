@@ -35,6 +35,30 @@ struct TripView: View {
                     .frame(maxWidth: .infinity)
                     .accessibilityAddTraits(.updatesFrequently)
 
+                if let message = viewModel.routeErrorMessage {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label(message, systemImage: "exclamationmark.triangle")
+                            // the map above would otherwise squeeze this to a truncated line at large text sizes
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        AccessibleActionButton(
+                            title: "Try again",
+                            systemImage: "arrow.clockwise",
+                            hint: "Asks for a walking route again"
+                        ) {
+                            viewModel.retryRoute()
+                            // the button disappears from under VoiceOver focus, so say that something is happening
+                            AccessibilityNotification.Announcement("Finding a walking route.").post()
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(
+                        Color(.secondarySystemBackground),
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    )
+                }
+
                 if viewModel.tripState.phase == .active || viewModel.tripState.phase == .paused {
                     AccessibleActionButton(
                         title: viewModel.tripState.phase == .paused ? "Resume trip" : "Pause trip",
@@ -69,7 +93,10 @@ struct TripView: View {
                     NavigationLink {
                         DestinationSearchView(services: services) { viewModel.setDestination($0) }
                     } label: {
-                        Label(viewModel.destination == nil ? "Choose destination" : "Change destination", systemImage: "magnifyingglass")
+                        Label(
+                            viewModel.destination == nil ? "Choose destination" : "Change destination",
+                            systemImage: "magnifyingglass"
+                        )
                             .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
                             .padding(.horizontal)
                     }
@@ -81,6 +108,11 @@ struct TripView: View {
             .padding()
         }
         .navigationTitle("Trip")
+        // VoiceOver doesn't read changes outside the focused element, so say the failure out loud
+        .onChange(of: viewModel.routeFailureCount) {
+            guard let message = viewModel.routeErrorMessage else { return }
+            AccessibilityNotification.Announcement(message).post()
+        }
         .task { await viewModel.start() }
     }
 }

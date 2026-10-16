@@ -25,7 +25,7 @@ private func bounds(_ coordinates: [GeoCoordinate]) -> MKMapRect {
         .reduce(MKMapRect.null) { $0.union($1) }
 }
 
-// The Valhalla fixture's shape: about 570 m of campus walkway.
+// A hand-made campus-scale walk of about 470 m.
 private let campusWalk = [
     GeoCoordinate(latitude: 33.7750, longitude: -84.3990),
     GeoCoordinate(latitude: 33.7746, longitude: -84.4005),

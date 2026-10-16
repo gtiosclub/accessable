@@ -62,4 +62,19 @@ struct TripViewModelTests {
 
         #expect(viewModel.showsUserLocation == expected)
     }
+
+    @Test(arguments: [LocationAuthorization.denied, .restricted])
+    func mapLabelWithoutLocationAccess(_ authorization: LocationAuthorization) async {
+        var services = AppServices.preview
+        services.location = FixedAuthorizationProvider(authorization: authorization)
+        services.trip = PlaceholderTripProvider()
+        let viewModel = TripViewModel(services: services)
+        await viewModel.start()
+
+        viewModel.setDestination(
+            Destination(name: "Library", coordinate: GeoCoordinate(latitude: 33.77434, longitude: -84.39572))
+        )
+
+        #expect(viewModel.mapAccessibilityLabel == "Map showing Library. A walking route needs location access.")
+    }
 }
