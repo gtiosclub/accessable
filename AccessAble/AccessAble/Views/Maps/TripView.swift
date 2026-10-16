@@ -117,6 +117,22 @@ private struct TripMapView: View {
             MapCompass()
             MapScaleView()
         }
+        .onChange(of: route, initial: true) { _, route in
+            guard let route else { return }
+            withAnimation {
+                cameraPosition = .rect(route.cameraRect())
+            }
+        }
+        // without a route (no location yet, or no permission) the destination could be off screen
+        .onChange(of: destination, initial: true) { _, destination in
+            guard route == nil, let destination else { return }
+            withAnimation {
+                cameraPosition = .region(
+                    MKCoordinateRegion(center: destination.coordinate.clCoordinate,
+                                       latitudinalMeters: 500, longitudinalMeters: 500)
+                )
+            }
+        }
         .onChange(of: tripState.nextManeuver, initial: true) { _, maneuver in
             guard let maneuver else { return }
             withAnimation {
