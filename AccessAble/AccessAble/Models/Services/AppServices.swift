@@ -26,7 +26,7 @@ struct AppServices: Sendable {
             scene: scene,
             sceneDescriber: scene,                          // TODO(CV 1.3)
             location: CoreLocationProvider(),
-            routing: PlaceholderRoutingService(),           // TODO(Maps 2.2): ValhallaRoutingService
+            routing: ValhallaRoutingService(),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
             locationContext: trip                           // TODO(Maps 2.1)
@@ -35,5 +35,10 @@ struct AppServices: Sendable {
 
     /// For SwiftUI previews and unit tests.
     @MainActor
-    static var preview: AppServices { live(performance: PerformanceModeMonitor()) }
+    static var preview: AppServices {
+        var services = live(performance: PerformanceModeMonitor())
+        // Previews and tests must not reach the network or spend the public server's fair-use budget.
+        services.routing = PlaceholderRoutingService()
+        return services
+    }
 }
