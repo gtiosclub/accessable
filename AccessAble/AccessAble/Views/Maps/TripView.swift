@@ -12,72 +12,74 @@ struct TripView: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            if viewModel.needsLocationAccess {
-                LocationAccessNotice(authorization: viewModel.locationAuthorization)
-            }
-            TripMapView(
-                tripState: viewModel.tripState,
-                destination: viewModel.destination,
-                route: viewModel.route,
-                showsUserLocation: viewModel.showsUserLocation,
-                accessibilityLabel: viewModel.mapAccessibilityLabel
-            )
-                .frame(minHeight: 240)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-
-            Text(viewModel.nextInstruction)
-                .font(.title2.weight(.semibold))
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
-                .accessibilityAddTraits(.updatesFrequently)
-
-            if viewModel.tripState.phase == .active || viewModel.tripState.phase == .paused {
-                AccessibleActionButton(
-                    title: viewModel.tripState.phase == .paused ? "Resume trip" : "Pause trip",
-                    systemImage: viewModel.tripState.phase == .paused ? "play.fill" : "pause.fill",
-                    hint: "Pauses or resumes navigation announcements"
-                ) {
-                    Task { await viewModel.togglePause() }
+        // scrolls so the notice and large text sizes push content down instead of under the title
+        ScrollView {
+            VStack(spacing: 16) {
+                if viewModel.needsLocationAccess {
+                    LocationAccessNotice(authorization: viewModel.locationAuthorization)
                 }
+                TripMapView(
+                    tripState: viewModel.tripState,
+                    destination: viewModel.destination,
+                    route: viewModel.route,
+                    showsUserLocation: viewModel.showsUserLocation,
+                    accessibilityLabel: viewModel.mapAccessibilityLabel
+                )
+                    // a map has no natural height inside a scroll view
+                    .frame(height: 300)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
-                AccessibleActionButton(
-                    title: "End trip", systemImage: "xmark", hint: "Stops navigation", role: .destructive
-                ) {
-                    Task { await viewModel.endTrip() }
-                }
-            } else {
-                if let destination = viewModel.destination {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Destination")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Text(destination.name)
-                            .font(.title3.weight(.semibold))
-                        if let address = destination.address {
-                            Text(address)
-                                .foregroundStyle(.secondary)
-                        }
+                Text(viewModel.nextInstruction)
+                    .font(.title2.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityAddTraits(.updatesFrequently)
+
+                if viewModel.tripState.phase == .active || viewModel.tripState.phase == .paused {
+                    AccessibleActionButton(
+                        title: viewModel.tripState.phase == .paused ? "Resume trip" : "Pause trip",
+                        systemImage: viewModel.tripState.phase == .paused ? "play.fill" : "pause.fill",
+                        hint: "Pauses or resumes navigation announcements"
+                    ) {
+                        Task { await viewModel.togglePause() }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .accessibilityElement(children: .combine)
-                }
 
-                NavigationLink {
-                    DestinationSearchView(services: services) { viewModel.setDestination($0) }
-                } label: {
-                    Label(viewModel.destination == nil ? "Choose destination" : "Change destination", systemImage: "magnifyingglass")
-                        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-                        .padding(.horizontal)
+                    AccessibleActionButton(
+                        title: "End trip", systemImage: "xmark", hint: "Stops navigation", role: .destructive
+                    ) {
+                        Task { await viewModel.endTrip() }
+                    }
+                } else {
+                    if let destination = viewModel.destination {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Destination")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text(destination.name)
+                                .font(.title3.weight(.semibold))
+                            if let address = destination.address {
+                                Text(address)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityElement(children: .combine)
+                    }
+
+                    NavigationLink {
+                        DestinationSearchView(services: services) { viewModel.setDestination($0) }
+                    } label: {
+                        Label(viewModel.destination == nil ? "Choose destination" : "Change destination", systemImage: "magnifyingglass")
+                            .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                            .padding(.horizontal)
+                    }
+                    .buttonStyle(.bordered)
+                    .font(.title3)
+                    .accessibilityHint("Search for a place or address to walk to")
                 }
-                .buttonStyle(.bordered)
-                .font(.title3)
-                .accessibilityHint("Search for a place or address to walk to")
             }
-
-            Spacer()
+            .padding()
         }
-        .padding()
         .navigationTitle("Trip")
         .task { await viewModel.start() }
     }
