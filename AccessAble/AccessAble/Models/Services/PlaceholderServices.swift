@@ -102,7 +102,7 @@ struct PlaceholderLocationProvider: LocationProvider {
     func requestAuthorization() async {}
 }
 
-/// Returns the sample route for any request. Replaced by 2.2 (Valhalla).
+/// Returns the sample route for any request, so previews and tests never reach Valhalla.
 struct PlaceholderRoutingService: RoutingService {
     func route(
         from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
