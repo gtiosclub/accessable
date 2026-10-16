@@ -261,34 +261,71 @@ struct ExportedFeature: Codable {
     let featureTypes: [String]
     let latitude: Double?
     let longitude: Double?
+    let tactilePaving: String
+    let audibleSignal: String
+    let kerb: String
+    let wheelchair: String
     let tags: [String: String]
 }
 
 func convertElements(elements: [OverpassElement]) -> [ExportedFeature] {
     var exported: [ExportedFeature] = []
+
     for element in elements {
         let tags = element.tags ?? [:]
         let types = findFeatureTypes(tags: tags)
-        if types.isEmpty { continue }
 
-        // Ways have no lat/lon of their own, so use their center point
+        if types.isEmpty {
+            continue
+        }
+
+        // Ways have no lat/lon of their own, so use their center point.
         var latitude = element.lat
         var longitude = element.lon
+
         if let center = element.center {
             latitude = center.lat
             longitude = center.lon
         }
 
-        exported.append(ExportedFeature(
-            osmType: element.type,
-            osmId: element.id,
-            featureTypes: types,
-            latitude: latitude,
-            longitude: longitude,
-            tags: tags
-        ))
+        exported.append(
+            ExportedFeature(
+                osmType: element.type,
+                osmId: element.id,
+                featureTypes: types,
+                latitude: latitude,
+                longitude: longitude,
+                tactilePaving: getValue(
+                    tags: tags,
+                    key: "tactile_paving"
+                ),
+                audibleSignal: getValue(
+                    tags: tags,
+                    key: "traffic_signals:sound"
+                ),
+                kerb: getValue(
+                    tags: tags,
+                    key: "kerb"
+                ),
+                wheelchair: getValue(
+                    tags: tags,
+                    key: "wheelchair"
+                ),
+                tags: tags
+            )
+        )
     }
+
     return exported
+}
+
+// Missing OSM tags are represented as "unknown".
+func getValue(tags: [String: String], key: String) -> String {
+    if let value = tags[key] {
+        return value
+    }
+
+    return "unknown"
 }
 
 print("")
