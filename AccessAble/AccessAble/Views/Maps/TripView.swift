@@ -16,7 +16,7 @@ struct TripView: View {
             if viewModel.needsLocationAccess {
                 LocationAccessNotice(authorization: viewModel.locationAuthorization)
             }
-            TripMapView(tripState: viewModel.tripState)
+            TripMapView(tripState: viewModel.tripState, destination: viewModel.destination, route: viewModel.route)
                 .frame(minHeight: 240)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
 
@@ -80,6 +80,8 @@ struct TripView: View {
 /// Shows the upcoming maneuver on a map. The user-location dot comes with MAP-5.
 private struct TripMapView: View {
     let tripState: TripState
+    let destination: Destination?
+    let route: NavigationRoute?
     // .automatic zooms out to the whole continent when there's nothing on the map yet
     @State private var cameraPosition: MapCameraPosition = .region(
         MKCoordinateRegion(center: SearchRegion.georgiaTech.center.clCoordinate,
@@ -155,7 +157,9 @@ private extension ManeuverKind {
                 ),
                 distanceToNextManeuver: 42,
                 distanceRemaining: 111
-            )
+            ),
+            destination: MapsSamples.destination,
+            route: MapsSamples.route
         )
         .navigationTitle("Trip")
     }

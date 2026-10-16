@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+import os
+
+private let log = Logger(subsystem: "AccessAble", category: "Trip")
 
 /// Owner: Maps + Location (2.x). Active trip: next maneuver, pause/resume, end.
 @MainActor
@@ -7,9 +10,13 @@ import Observation
 final class TripViewModel {
     private(set) var tripState: TripState = .idle
     private(set) var destination: Destination?
+    private(set) var route: NavigationRoute?
     private(set) var locationAuthorization: LocationAuthorization = .notDetermined
 
     @ObservationIgnored private let services: AppServices
+    @ObservationIgnored private var lastLocation: GeoCoordinate?
+    // internal so tests can await the request
+    @ObservationIgnored private(set) var routeTask: Task<Void, Never>?
 
     init(services: AppServices) {
         self.services = services
@@ -17,6 +24,8 @@ final class TripViewModel {
 
     func setDestination(_ destination: Destination) {
         self.destination = destination
+        route = nil
+        requestRoute()
     }
 
     var nextInstruction: String {
@@ -48,6 +57,11 @@ final class TripViewModel {
                     await self.receive(authorization)
                 }
             }
+            group.addTask { [services] in
+                for await sample in services.location.locationSamples() {
+                    await self.receive(sample)
+                }
+            }
         }
     }
 
@@ -65,4 +79,31 @@ final class TripViewModel {
 
     private func receive(_ state: TripState) { tripState = state }
     private func receive(_ authorization: LocationAuthorization) { locationAuthorization = authorization }
+
+    private func receive(_ sample: LocationSample) {
+        lastLocation = sample.coordinate
+        // a destination picked before the first fix is still waiting for its route
+        if destination != nil, route == nil, routeTask == nil {
+            requestRoute()
+        }
+    }
+
+    // cancels any in-flight request so a route to an old destination can't replace the new one
+    private func requestRoute() {
+        routeTask?.cancel()
+        routeTask = nil
+        guard let destination, let origin = lastLocation else { return }
+        routeTask = Task {
+            do {
+                let route = try await services.routing.route(
+                    from: origin, to: destination.coordinate, options: RouteOptions()
+                )
+                guard !Task.isCancelled else { return }
+                self.route = route
+            } catch {
+                guard !Task.isCancelled else { return }
+                log.error("Routing failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
 }
