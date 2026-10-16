@@ -251,15 +251,60 @@ func makeSummary(elements: [OverpassElement]) -> String {
     return text
 }
 
+// Step 4: Export element type, ID, coordinates or relevant geometry, and original tags
+
+// Data structures for JSON export
+struct ExportFile: Codable {
+    let testArea: String
+    let boundingBox: [String: Double]
+    let featureCount: Int
+    let features: [ExportedFeature]
+}
+
+struct ExportedFeature: Codable {
+    let osmType: String
+    let osmId: Int
+    let featureTypes: [String]
+    let latitude: Double?
+    let longitude: Double?
+    let tags: [String: String]
+}
+
+func convertElements(elements: [OverpassElement]) -> [ExportedFeature] {
+    var exported: [ExportedFeature] = []
+
+    for element in elements {
+        let tags = element.tags ?? [:]
+        let types = findFeatureTypes(tags: tags)
+        if types.isEmpty { continue }
+
+        // Ways have no lat/lon of their own, so use their center point
+        var latitude = element.lat
+        var longitude = element.lon
+        if let center = element.center {
+            latitude = center.lat
+            longitude = center.lon
+        }
+
+        exported.append(ExportedFeature(
+            osmType: element.type,
+            osmId: element.id,
+            featureTypes: types,
+            latitude: latitude,
+            longitude: longitude,
+            tags: tags
+        ))
+    }
+
+    return exported
+}
+
 print("")
 print("Asking Overpass for the data (this can take a bit)...")
 
-guard let data = await fetchFromOverpass(query: query) else {
-    print("No data was received.")
-    exit(1)
-}
-
-guard let response = decodeResponse(data: data) else {
+// If either step fails, the functions already printed the reason
+guard let data = await fetchFromOverpass(query: query),
+      let response = decodeResponse(data: data) else {
     exit(1)
 }
 print("Overpass sent back \(response.elements.count) elements")
@@ -268,12 +313,30 @@ let summary = makeSummary(elements: response.elements)
 print("")
 print(summary)
 
+let features = convertElements(elements: response.elements)
+print("Converted \(features.count) features")
+
+let exportFile = ExportFile(
+    testArea: testAreaName,
+    boundingBox: ["south": southLat, "west": westLon, "north": northLat, "east": eastLon],
+    featureCount: features.count,
+    features: features
+)
+
 do {
     try FileManager.default.createDirectory(atPath: outputFolder, withIntermediateDirectories: true)
+
     try summary.write(toFile: "\(outputFolder)/coverage_summary.md", atomically: true, encoding: .utf8)
     print("Saved the summary in \(outputFolder)/coverage_summary.md")
+
+    // sortedKeys keeps the key order stable so git diffs stay small
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    let exportData = try encoder.encode(exportFile)
+    try exportData.write(to: URL(fileURLWithPath: "\(outputFolder)/accessibility_export.json"))
+    print("Saved the export in \(outputFolder)/accessibility_export.json")
 } catch {
-    print("Could not save the summary: \(error)")
+    print("Could not save the files: \(error)")
     exit(1)
 }
 
