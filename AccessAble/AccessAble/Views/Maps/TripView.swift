@@ -88,6 +88,7 @@ private struct TripMapView: View {
     let destination: Destination?
     let route: NavigationRoute?
     let showsUserLocation: Bool
+    @Environment(\.colorSchemeContrast) private var contrast
     // .automatic zooms out to the whole continent when there's nothing on the map yet
     @State private var cameraPosition: MapCameraPosition = .region(
         MKCoordinateRegion(center: SearchRegion.georgiaTech.center.clCoordinate,
@@ -97,8 +98,12 @@ private struct TripMapView: View {
     var body: some View {
         Map(position: $cameraPosition, interactionModes: [.pan, .zoom]) {
             if let route {
-                MapPolyline(coordinates: route.coordinates.map(\.clCoordinate))
-                    .stroke(.blue, lineWidth: 5)
+                let coordinates = route.coordinates.map(\.clCoordinate)
+                // a background-coloured casing keeps the line visible over roads and parks of any colour
+                MapPolyline(coordinates: coordinates)
+                    .stroke(Color(.systemBackground), style: routeStroke(width: routeWidth + 4))
+                MapPolyline(coordinates: coordinates)
+                    .stroke(Self.routeColor, style: routeStroke(width: routeWidth))
             }
             // the destination marker already marks where the arrive maneuver is
             if let maneuver = tripState.nextManeuver, !(maneuver.kind == .arrive && destination != nil) {
@@ -113,6 +118,8 @@ private struct TripMapView: View {
                 UserAnnotation()
             }
         }
+        // muted map without points of interest so the route and markers are the boldest things on it
+        .mapStyle(.standard(elevation: .flat, emphasis: .muted, pointsOfInterest: .excludingAll))
         .mapControls {
             MapCompass()
             MapScaleView()
@@ -149,6 +156,18 @@ private struct TripMapView: View {
         // summary element so VoiceOver users can swipe past it instead of exploring each pin.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(mapAccessibilityLabel)
+    }
+
+    // standard system blue measures under 3:1 against parts of the muted map; its Increase Contrast variant doesn't
+    private static let routeColor = Color(UIColor { traits in
+        UIColor.systemBlue.resolvedColor(with: traits.modifyingTraits { $0.accessibilityContrast = .high })
+    })
+
+    /// Points; thicker when Increase Contrast is on.
+    private var routeWidth: CGFloat { contrast == .increased ? 10 : 7 }
+
+    private func routeStroke(width: CGFloat) -> StrokeStyle {
+        StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)
     }
 
     private var mapAccessibilityLabel: String {
