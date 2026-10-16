@@ -11,13 +11,14 @@ import UIKit
 /// Frames go through a `LatestOnlyProcessor` (T3), so when analysis is slower than the
 /// camera, stale frames are dropped rather than queued. `PerformanceMode` thins the input
 /// further by only offering every Nth camera frame.
-final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, Sendable {
+final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, Sendable {
     let sessionManager: ARSessionManager
     let perception: ScenePerception
     /// Idle unless a field test is being recorded from the Live detection screen.
     let recorder = FieldTestRecorder()
 
     private let performance: any PerformanceModeProviding
+    private let askAI: AskAI
     private let broadcaster = Broadcaster<SceneObservation>(replaysLatest: true)
     private let processor: LatestOnlyProcessor<CapturedFrame>
     /// Announcements go through a stream drained by one task, so they reach the sink in
@@ -30,6 +31,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, Sendabl
         var interfaceOrientation: UIInterfaceOrientation = .portrait
         var subscription: ARSessionManager.Subscription?
         var modeTask: Task<Void, Never>?
+        /// The still the latest Ask AI question was answered from.
+        var lastAskedImage: Data?
     }
 
     private let state = Mutex(State())
@@ -38,11 +41,13 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, Sendabl
         sessionManager: ARSessionManager,
         perception: ScenePerception = ScenePerception(),
         performance: any PerformanceModeProviding,
-        announcements: any AnnouncementSink
+        announcements: any AnnouncementSink,
+        askAI: AskAI = AskAI()
     ) {
         self.sessionManager = sessionManager
         self.perception = perception
         self.performance = performance
+        self.askAI = askAI
 
         let (pending, announcementQueue) = AsyncStream.makeStream(
             of: AnnouncementEvent.self, bufferingPolicy: .bufferingNewest(16)
@@ -129,11 +134,46 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, Sendabl
         SceneDescriptionBuilder().describe(broadcaster.latest ?? .empty)
     }
 
-    /// Tier B, "Ask AI" (T19), is not integrated yet. It must stay outside the obstacle
-    /// pipeline when it is.
+    /// Tier B, "Ask AI" (T19): the next camera frame as a still, plus what the pipeline
+    /// last saw (the objects, distances and directions "Describe my surroundings" uses),
+    /// answered on the device. Runs beside the obstacle pipeline, never in it.
+    /// `locationContext` is not used yet.
     func ask(_ question: String, locationContext: String?) async throws -> String {
-        "Ask AI is not available yet."
+        state.withLock { $0.lastAskedImage = nil }
+        let imageData = try await captureStillImage()
+        state.withLock { $0.lastAskedImage = imageData }
+        return try await askAI.answer(question, imageData: imageData, observation: broadcaster.latest ?? .empty).answer
     }
+
+    /// The next frame from the shared session as an upright JPEG. Frames only flow while
+    /// the session runs, so this gives up after `timeout` rather than waiting forever.
+    @concurrent
+    private func captureStillImage(timeout: Duration = .seconds(1)) async throws -> Data {
+        let orientation = CGImagePropertyOrientation(cameraImageIn: state.withLock { $0.interfaceOrientation })
+        let (frames, continuation) = AsyncStream.makeStream(of: CapturedImage.self, bufferingPolicy: .bufferingNewest(1))
+        // Only hands the buffer on; the JPEG is encoded here, off the frame queue.
+        let subscription = sessionManager.addFrameHandler { frame in
+            continuation.yield(CapturedImage(pixelBuffer: frame.capturedImage))
+        }
+        let timeoutTask = Task {
+            try? await Task.sleep(for: timeout)
+            continuation.finish()
+        }
+        defer {
+            sessionManager.removeFrameHandler(subscription)
+            continuation.finish()
+            timeoutTask.cancel()
+        }
+
+        for await image in frames {
+            return try stillImageJPEG(from: image.pixelBuffer, orientation: orientation)
+        }
+        throw AskAIError.noCameraImage
+    }
+
+    // MARK: - AskedImageProviding
+
+    var lastAskedImage: Data? { state.withLock { $0.lastAskedImage } }
 
     // MARK: - Frames
 
@@ -154,4 +194,19 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, Sendabl
 private struct CapturedFrame: @unchecked Sendable {
     let frame: ARFrame
     let interfaceOrientation: UIInterfaceOrientation
+}
+
+/// Carries one camera image from the session's queue to an Ask AI question.
+///
+/// `@unchecked Sendable` because `CVPixelBuffer` is not `Sendable`. It is safe because ARKit
+/// never writes to a delivered image and Ask AI only reads it, once, to encode the still.
+private struct CapturedImage: @unchecked Sendable {
+    let pixelBuffer: CVPixelBuffer
+}
+
+/// Lets the UI show which camera image an Ask AI answer came from. Separate from
+/// `SceneDescribing` so that contract stays as it is; services without a camera don't conform.
+protocol AskedImageProviding: Sendable {
+    /// The JPEG of the latest question's still; nil before any question, or if capture failed.
+    var lastAskedImage: Data? { get }
 }
