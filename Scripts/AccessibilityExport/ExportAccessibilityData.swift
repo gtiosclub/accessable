@@ -183,9 +183,12 @@ func percent(part: Int, whole: Int) -> String {
     return String(format: "%.0f%%", value)
 }
 
-func makeSummary(elements: [OverpassElement]) -> String {
+func makeSummary(elements: [OverpassElement], exportDate: String) -> String {
     var text = "# Accessibility Data Coverage Summary\n\n"
     text += "- Test area: \(testAreaName)\n"
+    text += "- Export date: \(exportDate)\n"
+    text += "- Source: OpenStreetMap contributors, through the Overpass API (\(overpassURL))\n"
+    text += "- License: ODbL (https://www.openstreetmap.org/copyright)\n"
     text += "- Bounding box (south, west, north, east): \(southLat), \(westLon), \(northLat), \(eastLon)\n"
     text += "- Total elements found: \(elements.count)\n\n"
 
@@ -242,6 +245,10 @@ func makeSummary(elements: [OverpassElement]) -> String {
 
 // Data structures for JSON export
 struct ExportFile: Codable {
+    let source: String
+    let license: String
+    let endpoint: String
+    let exportDate: String
     let testArea: String
     let boundingBox: [String: Double]
     let featureCount: Int
@@ -294,7 +301,8 @@ guard let data = await fetchFromOverpass(query: query),
 }
 print("Overpass sent back \(response.elements.count) elements")
 
-let summary = makeSummary(elements: response.elements)
+let exportDate = ISO8601DateFormatter().string(from: Date())
+let summary = makeSummary(elements: response.elements, exportDate: exportDate)
 print("")
 print(summary)
 
@@ -302,6 +310,10 @@ let features = convertElements(elements: response.elements)
 print("Converted \(features.count) features")
 
 let exportFile = ExportFile(
+    source: "OpenStreetMap contributors via Overpass API",
+    license: "ODbL (https://www.openstreetmap.org/copyright)",
+    endpoint: overpassURL,
+    exportDate: exportDate,
     testArea: testAreaName,
     boundingBox: ["south": southLat, "west": westLon, "north": northLat, "east": eastLon],
     featureCount: features.count,

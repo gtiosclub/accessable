@@ -1,6 +1,9 @@
 # Accessibility Data Coverage Summary
 
 - Test area: Georgia Tech campus, Atlanta GA
+- Export date: 2026-10-16T03:24:47Z
+- Source: OpenStreetMap contributors, through the Overpass API (https://overpass-api.de/api/interpreter)
+- License: ODbL (https://www.openstreetmap.org/copyright)
 - Bounding box (south, west, north, east): 33.77, -84.408, 33.782, -84.388
 - Total elements found: 1270
 
