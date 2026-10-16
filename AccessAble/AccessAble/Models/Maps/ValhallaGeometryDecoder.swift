@@ -14,6 +14,7 @@ enum ValhallaGeometryDecoder {
         case unsupportedUnits
         case missingMetrics
         case invalidMetrics
+        case unexpectedLegCount
     }
 
     /// Returns one coordinate array per leg; maneuver indices are local to each leg.
@@ -110,6 +111,18 @@ enum ValhallaGeometryDecoder {
                                  maneuverMetrics: maneuverMetrics)
         }
         return NormalizedTrip(legs: legs, metrics: tripMetrics)
+    }
+
+    /// Converts a response to a two-location request. Distances are derived from the geometry by
+    /// `NavigationRoute`, not taken from Valhalla.
+    /// - Throws: `DecodeError`, `DecodingError`, or `NavigationRoute.ValidationError`.
+    static func decodeRoute(from data: Data) throws -> NavigationRoute {
+        let trip = try decodeNormalizedTrip(from: data)
+        // We only ever send an origin and a destination, so any other leg count is a response we didn't ask for.
+        guard trip.legs.count == 1 else { throw DecodeError.unexpectedLegCount }
+        let leg = trip.legs[0].geometry
+        return try NavigationRoute(coordinates: leg.coordinates, steps: leg.steps,
+                                   estimatedDuration: trip.metrics.durationSeconds)
     }
 
     private static func normalize(_ summary: Summary?, metresPerUnit: Double) throws -> Metrics {
