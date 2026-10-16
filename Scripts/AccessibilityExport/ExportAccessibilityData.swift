@@ -328,6 +328,31 @@ func getValue(tags: [String: String], key: String) -> String {
     return "unknown"
 }
 
+// Prints 3 features per type with a link to the OSM page,
+// so the exported tags can be compared with the source
+func printSpotCheck(features: [ExportedFeature]) {
+    print("")
+    print("Spot check:")
+
+    for type in allFeatureTypes {
+        print("")
+        print("\(type):")
+
+        var shown = 0
+        for feature in features {
+            if shown < 3 && feature.featureTypes.contains(type) {
+                print("  https://www.openstreetmap.org/\(feature.osmType)/\(feature.osmId)")
+                print("  tags: \(feature.tags)")
+                shown += 1
+            }
+        }
+
+        if shown == 0 {
+            print("  nothing found")
+        }
+    }
+}
+
 print("")
 print("Asking Overpass for the data (this can take a bit)...")
 
@@ -373,3 +398,5 @@ do {
     print("Could not save the files: \(error)")
     exit(1)
 }
+
+printSpotCheck(features: features)
