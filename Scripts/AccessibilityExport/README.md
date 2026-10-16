@@ -1,4 +1,4 @@
-# Accessibility Data Export (M5 / ACCESS-1)
+# Accessibility Data Export
 
 This script retrieves accessibility features from OpenStreetMap (OSM) for the Georgia Tech campus test area. It generates a JSON export and a Markdown coverage summary.
 
@@ -9,13 +9,14 @@ The script uses the Overpass API to retrieve these accessibility feature types:
 | Feature type | OSM tags used |
 |---|---|
 | crossing | `highway=crossing` for nodes and `footway=crossing` for ways |
-| audible_signal | `traffic_signals:sound` or `traffic_signals:vibration` |
+| audible_signal | `traffic_signals:sound` |
+| vibrating_signal | `traffic_signals:vibration` |
 | tactile_paving | `tactile_paving` |
 | curb | `barrier=kerb` or any `kerb` tag |
 | elevator | `highway=elevator` |
 | entrance | `entrance` |
 
-An OSM element can match more than one feature type if it has multiple relevant tags.
+An OSM element can match more than one feature type if it has multiple relevant tags. A tag set to `no` (for example `tactile_paving=no`) means the feature is absent, so it doesn't make the element match that type. Elements the query returns that match no type this way are left out of the JSON export.
 
 ## Test area
 
@@ -82,11 +83,11 @@ The top-level JSON object includes:
 
 Each feature contains its OSM element type and ID, matching feature types, latitude, longitude, normalized attributes, and original `tags`.
 
-The normalized attributes are `tactilePaving`, `audibleSignal`, `kerb`, and `wheelchair`. When a corresponding tag is missing, its normalized field is set to `"unknown"`. The original OSM `tags` dictionary is retained.
+The normalized attributes are `tactilePaving`, `audibleSignal`, `vibratingSignal`, `kerb`, and `wheelchair`. When a corresponding tag is missing, its normalized field is set to `"unknown"`. The original OSM `tags` dictionary is retained.
 
-For ways, the exported coordinates use the center point returned by the Overpass query.
+For ways (for example a crossing drawn as a short line), the exported coordinates are the center point returned by `out center`, not the full line.
 
-Note that `audible_signal` currently includes elements tagged with either sound or vibration information. The normalized `audibleSignal` field specifically reads `traffic_signals:sound`; vibration information remains available in the original `tags` dictionary.
+`accessibility_export.json` and `coverage_summary.md` are committed, so the app and other members can use the data without running the script. Regenerate both together so their export dates match.
 
 ## The Overpass query
 
@@ -117,11 +118,27 @@ The command should finish without a JSON parsing error.
 
 The script also prints up to three representative features per feature type, along with their OpenStreetMap URLs and original tags. Open the links and compare the tags on OpenStreetMap with the tags printed in Terminal.
 
+### Last spot check
+
+For the export dated 2026-10-16, one feature of each type from the printed spot check was compared by hand with its live OpenStreetMap record (tags, latitude and longitude):
+
+| Feature type | OSM element | Result |
+|---|---|---|
+| crossing | node 69168333 | Tags and coordinates match |
+| audible_signal | node 5674288136 | Tags and coordinates match |
+| vibrating_signal | node 2048209351 | Tags and coordinates match |
+| tactile_paving | node 69259142 | Tags and coordinates match |
+| curb | node 523399947 | Tags and coordinates match |
+| elevator | node 3078123263 | Tags and coordinates match |
+| entrance | node 523233177 | Tags and coordinates match |
+
+Across all 1254 exported features, every normalized attribute equals its original tag, or `"unknown"` when the tag is missing, and every feature has coordinates.
+
 ## Troubleshooting
 
 If the Overpass request fails or returns a non-200 HTTP status, wait briefly and run the script again. The Overpass service may be temporarily busy.
 
-If the script cannot find the output directory, check that you are running it from the repository root.
+Run the script from the repository root. The output path is relative, so running it anywhere else quietly creates a new `Data/AccessibilityExport/` folder in that directory instead of updating the committed files.
 
 If a feature type has a count of zero, check the coverage summary. A missing feature type is a finding to investigate, not necessarily a script failure.
 

@@ -249,13 +249,13 @@ func makeSummary(elements: [OverpassElement], exportDate: String) -> String {
     text += "- Lines (ways) are counted as one feature each. A crossing mapped as both a road node and a footway line is counted twice.\n"
     text += "- Curb details are usually on separate kerb nodes at each end of a crossing, so few crossings carry a kerb tag themselves.\n"
     text += "- Feature counts skip tags set to \"no\"; the coverage gaps count any tag, including \"no\".\n"
+    text += "- The JSON export leaves out elements whose only matching tag is \"no\", so it can list fewer features than the total above.\n"
 
     return text
 }
 
 // Step 4: Export element type, ID, coordinates or relevant geometry, and original tags
 
-// Data structures for JSON export
 struct ExportFile: Codable {
     let source: String
     let license: String
@@ -275,6 +275,7 @@ struct ExportedFeature: Codable {
     let longitude: Double?
     let tactilePaving: String
     let audibleSignal: String
+    let vibratingSignal: String
     let kerb: String
     let wheelchair: String
     let tags: [String: String]
@@ -302,10 +303,11 @@ func convertElements(elements: [OverpassElement]) -> [ExportedFeature] {
             featureTypes: types,
             latitude: latitude,
             longitude: longitude,
-            tactilePaving: getValue(tags: tags, key: "tactile_paving"),
-            audibleSignal: getValue(tags: tags, key: "traffic_signals:sound"),
-            kerb: getValue(tags: tags, key: "kerb"),
-            wheelchair: getValue(tags: tags, key: "wheelchair"),
+            tactilePaving: valueOrUnknown(tags: tags, key: "tactile_paving"),
+            audibleSignal: valueOrUnknown(tags: tags, key: "traffic_signals:sound"),
+            vibratingSignal: valueOrUnknown(tags: tags, key: "traffic_signals:vibration"),
+            kerb: valueOrUnknown(tags: tags, key: "kerb"),
+            wheelchair: valueOrUnknown(tags: tags, key: "wheelchair"),
             tags: tags
         ))
     }
@@ -313,8 +315,8 @@ func convertElements(elements: [OverpassElement]) -> [ExportedFeature] {
     return exported
 }
 
-// Missing OSM tags are represented as "unknown".
-func getValue(tags: [String: String], key: String) -> String {
+// A missing tag becomes "unknown" rather than a guess, since unmapped doesn't mean inaccessible
+func valueOrUnknown(tags: [String: String], key: String) -> String {
     if let value = tags[key] {
         return value
     }
@@ -335,7 +337,9 @@ func printSpotCheck(features: [ExportedFeature]) {
         for feature in features {
             if shown < 3 && feature.featureTypes.contains(type) {
                 print("  https://www.openstreetmap.org/\(feature.osmType)/\(feature.osmId)")
-                print("  tags: \(feature.tags)")
+                // sorted so the same feature prints the same way every run
+                let tagList = feature.tags.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
+                print("  tags: \(tagList.joined(separator: ", "))")
                 shown += 1
             }
         }
@@ -376,16 +380,18 @@ let exportFile = ExportFile(
 )
 
 do {
+    // sortedKeys keeps the key order stable so git diffs stay small
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+    // encoded before anything is written, so a failure can't leave the two files from different runs
+    let exportData = try encoder.encode(exportFile)
+
     try FileManager.default.createDirectory(atPath: outputFolder, withIntermediateDirectories: true)
 
     try summary.write(toFile: "\(outputFolder)/coverage_summary.md", atomically: true, encoding: .utf8)
     print("Saved the summary in \(outputFolder)/coverage_summary.md")
 
-    // sortedKeys keeps the key order stable so git diffs stay small
-    let encoder = JSONEncoder()
-    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-    let exportData = try encoder.encode(exportFile)
-    try exportData.write(to: URL(fileURLWithPath: "\(outputFolder)/accessibility_export.json"))
+    try exportData.write(to: URL(fileURLWithPath: "\(outputFolder)/accessibility_export.json"), options: .atomic)
     print("Saved the export in \(outputFolder)/accessibility_export.json")
 } catch {
     print("Could not save the files: \(error)")
