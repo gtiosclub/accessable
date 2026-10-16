@@ -77,7 +77,7 @@ struct TripView: View {
     }
 }
 
-/// Shows the upcoming maneuver on a map. The user-location dot comes with MAP-5.
+/// Shows the route and upcoming maneuver on a map. The user-location dot comes with MAP-5.
 private struct TripMapView: View {
     let tripState: TripState
     let destination: Destination?
@@ -90,6 +90,10 @@ private struct TripMapView: View {
 
     var body: some View {
         Map(position: $cameraPosition, interactionModes: [.pan, .zoom]) {
+            if let route {
+                MapPolyline(coordinates: route.coordinates.map(\.clCoordinate))
+                    .stroke(.blue, lineWidth: 5)
+            }
             if let maneuver = tripState.nextManeuver {
                 Marker(maneuver.instruction,
                        systemImage: maneuver.kind.mapSymbolName,
