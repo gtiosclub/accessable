@@ -79,6 +79,65 @@ struct PlaceholderSceneProvider: SceneObservationProviding, SceneDescribing {
     }
 }
 
+/// Emits one sample fix, heading, and granted permission so UI work can proceed without GPS. Replaced by 2.1.
+struct PlaceholderLocationProvider: LocationProvider {
+    func locationSamples() -> AsyncStream<LocationSample> {
+        AsyncStream { continuation in
+            continuation.yield(MapsSamples.location)
+            continuation.finish()
+        }
+    }
+
+    func headingSamples() -> AsyncStream<HeadingSample> {
+        AsyncStream { continuation in
+            continuation.yield(MapsSamples.heading)
+            continuation.finish()
+        }
+    }
+
+    func authorizationStates() -> AsyncStream<LocationAuthorization> {
+        AsyncStream { continuation in
+            continuation.yield(.authorized(preciseAccuracy: true))
+            continuation.finish()
+        }
+    }
+
+    func requestAuthorization() async {}
+}
+
+/// Returns the sample route for any request, so previews and tests never reach Valhalla.
+struct PlaceholderRoutingService: RoutingService {
+    func route(
+        from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
+    ) async throws -> NavigationRoute {
+        MapsSamples.route
+    }
+}
+
+/// Hardcoded campus places so previews don't call MapKit.
+struct PlaceholderDestinationSearch: DestinationSearching {
+    static let samples = [
+        SearchSuggestion(title: "Georgia Tech Library", subtitle: "260 Fourth St NW, Atlanta, GA"),
+        SearchSuggestion(title: "John Lewis Student Center", subtitle: "351 Ferst Dr NW, Atlanta, GA"),
+        SearchSuggestion(title: "Campus Recreation Center", subtitle: "750 Ferst Dr NW, Atlanta, GA"),
+    ]
+
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
+
+    func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
+        results.stream()
+    }
+
+    func update(query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        results.send(.success(trimmed.isEmpty ? [] : Self.samples.filter { $0.title.localizedCaseInsensitiveContains(trimmed) }))
+    }
+
+    func resolve(_ suggestion: SearchSuggestion) async throws -> Destination {
+        Destination(name: suggestion.title, coordinate: MapsSamples.destination.coordinate, address: suggestion.subtitle)
+    }
+}
+
 struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
     func tripStates() -> AsyncStream<TripState> {
         AsyncStream { continuation in
@@ -87,9 +146,35 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
         }
     }
 
+    func tripRoutes() -> AsyncStream<NavigationRoute?> {
+        AsyncStream { $0.finish() }
+    }
+
+    func startTrip(route: NavigationRoute, destination: Destination) async {}
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
 
     func currentLocationDescription() async -> String? { nil }
+}
+
+/// Publishes one fixed state, so previews can show a trip in progress or arrived.
+struct PreviewTripProvider: TripStateProviding {
+    let state: TripState
+
+    func tripStates() -> AsyncStream<TripState> {
+        AsyncStream { continuation in
+            continuation.yield(state)
+            continuation.finish()
+        }
+    }
+
+    func tripRoutes() -> AsyncStream<NavigationRoute?> {
+        AsyncStream { $0.finish() }
+    }
+
+    func startTrip(route: NavigationRoute, destination: Destination) async {}
+    func pauseTrip() async {}
+    func resumeTrip() async {}
+    func endTrip() async {}
 }
