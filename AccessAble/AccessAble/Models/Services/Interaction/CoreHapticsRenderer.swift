@@ -62,7 +62,9 @@ actor CoreHapticsRenderer: HapticRendering {
         engine.playsHapticsOnly = true
         engine.isAutoShutdownEnabled = true
         // The system can reset the engine (e.g. app backgrounded); rebuild it on the next play.
-        engine.resetHandler = { [weak self] in
+        // `@Sendable` keeps the handler out of the actor's isolation; it only hops back in
+        // through the Task. Without it Swift 6 rejects the Task closure as a data race.
+        engine.resetHandler = { @Sendable [weak self] in
             Task { await self?.discardEngine() }
         }
         try engine.start()

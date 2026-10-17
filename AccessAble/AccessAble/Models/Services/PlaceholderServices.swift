@@ -71,7 +71,7 @@ struct PlaceholderSceneProvider: SceneObservationProviding, SceneDescribing {
     func stop() async {}
 
     func describeCurrentScene() async -> String {
-        Self.sample.prioritizedDetections.map(SpokenPhrasing.describe).joined(separator: " ")
+        SceneDescriptionBuilder().describe(Self.sample)
     }
 
     func ask(_ question: String, locationContext: String?) async throws -> String {

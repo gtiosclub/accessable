@@ -14,7 +14,7 @@ struct Detection: Identifiable, Equatable, Sendable {
 
     let id: UUID
     /// Stable across frames when tracked, so announcements fire on entry/threshold crossings only.
-    var trackID: Int?
+    var trackID: UUID?
     /// e.g. "person", "chair", "door", "obstacle", "drop-off".
     var label: String
     var confidence: Float
@@ -26,17 +26,21 @@ struct Detection: Identifiable, Equatable, Sendable {
     var origin: Origin
     /// True for things the user could walk into or fall off.
     var isHazard: Bool
+    /// Where it is in ARKit's gravity-aligned world, in metres, when depth placed it. Stable
+    /// while tracking runs, so a thing seen once can be steered towards after looking away.
+    var worldPosition: SIMD3<Float>?
 
     init(
         id: UUID = UUID(),
-        trackID: Int? = nil,
+        trackID: UUID? = nil,
         label: String,
         confidence: Float,
         boundingBox: CGRect,
         distance: Double? = nil,
         bearing: RelativeBearing? = nil,
         origin: Origin,
-        isHazard: Bool
+        isHazard: Bool,
+        worldPosition: SIMD3<Float>? = nil
     ) {
         self.id = id
         self.trackID = trackID
@@ -47,6 +51,7 @@ struct Detection: Identifiable, Equatable, Sendable {
         self.bearing = bearing
         self.origin = origin
         self.isHazard = isHazard
+        self.worldPosition = worldPosition
     }
 }
 
@@ -67,12 +72,15 @@ struct RecognizedText: Identifiable, Equatable, Sendable {
     var confidence: Float
     /// Normalized (0...1), upright orientation, origin at top-left.
     var boundingBox: CGRect
+    /// Where the text is in the world, in metres, when depth placed it at read time.
+    var worldPosition: SIMD3<Float>?
 
-    init(id: UUID = UUID(), string: String, confidence: Float, boundingBox: CGRect) {
+    init(id: UUID = UUID(), string: String, confidence: Float, boundingBox: CGRect, worldPosition: SIMD3<Float>? = nil) {
         self.id = id
         self.string = string
         self.confidence = confidence
         self.boundingBox = boundingBox
+        self.worldPosition = worldPosition
     }
 }
 
@@ -82,6 +90,8 @@ struct SceneObservation: Equatable, Sendable {
     var detections: [Detection]
     var ground: GroundSurface
     var recognizedText: [RecognizedText]
+    /// Kerbs, steps and drop-offs in the walking surface ahead, nearest first. Empty without LiDAR.
+    var elevationHazards: [ElevationHazard]
     /// False when distances came from relative depth or were unavailable.
     var hasMetricDepth: Bool
 
@@ -90,12 +100,14 @@ struct SceneObservation: Equatable, Sendable {
         detections: [Detection] = [],
         ground: GroundSurface = .unknown,
         recognizedText: [RecognizedText] = [],
+        elevationHazards: [ElevationHazard] = [],
         hasMetricDepth: Bool = false
     ) {
         self.timestamp = timestamp
         self.detections = detections
         self.ground = ground
         self.recognizedText = recognizedText
+        self.elevationHazards = elevationHazards
         self.hasMetricDepth = hasMetricDepth
     }
 
