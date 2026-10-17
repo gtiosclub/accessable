@@ -6,13 +6,16 @@ struct LocationSample: Codable, Equatable, Sendable {
     /// Radius of uncertainty in metres.
     var horizontalAccuracy: Double
     var timestamp: Date
-    /// Metres per second.
+    /// Metres per second. `nil` when Core Location has no valid value, never 0, so a missing reading can't pass for
+    /// standing still.
     var speed: Double? = nil
-    /// Metres per second.
+    /// Metres per second. `nil` when unknown; the simulator often reports none, so don't require it to use `speed`.
     var speedAccuracy: Double? = nil
-    /// Direction of travel (not where the phone points) in degrees clockwise from true north, 0..<360.
+    /// Direction of travel (not where the phone points) in degrees clockwise from true north, 0..<360. `nil` when
+    /// Core Location has no valid value, such as while standing still, never 0, so a missing reading can't pass for
+    /// due north.
     var course: Double? = nil
-    /// Degrees.
+    /// Degrees. `nil` when unknown; the simulator often reports none, so don't require it to use `course`.
     var courseAccuracy: Double? = nil
 }
 
@@ -254,7 +257,9 @@ enum MapsSamples {
         horizontalAccuracy: 5,
         timestamp: Date(timeIntervalSince1970: 1_700_000_000),
         speed: 1.25,
-        course: 0
+        speedAccuracy: 0.5,
+        course: 0,
+        courseAccuracy: 15
     )
     static let heading = HeadingSample(
         trueHeading: 0,
