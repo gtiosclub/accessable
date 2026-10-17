@@ -50,8 +50,43 @@ protocol SceneDescribing: Sendable {
 
 // MARK: - Maps + Location (2.x)
 
+/// Tracking runs while any stream has a subscriber, so ending a trip stops it. Location and heading streams
+/// stay silent without permission and drop invalid readings. Publish through `Broadcaster`; it doesn't report
+/// when its last subscriber leaves, so count subscribers yourself.
+protocol LocationProvider: Sendable {
+    func locationSamples() -> AsyncStream<LocationSample>
+    func headingSamples() -> AsyncStream<HeadingSample>
+    /// Emits the current permission immediately, then every change.
+    func authorizationStates() -> AsyncStream<LocationAuthorization>
+    /// Prompts for When In Use access if undetermined. Returns immediately; the result arrives on
+    /// `authorizationStates()`.
+    func requestAuthorization() async
+}
+
+/// Computes a route without starting navigation or delivering speech.
+protocol RoutingService: Sendable {
+    /// - Throws: `RoutingError`, or `CancellationError` if the task is cancelled.
+    func route(
+        from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
+    ) async throws -> NavigationRoute
+}
+
+/// Main actor because MKLocalSearchCompleter is.
+@MainActor
+protocol DestinationSearching: Sendable {
+    func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>>
+    func update(query: String)
+    func resolve(_ suggestion: SearchSuggestion) async throws -> Destination
+}
+
 protocol TripStateProviding: Sendable {
     func tripStates() -> AsyncStream<TripState>
+    /// The route the trip is following, replaced on each reroute; nil when no trip is running. Kept out of
+    /// `TripState` so the Live Activity's state stays small.
+    func tripRoutes() -> AsyncStream<NavigationRoute?>
+    /// Starts guidance along `route`, replacing any trip in progress. Progress arrives on `tripStates()`.
+    /// Voice "start trip" needs a planned route first; a future `planTrip`/`startTrip()` split is expected.
+    func startTrip(route: NavigationRoute, destination: Destination) async
     func pauseTrip() async
     func resumeTrip() async
     func endTrip() async
