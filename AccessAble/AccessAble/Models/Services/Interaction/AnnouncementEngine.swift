@@ -101,6 +101,8 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
     }
  
     private func isDuplicate(_ event: AnnouncementEvent, now: Date = .now) -> Bool {
+        // Asking the same thing twice ("where am I?") should get an answer both times
+        if event.source == .userInteraction { return false }
         recentKeys = recentKeys.filter { now.timeIntervalSince($0.value) < dedupWindow }
         let key = event.dedupKey ?? event.text
         if recentKeys[key] != nil { return true }

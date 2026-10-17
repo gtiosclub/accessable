@@ -24,7 +24,21 @@ struct CommandView: View {
                     .submitLabel(.send)
                     .onSubmit { Task { await viewModel.submit() } }
                     .accessibilityHint("For example: describe my surroundings, or where am I")
- 
+
+                Button {
+                    Task { await viewModel.toggleDictation() }
+                } label: {
+                    Label(
+                        viewModel.dictation.isRecording ? "Stop and send" : "Dictate",
+                        systemImage: viewModel.dictation.isRecording ? "stop.circle.fill" : "mic.fill"
+                    )
+                    .minimumTapTarget()
+                }
+                .disabled(viewModel.isWorking)
+                .accessibilityHint(viewModel.dictation.isRecording
+                    ? "Stops listening and runs what you said"
+                    : "Speak a command or question, then tap again to send")
+
                 Button {
                     Task { await viewModel.submit() }
                 } label: {
@@ -49,6 +63,7 @@ struct CommandView: View {
             }
         }
         .navigationTitle("Commands")
+        .onDisappear { viewModel.cancelDictation() }
     }
 }
  

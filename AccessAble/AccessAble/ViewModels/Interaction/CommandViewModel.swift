@@ -9,25 +9,50 @@
 import Foundation
 import Observation
  
-/// Owner: User Interaction (3.1). Takes typed text, interprets it, carries out the command, and speaks the reply.
-/// Voice input (speech recognition) can call `run(_:)` directly later.
+/// Owner: User Interaction (3.1). Takes typed or dictated text, interprets it, carries out the command,
+/// and speaks the reply.
 @MainActor
 @Observable
 final class CommandViewModel {
     var text = ""
     private(set) var lastReply: String?
     private(set) var isWorking = false
- 
+    let dictation = SpeechDictation()
+
     @ObservationIgnored private let services: AppServices
- 
+
     init(services: AppServices) {
         self.services = services
+        dictation.onTranscript = { [weak self] transcript, isFinal in
+            guard let self else { return }
+            text = transcript
+            // Stopping dictation (or Speech ending it on its own) runs the command, no extra tap needed
+            if isFinal {
+                dictation.stop()
+                Task { await self.submit() }
+            }
+        }
+        dictation.onError = { [weak self] message in
+            Task { await self?.reply(message) }
+        }
     }
- 
+
     var canSubmit: Bool {
-        !isWorking && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !isWorking && !dictation.isRecording && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
- 
+
+    func toggleDictation() async {
+        if dictation.isRecording {
+            dictation.stop()
+        } else {
+            await dictation.start()
+        }
+    }
+
+    func cancelDictation() {
+        dictation.cancel()
+    }
+
     func submit() async {
         guard canSubmit else { return }
         let input = text
@@ -46,7 +71,7 @@ final class CommandViewModel {
         switch command {
         case .describeSurroundings:
             let description = await services.sceneDescriber.describeCurrentScene()
-            await reply(description, category: .ambient, source: .sceneDescription)
+            await reply(description, category: .ambient)
         case .whereAmI:
             let location = await services.locationContext.currentLocationDescription()
             await reply(location ?? "Your location isn't available yet.")
@@ -74,14 +99,11 @@ final class CommandViewModel {
     }
  
     /// Shows the reply on screen and speaks it through the AnnouncementEngine (so it's VoiceOver-safe).
-    private func reply(
-        _ text: String,
-        category: AnnouncementCategory = .system,
-        source: AnnouncementSource = .userInteraction
-    ) async {
+    /// `.userInteraction` source means it skips the category filter and dedup: the user asked for it.
+    private func reply(_ text: String, category: AnnouncementCategory = .system) async {
         lastReply = text
         await services.announcements.submit(
-            AnnouncementEvent(category: category, priority: .high, text: text, source: source)
+            AnnouncementEvent(category: category, priority: .high, text: text, source: .userInteraction)
         )
     }
 }

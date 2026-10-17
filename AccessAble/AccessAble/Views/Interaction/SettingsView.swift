@@ -48,6 +48,16 @@ struct SettingsView: View {
             } footer: {
                 Text("When VoiceOver is on, announcements use it for speech.")
             }
+
+            Section {
+                Picker("Performance", selection: $viewModel.performanceSetting) {
+                    Text("Automatic").tag(PerformanceModeSetting.automatic)
+                    Text("Best quality").tag(PerformanceModeSetting.normal)
+                    Text("Save battery").tag(PerformanceModeSetting.battery)
+                }
+            } footer: {
+                Text("Currently: \(viewModel.currentPerformanceMode == .battery ? "saving battery" : "best quality")")
+            }
         }
         .navigationTitle("Settings")
     }

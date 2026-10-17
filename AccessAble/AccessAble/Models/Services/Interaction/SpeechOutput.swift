@@ -12,9 +12,6 @@ final class SpeechOutput: NSObject {
         super.init()
         synthesizer.delegate = self
         synthesizer.usesApplicationAudioSession = true
-        try? AVAudioSession.sharedInstance().setCategory(
-            .playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers]
-        )
         announcementObserver = NotificationCenter.default.addObserver(
             forName: UIAccessibility.announcementDidFinishNotification, object: nil, queue: .main
         ) { [weak self] note in
@@ -49,7 +46,12 @@ final class SpeechOutput: NSObject {
         if interrupting, synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
-        try? AVAudioSession.sharedInstance().setActive(true)
+        // Set every time: dictation switches the shared session to .record, which would make speech silent
+        let session = AVAudioSession.sharedInstance()
+        try? session.setCategory(
+            .playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers]
+        )
+        try? session.setActive(true)
         let utterance = AVSpeechUtterance(string: text)
         utterance.rate = rate // GuidanceProfile.speechRate is already in AVSpeechUtterance units
         await withCheckedContinuation { continuation in
