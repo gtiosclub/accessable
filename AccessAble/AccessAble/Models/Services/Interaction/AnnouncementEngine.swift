@@ -37,7 +37,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
         guard let last else { return }
         await enqueue(AnnouncementEvent(
             category: last.category, priority: .high, text: last.text,
-            bearing: last.bearing, source: last.source
+            distance: last.distance, bearing: last.bearing, source: last.source
         ))
     }
  
@@ -75,7 +75,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
             last = event
             delivered.send(event)
             if let haptic = event.haptic, profile.channels.contains(.haptics) {
-                await haptics.play(haptic, intensity: profile.hapticIntensity)
+                await haptics.play(haptic, intensity: profile.hapticIntensity * distanceScale(for: event))
             }
             if profile.channels.contains(.speech) {
                 await speech.speak(event.text, rate: profile.speechRate, interrupting: event.priority == .critical)
@@ -83,6 +83,16 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
             current = nil
         }
         isDraining = false
+    }
+
+    /// Ramps obstacle haptics from 45% strength at 5 m to full strength at 0.5 m.
+    /// If distance is unavailable, preserve the user's configured intensity.
+    private func distanceScale(for event: AnnouncementEvent) -> Float {
+        guard event.haptic == .obstacleNear || event.haptic == .obstacleNearer || event.haptic == .stop,
+              let distance = event.distance, distance.isFinite else { return 1 }
+        let clampedDistance = min(max(distance, 0.5), 5.0)
+        let proximity = (5.0 - clampedDistance) / 4.5
+        return Float(0.45 + proximity * 0.55)
     }
  
     private func nextFreshEvent() -> AnnouncementEvent? {
