@@ -39,6 +39,8 @@ struct AppServices: Sendable {
         var services = live(performance: PerformanceModeMonitor())
         // Previews and tests must not reach the network or spend the public server's fair-use budget.
         services.routing = PlaceholderRoutingService()
+        // A real trip would start GPS tracking and background location from a preview or test.
+        services.trip = PlaceholderTripProvider()
         return services
     }
 }

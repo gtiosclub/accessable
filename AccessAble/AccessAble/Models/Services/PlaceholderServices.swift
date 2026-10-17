@@ -143,6 +143,7 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
         }
     }
 
+    func startTrip(route: NavigationRoute, destination: Destination) async {}
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}

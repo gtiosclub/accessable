@@ -81,6 +81,9 @@ protocol DestinationSearching: Sendable {
 
 protocol TripStateProviding: Sendable {
     func tripStates() -> AsyncStream<TripState>
+    /// Starts guidance along `route`, replacing any trip in progress. Progress arrives on `tripStates()`.
+    /// Voice "start trip" needs a planned route first; a future `planTrip`/`startTrip()` split is expected.
+    func startTrip(route: NavigationRoute, destination: Destination) async
     func pauseTrip() async
     func resumeTrip() async
     func endTrip() async

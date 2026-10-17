@@ -7,4 +7,9 @@ struct AppServicesTests {
     func previewNeverRoutesOverTheNetwork() {
         #expect(AppServices.preview.routing is PlaceholderRoutingService)
     }
+
+    @Test
+    func previewNeverStartsRealTrips() {
+        #expect(AppServices.preview.trip is PlaceholderTripProvider)
+    }
 }
