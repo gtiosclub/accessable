@@ -81,6 +81,9 @@ protocol DestinationSearching: Sendable {
 
 protocol TripStateProviding: Sendable {
     func tripStates() -> AsyncStream<TripState>
+    /// The route the trip is following, replaced on each reroute; nil when no trip is running. Kept out of
+    /// `TripState` so the Live Activity's state stays small.
+    func tripRoutes() -> AsyncStream<NavigationRoute?>
     /// Starts guidance along `route`, replacing any trip in progress. Progress arrives on `tripStates()`.
     /// Voice "start trip" needs a planned route first; a future `planTrip`/`startTrip()` split is expected.
     func startTrip(route: NavigationRoute, destination: Destination) async

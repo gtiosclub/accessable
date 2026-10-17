@@ -135,6 +135,11 @@ final class TripViewModel {
                 }
             }
             group.addTask { [services] in
+                for await route in services.trip.tripRoutes() {
+                    await self.receive(route)
+                }
+            }
+            group.addTask { [services] in
                 for await authorization in services.location.authorizationStates() {
                     await self.receive(authorization)
                 }
@@ -202,6 +207,12 @@ final class TripViewModel {
         default:
             break
         }
+    }
+    /// A reroute replaces the route mid-trip, so the map draws the one being followed. A nil route needs nothing here:
+    /// the phase change that comes with it already drops the route.
+    private func receive(_ route: NavigationRoute?) {
+        guard let route, tripState.phase != .arrived else { return }
+        self.route = route
     }
     private func receive(_ authorization: LocationAuthorization) { locationAuthorization = authorization }
 

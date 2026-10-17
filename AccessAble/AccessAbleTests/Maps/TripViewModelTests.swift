@@ -84,6 +84,7 @@ struct TripViewModelTests {
 /// Trip states the test sends, and the routes it was asked to start; never finishes, so run `start()` in a task.
 private final class ControlledTripProvider: TripStateProviding, Sendable {
     private let states = Broadcaster<TripState>(replaysLatest: true)
+    private let routes = Broadcaster<NavigationRoute?>(replaysLatest: true)
     private let started = Mutex<[NavigationRoute]>([])
 
     init(_ state: TripState = .idle) {
@@ -94,9 +95,14 @@ private final class ControlledTripProvider: TripStateProviding, Sendable {
         states.send(state)
     }
 
+    func send(_ route: NavigationRoute?) {
+        routes.send(route)
+    }
+
     var startedRoutes: [NavigationRoute] { started.withLock { $0 } }
 
     func tripStates() -> AsyncStream<TripState> { states.stream() }
+    func tripRoutes() -> AsyncStream<NavigationRoute?> { routes.stream() }
     func startTrip(route: NavigationRoute, destination: Destination) async { started.withLock { $0.append(route) } }
     func pauseTrip() async {}
     func resumeTrip() async {}
@@ -321,6 +327,21 @@ struct TripStartTests {
         await screen.show(state(.arrived))
         await screen.show(state(.planning))
         #expect(screen.viewModel.destination == nil)
+        screen.stop()
+    }
+
+    @Test
+    func rerouteReplacesTheRouteOnTheMap() async throws {
+        let screen = TripScreen()
+        await screen.plan()
+        await screen.show(state(.active, maneuver: turn, distance: 42))
+        let rerouted = try NavigationRoute(coordinates: [turn.coordinate, library.coordinate], steps: [
+            RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Walk east.", spokenInstruction: "Walk east."),
+            RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
+        ], estimatedDuration: 60)
+
+        screen.trip.send(rerouted)
+        await screen.until { screen.viewModel.route == rerouted }
         screen.stop()
     }
 
