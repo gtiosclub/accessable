@@ -42,9 +42,10 @@ struct GuidanceProfile: Codable, Hashable, Sendable {
     var hapticIntensity: Float
     var enabledCategories: Set<AnnouncementCategory>
 
-    /// Whether this profile wants to hear an event at all. Critical events always pass.
+    /// Whether this profile wants to hear an event at all. Critical events and replies to
+    /// something the user just asked for always pass.
     func allows(_ event: AnnouncementEvent) -> Bool {
-        if event.priority == .critical { return true }
+        if event.priority == .critical || event.source == .userInteraction { return true }
         guard enabledCategories.contains(event.category) else { return false }
         switch verbosity {
         case .passive: return event.priority >= .high

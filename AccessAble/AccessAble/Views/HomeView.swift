@@ -48,6 +48,16 @@ struct HomeView: View {
                 }
                 .buttonStyle(.bordered)
                 .accessibilityHint("Plan or continue a walking trip")
+                
+                NavigationLink {
+                    CommandView(services: app.services)
+                } label: {
+                    Label("Commands", systemImage: "text.bubble")
+                        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                        .padding(.horizontal)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityHint("Type a command or ask a question")
             }
             .font(.title3)
             .padding()
