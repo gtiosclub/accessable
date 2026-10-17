@@ -19,20 +19,23 @@ struct AppServices: Sendable {
     static func live(performance: PerformanceModeMonitor) -> AppServices {
         let scene = PlaceholderSceneProvider()      // TODO(CV 1.4): CameraSessionManager + SceneAnalyzer
         let trip = PlaceholderTripProvider()        // TODO(Maps 2.2): TripManager / RouteProgressTracker
+        let location = CoreLocationProvider()
         var services = AppServices(
             announcements: PlaceholderAnnouncementEngine(), // TODO(UI 3.3): AnnouncementEngine
             haptics: PlaceholderHaptics(),                  // TODO(UI 3.2): CoreHapticsRenderer
             performance: performance,
             scene: scene,
             sceneDescriber: scene,                          // TODO(CV 1.3)
-            location: CoreLocationProvider(),
+            location: location,
             routing: ValhallaRoutingService(),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
             locationContext: trip                           // TODO(Maps 2.1)
         )
-        services.trip = TripManager(location: services.location, routing: services.routing,
-                                    announcements: services.announcements)
+        services.trip = TripManager(
+            location: location, routing: services.routing, announcements: services.announcements,
+            setBackgroundTracking: { await location.setBackgroundTracking($0) }
+        )
         return services
     }
 
