@@ -11,12 +11,14 @@ struct AppServices: Sendable {
     var sceneDescriber: any SceneDescribing
     var trip: any TripStateProviding
     var locationContext: any LocationContextProviding
+    var commands: any CommandInterpreting
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
     static func live(performance: PerformanceModeMonitor) -> AppServices {
         let scene = PlaceholderSceneProvider()      // TODO(CV 1.4): CameraSessionManager + SceneAnalyzer
         let trip = PlaceholderTripProvider()        // TODO(Maps 2.2): TripManager / RouteProgressTracker
+        let haptics = PlaceholderHaptics()          // TODO(UI 3.2): CoreHapticsRenderer
         return AppServices(
             announcements: PlaceholderAnnouncementEngine(), // TODO(UI 3.3): AnnouncementEngine
             haptics: CoreHapticsRenderer(),                  // TODO(UI 3.2): CoreHapticsRenderer
@@ -25,7 +27,8 @@ struct AppServices: Sendable {
             scene: scene,
             sceneDescriber: scene,                          // TODO(CV 1.3)
             trip: trip,
-            locationContext: trip                           // TODO(Maps 2.1)
+            locationContext: trip,                          // TODO(Maps 2.1)
+            commands: FoundationModelCommandInterpreter()
         )
     }
 

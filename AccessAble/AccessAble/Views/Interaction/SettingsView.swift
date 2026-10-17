@@ -24,7 +24,16 @@ struct SettingsView: View {
                 }
             }
 
-            Section("Channels") {
+            Section("Announcements") {
+                ForEach(AnnouncementCategory.allCases, id: \.self) { category in
+                    Toggle(category.rawValue.capitalized, isOn: Binding(
+                        get: { viewModel.isEnabled(category) },
+                        set: { viewModel.setCategory(category, enabled: $0) }
+                    ))
+                }
+            }
+
+            Section {
                 channelToggle("Speech", .speech)
                 channelToggle("Haptics", .haptics)
                 channelToggle("Spatial audio", .spatialAudio)
@@ -34,15 +43,10 @@ struct SettingsView: View {
                 LabeledContent("Haptic intensity") {
                     Slider(value: $viewModel.profile.hapticIntensity, in: 0...1)
                 }
-            }
-
-            Section("Announcements") {
-                ForEach(AnnouncementCategory.allCases, id: \.self) { category in
-                    Toggle(category.rawValue.capitalized, isOn: Binding(
-                        get: { viewModel.isEnabled(category) },
-                        set: { viewModel.setCategory(category, enabled: $0) }
-                    ))
-                }
+            } header: {
+                Text("Channels")
+            } footer: {
+                Text("When VoiceOver is on, announcements use it for speech.")
             }
 
             Section {

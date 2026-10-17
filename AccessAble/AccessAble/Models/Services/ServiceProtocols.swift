@@ -6,6 +6,15 @@ import Foundation
 
 // MARK: - User Interaction (3.3) — owns delivery of everything the user hears/feels
 
+/// Natural-language commands and questions (3.1). Text in; a command, or a spoken answer, out.
+protocol CommandInterpreting: Sendable {
+    /// Never throws: anything it can't understand comes back as `.unknown`.
+    func interpret(_ text: String) async -> VoiceCommand
+    /// Short answer suitable for speech. `context` is e.g. "on Ferst Drive facing north".
+    func answer(_ question: String, context: String?) async throws -> String
+}
+
+
 /// Anything that wants to tell the user something submits an event here. CV and Maps depend only on this.
 protocol AnnouncementSink: Sendable {
     func submit(_ event: AnnouncementEvent) async
