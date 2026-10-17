@@ -1,0 +1,11 @@
+{
+  "Version": 1.0,
+  "Metadata": { "Project": "AccessAble", "Description": "Obstacle stop: one hard, near-continuous buzz. Looped every 1.0 s, leaving a 0.15 s gap, until cleared." },
+  "Pattern": [
+    { "Event": { "Time": 0.0, "EventType": "HapticContinuous", "EventDuration": 0.85,
+      "EventParameters": [
+        { "ParameterID": "HapticIntensity", "ParameterValue": 1.0 },
+        { "ParameterID": "HapticSharpness", "ParameterValue": 0.6 }
+      ] } }
+  ]
+}
