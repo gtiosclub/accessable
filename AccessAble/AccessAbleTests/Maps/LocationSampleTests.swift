@@ -85,4 +85,17 @@ struct LocationSampleTests {
         #expect(sample.speed == 1.4)
         #expect(sample.speedAccuracy == 0.5)
     }
+
+    @Test func invalidFixIsRejected() {
+        #expect(LocationSample(location(horizontalAccuracy: -1)) == nil)
+    }
+
+    @Test func zeroSpeedAndCourseAreReadings() throws {
+        let sample = try #require(LocationSample(location(course: 0, courseAccuracy: 0, speed: 0, speedAccuracy: 0)))
+
+        #expect(sample.speed == 0)
+        #expect(sample.speedAccuracy == 0)
+        #expect(sample.course == 0)
+        #expect(sample.courseAccuracy == 0)
+    }
 }
