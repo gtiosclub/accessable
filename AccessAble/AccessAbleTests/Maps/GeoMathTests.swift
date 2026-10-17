@@ -201,6 +201,56 @@ struct GeoMathBearingTests {
     }
 }
 
+struct GeoMathRealWorldTests {
+    struct Trip: Sendable, CustomTestStringConvertible {
+        let name: String
+        let start: GeoCoordinate
+        let end: GeoCoordinate
+        let metres: Double
+        /// Initial bearing in degrees.
+        let bearing: Double
+
+        var testDescription: String { name }
+    }
+
+    // Computed in Python on the same 6,371,008.8 m sphere from 3D unit vectors: distance is R·atan2(|a×b|, a·b), and
+    // bearing is atan2 of b's components along the local east and north unit vectors at a. That shares neither
+    // haversine nor the trigonometric bearing formula with GeoMath.
+    static let trips = [
+        Trip(name: "Tech Tower to Clough Commons",
+             start: GeoCoordinate(latitude: 33.772496, longitude: -84.394787),
+             end: GeoCoordinate(latitude: 33.774920, longitude: -84.396415),
+             metres: 308.6957204657596, bearing: 330.82692940332277),
+        Trip(name: "Kessler Campanile to Klaus",
+             start: GeoCoordinate(latitude: 33.774180, longitude: -84.398210),
+             end: GeoCoordinate(latitude: 33.777190, longitude: -84.396220),
+             metres: 381.90681418199114, bearing: 28.790196737293034),
+        Trip(name: "Student Center to the CRC",
+             start: GeoCoordinate(latitude: 33.773842, longitude: -84.398563),
+             end: GeoCoordinate(latitude: 33.775540, longitude: -84.403936),
+             metres: 531.3000688363302, bearing: 290.8177476205874),
+        Trip(name: "Atlanta to New York City",
+             start: GeoCoordinate(latitude: 33.7490, longitude: -84.3880),
+             end: GeoCoordinate(latitude: 40.7128, longitude: -74.0060),
+             metres: 1_200_318.4564463005, bearing: 46.83051853031718),
+        Trip(name: "Atlanta to London",
+             start: GeoCoordinate(latitude: 33.7490, longitude: -84.3880),
+             end: GeoCoordinate(latitude: 51.5074, longitude: -0.1278),
+             metres: 6_769_959.009502972, bearing: 45.143110198529094),
+        Trip(name: "Sydney to Tokyo",
+             start: GeoCoordinate(latitude: -33.8688, longitude: 151.2093),
+             end: GeoCoordinate(latitude: 35.6762, longitude: 139.6503),
+             metres: 7_825_829.425997214, bearing: 350.04904749782787),
+    ]
+
+    @Test(arguments: trips)
+    func matchesAnIndependentComputation(_ trip: Trip) {
+        let distance = GeoMath.distance(from: trip.start, to: trip.end)
+        #expect(isClose(distance, trip.metres, within: max(1e-9 * trip.metres, 1e-6)))
+        #expect(angularGap(GeoMath.bearing(from: trip.start, to: trip.end), trip.bearing) <= 1e-9)
+    }
+}
+
 struct GeoMathNormalizedBearingTests {
     @Test(arguments: [
         (-720.0, 0.0),
