@@ -108,6 +108,17 @@ struct TripView: View {
             .padding()
         }
         .navigationTitle("Trip")
+        #if DEBUG
+        .toolbar {
+            ToolbarItem {
+                NavigationLink {
+                    LocationDebugView(services: services)
+                } label: {
+                    Label("Location readings", systemImage: "location.viewfinder")
+                }
+            }
+        }
+        #endif
         // VoiceOver doesn't read changes outside the focused element, so say the failure out loud
         .onChange(of: viewModel.routeFailureCount) {
             guard let message = viewModel.routeErrorMessage else { return }
