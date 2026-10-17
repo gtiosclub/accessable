@@ -9,6 +9,11 @@ struct AppServicesTests {
     }
 
     @Test
+    func liveGuidesTripsWithTripManager() {
+        #expect(AppServices.live(performance: PerformanceModeMonitor()).trip is TripManager)
+    }
+
+    @Test
     func previewNeverStartsRealTrips() {
         #expect(AppServices.preview.trip is PlaceholderTripProvider)
     }

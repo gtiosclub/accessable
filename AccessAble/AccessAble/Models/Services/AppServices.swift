@@ -19,7 +19,7 @@ struct AppServices: Sendable {
     static func live(performance: PerformanceModeMonitor) -> AppServices {
         let scene = PlaceholderSceneProvider()      // TODO(CV 1.4): CameraSessionManager + SceneAnalyzer
         let trip = PlaceholderTripProvider()        // TODO(Maps 2.2): TripManager / RouteProgressTracker
-        return AppServices(
+        var services = AppServices(
             announcements: PlaceholderAnnouncementEngine(), // TODO(UI 3.3): AnnouncementEngine
             haptics: PlaceholderHaptics(),                  // TODO(UI 3.2): CoreHapticsRenderer
             performance: performance,
@@ -31,6 +31,9 @@ struct AppServices: Sendable {
             trip: trip,
             locationContext: trip                           // TODO(Maps 2.1)
         )
+        services.trip = TripManager(location: services.location, routing: services.routing,
+                                    announcements: services.announcements)
+        return services
     }
 
     /// For SwiftUI previews and unit tests.
