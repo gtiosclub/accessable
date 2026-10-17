@@ -1,0 +1,16 @@
+{
+  "Version": 1.0,
+  "Metadata": { "Project": "AccessAble", "Description": "Obstacle nearer: two medium-strong buzzes in quick succession. Looped every 0.7 s by the renderer." },
+  "Pattern": [
+    { "Event": { "Time": 0.0, "EventType": "HapticContinuous", "EventDuration": 0.1,
+      "EventParameters": [
+        { "ParameterID": "HapticIntensity", "ParameterValue": 0.75 },
+        { "ParameterID": "HapticSharpness", "ParameterValue": 0.4 }
+      ] } },
+    { "Event": { "Time": 0.18, "EventType": "HapticContinuous", "EventDuration": 0.1,
+      "EventParameters": [
+        { "ParameterID": "HapticIntensity", "ParameterValue": 0.75 },
+        { "ParameterID": "HapticSharpness", "ParameterValue": 0.4 }
+      ] } }
+  ]
+}

@@ -63,7 +63,7 @@ final class AppViewModel {
 extension AppViewModel {
     /// In-memory, already-onboarded instance for SwiftUI previews.
     static var preview: AppViewModel {
-        let vm = AppViewModel(defaults: UserDefaults(suiteName: "preview") ?? .standard)
+        let vm = AppViewModel(defaults: UserDefaults(suiteName: "preview") ?? .standard, services: .preview)
         vm.hasCompletedOnboarding = true
         return vm
     }

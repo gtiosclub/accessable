@@ -2,9 +2,6 @@ import Foundation
 
 /// Haptic vocabulary v1. Each case maps to an AHAP file of the same name (e.g. `turnLeft.ahap`)
 /// owned by the Haptics subteam (3.2).
-///
-/// The iPhone has a single actuator, so direction is encoded as a pattern, not a location:
-/// turn left = 2 pulses, turn right = 3 pulses.
 enum HapticID: String, Codable, CaseIterable, Sendable {
     case obstacleNear
     case obstacleNearer
@@ -20,6 +17,15 @@ enum HapticID: String, Codable, CaseIterable, Sendable {
 
     var ahapURL: URL? {
         Bundle.main.url(forResource: ahapFileName, withExtension: "ahap")
+    }
+    
+    var loopPeriod: TimeInterval? {
+        switch self {
+        case .obstacleNear: 1.2
+        case .obstacleNearer: 0.7
+        case .stop: 1.0
+        default: nil
+        }
     }
 
     /// Spoken/visible name used in the Practice screen and Settings.
@@ -40,15 +46,15 @@ enum HapticID: String, Codable, CaseIterable, Sendable {
     /// Describes how the pattern feels, for the Practice screen.
     var patternDescription: String {
         switch self {
-        case .obstacleNear: "Slow, soft pulses"
-        case .obstacleNearer: "Faster, stronger pulses"
-        case .stop: "One long, strong buzz"
-        case .turnLeft: "Two short pulses"
-        case .turnRight: "Three short pulses"
+        case .obstacleNear: "One soft buzz, repeating slowly"
+        case .obstacleNearer: "Two stronger buzzes, repeating quickly"
+        case .stop: "A hard, almost constant buzz"
+        case .turnLeft: "Two short, sharp buzzes"
+        case .turnRight: "One long, sharp buzz"
         case .onRouteHeartbeat: "A gentle double tap every few seconds"
-        case .arrived: "Rising pattern"
+        case .arrived: "Three buzzes getting stronger, then a long buzz that fades"
         case .attention: "One sharp tap"
-        case .error: "Three quick buzzes"
+        case .error: "Three dull buzzes getting weaker"
         }
     }
 }

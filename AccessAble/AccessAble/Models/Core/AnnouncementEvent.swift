@@ -42,6 +42,8 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
     /// Exactly what should be spoken. Keep it short; hazards first.
     var text: String
     var haptic: HapticID?
+    /// Distance to the hazard in metres, when known. Used to scale obstacle haptics.
+    var distance: Double?
     /// Where the thing is relative to the user's facing direction, if known. Drives spatial audio.
     var bearing: RelativeBearing?
     var source: AnnouncementSource
@@ -57,6 +59,7 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
         priority: AnnouncementPriority,
         text: String,
         haptic: HapticID? = nil,
+        distance: Double? = nil,
         bearing: RelativeBearing? = nil,
         source: AnnouncementSource,
         createdAt: Date = .now,
@@ -68,6 +71,7 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
         self.priority = priority
         self.text = text
         self.haptic = haptic
+        self.distance = distance
         self.bearing = bearing
         self.source = source
         self.createdAt = createdAt
