@@ -108,4 +108,9 @@ struct SceneObservation: Equatable, Sendable {
     }
 
     static let empty = SceneObservation()
+
+    /// placeholder function for later
+    func isObstacleDetected(within range: Double = 2.0) -> Bool {
+        detections.contains { $0.isHazard && ($0.distance ?? 0) <= range }
+    }
 }

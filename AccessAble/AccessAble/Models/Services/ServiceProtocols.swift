@@ -26,6 +26,11 @@ protocol HapticRendering: Sendable {
     func play(_ id: HapticID, intensity: Float) async
 }
 
+/// Vibrates and beeps to warn that an obstacle was detected.
+protocol ObstacleAlerting: Sendable {
+    func alert(intensity: Float) async
+}
+
 /// Publishes the current PerformanceMode (3.3). CV (1.4) and Maps (2.1) subscribe.
 protocol PerformanceModeProviding: Sendable {
     func modes() -> AsyncStream<PerformanceMode>

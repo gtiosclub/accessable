@@ -5,6 +5,7 @@ import Foundation
 struct AppServices: Sendable {
     var announcements: any AnnouncementEngineProtocol
     var haptics: any HapticRendering
+    var obstacleAlert: any ObstacleAlerting
     var performance: any PerformanceModeProviding
     var scene: any SceneObservationProviding
     var sceneDescriber: any SceneDescribing
@@ -19,6 +20,7 @@ struct AppServices: Sendable {
         return AppServices(
             announcements: PlaceholderAnnouncementEngine(), // TODO(UI 3.3): AnnouncementEngine
             haptics: PlaceholderHaptics(),                  // TODO(UI 3.2): CoreHapticsRenderer
+            obstacleAlert: ObstacleAlertPlayer(),
             performance: performance,
             scene: scene,
             sceneDescriber: scene,                          // TODO(CV 1.3)
