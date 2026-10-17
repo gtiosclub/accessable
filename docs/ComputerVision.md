@@ -214,7 +214,7 @@ a physical device by the integrator; see **Device validation**.
 | T16 Alert thresholds | Smitha | #105 | Rewritten, integrated | `ObstacleAnnouncer.swift` | Emits `AnnouncementEvent`s; exit grace period, state pruning, elevation hazards, priority and haptic mapping. |
 | T17 OCR | Smitha | #114 | Integrated | `TextDetector.swift`, `RecognizedTextMemory.swift`, `TextReader.swift` | Off the safety path at ≤1 Hz; confidence filter and de-duplication. |
 | T18 Instant descriptions | Smitha | #112 | Integrated | `SceneDescriptionBuilder.swift` | Hazards first, capped at four items, speakable empty scene; serves `describeCurrentScene()`. |
-| T19 Ask AI | Deshna, Nish | — | Implemented, not on device yet | `AskAI.swift`, `ImageFacts.swift`, `ARSceneAnalyzer.ask` | On-device only. Facts: the latest `SceneObservation` (objects, people, kerbs with distance and direction, as in T18) plus text (T17's `TextDetector`), scene labels and each object's main colour read from one still frame. Foundation Models answers from those facts, a template where Apple Intelligence is unavailable; iOS 26's model is text-only, so it never sees the image. Outside the obstacle pipeline. Camera guidance screen has an Ask AI section. |
+| T19 Ask AI | Deshna, Nish | #144 | Integrated, not on device yet | `AskAI.swift`, `ImageFacts.swift`, `ARSceneAnalyzer.ask` | On-device only. Facts: the latest `SceneObservation` (objects, people, kerbs with distance and direction, as in T18) plus text (T17's `TextDetector`), scene labels and each object's main colour read from one still frame. Foundation Models answers from those facts, a template where Apple Intelligence is unavailable; iOS 26's model is text-only, so it never sees the image. Outside the obstacle pipeline. Camera guidance screen has an Ask AI section; Home has none yet. If the model fails (guardrail, context window), the template answers instead. The answer is spoken only through VoiceOver until the announcement engine (3.3) lands. |
 | T20 Test set & metrics | Deshna | #122 | Metrics integrated; data missing | `Evaluation/`, `TestSet/` | Live FPS/latency on the Live screen. `TestSet/annotations.json` has no frames yet. |
 
 ### Task descriptions that changed
@@ -277,8 +277,9 @@ Camera guidance for announcements:
   points at the floor or sky. The handoff document calls for it; no task covers it.
 - **Local safe-path guidance** — find open space beside an obstacle in the corridor and turn it
   into "move slightly right", the core product goal beyond warnings.
-- **T19 Ask AI**, then **T21–T24** (AI modes, personalization, safety rules), outside the
-  obstacle pipeline. Settle T19 ownership (Deshna and Nish are both listed).
+- **T19 Ask AI on device** — check answers and latency on a real iPhone, with and without
+  Apple Intelligence; add an Ask AI entry point to Home. Then **T21–T24** (AI modes,
+  personalization, safety rules), outside the obstacle pipeline.
 - **Motion** — track velocity and approach rate for people and moving objects (deferred from T15).
 - **Recorded test set** — capture and annotate the eleven T20 scenarios; run detection and
   distance evaluation on every model or threshold change.

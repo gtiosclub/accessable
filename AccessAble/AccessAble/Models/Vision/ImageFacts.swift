@@ -165,6 +165,9 @@ func colorName(red: Double, green: Double, blue: Double) -> String {
     }
 }
 
+/// Creating a `CIContext` is expensive, so every still shares one.
+private let stillImageContext = CIContext()
+
 /// Encodes a camera frame as an upright JPEG still for Ask AI. `orientation` is how the
 /// buffer is rotated relative to upright, as for Vision (T4).
 func stillImageJPEG(
@@ -174,7 +177,7 @@ func stillImageJPEG(
 ) throws -> Data {
     let image = CIImage(cvPixelBuffer: pixelBuffer).oriented(orientation)
     guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-          let data = CIContext().jpegRepresentation(
+          let data = stillImageContext.jpegRepresentation(
               of: image,
               colorSpace: colorSpace,
               options: [CIImageRepresentationOption(rawValue: kCGImageDestinationLossyCompressionQuality as String): quality]

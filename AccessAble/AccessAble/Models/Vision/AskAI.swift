@@ -93,11 +93,17 @@ protocol AskAIResponder: Sendable {
 
 /// The on-device model when Apple Intelligence is available, the template otherwise.
 /// Checked per question, since the model can finish downloading or be turned off at any time.
+/// When the model fails (a guardrail, the context window, assets still loading), the
+/// template answers instead: the user gets what was found, not the model's error.
 struct OnDeviceAskAIResponder: AskAIResponder {
     func answer(_ question: String, facts: ImageFacts) async throws -> String {
         #if canImport(FoundationModels)
         if #available(iOS 26, macOS 26, *), SystemLanguageModel.default.isAvailable {
-            return try await FoundationModelsAskAIResponder().answer(question, facts: facts)
+            do {
+                return try await FoundationModelsAskAIResponder().answer(question, facts: facts)
+            } catch {
+                try Task.checkCancellation()
+            }
         }
         #endif
         return TemplateAskAIResponder().answer(question, facts: facts)
