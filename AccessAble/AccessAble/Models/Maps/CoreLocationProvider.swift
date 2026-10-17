@@ -28,11 +28,21 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
                 }
                 continuation.finish()
             }
+            // the add and remove run in separate tasks, so a quick unsubscribe can briefly count wrong; the count
+            // settles once both have run
             continuation.onTermination = { _ in
                 task.cancel()
                 Task { await self.locationSubscriberRemoved()}
             }
         }
+    }
+
+    /// Keeps fixes coming with the screen locked, for an active trip only: the Trip screen's and the debug view's own
+    /// subscriptions stay open in the background, so leaving this on would track the user whenever the app is open.
+    func setBackgroundTracking(_ on: Bool) {
+        manager.allowsBackgroundLocationUpdates = on
+        // waiting at a crosswalk with the phone in a pocket could otherwise stop updates for the rest of the walk
+        manager.pausesLocationUpdatesAutomatically = !on
     }
 
     nonisolated func headingSamples() -> AsyncStream<HeadingSample> {

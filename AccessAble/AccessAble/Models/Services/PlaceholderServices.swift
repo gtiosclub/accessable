@@ -143,9 +143,27 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
         }
     }
 
+    func startTrip(route: NavigationRoute, destination: Destination) async {}
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
 
     func currentLocationDescription() async -> String? { nil }
+}
+
+/// Publishes one fixed state, so previews can show a trip in progress or arrived.
+struct PreviewTripProvider: TripStateProviding {
+    let state: TripState
+
+    func tripStates() -> AsyncStream<TripState> {
+        AsyncStream { continuation in
+            continuation.yield(state)
+            continuation.finish()
+        }
+    }
+
+    func startTrip(route: NavigationRoute, destination: Destination) async {}
+    func pauseTrip() async {}
+    func resumeTrip() async {}
+    func endTrip() async {}
 }

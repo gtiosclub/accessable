@@ -4,6 +4,7 @@ import SwiftUI
 /// Owner: Maps + Location (2.x). Trip planning and active-trip screen.
 struct TripView: View {
     @State private var viewModel: TripViewModel
+    @AccessibilityFocusState private var isInstructionFocused: Bool
     private let services: AppServices
 
     init(services: AppServices) {
@@ -34,6 +35,7 @@ struct TripView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     .accessibilityAddTraits(.updatesFrequently)
+                    .accessibilityFocused($isInstructionFocused)
 
                 if let message = viewModel.routeErrorMessage {
                     VStack(alignment: .leading, spacing: 12) {
@@ -59,7 +61,8 @@ struct TripView: View {
                     )
                 }
 
-                if viewModel.tripState.phase == .active || viewModel.tripState.phase == .paused {
+                switch viewModel.tripState.phase {
+                case .active, .paused:
                     AccessibleActionButton(
                         title: viewModel.tripState.phase == .paused ? "Resume trip" : "Pause trip",
                         systemImage: viewModel.tripState.phase == .paused ? "play.fill" : "pause.fill",
@@ -73,7 +76,25 @@ struct TripView: View {
                     ) {
                         Task { await viewModel.endTrip() }
                     }
-                } else {
+                case .arrived:
+                    AccessibleActionButton(title: "Done", systemImage: "checkmark", hint: "Ends the trip") {
+                        Task { await viewModel.endTrip() }
+                    }
+                case .planning:
+                    // where Pause appears once the trip starts
+                    if viewModel.canStartTrip, let name = viewModel.destination?.name {
+                        AccessibleActionButton(
+                            title: "Start walking directions",
+                            systemImage: "figure.walk",
+                            hint: "Starts spoken turn-by-turn directions to \(name)"
+                        ) {
+                            Task {
+                                // the button is gone, so put VoiceOver on what to do first
+                                if await viewModel.startTrip() { isInstructionFocused = true }
+                            }
+                        }
+                    }
+
                     if let destination = viewModel.destination {
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Destination")
@@ -122,6 +143,11 @@ struct TripView: View {
         // VoiceOver doesn't read changes outside the focused element, so say the failure out loud
         .onChange(of: viewModel.routeFailureCount) {
             guard let message = viewModel.routeErrorMessage else { return }
+            AccessibilityNotification.Announcement(message).post()
+        }
+        // likewise when a route arrives, so the user knows Start is there
+        .onChange(of: viewModel.route) { previous, route in
+            guard previous == nil, route != nil, let message = viewModel.routeReadyAnnouncement else { return }
             AccessibilityNotification.Announcement(message).post()
         }
         .task { await viewModel.start() }
@@ -236,6 +262,34 @@ private extension ManeuverKind {
     NavigationStack {
         TripView(services: .preview)
     }
+}
+
+#Preview("Active trip") {
+    NavigationStack {
+        TripView(services: servicesShowing(TripState(
+            phase: .active,
+            destinationName: MapsSamples.destination.name,
+            nextManeuver: Maneuver(kind: .turnLeft, instruction: "Turn left onto the campus walkway",
+                                   coordinate: MapsSamples.destination.coordinate),
+            distanceToNextManeuver: 42,
+            distanceRemaining: 111
+        )))
+    }
+}
+
+#Preview("Arrived") {
+    NavigationStack {
+        TripView(services: servicesShowing(TripState(
+            phase: .arrived, destinationName: MapsSamples.destination.name, distanceRemaining: 6
+        )))
+    }
+}
+
+@MainActor
+private func servicesShowing(_ state: TripState) -> AppServices {
+    var services = AppServices.preview
+    services.trip = PreviewTripProvider(state: state)
+    return services
 }
 
 #Preview("With a planned trip") {
