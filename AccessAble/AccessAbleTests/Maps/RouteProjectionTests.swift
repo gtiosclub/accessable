@@ -44,6 +44,8 @@ struct RouteProjectionAnalyticTests {
         let along: Double
         let offset: Double
         var segmentIndex = 0
+        var degreesTolerance = 1e-11
+        var metresTolerance = 1e-6
 
         var testDescription: String { name }
     }
@@ -73,6 +75,15 @@ struct RouteProjectionAnalyticTests {
         Case(name: "right of a 5 cm segment", coordinates: shortSegments,
              point: point(-0.01 / metresPerDegree, 1.02 / metresPerDegree), foot: point(0, 1.02 / metresPerDegree),
              along: 1.02, offset: 0.01, segmentIndex: 1),
+        // Off the equator and meridians the foot has no simple closed form, so these come from 3D unit vectors on the
+        // same sphere in 60-digit decimal arithmetic: exact math, rounded to the digits shown. They hold only for
+        // `campusRoute` as written, so recompute them if that fixture changes. The tolerances cover GeoMath's own
+        // rounding: the normal of a 140 m segment is a cross product of nearly equal vectors.
+        Case(name: "east of the south-south-east leg of a campus route is left",
+             coordinates: RouteProjectionPropertyTests.campusRoute,
+             point: point(33.7755, -84.3965), foot: point(33.775393056331913, -84.396964350702303),
+             along: 291.30275697441518, offset: -44.535905929748322, segmentIndex: 2,
+             degreesTolerance: 1e-10, metresTolerance: 1e-5),
     ]
 
     static let shortSegments = [point(0, 0), point(0, 1 / metresPerDegree), point(0, 1.05 / metresPerDegree)]
@@ -82,10 +93,10 @@ struct RouteProjectionAnalyticTests {
         let projection = try route(known.coordinates).projection(of: known.point)
         #expect(projection.originalCoordinate == known.point)
         #expect(projection.segmentIndex == known.segmentIndex)
-        #expect(isClose(projection.coordinate.latitude, known.foot.latitude, within: 1e-11))
-        #expect(isClose(projection.coordinate.longitude, known.foot.longitude, within: 1e-11))
-        #expect(isClose(projection.distanceAlongRoute, known.along, within: 1e-6))
-        #expect(isClose(projection.sideOffset, known.offset, within: 1e-6))
+        #expect(isClose(projection.coordinate.latitude, known.foot.latitude, within: known.degreesTolerance))
+        #expect(isClose(projection.coordinate.longitude, known.foot.longitude, within: known.degreesTolerance))
+        #expect(isClose(projection.distanceAlongRoute, known.along, within: known.metresTolerance))
+        #expect(isClose(projection.sideOffset, known.offset, within: known.metresTolerance))
     }
 }
 
