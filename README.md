@@ -40,6 +40,8 @@ AccessAble/                              Xcode project folder
         └── Vision/  Maps/  Interaction/
 ```
 
+Maps geometry reference (distances, bearings, route projection): [`Docs/Maps/Geometry.md`](Docs/Maps/Geometry.md).
+
 ## Conventions
 
 - **Models** are value types (`struct`/`enum`), `Sendable`, and `Codable` where they get persisted. Services
