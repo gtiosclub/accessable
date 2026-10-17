@@ -19,7 +19,7 @@ struct AppServices: Sendable {
         let trip = PlaceholderTripProvider()        // TODO(Maps 2.2): TripManager / RouteProgressTracker
         return AppServices(
             announcements: PlaceholderAnnouncementEngine(), // TODO(UI 3.3): AnnouncementEngine
-            haptics: PlaceholderHaptics(),                  // TODO(UI 3.2): CoreHapticsRenderer
+            haptics: CoreHapticsRenderer(),                  // TODO(UI 3.2): CoreHapticsRenderer
             obstacleAlert: ObstacleAlertPlayer(),
             performance: performance,
             scene: scene,

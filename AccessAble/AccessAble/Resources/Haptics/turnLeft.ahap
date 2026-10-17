@@ -1,0 +1,16 @@
+{
+  "Version": 1.0,
+  "Metadata": { "Project": "AccessAble", "Description": "Turn left: two short, sharp buzzes." },
+  "Pattern": [
+    { "Event": { "Time": 0.0, "EventType": "HapticContinuous", "EventDuration": 0.08,
+      "EventParameters": [
+        { "ParameterID": "HapticIntensity", "ParameterValue": 0.9 },
+        { "ParameterID": "HapticSharpness", "ParameterValue": 0.9 }
+      ] } },
+    { "Event": { "Time": 0.2, "EventType": "HapticContinuous", "EventDuration": 0.08,
+      "EventParameters": [
+        { "ParameterID": "HapticIntensity", "ParameterValue": 0.9 },
+        { "ParameterID": "HapticSharpness", "ParameterValue": 0.9 }
+      ] } }
+  ]
+}
