@@ -33,6 +33,7 @@ protocol AnnouncementEngineProtocol: AnnouncementSink {
 /// Renders a haptic from the shared vocabulary (3.2).
 protocol HapticRendering: Sendable {
     func play(_ id: HapticID, intensity: Float) async
+    func stop() async
 }
 
 /// Vibrates and beeps to warn that an obstacle was detected.
