@@ -9,6 +9,8 @@ import SwiftUI
 /// LiDAR device for the floor, obstacle and kerb readouts.
 struct LiveSceneView: View {
     @State private var viewModel: LiveSceneViewModel
+    @State private var asksDestination = false
+    @State private var destination = ""
 
     init(services: AppServices) {
         _viewModel = State(initialValue: LiveSceneViewModel(services: services))
@@ -31,6 +33,44 @@ struct LiveSceneView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.start() }
         .onDisappear { Task { await viewModel.stop() } }
+        .alert("Where do you want to go?", isPresented: $asksDestination) {
+            TextField("For example: the chair, exit, room 210", text: $destination)
+            Button("Go") { viewModel.navigate(to: destination) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Then turn slowly all the way around so the camera can find it.")
+        }
+    }
+
+    /// "Take me to…" / "Stop" and the current step.
+    private var navigationControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                if viewModel.isNavigating {
+                    Button {
+                        viewModel.stopNavigating()
+                    } label: {
+                        Label("Stop guiding", systemImage: "xmark.circle.fill")
+                    }
+                    .tint(.red)
+                } else {
+                    Button {
+                        asksDestination = true
+                    } label: {
+                        Label("Take me to…", systemImage: "location.north.circle")
+                    }
+                    .accessibilityHint("Type what to find. Turn around slowly, then follow the spoken directions.")
+                }
+                Spacer()
+            }
+            .buttonStyle(.borderedProminent)
+
+            if let navigation = viewModel.navigation {
+                Text(navigation.description)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(navigation.phase == .notFound ? Color.red : Color.primary)
+            }
+        }
     }
 
     private var preview: some View {
@@ -93,6 +133,8 @@ struct LiveSceneView: View {
                     .font(.caption2.monospacedDigit())
                     .lineLimit(2)
             }
+            navigationControls
+
             if let event = viewModel.lastAnnouncement {
                 AnnouncementBanner(event: event)
             }

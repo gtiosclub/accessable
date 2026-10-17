@@ -82,6 +82,8 @@ func detectObstacles(
         var nearest = Float.greatestFiniteMagnitude
         var minLateral = Float.greatestFiniteMagnitude
         var maxLateral = -Float.greatestFiniteMagnitude
+        var minAlong = Float.greatestFiniteMagnitude
+        var maxAlong = -Float.greatestFiniteMagnitude
         var intersects = false
 
         for index in cluster {
@@ -90,6 +92,8 @@ func detectObstacles(
             let footprint = footprints[index]
             minLateral = min(minLateral, footprint.y)
             maxLateral = max(maxLateral, footprint.y)
+            minAlong = min(minAlong, footprint.x)
+            maxAlong = max(maxAlong, footprint.x)
             // 7. Any supporting point inside the corridor puts the obstacle in the way.
             if corridor.contains(kept[index]) {
                 intersects = true
@@ -103,7 +107,9 @@ func detectObstacles(
                 nearestDistance: nearest,
                 width: maxLateral - minLateral,
                 height: topHeight,
-                intersectsWalkingCorridor: intersects
+                intersectsWalkingCorridor: intersects,
+                lateralRange: minLateral ... maxLateral,
+                forwardRange: minAlong ... maxAlong
             )
         )
     }
@@ -165,4 +171,136 @@ func clusterFootprints(_ footprints: [SIMD2<Float>], radius: Float) -> [[Int]] {
     }
 
     return clusters
+}
+
+/// What the depth sensor could see, by distance ahead: how far to either side of the
+/// centre line it returned anything at all, and how near the first thing standing up on
+/// each side is. All in the corridor's floor-plane frame, lateral negative to the left.
+///
+/// The clearance search needs the first to tell "nothing there" from "could not see
+/// there": a wall that fills the view edge to edge has no visible end, and advising the
+/// user to walk around it would be a guess. The view is narrow up close (about ±0.5 m at
+/// 1 m) and wide further out, so coverage is kept per distance band rather than as one
+/// range. The second is what to say when nothing is passable: turn towards the side with
+/// more room.
+struct CoverageProfile: Sendable, Equatable {
+    /// Width of the forward distance bands.
+    let binWidth: Float
+    /// Lateral extent seen in each band, from the origin outwards; nil where nothing was seen.
+    let bands: [ClosedRange<Float>?]
+    /// Robust distance to the nearest thing standing up on the left (20th percentile of
+    /// its points' forward distance). nil when nothing stands on that side.
+    let nearestLeft: Float?
+    /// The right-hand counterpart of `nearestLeft`.
+    let nearestRight: Float?
+
+    init(binWidth: Float, bands: [ClosedRange<Float>?], nearestLeft: Float?, nearestRight: Float?) {
+        self.binWidth = binWidth
+        self.bands = bands
+        self.nearestLeft = nearestLeft
+        self.nearestRight = nearestRight
+    }
+
+    /// The same extent at every distance. For tests and callers without a point cloud.
+    init(uniform lateral: ClosedRange<Float>, nearestLeft: Float? = nil, nearestRight: Float? = nil) {
+        self.init(binWidth: 10, bands: [lateral], nearestLeft: nearestLeft, nearestRight: nearestRight)
+    }
+
+    /// Lateral extent seen `along` metres ahead: that band, or the nearest seen band
+    /// within two, or the union of everything.
+    func lateral(at along: Float) -> ClosedRange<Float>? {
+        guard !bands.isEmpty, along.isFinite else { return nil }
+        let index = min(max(Int((along / binWidth).rounded(.down)), 0), bands.count - 1)
+        if let band = bands[index] { return band }
+        for delta in 1 ... 2 {
+            if index - delta >= 0, let band = bands[index - delta] { return band }
+            if index + delta < bands.count, let band = bands[index + delta] { return band }
+        }
+        return overall
+    }
+
+    /// Union of every band.
+    var overall: ClosedRange<Float>? {
+        let seen = bands.compactMap { $0 }
+        guard let first = seen.first else { return nil }
+        return seen.dropFirst().reduce(first) { min($0.lowerBound, $1.lowerBound) ... max($0.upperBound, $1.upperBound) }
+    }
+
+    /// The side with more room ahead of it, or nil when both are equally open or unknown.
+    var moreOpenSide: TurnSide? {
+        switch (nearestLeft, nearestRight) {
+        case (nil, nil): nil
+        case (nil, _): .left
+        case (_, nil): .right
+        case let (left?, right?):
+            abs(left - right) < 0.2 ? nil : (left > right ? .left : .right)
+        }
+    }
+}
+
+/// Knobs for `coverageProfile`, in metres.
+struct CoverageTuning: Sendable {
+    var binWidth: Float = 0.5
+    /// Points nearer the centre line than this count for neither side.
+    var sideMinimumLateral: Float = 0.15
+    /// Heights above the floor that count as "standing up" for the side distances: above
+    /// floor noise and kerbs, below the ceiling.
+    var obstructionHeights: ClosedRange<Float> = 0.15 ... 2.2
+
+    static let `default` = CoverageTuning()
+
+    init() {}
+}
+
+/// Measures what the sensor saw ahead; see `CoverageProfile`. Every finite point counts
+/// towards the lateral extents — floor, obstacles, walls. Returns nil when nothing ahead
+/// was observed.
+func coverageProfile(
+    points: [SIMD3<Float>],
+    floor: Plane3D,
+    corridor: WalkingCorridor,
+    lookAhead: Float,
+    tuning: CoverageTuning = .default
+) -> CoverageProfile? {
+    guard let corridor = corridor.flattened(ontoFloorNormal: floor.normal), lookAhead > 0 else { return nil }
+
+    let bandCount = Int((lookAhead / tuning.binWidth).rounded(.up))
+    var bands = [ClosedRange<Float>?](repeating: nil, count: max(bandCount, 1))
+    var leftAlongs: [Float] = []
+    var rightAlongs: [Float] = []
+    var seenAny = false
+
+    for point in points {
+        guard point.x.isFinite, point.y.isFinite, point.z.isFinite else { continue }
+        let offset = point - corridor.origin
+        let along = simd_dot(offset, corridor.forward)
+        guard along >= 0, along <= corridor.maxDistance else { continue }
+        let lateral = simd_dot(offset, corridor.right)
+
+        if along <= lookAhead {
+            seenAny = true
+            let index = min(Int(along / tuning.binWidth), bands.count - 1)
+            if let band = bands[index] {
+                bands[index] = min(band.lowerBound, lateral) ... max(band.upperBound, lateral)
+            } else {
+                bands[index] = lateral ... lateral
+            }
+        }
+
+        let height = distanceFromPlane(point: point, plane: floor)
+        guard tuning.obstructionHeights.contains(height) else { continue }
+        if lateral <= -tuning.sideMinimumLateral {
+            leftAlongs.append(along)
+        } else if lateral >= tuning.sideMinimumLateral {
+            rightAlongs.append(along)
+        }
+    }
+    guard seenAny else { return nil }
+
+    return CoverageProfile(
+        binWidth: tuning.binWidth,
+        bands: bands,
+        nearestLeft: leftAlongs.isEmpty ? nil : quantile(leftAlongs, 0.2),
+        nearestRight: rightAlongs.isEmpty ? nil : quantile(rightAlongs, 0.2)
+    )
 }

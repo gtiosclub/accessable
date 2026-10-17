@@ -30,9 +30,20 @@ final class TextReader: Sendable {
         self.interval = interval
     }
 
+    /// A function placing an upright, normalized text box in the world, built from the
+    /// frame the text was read from. Called on the OCR queue.
+    typealias Locator = @Sendable (CGRect) -> SIMD3<Float>?
+
     /// Starts a read of `image` in the background if the previous one has finished and
-    /// `interval` has passed since it started.
-    func readIfDue(_ image: CVPixelBuffer, orientation: CGImagePropertyOrientation, at time: TimeInterval) {
+    /// `interval` has passed since it started. `locate`, when given, fills in each text's
+    /// `worldPosition` using the same frame, so the position matches the box even though
+    /// the read finishes later.
+    func readIfDue(
+        _ image: CVPixelBuffer,
+        orientation: CGImagePropertyOrientation,
+        at time: TimeInterval,
+        locate: Locator? = nil
+    ) {
         let isDue = state.withLock { state in
             guard !state.isReading, time - state.lastReadStart >= interval else { return false }
             state.isReading = true
@@ -43,9 +54,16 @@ final class TextReader: Sendable {
 
         let request = ReadRequest(image: image, orientation: orientation, time: time)
         queue.async { [self] in
-            let texts: [RecognizedText]
+            var texts: [RecognizedText]
             do {
                 texts = try detector.detectText(pixelBuffer: request.image, orientation: request.orientation)
+                if let locate {
+                    texts = texts.map { text in
+                        var located = text
+                        located.worldPosition = locate(text.boundingBox)
+                        return located
+                    }
+                }
             } catch {
                 log.error("text recognition failed: \(error.localizedDescription, privacy: .public)")
                 texts = []

@@ -34,6 +34,10 @@ struct ElevationTuning: Sendable {
     var maxSampleGap: Float = 0.40
     /// Never report two hazards closer together than this.
     var minHazardSpacing: Float = 0.15
+    /// A rise followed within this distance by a matching fall is a thing lying on the
+    /// ground — a bag, a chair base, a low box — not a change in the ground. Both edges are
+    /// dropped; T11 reports the object. A kerb or step stays up for longer than this.
+    var bumpMaxLength: Float = 0.6
     /// How far the depth sensor was expected to return data, if the caller knows. When
     /// set, coverage that simply stops short of it is reported as a `.dropOff`: a kerb
     /// edge often returns NO depth at all beyond it, so absent data is itself the signal.
@@ -100,6 +104,7 @@ func detectElevationHazards(
     var hazards: [ElevationHazard] = []
 
     for (segmentIndex, segment) in segments.enumerated() {
+        var steps: [ElevationHazard] = []
         // 4. Walk the segment, accumulating consecutive same-direction changes.
         var index = segment.lowerBound
         while index < segment.upperBound - 1 {
@@ -132,13 +137,14 @@ func detectElevationHazards(
                 } else {
                     .stepDown
                 }
-                hazards.append(
+                steps.append(
                     ElevationHazard(type: type, distance: distances[start], heightChange: heightChange)
                 )
             }
 
             index = end
         }
+        hazards += withoutBumps(steps, maxLength: tuning.bumpMaxLength, tolerance: tuning.minStepHeight)
 
         // 6. Coverage gaps. An interior hole is genuinely ambiguous, so say so rather
         // than guessing at a height.
@@ -173,6 +179,24 @@ func detectElevationHazards(
 // faithful to what it measured, and collapsing N same-direction steps into "stairs ahead"
 // is a phrasing decision for the scene description (1.3) and the announcement engine
 // (3.3), which already has `GroundSurface.stairs` to say it with.
+
+/// Removes rise-and-fall pairs that cancel out within `maxLength` of each other: an
+/// object on the ground, not terrain. Anything else is kept in order.
+func withoutBumps(_ steps: [ElevationHazard], maxLength: Float, tolerance: Float) -> [ElevationHazard] {
+    var removed = Set<Int>()
+    for (index, rise) in steps.enumerated() where rise.heightChange > 0 && !removed.contains(index) {
+        guard let fallIndex = steps.indices.first(where: { candidate in
+            candidate > index && !removed.contains(candidate) && steps[candidate].heightChange < 0
+        }) else { continue }
+        let fall = steps[fallIndex]
+        guard fall.distance - rise.distance <= maxLength,
+              abs(rise.heightChange + fall.heightChange) <= tolerance
+        else { continue }
+        removed.insert(index)
+        removed.insert(fallIndex)
+    }
+    return steps.indices.filter { !removed.contains($0) }.map { steps[$0] }
+}
 
 /// Median of `values`, taking the lower of the two middle elements for an even count.
 /// Returns 0 when empty, which only happens on inputs already rejected by the caller.

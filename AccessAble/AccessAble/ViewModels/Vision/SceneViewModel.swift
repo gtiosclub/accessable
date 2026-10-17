@@ -15,6 +15,11 @@ final class SceneViewModel {
     private(set) var isAsking = false
     /// The camera image the latest answer was based on, when the service can provide it.
     private(set) var askedImage: UIImage?
+    /// Progress of "Take me to…"; nil without a request, or where the service cannot navigate.
+    private(set) var navigation: NavigationStatus?
+
+    /// False where the scene service has no camera (previews, the Simulator).
+    var canNavigate: Bool { services.scene is any SceneNavigating }
 
     @ObservationIgnored private let services: AppServices
 
@@ -31,6 +36,21 @@ final class SceneViewModel {
         }
         for await observation in services.scene.observations() {
             self.observation = observation
+            navigation = (services.scene as? any SceneNavigating)?.navigationStatus
+        }
+    }
+
+    /// Starts steering towards `query`; an empty query cancels.
+    func navigate(to query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        (services.scene as? any SceneNavigating)?.navigate(to: trimmed.isEmpty ? nil : trimmed)
+        if trimmed.isEmpty { navigation = nil }
+    }
+
+    var isNavigating: Bool {
+        switch navigation?.phase {
+        case .scanning, .guiding: true
+        default: false
         }
     }
 

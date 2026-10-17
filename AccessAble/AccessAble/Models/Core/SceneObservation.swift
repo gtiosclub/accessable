@@ -26,6 +26,9 @@ struct Detection: Identifiable, Equatable, Sendable {
     var origin: Origin
     /// True for things the user could walk into or fall off.
     var isHazard: Bool
+    /// Where it is in ARKit's gravity-aligned world, in metres, when depth placed it. Stable
+    /// while tracking runs, so a thing seen once can be steered towards after looking away.
+    var worldPosition: SIMD3<Float>?
 
     init(
         id: UUID = UUID(),
@@ -36,7 +39,8 @@ struct Detection: Identifiable, Equatable, Sendable {
         distance: Double? = nil,
         bearing: RelativeBearing? = nil,
         origin: Origin,
-        isHazard: Bool
+        isHazard: Bool,
+        worldPosition: SIMD3<Float>? = nil
     ) {
         self.id = id
         self.trackID = trackID
@@ -47,6 +51,7 @@ struct Detection: Identifiable, Equatable, Sendable {
         self.bearing = bearing
         self.origin = origin
         self.isHazard = isHazard
+        self.worldPosition = worldPosition
     }
 }
 
@@ -67,12 +72,15 @@ struct RecognizedText: Identifiable, Equatable, Sendable {
     var confidence: Float
     /// Normalized (0...1), upright orientation, origin at top-left.
     var boundingBox: CGRect
+    /// Where the text is in the world, in metres, when depth placed it at read time.
+    var worldPosition: SIMD3<Float>?
 
-    init(id: UUID = UUID(), string: String, confidence: Float, boundingBox: CGRect) {
+    init(id: UUID = UUID(), string: String, confidence: Float, boundingBox: CGRect, worldPosition: SIMD3<Float>? = nil) {
         self.id = id
         self.string = string
         self.confidence = confidence
         self.boundingBox = boundingBox
+        self.worldPosition = worldPosition
     }
 }
 

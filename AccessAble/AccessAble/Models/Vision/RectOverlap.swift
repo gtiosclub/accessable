@@ -16,6 +16,13 @@ extension CGRect {
         return smaller > 0 ? intersectionArea(with: other) / smaller : 0
     }
 
+    /// Area of the intersection divided by the area of the larger rectangle, 0...1. Low
+    /// when a small box merely sits inside a much larger one.
+    func overlapOfLarger(with other: CGRect) -> CGFloat {
+        let larger = max(area, other.area)
+        return larger > 0 ? intersectionArea(with: other) / larger : 0
+    }
+
     private var area: CGFloat {
         isNull ? 0 : abs(width * height)
     }

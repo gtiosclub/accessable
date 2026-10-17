@@ -11,7 +11,7 @@ import UIKit
 /// Frames go through a `LatestOnlyProcessor` (T3), so when analysis is slower than the
 /// camera, stale frames are dropped rather than queued. `PerformanceMode` thins the input
 /// further by only offering every Nth camera frame.
-final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, Sendable {
+final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, Sendable {
     let sessionManager: ARSessionManager
     let perception: ScenePerception
     /// Idle unless a field test is being recorded from the Live detection screen.
@@ -86,6 +86,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     func start() async throws {
         try await MainActor.run { try sessionManager.start() }
+        // Tracking restarts from scratch, so nothing remembered about the old world holds.
+        perception.reset()
 
         let subscription = sessionManager.addFrameHandler { [weak self] frame in
             self?.receive(frame)
@@ -175,6 +177,14 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     var lastAskedImage: Data? { state.withLock { $0.lastAskedImage } }
 
+    // MARK: - SceneNavigating
+
+    func navigate(to query: String?) {
+        perception.navigate(to: query)
+    }
+
+    var navigationStatus: NavigationStatus? { perception.navigationStatus }
+
     // MARK: - Frames
 
     private func receive(_ frame: ARFrame) {
@@ -209,4 +219,13 @@ private struct CapturedImage: @unchecked Sendable {
 protocol AskedImageProviding: Sendable {
     /// The JPEG of the latest question's still; nil before any question, or if capture failed.
     var lastAskedImage: Data? { get }
+}
+
+/// "Take me to the chair": scan the room by turning on the spot, then be steered to it.
+/// Separate from `SceneObservationProviding` so that contract stays as it is.
+protocol SceneNavigating: Sendable {
+    /// Starts a request, replacing any current one; nil cancels.
+    func navigate(to query: String?)
+    /// Progress of the current request, refreshed with every analyzed frame.
+    var navigationStatus: NavigationStatus? { get }
 }

@@ -5,6 +5,7 @@ struct SceneView: View {
     @State private var viewModel: SceneViewModel
     @State private var question = ""
     @State private var showsAskedImage = false
+    @State private var destination = ""
 
     init(services: AppServices) {
         _viewModel = State(initialValue: SceneViewModel(services: services))
@@ -12,6 +13,24 @@ struct SceneView: View {
 
     var body: some View {
         List {
+            if viewModel.canNavigate {
+                Section("Take me to") {
+                    TextField("For example: the chair, exit, room 210", text: $destination)
+                        .submitLabel(.go)
+                        .onSubmit(navigate)
+                        .accessibilityHint("What to find. Then turn slowly all the way around and follow the directions.")
+                    if viewModel.isNavigating {
+                        Button("Stop guiding", role: .destructive) { viewModel.navigate(to: "") }
+                    } else {
+                        Button("Go", action: navigate)
+                            .disabled(destination.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    if let navigation = viewModel.navigation {
+                        Text(navigation.description)
+                    }
+                }
+            }
+
             Section("Ask AI") {
                 TextField("Ask about what the camera sees", text: $question, axis: .vertical)
                     .submitLabel(.send)
@@ -74,6 +93,12 @@ struct SceneView: View {
 
     private var trimmedQuestion: String {
         question.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func navigate() {
+        let target = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else { return }
+        viewModel.navigate(to: target)
     }
 
     private func ask() {

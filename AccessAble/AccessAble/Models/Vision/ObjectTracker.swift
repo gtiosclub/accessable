@@ -9,8 +9,8 @@ import Foundation
 /// announcements fire once per object instead of once per frame.
 ///
 /// Matching is greedy on IoU: the best-overlapping pairs are taken first, with ties broken
-/// deterministically. Labels must agree, except that the generic geometric "obstacle"
-/// label is compatible with any other. Whether a geometric obstacle gets a model label
+/// deterministically. Labels must agree, except that the generic geometric labels
+/// ("obstacle", "wall", "pole", "low obstacle") are compatible with any other. Whether a geometric obstacle gets a model label
 /// depends on the model seeing it that frame, and a missed frame must not turn a chair into
 /// a new object. A track keeps the most specific label it has seen.
 ///
@@ -69,8 +69,11 @@ struct ObjectTracker: Sendable {
         return detections.enumerated().map { index, detection in
             let id = trackForDetection[index] ?? UUID()
             var tracked = detection
+            // A track keeps the most specific label it has seen: a chair the model missed
+            // this frame is still a chair, not a fresh "obstacle". Between two generic
+            // labels the newer shape reading wins.
             var label = detection.label
-            if detection.label == Detection.obstacleLabel, let previous = tracks[id]?.label {
+            if detection.hasGenericLabel, let previous = tracks[id]?.label, !Detection.genericLabels.contains(previous) {
                 label = previous
             }
             tracked.trackID = id
@@ -81,11 +84,19 @@ struct ObjectTracker: Sendable {
     }
 
     private func labelsMatch(_ a: String, _ b: String) -> Bool {
-        a == b || a == Detection.obstacleLabel || b == Detection.obstacleLabel
+        a == b || Detection.genericLabels.contains(a) || Detection.genericLabels.contains(b)
     }
 }
 
 extension Detection {
-    /// The label of a geometric obstacle no model has recognized.
+    /// The label of a geometric obstacle no model has recognized and whose shape says
+    /// nothing more specific.
     static let obstacleLabel = "obstacle"
+
+    /// Every label geometry alone can give (`GeometricObstacle.Kind`). Compatible with any
+    /// specific label when tracking, since the same object may be recognized one frame and
+    /// not the next.
+    static let genericLabels: Set<String> = Set(GeometricObstacle.Kind.allCases.map(\.label))
+
+    var hasGenericLabel: Bool { Self.genericLabels.contains(label) }
 }

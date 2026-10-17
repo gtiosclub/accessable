@@ -12,10 +12,13 @@ import simd
 /// `capturedImage` goes to Vision for people (T14) and objects (T13). `sceneDepth` becomes
 /// one filtered `DepthMap` (T6) that places those detections in the world (T5, T7) and is
 /// unprojected into a point cloud for the floor fit (T10), geometric obstacles (T11) and
-/// the ground profile behind kerb detection (T12). Obstacles that match a recognized object
-/// take its label, every detection gets a stable track ID (T15), and the announcer (T16)
-/// decides what in the walking corridor (T9) the user should hear about. Text (T17) is
-/// read on the side by `TextReader` and attached as it becomes available.
+/// the ground profile behind kerb detection (T12). The floor is remembered between frames
+/// (`FloorMemory`), so obstacles are still measured when no floor is in view — up against
+/// a wall, say. Every obstacle's footprint feeds the clearance search (`assessPath`) that
+/// says which way round is open. Obstacles that match a recognized object take its label,
+/// every detection gets a stable track ID (T15), and the announcer (T16) decides what the
+/// user should hear about the walking corridor (T9). Text (T17) is read on the side by
+/// `TextReader` and attached as it becomes available.
 ///
 /// Call `analyze` from one queue at a time — `ARSceneAnalyzer` calls it from its
 /// latest-only processing queue. State that outlives a frame, or that the UI reads, lives
@@ -38,6 +41,12 @@ final class ScenePerception: Sendable {
         /// Signed height of the camera above the fitted floor, in metres. A good live
         /// sanity check on T10: held normally it should read roughly 1.1 to 1.5 m.
         var cameraHeight: Float?
+        /// False when `floor` is remembered or assumed rather than fitted to this frame.
+        var isFloorMeasured = false
+        /// Where the open space is, when depth could tell.
+        var path: PathAssessment?
+        /// What "take me to…" is doing, while a request is active or just finished.
+        var navigation: NavigationStatus?
         /// width / height of the frame once rotated upright. Overlays need it to map a
         /// normalized box onto an aspect-filled preview.
         var uprightAspectRatio: Float = 3.0 / 4.0
@@ -53,9 +62,17 @@ final class ScenePerception: Sendable {
     private let log = Logger(subsystem: "AccessAble", category: "ScenePerception")
 
     private let diagnosticsState = Mutex(Diagnostics())
+    private let floorMemory = Mutex(FloorMemory())
     private let tracker = Mutex(ObjectTracker())
     private let announcer = Mutex(ObstacleAnnouncer())
     private let frameTimer = Mutex(FrameTimer())
+    private let occupancy = Mutex(LocalOccupancyMap())
+    private let navigation = Mutex<NavigationGuide?>(nil)
+    /// When the announcer last spoke about the path, so navigation cues keep out of its way.
+    private let lastPathAnnouncement = Mutex<TimeInterval>(-.infinity)
+    /// Set when a request arrives, consumed by the next frame, which knows the frame time.
+    private let pendingNavigationQuery = Mutex<String??>(nil)
+    private let clearanceTuning = PathClearanceTuning.default
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
@@ -73,28 +90,64 @@ final class ScenePerception: Sendable {
 
     var diagnostics: Diagnostics { diagnosticsState.withLock { $0 } }
 
+    /// Forgets everything carried between frames. Call when tracking restarts: world
+    /// coordinates change, so the remembered floor and the announcement state are void.
+    func reset() {
+        floorMemory.withLock { $0.reset() }
+        tracker.withLock { $0 = ObjectTracker() }
+        announcer.withLock { $0 = ObstacleAnnouncer() }
+        navigation.withLock { $0 = nil }
+        pendingNavigationQuery.withLock { $0 = nil }
+        occupancy.withLock { $0.reset() }
+        lastPathAnnouncement.withLock { $0 = -.infinity }
+    }
+
+    /// Starts steering the user towards `query` ("the chair", "exit"), replacing any
+    /// current request; nil cancels. Takes effect on the next analyzed frame.
+    func navigate(to query: String?) {
+        pendingNavigationQuery.withLock { $0 = .some(query) }
+    }
+
+    /// The current "take me to…" status, if any.
+    var navigationStatus: NavigationStatus? { diagnostics.navigation }
+
     func analyze(_ frame: ARFrame, interfaceOrientation: UIInterfaceOrientation) -> Analysis {
         let start = CACurrentMediaTime()
         let imageOrientation = CGImagePropertyOrientation(cameraImageIn: interfaceOrientation)
         let upright = uprightSize(for: frame.camera.imageResolution, orientation: interfaceOrientation)
         var diagnostics = Diagnostics(uprightAspectRatio: Float(upright.width / upright.height))
 
-        textReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp)
+        let depthMap = frame.sceneDepth.flatMap { DepthMap(depth: $0.depthMap, confidence: $0.confidenceMap) }
+        let cameraTransform = frame.camera.transform
+        // Text is read later, on its own queue; give it this frame's depth so each sign
+        // gets a world position that matches the frame it was read from.
+        let textLocator: TextReader.Locator? = depthMap.map { depthMap in
+            let intrinsics = depthIntrinsics(for: frame.camera, depth: depthMap)
+            return { box in
+                worldPosition(
+                    ofRegion: imageOrientation.sensorRect(fromUpright: box), in: depthMap,
+                    intrinsics: intrinsics, cameraTransform: cameraTransform
+                )
+            }
+        }
+        textReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp, locate: textLocator)
         let wasReadingText = textReader.isReading
         var recognized = recognizeObjects(in: frame.capturedImage, orientation: imageOrientation)
         var obstacles: [Detection] = []
         var hazards: [ElevationHazard] = []
+        var path: PathAssessment?
+        var blockedAhead: BlockedAhead?
         // `Detection.id`s of everything inside the walking corridor this frame.
         var inPath = Set<UUID>()
-        let depthMap = frame.sceneDepth.flatMap { DepthMap(depth: $0.depthMap, confidence: $0.confidenceMap) }
+
+        let corridor = corridor(for: frame.camera)
+        // World space is gravity-aligned, so flattening onto world up gives a level
+        // heading for bearings and the path test even before a floor has been found.
+        let heading = corridor.flattened(ontoFloorNormal: [0, 1, 0]) ?? corridor
 
         if let depthMap {
             let camera = frame.camera
             let intrinsics = depthIntrinsics(for: camera, depth: depthMap)
-            let corridor = corridor(for: camera)
-            // World space is gravity-aligned, so flattening onto world up gives a level
-            // heading for bearings and the path test even before a floor has been found.
-            let heading = corridor.flattened(ontoFloorNormal: [0, 1, 0]) ?? corridor
 
             // T5 + T7 — distance and direction for each recognized object.
             recognized = recognized.map { detection in
@@ -105,6 +158,7 @@ final class ScenePerception: Sendable {
                 var located = detection
                 located.distance = Double(heading.distance(to: position))
                 located.bearing = heading.bearing(to: position)
+                located.worldPosition = position
                 // Only things a walker can collide with are path hazards; a recognized cup
                 // on a table is left to the geometry to judge.
                 if heading.contains(position), detection.isHazard || detection.label == "person" {
@@ -115,24 +169,49 @@ final class ScenePerception: Sendable {
 
             let cloud = unprojectDepthMap(depthMap, intrinsics: intrinsics, cameraTransform: camera.transform)
 
-            // T10 — the floor everything else is measured against.
-            if let fit = detectFloorPlane(points: cloud) {
-                diagnostics.floor = fit.plane
-                diagnostics.cameraHeight = distanceFromPlane(point: corridor.origin, plane: fit.plane)
+            // T10 — the floor everything else is measured against. When none is in view
+            // (close to a wall, the floor leaves the frame) the remembered one stands in.
+            let floor = floorMemory.withLock {
+                $0.update(fit: detectFloorPlane(points: cloud), cameraPosition: corridor.origin, at: frame.timestamp)
+            }
+            diagnostics.floor = floor.plane
+            diagnostics.cameraHeight = floor.cameraHeight
+            diagnostics.isFloorMeasured = floor.isMeasured
 
-                // T11 — obstacles by geometry, no labels needed.
-                obstacles = detectObstacles(points: cloud, floor: fit.plane, corridor: corridor)
-                    .filter(\.intersectsWalkingCorridor)
-                    .compactMap {
-                        detection(
-                            for: $0, floor: fit.plane, heading: heading,
-                            camera: camera, orientation: interfaceOrientation, viewportSize: upright
-                        )
-                    }
-                inPath.formUnion(obstacles.map(\.id))
+            // T11 — obstacles by geometry, no labels needed. Against a remembered floor
+            // the tolerance is looser: the real floor may sit a few centimetres off it,
+            // and must not become a knee-high obstacle.
+            var obstacleTuning = ObstacleDetectionTuning.default
+            if !floor.isMeasured { obstacleTuning.floorTolerance = 0.15 }
+            let found = detectObstacles(points: cloud, floor: floor.plane, corridor: corridor, tuning: obstacleTuning)
 
-                // T12 — kerbs and drop-offs in the surface itself.
-                let profile = groundProfile(points: cloud, floor: fit.plane, corridor: corridor)
+            // The map remembers what has been seen; the plan reads the map, not the frame.
+            let plan = occupancy.withLock { map in
+                map.integrate(points: cloud, floor: floor.plane, cameraPosition: corridor.origin, floorIsMeasured: floor.isMeasured)
+                return planPath(map: map, heading: heading, tuning: clearanceTuning)
+            }
+            path = plan
+            blockedAhead = BlockedAhead(distance: plan.blockedDistance)
+            diagnostics.path = plan
+
+            // What the sensor could see sideways at each distance, for naming walls.
+            let coverage = coverageProfile(points: cloud, floor: floor.plane, corridor: corridor, lookAhead: clearanceTuning.lookAhead)
+
+            obstacles = found
+                .filter(\.intersectsWalkingCorridor)
+                .compactMap {
+                    detection(
+                        for: $0, floor: floor.plane, coverage: coverage?.lateral(at: $0.forwardRange.lowerBound),
+                        heading: heading, camera: camera, orientation: interfaceOrientation, viewportSize: upright
+                    )
+                }
+            inPath.formUnion(obstacles.map(\.id))
+
+            // T12 — kerbs and drop-offs in the surface itself. Only against a floor fitted
+            // to this frame: a few centimetres of error in a remembered floor is a kerb.
+            // Obstacles are cut out of the profile so a chair leg is not a step.
+            if floor.isMeasured {
+                let profile = groundProfile(points: cloud, floor: floor.plane, corridor: corridor, excluding: found)
                 hazards = detectElevationHazards(samples: profile)
             }
         }
@@ -140,12 +219,36 @@ final class ScenePerception: Sendable {
         let detections = tracker.withLock {
             $0.update(fuse(obstacles: obstacles, recognized: recognized), at: frame.timestamp)
         }
-        let announcements = announcer.withLock {
+        let recognizedText = textReader.currentText(at: frame.timestamp)
+        var announcements = announcer.withLock {
             $0.announcements(
                 for: detections.map { ObstacleAlertInput(detection: $0, isInPath: inPath.contains($0.id)) },
                 hazards: hazards,
+                path: path,
+                blockedAhead: blockedAhead,
                 at: frame.timestamp
             )
+        }
+        if !announcements.isEmpty {
+            lastPathAnnouncement.withLock { $0 = frame.timestamp }
+        }
+
+        // "Take me to…": sightings go in, one instruction at a time comes out.
+        if let pending = pendingNavigationQuery.withLock({ query in
+            defer { query = nil }
+            return query
+        }) {
+            navigation.withLock { $0 = pending.map { NavigationGuide(query: $0, at: frame.timestamp) } }
+        }
+        // Navigation cues hold back for a moment after a path warning; the warning matters more.
+        let pathSpokeRecently = frame.timestamp - lastPathAnnouncement.withLock { $0 } < 2.5
+        diagnostics.navigation = navigation.withLock { guide -> NavigationStatus? in
+            guard guide != nil else { return nil }
+            let result = guide!.update(detections: detections, text: recognizedText, heading: heading, at: frame.timestamp)
+            if let event = result.announcement, !pathSpokeRecently || event.priority >= .high {
+                announcements.append(event)
+            }
+            return result.status
         }
         let end = CACurrentMediaTime()
         diagnostics.performance = frameTimer.withLock { timer in
@@ -158,7 +261,7 @@ final class ScenePerception: Sendable {
             timestamp: .now,
             detections: detections,
             ground: groundSurface(for: hazards),
-            recognizedText: textReader.currentText(at: frame.timestamp),
+            recognizedText: recognizedText,
             elevationHazards: hazards,
             hasMetricDepth: depthMap != nil
         )
@@ -223,11 +326,12 @@ private extension ScenePerception {
         ).scaled(toWidth: depth.width, height: depth.height)
     }
 
-    /// Wraps a geometric obstacle as a `Detection`, projecting its 3D extent back into
-    /// normalized image space so the UI can draw a box around it.
+    /// Wraps a geometric obstacle as a `Detection`, named by its shape ("wall", "pole"…)
+    /// and projected back into normalized image space so the UI can draw a box around it.
     func detection(
         for obstacle: GeometricObstacle,
         floor: Plane3D,
+        coverage: ClosedRange<Float>?,
         heading: WalkingCorridor,
         camera: ARCamera,
         orientation: UIInterfaceOrientation,
@@ -239,13 +343,14 @@ private extension ScenePerception {
         ) else { return nil }
 
         return Detection(
-            label: Detection.obstacleLabel,
+            label: obstacle.kind(coverage: coverage).label,
             confidence: 1,
             boundingBox: box,
             distance: Double(obstacle.nearestDistance),
             bearing: heading.bearing(to: obstacle.center),
             origin: .geometric,
-            isHazard: true
+            isHazard: true,
+            worldPosition: obstacle.center
         )
     }
 

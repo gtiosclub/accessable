@@ -22,6 +22,15 @@ final class LiveSceneViewModel {
     private(set) var imageAspectRatio: CGFloat = 3.0 / 4.0
     /// Camera height above the fitted floor, in metres; nil until a floor is found.
     private(set) var cameraHeight: Float?
+    /// False while the floor is remembered or assumed rather than seen this frame.
+    private(set) var isFloorMeasured = false
+    /// Which way the geometry says is open; nil without depth.
+    private(set) var path: PathAssessment?
+    /// Progress of "Take me to…", nil when no request is active or finished.
+    private(set) var navigation: NavigationStatus?
+    /// How the phone is held. Landscape widens the horizontal field of view from about
+    /// 50° to about 70°, so more of the room is seen at once; the pipeline follows it.
+    private(set) var interfaceOrientation: UIInterfaceOrientation = .portrait
     /// Measured analysis rate and latency (T20); nil until a few frames have been timed.
     private(set) var performance: PerformanceMetrics?
     /// ARKit tracking state and camera frame rate, for checking the session on a device (T1).
@@ -49,6 +58,7 @@ final class LiveSceneViewModel {
     @ObservationIgnored private let announcements: any AnnouncementEngineProtocol
     @ObservationIgnored private let speaker = FieldTestSpeaker()
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
+    @ObservationIgnored private var orientationTask: Task<Void, Never>?
 
     /// The device validation checklist in docs/ComputerVision.md, as markers for a recording.
     static let checklistMarks = [
@@ -98,12 +108,31 @@ final class LiveSceneViewModel {
         lastMark = label
     }
 
+    /// Starts steering towards `query`; an empty query cancels.
+    func navigate(to query: String) {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        analyzer?.navigate(to: trimmed.isEmpty ? nil : trimmed)
+        if trimmed.isEmpty { navigation = nil }
+    }
+
+    func stopNavigating() {
+        analyzer?.navigate(to: nil)
+        navigation = nil
+    }
+
+    var isNavigating: Bool {
+        switch navigation?.phase {
+        case .scanning, .guiding: true
+        default: false
+        }
+    }
+
     func start() async {
         guard let analyzer else {
             errorMessage = ARSessionManagerError.worldTrackingUnsupported.localizedDescription
             return
         }
-        analyzer.setInterfaceOrientation(.portrait)
+        followDeviceOrientation(analyzer)
         do {
             try await analyzer.start()
         } catch {
@@ -127,6 +156,9 @@ final class LiveSceneViewModel {
             self.observation = observation
             hazards = observation.elevationHazards
             cameraHeight = diagnostics.cameraHeight
+            isFloorMeasured = diagnostics.isFloorMeasured
+            path = diagnostics.path
+            navigation = diagnostics.navigation
             performance = diagnostics.performance
             sessionDescription = Self.describe(
                 tracking: analyzer.sessionManager.trackingStateDescription,
@@ -139,6 +171,9 @@ final class LiveSceneViewModel {
     func stop() async {
         deliveryTask?.cancel()
         deliveryTask = nil
+        orientationTask?.cancel()
+        orientationTask = nil
+        UIDevice.current.endGeneratingDeviceOrientationNotifications()
         speaker.deactivate()
         analyzer?.recorder.stop()
         isRecording = false
@@ -159,12 +194,55 @@ final class LiveSceneViewModel {
         guard let height = cameraHeight else { return "Looking for the ground…" }
         // Held normally this should read roughly 1.1 to 1.5 m. A wildly different number
         // means the floor fit latched onto something that is not the floor.
-        return String(format: "Floor found, camera %.2f m above it", height)
+        let source = isFloorMeasured ? "Floor found" : "Floor remembered"
+        return String(format: "%@, camera %.2f m above it", source, height)
+    }
+
+    /// "Path clear" / "Go left" / "Blocked", for the readout.
+    var pathDescription: String? {
+        guard let path else { return nil }
+        return switch path.clearDirection {
+        case .ahead: path.isNarrow ? "Narrow gap ahead" : "Path clear"
+        case .left: "Blocked — go left"
+        case .right: "Blocked — go right"
+        case .blocked:
+            switch path.turn {
+            case .left: "Blocked — turn left"
+            case .right: "Blocked — turn right"
+            case nil: "Blocked — no clear path"
+            }
+        }
     }
 
     var performanceDescription: String? {
         performance.map {
             String(format: "%.0f fps, %.0f ms (p95 %.0f ms)", $0.averageFPS, $0.averageLatencyMilliseconds, $0.p95LatencyMilliseconds)
+        }
+    }
+
+    /// Keeps the analyzer's idea of "upright" in step with how the phone is held, so
+    /// Vision sees upright images and boxes land on the rotated preview.
+    private func followDeviceOrientation(_ analyzer: ARSceneAnalyzer) {
+        func apply(_ device: UIDeviceOrientation) {
+            // Device and interface landscape are mirror images of each other.
+            let interface: UIInterfaceOrientation? = switch device {
+            case .portrait: .portrait
+            case .landscapeLeft: .landscapeRight
+            case .landscapeRight: .landscapeLeft
+            default: nil // Face up/down and upside down: keep what we had.
+            }
+            guard let interface else { return }
+            interfaceOrientation = interface
+            analyzer.setInterfaceOrientation(interface)
+        }
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+        apply(UIDevice.current.orientation)
+        analyzer.setInterfaceOrientation(interfaceOrientation)
+        orientationTask?.cancel()
+        orientationTask = Task { @MainActor in
+            for await _ in NotificationCenter.default.notifications(named: UIDevice.orientationDidChangeNotification) {
+                apply(UIDevice.current.orientation)
+            }
         }
     }
 
@@ -175,7 +253,8 @@ final class LiveSceneViewModel {
     }
 
     var countsDescription: String {
-        "\(people.count) person(s), \(obstacles.count) obstacle(s) in your path"
+        let counts = "\(people.count) person(s), \(obstacles.count) obstacle(s) in your path"
+        return pathDescription.map { "\(counts). \($0)" } ?? counts
     }
 
     /// What VoiceOver reads for the readout; the overlay boxes themselves are purely visual.

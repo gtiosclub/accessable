@@ -54,6 +54,10 @@ final class FieldTestRecorder: Sendable {
         let lowPower: Bool
         let hasDepth: Bool
         let cameraHeight: Float?
+        /// False when the floor was remembered or assumed rather than fitted this frame.
+        let floorMeasured: Bool
+        /// `ClearDirection` the geometry chose, e.g. "left"; nil without depth.
+        let path: String?
         let detections: [DetectionRecord]
         let hazards: [HazardRecord]
         let emitted: [EventRecord]
@@ -175,6 +179,8 @@ extension FieldTestRecorder.FrameRecord {
             lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
             hasDepth: observation.hasMetricDepth,
             cameraHeight: diagnostics.cameraHeight,
+            floorMeasured: diagnostics.isFloorMeasured,
+            path: diagnostics.path?.clearDirection.rawValue,
             detections: observation.detections.map { detection in
                 FieldTestRecorder.DetectionRecord(
                     label: detection.label,

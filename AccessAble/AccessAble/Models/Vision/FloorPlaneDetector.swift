@@ -17,8 +17,11 @@ struct FloorDetectionTuning: Sendable {
     var inlierDistance: Float = 0.03
     /// Absolute floor on support, so a 3-point fluke is never returned.
     var minInliers: Int = 16
-    /// Support required as a fraction of the finite input points.
-    var minInlierRatio: Float = 0.20
+    /// Support required as a fraction of the finite input points. Low on purpose: walking
+    /// up to a wall, the floor shrinks to a strip at the bottom of the frame, and the fit
+    /// must keep working there. `lowerPlaneSupportFraction` and the camera-height check in
+    /// `FloorMemory` are what keep a tabletop from being taken for the floor.
+    var minInlierRatio: Float = 0.08
     /// Which way is up. Pass ARKit's gravity-aligned world up, or the device's gravity
     /// vector negated. Only its direction matters.
     var upHint: SIMD3<Float> = [0, 1, 0]
@@ -114,7 +117,13 @@ func detectFloorPlane(
     let inlierPoints = finite.filter {
         abs(distanceFromPlane(point: $0, plane: winner.plane)) <= tuning.inlierDistance
     }
-    let refined = fitPlaneLeastSquares(points: inlierPoints, orientedTowards: up) ?? winner.plane
+    // The refinement can swing: a thin horizontal band of points sampled off a wall is a
+    // valid 3-point candidate, and least squares through that band is the wall itself. A
+    // refined plane that fails the tilt test is discarded in favour of the raw candidate.
+    var refined = fitPlaneLeastSquares(points: inlierPoints, orientedTowards: up) ?? winner.plane
+    if abs(simd_dot(refined.normal, up)) < minTiltCosine {
+        refined = winner.plane
+    }
 
     // Re-measure support against the refined plane; it has moved, if only slightly.
     var finalInliers: [Float] = []

@@ -19,8 +19,17 @@ struct GroundProfileTuning: Sendable {
     var minPointsPerBin: Int = 3
     /// Ignore anything this far above the floor when measuring the ground. Keeps an
     /// obstacle's body, or a passing pedestrian's legs, from being mistaken for a rise in
-    /// the pavement, while still letting a genuine step up through.
-    var maxGroundHeight: Float = 0.50
+    /// the pavement, while still letting a kerb or one stair riser (up to 0.19 m) through.
+    var maxGroundHeight: Float = 0.30
+    /// Nothing nearer than this is profiled: the bottom rows of the frame hold the user's
+    /// own feet, whatever they are carrying, and the sparsest, noisiest returns.
+    var minimumDistance: Float = 0.5
+    /// Points inside a detected obstacle's footprint, padded by this, are left out of the
+    /// profile unless they lie on the floor. A chair leg standing in a bin otherwise
+    /// outnumbers the floor there and reads as a step up, then a drop.
+    var obstaclePadding: Float = 0.05
+    /// Points this close to the floor are the floor, even under an obstacle.
+    var floorTolerance: Float = 0.06
     /// Which height in each bin counts as "the ground". A low quantile rather than the
     /// minimum: the minimum is whichever single point was noisiest downwards.
     var heightQuantile: Float = 0.20
@@ -34,15 +43,27 @@ struct GroundProfileTuning: Sendable {
 ///
 /// Heights are signed distances from `floor`, so a kerb down reads negative — the same
 /// convention `GroundSample.height` documents. Output is ordered by distance and may have
-/// gaps where the sensor returned nothing.
+/// gaps where the sensor returned nothing. `obstacles` (T11's output for the same cloud)
+/// are cut out of the profile so that objects standing on the ground are not read as
+/// changes in the ground.
 func groundProfile(
     points: [SIMD3<Float>],
     floor: Plane3D,
     corridor: WalkingCorridor,
+    excluding obstacles: [GeometricObstacle] = [],
     tuning: GroundProfileTuning = .default
 ) -> [GroundSample] {
     guard let corridor = corridor.flattened(ontoFloorNormal: floor.normal) else { return [] }
     guard tuning.binWidth > 0 else { return [] }
+
+    // Footprints of the obstacles that touch the sampled strip, padded.
+    let halfStrip = tuning.samplingWidth / 2
+    let exclusions: [(along: ClosedRange<Float>, lateral: ClosedRange<Float>)] = obstacles.compactMap { obstacle in
+        let lateral = (obstacle.lateralRange.lowerBound - tuning.obstaclePadding) ... (obstacle.lateralRange.upperBound + tuning.obstaclePadding)
+        guard lateral.lowerBound <= halfStrip, lateral.upperBound >= -halfStrip else { return nil }
+        let along = (obstacle.forwardRange.lowerBound - tuning.obstaclePadding) ... (obstacle.forwardRange.upperBound + tuning.obstaclePadding)
+        return (along, lateral)
+    }
 
     var bins: [Int: [(along: Float, height: Float)]] = [:]
 
@@ -51,13 +72,17 @@ func groundProfile(
 
         let offset = point - corridor.origin
         let along = simd_dot(offset, corridor.forward)
-        guard along >= 0, along <= corridor.maxDistance else { continue }
+        guard along >= tuning.minimumDistance, along <= corridor.maxDistance else { continue }
 
         let lateral = simd_dot(offset, corridor.right)
-        guard abs(lateral) <= tuning.samplingWidth / 2 else { continue }
+        guard abs(lateral) <= halfStrip else { continue }
 
         let height = distanceFromPlane(point: point, plane: floor)
         guard height <= tuning.maxGroundHeight else { continue }
+        if height > tuning.floorTolerance,
+           exclusions.contains(where: { $0.along.contains(along) && $0.lateral.contains(lateral) }) {
+            continue
+        }
 
         bins[Int((along / tuning.binWidth).rounded(.down)), default: []].append((along, height))
     }

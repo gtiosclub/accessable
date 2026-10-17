@@ -69,7 +69,8 @@ func objectDetections(
 /// to serve concurrent requests.
 final class ObjectDetector: @unchecked Sendable {
     /// Detections below this are discarded. At 0.4 the model reported a spoon on an
-    /// abstract wallpaper at 0.51, so anything lower is too noisy to speak aloud.
+    /// abstract wallpaper at 0.51, and at 0.5 a hand in front of the lens was a suitcase.
+    /// Fewer, surer labels: a missed label still leaves the geometric obstacle.
     let minimumConfidence: Float
     /// People come from T14's dedicated detector; reporting them here too would double them.
     let ignoredLabels: Set<String> = ["person"]
@@ -79,7 +80,7 @@ final class ObjectDetector: @unchecked Sendable {
     private var model: Result<VNCoreMLModel, any Error>?
 
     /// Returns nil when the compiled model is not in `bundle`.
-    init?(modelName: String = "yolo11n", bundle: Bundle = .main, minimumConfidence: Float = 0.5) {
+    init?(modelName: String = "yolo11n", bundle: Bundle = .main, minimumConfidence: Float = 0.6) {
         guard let url = bundle.url(forResource: modelName, withExtension: "mlmodelc") else { return nil }
         modelURL = url
         self.minimumConfidence = minimumConfidence
