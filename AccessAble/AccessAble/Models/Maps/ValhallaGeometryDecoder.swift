@@ -63,7 +63,8 @@ enum ValhallaGeometryDecoder {
                     coordinateIndex: maneuver.beginShapeIndex,
                     instruction: maneuver.instruction,
                     spokenInstruction: verbal.flatMap { $0.isEmpty ? nil : $0 }
-                        ?? maneuver.instruction
+                        ?? maneuver.instruction,
+                    announcesNextStep: maneuver.verbalMultiCue ?? false
                 )
             }
             return DecodedLeg(coordinates: coordinates, steps: steps)
@@ -246,12 +247,15 @@ enum ValhallaGeometryDecoder {
         let beginShapeIndex: Int
         let endShapeIndex: Int
         let verbalPreTransitionInstruction: String?
+        // Valhalla omits the key unless the pre-transition text also names the next maneuver.
+        let verbalMultiCue: Bool?
 
         private enum CodingKeys: String, CodingKey {
             case type, instruction, length, time
             case beginShapeIndex = "begin_shape_index"
             case endShapeIndex = "end_shape_index"
             case verbalPreTransitionInstruction = "verbal_pre_transition_instruction"
+            case verbalMultiCue = "verbal_multi_cue"
         }
     }
 }

@@ -81,6 +81,25 @@ struct NavigationRouteTests {
     }
 
     @Test
+    func keepsMultiCueFlagThroughACodableRoundTrip() throws {
+        var steps = validSteps
+        steps[0].announcesNextStep = true
+        let route = try NavigationRoute(coordinates: coordinates, steps: steps, estimatedDuration: 120)
+        let decoded = try JSONDecoder().decode(NavigationRoute.self, from: JSONEncoder().encode(route))
+        #expect(decoded.steps.map(\.announcesNextStep) == [true, false, false])
+    }
+
+    @Test
+    func decodesStepsSavedBeforeTheMultiCueFlag() throws {
+        let json = """
+            {"kind":"turnLeft","coordinateIndex":1,"instruction":"Turn left","spokenInstruction":"Turn left."}
+            """
+        let step = try JSONDecoder().decode(RouteStep.self, from: Data(json.utf8))
+        #expect(step == RouteStep(kind: .turnLeft, coordinateIndex: 1, instruction: "Turn left",
+                                  spokenInstruction: "Turn left."))
+    }
+
+    @Test
     func buildsTheSampleRoute() {
         let route = MapsSamples.route
         #expect(route.coordinates.count == 2)

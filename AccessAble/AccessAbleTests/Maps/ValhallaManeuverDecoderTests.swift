@@ -24,6 +24,13 @@ struct ValhallaManeuverDecoderTests {
         #expect(leg.coordinates[arrival.coordinateIndex] == leg.coordinates.last)
     }
 
+    @Test
+    func marksStepsWhoseSpeechAnnouncesTheNextStep() throws {
+        let legs = try ValhallaGeometryDecoder.decodeLegsWithManeuvers(from: fixture())
+        let flagged = legs[0].steps.indices.filter { legs[0].steps[$0].announcesNextStep }
+        #expect(flagged == [0, 2])
+    }
+
     private func alteredFixture(_ edit: (inout [[String: Any]]) -> Void) throws -> Data {
         var response = try #require(JSONSerialization.jsonObject(with: fixture()) as? [String: Any])
         var trip = try #require(response["trip"] as? [String: Any])

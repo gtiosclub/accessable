@@ -130,6 +130,20 @@ struct RouteStep: Codable, Equatable, Sendable {
     var instruction: String
     /// Text for speech.
     var spokenInstruction: String
+    /// `spokenInstruction` also announces the following step, as in "Turn right. Then Continue.".
+    var announcesNextStep: Bool = false
+}
+
+extension RouteStep {
+    // In an extension so the memberwise init keeps its default; routes saved before the flag existed still decode.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = try container.decode(ManeuverKind.self, forKey: .kind)
+        coordinateIndex = try container.decode(Int.self, forKey: .coordinateIndex)
+        instruction = try container.decode(String.self, forKey: .instruction)
+        spokenInstruction = try container.decode(String.self, forKey: .spokenInstruction)
+        announcesNextStep = try container.decodeIfPresent(Bool.self, forKey: .announcesNextStep) ?? false
+    }
 }
 
 /// Always valid: created and decoded only through the validating init, which derives the distances.
