@@ -107,6 +107,36 @@ struct DepthPipelineTests {
         #expect(detectElevationHazards(samples: profile).isEmpty)
     }
 
+    @Test("a chair leg standing in the strip is not a step in the ground")
+    func obstaclesCutOutOfGroundProfile() {
+        var noise = NoiseGenerator(seed: 37)
+        let floorPoints = planePoints(count: 4000, height: 0, x: -1 ... 1, z: -4 ... 0, sigma: 0.004, noise: &noise)
+        // A dense chair base 1.5 m ahead, its underside 12 cm up: it outnumbers the floor
+        // in its bins, and its lowest points are not at floor level.
+        let box = boxSurfacePoints(centerX: 0, centerZ: -1.5, width: 0.3, depth: 0.3, height: 0.5, step: 0.02, minY: 0.12)
+        let floor = Plane3D.horizontal(atHeight: 0)
+        let points = floorPoints + box
+
+        // Without the exclusion the base shows up as raised ground (the bump filter in
+        // T12 would still catch this one, but a base beside a real kerb would not be so lucky).
+        let contaminated = groundProfile(points: points, floor: floor, corridor: .default)
+        #expect(contaminated.contains { $0.height > 0.05 })
+
+        let obstacles = detectObstacles(points: points, floor: floor, corridor: .default)
+        let clean = groundProfile(points: points, floor: floor, corridor: .default, excluding: obstacles)
+        #expect(clean.count > 20)
+        #expect(clean.allSatisfy { abs($0.height) < 0.03 })
+        #expect(detectElevationHazards(samples: clean).isEmpty)
+    }
+
+    @Test("the profile starts half a metre out, past the user's own feet")
+    func profileSkipsNearField() {
+        var noise = NoiseGenerator(seed: 39)
+        let points = planePoints(count: 4000, height: 0, x: -1 ... 1, z: -4 ... 0, sigma: 0.004, noise: &noise)
+        let profile = groundProfile(points: points, floor: .horizontal(atHeight: 0), corridor: .default)
+        #expect(profile.allSatisfy { $0.forwardDistance >= 0.5 })
+    }
+
     @Test("a kerb in the point cloud comes out of T12 as a step down")
     func kerbSurvivesTheProfiler() throws {
         var noise = NoiseGenerator(seed: 37)

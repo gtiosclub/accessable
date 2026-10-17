@@ -78,6 +78,34 @@ struct DetectionFusionTests {
         #expect(fused.map(\.label) == ["obstacle", "bench"])
     }
 
+    @Test("a person seen past a chair does not become the chair")
+    func smallBoxInsideLargeBoxIsNotFused() {
+        // The chair's projected box is big; the far person's box lands inside it.
+        let fused = fuse(
+            obstacles: [obstacle(CGRect(x: 0.3, y: 0.2, width: 0.4, height: 0.6), distance: 1.5)],
+            recognized: [object("person", CGRect(x: 0.45, y: 0.25, width: 0.08, height: 0.15), distance: 1.6)]
+        )
+        #expect(fused.map(\.label) == ["obstacle", "person"])
+    }
+
+    @Test("boxes that overlap at different depths are different things")
+    func distanceMismatchIsNotFused() {
+        let fused = fuse(
+            obstacles: [obstacle(CGRect(x: 0.4, y: 0.5, width: 0.2, height: 0.3), distance: 1.5)],
+            recognized: [object("person", CGRect(x: 0.35, y: 0.4, width: 0.3, height: 0.45), distance: 3.4)]
+        )
+        #expect(fused.map(\.label) == ["obstacle", "person"])
+    }
+
+    @Test("only things one can walk into lend their label")
+    func onlyFusableLabels() {
+        let fused = fuse(
+            obstacles: [obstacle(CGRect(x: 0.4, y: 0.5, width: 0.2, height: 0.3))],
+            recognized: [object("cell phone", CGRect(x: 0.35, y: 0.4, width: 0.3, height: 0.45))]
+        )
+        #expect(fused.map(\.label) == ["obstacle", "cell phone"])
+    }
+
     @Test("each recognized object labels at most one obstacle")
     func oneToOne() {
         let fused = fuse(

@@ -77,6 +77,25 @@ struct FloorPlaneDetectorTests {
         #expect(detectFloorPlane(points: wall) == nil)
     }
 
+    @Test("a wall never becomes the floor, even through refinement")
+    func wallNeverRefinesIntoFloor() {
+        // A thin horizontal band of wall points is a legal 3-point candidate; least squares
+        // through that band is the wall. Before the tilt re-check this returned the wall
+        // with 75% support — and the obstacle detector then measured heights against it.
+        var noise = NoiseGenerator(seed: 43)
+        let wall = wallPoints(count: 1200, z: -1, x: -0.6 ... 0.6, y: 0.3 ... 2.2, noise: &noise)
+        #expect(detectFloorPlane(points: wall) == nil)
+    }
+
+    @Test("a tilted plane is rejected by the floor memory")
+    func memoryRejectsTiltedPlane() {
+        var memory = FloorMemory()
+        let wall = FloorPlaneFit(plane: Plane3D(normal: [0, 0.04, -1], point: [0, 1.2, -1]), inlierCount: 900, inlierRatio: 0.75, rmsError: 0.01)
+        let estimate = memory.update(fit: wall, cameraPosition: [0, 1.3, 0], at: 0)
+        #expect(!estimate.isMeasured)
+        #expect(memory.rememberedCameraHeight == nil)
+    }
+
     @Test("survives NaN holes in the depth data")
     func nonFiniteInput() throws {
         var noise = NoiseGenerator(seed: 23)

@@ -109,6 +109,65 @@ struct GeometricObstacleDetectorTests {
         #expect(abs(obstacles[1].height - 0.9) < 0.05)
     }
 
+    @Test("a wall across the path is one obstacle, named as a wall")
+    func wall() throws {
+        var noise = NoiseGenerator(seed: 41)
+        // Wider than the floor cloud, as a real wall is wider than the view.
+        let wall = wallPoints(count: 2500, z: -2, x: -2.5 ... 2.5, noise: &noise)
+        let cloud = floorCloud() + wall
+
+        let obstacles = detectObstacles(points: cloud, floor: floor, corridor: corridor)
+        let coverage = coverageProfile(points: cloud, floor: floor, corridor: corridor, lookAhead: 2.5)
+
+        #expect(obstacles.count == 1)
+        let obstacle = try #require(obstacles.first)
+        #expect(obstacle.intersectsWalkingCorridor)
+        #expect(abs(obstacle.nearestDistance - 2) < 0.05)
+        #expect(abs(obstacle.lateralRange.lowerBound + 2.5) < 0.05)
+        #expect(abs(obstacle.lateralRange.upperBound - 2.5) < 0.05)
+        #expect(abs(obstacle.forwardRange.lowerBound - 2) < 0.05)
+        #expect(obstacle.kind(coverage: coverage?.lateral(at: 2)) == .wall)
+    }
+
+    @Test("a wall is still found when no floor is in view, against the remembered floor")
+    func wallWithoutVisibleFloor() throws {
+        // Standing 1 m from a wall, the camera sees nothing but wall from knee height up.
+        var noise = NoiseGenerator(seed: 43)
+        let wall = wallPoints(count: 1200, z: -1, x: -0.6 ... 0.6, y: 0.3 ... 2.2, noise: &noise)
+        let cameraCorridor = WalkingCorridor(origin: [0, 1.3, 0], forward: [0, 0, -1], right: [1, 0, 0], width: 0.9, maxDistance: 4)
+
+        #expect(detectFloorPlane(points: wall) == nil)
+        var memory = FloorMemory()
+        let estimate = memory.update(fit: detectFloorPlane(points: wall), cameraPosition: cameraCorridor.origin, at: 0)
+        #expect(!estimate.isMeasured)
+
+        let obstacles = detectObstacles(points: wall, floor: estimate.plane, corridor: cameraCorridor)
+        let coverage = coverageProfile(points: wall, floor: estimate.plane, corridor: cameraCorridor, lookAhead: 2.5)
+        let obstacle = try #require(obstacles.first)
+        #expect(obstacles.count == 1)
+        #expect(obstacle.intersectsWalkingCorridor)
+        #expect(abs(obstacle.nearestDistance - 1) < 0.1)
+        #expect(obstacle.kind(coverage: coverage?.lateral(at: 1)) == .wall)
+    }
+
+    @Test("obstacles are named by shape", arguments: [
+        (width: Float(0.1), height: Float(1.8), kind: GeometricObstacle.Kind.pole),
+        (width: Float(0.8), height: Float(0.3), kind: GeometricObstacle.Kind.lowObstacle),
+        (width: Float(2.0), height: Float(1.2), kind: GeometricObstacle.Kind.wall),
+        (width: Float(0.6), height: Float(0.8), kind: GeometricObstacle.Kind.obstacle),
+    ])
+    func kinds(width: Float, height: Float, kind: GeometricObstacle.Kind) {
+        let obstacle = GeometricObstacle(center: [0, height / 2, -2], nearestDistance: 2, width: width, height: height, intersectsWalkingCorridor: true)
+        #expect(obstacle.kind(coverage: -3 ... 3) == kind)
+    }
+
+    @Test("a narrow stretch of wall that fills the view is still a wall")
+    func wallByCoverage() {
+        let stretch = GeometricObstacle(center: [0, 1, -1], nearestDistance: 1, width: 1.0, height: 1.8, intersectsWalkingCorridor: true)
+        #expect(stretch.kind(coverage: -0.52 ... 0.52) == .wall)
+        #expect(stretch.kind(coverage: -1.5 ... 1.5) == .obstacle)
+    }
+
     @Test("an empty floor has no obstacles")
     func bareFloor() {
         #expect(detectObstacles(points: floorCloud(), floor: floor, corridor: corridor).isEmpty)

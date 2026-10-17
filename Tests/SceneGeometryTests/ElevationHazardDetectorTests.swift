@@ -74,6 +74,23 @@ struct ElevationHazardDetectorTests {
         #expect(hazards.allSatisfy { abs($0.heightChange - 0.17) < 0.02 })
     }
 
+    @Test("a low object on the ground — up and back down within a stride — is not a step")
+    func bumpIsNotAStep() {
+        // Flat, then a 0.12 m rise at 1.5 m that falls back at 1.9 m, then flat.
+        let samples = stride(from: Float(0.5), through: 3.5, by: 0.1).map { distance in
+            GroundSample(forwardDistance: distance, height: (1.5 ..< 1.9).contains(distance) ? 0.12 : 0)
+        }
+        #expect(detectElevationHazards(samples: samples).isEmpty)
+    }
+
+    @Test("a rise that stays up is a kerb, not a bump")
+    func longRiseIsAKerb() {
+        let samples = stride(from: Float(0.5), through: 3.5, by: 0.1).map { distance in
+            GroundSample(forwardDistance: distance, height: distance >= 1.5 ? 0.12 : 0)
+        }
+        #expect(detectElevationHazards(samples: samples).map(\.type) == [.stepUp])
+    }
+
     @Test("a single depth spike does not invent a step")
     func noiseSpikeRejected() {
         let samples = groundProfile(from: 0.2, to: 2.0) { _ in 0 }
