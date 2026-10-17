@@ -40,6 +40,9 @@ struct PlaceholderHaptics: HapticRendering {
     func play(_ id: HapticID, intensity: Float) async {
         log.info("haptic \(id.rawValue) @ \(intensity)")
     }
+    func stop() async {
+        log.info("haptic stop")
+    }
 }
 
 /// Emits one hard-coded scene so UI work can proceed without a camera.

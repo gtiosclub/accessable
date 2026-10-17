@@ -6,6 +6,15 @@ import Foundation
 
 // MARK: - User Interaction (3.3) — owns delivery of everything the user hears/feels
 
+/// Natural-language commands and questions (3.1). Text in; a command, or a spoken answer, out.
+protocol CommandInterpreting: Sendable {
+    /// Never throws: anything it can't understand comes back as `.unknown`.
+    func interpret(_ text: String) async -> VoiceCommand
+    /// Short answer suitable for speech. `context` is e.g. "on Ferst Drive facing north".
+    func answer(_ question: String, context: String?) async throws -> String
+}
+
+
 /// Anything that wants to tell the user something submits an event here. CV and Maps depend only on this.
 protocol AnnouncementSink: Sendable {
     func submit(_ event: AnnouncementEvent) async
@@ -24,6 +33,12 @@ protocol AnnouncementEngineProtocol: AnnouncementSink {
 /// Renders a haptic from the shared vocabulary (3.2).
 protocol HapticRendering: Sendable {
     func play(_ id: HapticID, intensity: Float) async
+    func stop() async
+}
+
+/// Vibrates and beeps to warn that an obstacle was detected.
+protocol ObstacleAlerting: Sendable {
+    func alert(intensity: Float) async
 }
 
 /// Publishes the current PerformanceMode (3.3). CV (1.4) and Maps (2.1) subscribe.

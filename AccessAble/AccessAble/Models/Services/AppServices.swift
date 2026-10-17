@@ -5,6 +5,7 @@ import Foundation
 struct AppServices: Sendable {
     var announcements: any AnnouncementEngineProtocol
     var haptics: any HapticRendering
+    var obstacleAlert: any ObstacleAlerting
     var performance: any PerformanceModeProviding
     var scene: any SceneObservationProviding
     var sceneDescriber: any SceneDescribing
@@ -13,6 +14,7 @@ struct AppServices: Sendable {
     var destinationSearch: any DestinationSearching
     var trip: any TripStateProviding
     var locationContext: any LocationContextProviding
+    var commands: any CommandInterpreting
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
@@ -22,7 +24,8 @@ struct AppServices: Sendable {
         let location = CoreLocationProvider()
         var services = AppServices(
             announcements: PlaceholderAnnouncementEngine(), // TODO(UI 3.3): AnnouncementEngine
-            haptics: PlaceholderHaptics(),                  // TODO(UI 3.2): CoreHapticsRenderer
+            haptics: CoreHapticsRenderer(),                  // TODO(UI 3.2): CoreHapticsRenderer
+            obstacleAlert: ObstacleAlertPlayer(),
             performance: performance,
             scene: scene,
             sceneDescriber: scene,                          // TODO(CV 1.3)
@@ -30,7 +33,8 @@ struct AppServices: Sendable {
             routing: ValhallaRoutingService(),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
-            locationContext: trip                           // TODO(Maps 2.1)
+            locationContext: trip,                          // TODO(Maps 2.1)
+            commands: FoundationModelCommandInterpreter()
         )
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
