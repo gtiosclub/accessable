@@ -568,6 +568,10 @@ struct TripManagerTests {
         await harness.router.respond()
         let rerouted = await harness.states.waitFor { $0.nextManeuver?.instruction == "Arrive" }
         #expect(abs((rerouted.distanceRemaining ?? 0) - 80) < 0.5)
+        // the map redraws from this stream
+        var routes = harness.manager.tripRoutes().makeAsyncIterator()
+        let latest = try #require(await routes.next())
+        #expect(latest == (try eastRoute(from: origin)))
         await harness.engine.waitForCount(3)
         #expect(await harness.engine.texts.last == "New route. Head east.")
 

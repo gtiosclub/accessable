@@ -10,6 +10,7 @@ private let log = Logger(subsystem: "AccessAble", category: "TripManager")
 /// `generation` it was started for and does nothing once it is stale. State changes happen before the next `await`.
 actor TripManager: TripStateProviding {
     private nonisolated let states = Broadcaster<TripState>(replaysLatest: true)
+    private nonisolated let routes = Broadcaster<NavigationRoute?>(replaysLatest: true)
 
     private let location: any LocationProvider
     private let routing: any RoutingService
@@ -82,6 +83,10 @@ actor TripManager: TripStateProviding {
         states.stream()
     }
 
+    nonisolated func tripRoutes() -> AsyncStream<NavigationRoute?> {
+        routes.stream()
+    }
+
     func startTrip(route: NavigationRoute, destination: Destination) async {
         generation += 1
         let generation = generation
@@ -103,6 +108,7 @@ actor TripManager: TripStateProviding {
         tripStartedAt = now()
         lastGoodFixAt = nil
         isSignalWeak = false
+        routes.send(route)
         publish(at: now())
 
         // subscribed before any await, so a fix or delivery can't slip past while this trip is set up
@@ -161,6 +167,7 @@ actor TripManager: TripStateProviding {
         progress = nil
         route = nil
         destination = nil
+        routes.send(nil)
         states.send(TripState(phase: .planning, updatedAt: now()))
         await setBackgroundTracking(false)
         // a trip started meanwhile shouldn't hear that it ended
@@ -341,6 +348,7 @@ actor TripManager: TripStateProviding {
             self.tracker = tracker
             progress = tracker.state
             missedTurnStep = nil
+            routes.send(newRoute)
             publish(at: now())
             guard phase == .active, let first = newRoute.steps.first else { return }
             await submit(maneuver("New route. \(first.spokenInstruction)", .high, expiresIn: 15, key: "reroute"))
