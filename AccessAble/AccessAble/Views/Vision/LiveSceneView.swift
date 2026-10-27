@@ -133,6 +133,9 @@ struct LiveSceneView: View {
                     .font(.caption2.monospacedDigit())
                     .lineLimit(2)
             }
+            if viewModel.isRecording {
+                elevationTestControls
+            }
             navigationControls
 
             if let event = viewModel.lastAnnouncement {
@@ -142,6 +145,44 @@ struct LiveSceneView: View {
         .padding(10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .padding(.horizontal)
+    }
+
+    /// Ground truth is deliberately entered rather than inferred from the scenario label:
+    /// a "low curb" varies by site, and its tape-measured height is calibration evidence.
+    private var elevationTestControls: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("Elevation test setup")
+                .font(.caption.weight(.semibold))
+            TextField("Physical setup (e.g. east entrance curb)", text: $viewModel.elevationPhysicalSetup)
+            TextField("Surface (concrete, carpet, asphalt…)", text: $viewModel.elevationSurfaceType)
+            HStack {
+                TextField("Expected height m", text: $viewModel.elevationExpectedHeight)
+                    .keyboardType(.decimalPad)
+                TextField("Edge distance m", text: $viewModel.elevationExpectedDistance)
+                    .keyboardType(.decimalPad)
+            }
+            Menu(viewModel.elevationExpectedHazard) {
+                ForEach(["step / curb", "stairs", "ramp", "drop-off", "missing-depth edge", "obstacle control"], id: \.self) { value in
+                    Button(value) { viewModel.elevationExpectedHazard = value }
+                }
+            }
+            HStack {
+                Button("Record setup") { viewModel.recordElevationSetup() }
+                    .disabled(viewModel.hasActiveElevationSetup)
+                Menu("Record outcome") {
+                    ForEach(["tester heard warning", "warning missing", "wrong warning", "false warning", "inconclusive"], id: \.self) { outcome in
+                        Button(outcome) { viewModel.recordElevationOutcome(outcome) }
+                    }
+                }
+            }
+            .buttonStyle(.bordered)
+            if let message = viewModel.elevationValidationMessage {
+                Text(message)
+                    .foregroundStyle(.red)
+                    .accessibilityLabel("Elevation setup error: \(message)")
+            }
+        }
+        .font(.caption)
     }
 
     private var readout: some View {

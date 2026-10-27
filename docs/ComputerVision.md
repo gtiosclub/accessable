@@ -296,7 +296,8 @@ Camera guidance for announcements:
    still (a reminder every 8 s at the stop band only) or when it flickers at the corridor
    edge, and one "Path clear." after stepping round it (T16). Sweep the phone left and right
    while stopped in front of it: the advice must not change.
-8. Kerb and step down outdoors are announced; a drop-off is at least high priority (T12, T16).
+8. Run the **Elevation field procedure** below before treating kerb, stair, ramp, or drop-off
+   behavior as device-validated (T12, T16).
 11. Wall: walk straight at a wall from 4 m. The readout switches from "Floor found" to
     "Floor remembered" around 2 m and the wall is still announced as "Wall", ending in
     "Stop. Wall ahead." Turn until the wall's end is in view and the advice becomes "Go left"
@@ -316,6 +317,48 @@ Camera guidance for announcements:
 9. OCR: a room sign shows up in "Describe my surroundings" once, and disappears a few seconds
    after looking away (T17, T18).
 10. No "delegate is retaining N ARFrames" warnings in the console (T3).
+
+### Elevation field procedure (T41 — pending on-device execution)
+
+This procedure has **not** been run by the repository maintainer. Run it only with a LiDAR
+iPhone (12 Pro or newer), a sighted safety spotter, and a tape measure. Do not approach an
+unprotected edge while relying on the app.
+
+1. For each setup, measure and enter the physical setup name, surface material, edge distance,
+   and expected vertical height in Live detection's **Elevation test setup** controls. Start a
+   recording, then tap **Record setup** before each approach.
+2. Test a low curb up and down, standard stair risers in both directions, a compliant 1:12 ramp,
+   and an abrupt protected drop-off. Include flat concrete/asphalt and a visually challenging
+   surface where safe. Make at least three slow approaches per feature from 3–4 m.
+3. For each pass, verify tracking is normal and note thermal state. The JSONL frame records keep
+   tracking, thermal state, measured hazard distance/height, emitted events, and actually
+   delivered events. Tap **Record outcome** as `tester heard warning`, `warning missing`, `wrong
+   warning`, `false warning`, or `inconclusive` after the pass.
+4. Run controls: the ramp must not become a step; an object, chair leg, or low box on level
+   ground must not become a surface hazard; ordinary sparse or missing-depth frames must not be
+   called a drop-off. Interior coverage holes remain ambiguous, never safe.
+5. Confirm a detected close drop-off yields `Stop. Drop-off ahead.` with critical priority, while
+   an equivalently close curb/step is high priority. Confirm the delivered-event record agrees
+   with the on-screen banner/audio outcome.
+6. Repeat after a sustained run to capture fair/serious thermal conditions if they occur. Export
+   the JSONL file from `Documents/FieldTests/` and compare tape-measured values to the recorded
+   `HazardRecord` values before proposing any threshold change.
+
+`expectedMaxDistance` intentionally remains unset in the live elevation pipeline. The walking
+corridor range is an application look-ahead preference, not proof that LiDAR should return depth
+that far; using it would turn ordinary sparse frames into false urgent drop-offs. The detector's
+missing-depth drop-off mode is covered by explicit synthetic tests only until field recordings
+support a reliable coverage model.
+
+Elevation JSONL records use five kinds: `frame`, `delivered`, `mark`, `elevationSetup`, and
+`elevationOutcome`. Each elevation setup receives a UUID `scenarioID`; its outcome includes the
+same immutable setup, and every analyzed frame and delivered announcement while it is active
+contains `elevationScenarioID`. Emitted-event IDs preserve that association if delivery happens
+after closure. Calibration tooling must group only records with the same ID. An outcome requires
+at least one queued frame and closes the scenario, so later frames/events cannot contaminate that
+pass. `outcome` is the tester's observation; `deliveredEventCount` is separate machine-recorded
+delivery evidence available before the outcome. Setup entry requires a nonempty physical setup
+and surface plus finite, nonnegative tape-measured expected height and distance.
 
 ## Next phase
 

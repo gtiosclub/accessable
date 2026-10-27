@@ -47,6 +47,14 @@ final class LiveSceneViewModel {
     private(set) var recordingName: String?
     /// The checklist step most recently marked.
     private(set) var lastMark: String?
+    /// Ground truth entered by the tester before recording an elevation scenario. These stay
+    /// as strings for SwiftUI editing and are parsed only when written to the JSONL record.
+    var elevationPhysicalSetup = ""
+    var elevationSurfaceType = ""
+    var elevationExpectedHeight = ""
+    var elevationExpectedDistance = ""
+    var elevationExpectedHazard = "step / curb"
+    private(set) var elevationValidationMessage: String?
     /// Speak delivered announcements and play their haptics here, standing in for the
     /// announcement engine (3.3) until it lands.
     var speaksAnnouncements = true {
@@ -58,6 +66,7 @@ final class LiveSceneViewModel {
     @ObservationIgnored private let announcements: any AnnouncementEngineProtocol
     @ObservationIgnored private let speaker = FieldTestSpeaker()
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
+    @ObservationIgnored private var elevationScenarioTask: Task<Void, Never>?
     @ObservationIgnored private var orientationTask: Task<Void, Never>?
 
     /// The device validation checklist in docs/ComputerVision.md, as markers for a recording.
@@ -98,6 +107,7 @@ final class LiveSceneViewModel {
             recordingName = try recorder.start().lastPathComponent
             isRecording = true
             lastMark = nil
+            elevationValidationMessage = nil
         } catch {
             errorMessage = "Could not start recording: \(error.localizedDescription)"
         }
@@ -106,6 +116,36 @@ final class LiveSceneViewModel {
     func mark(_ label: String) {
         analyzer?.recorder.mark(label)
         lastMark = label
+    }
+
+    /// Mirrored from the recorder's status stream; lifecycle ownership remains in the recorder.
+    private(set) var hasActiveElevationSetup = false
+
+    func recordElevationSetup() {
+        guard let recorder = analyzer?.recorder, recorder.isRecording else { return }
+        guard let setup = validatedElevationSetup() else { return }
+        switch recorder.recordElevationSetup(setup, environment: testEnvironment) {
+        case .recorded:
+            elevationValidationMessage = nil
+            lastMark = "Elevation setup recorded"
+        case .activeSetupExists:
+            elevationValidationMessage = "Record an outcome before starting another elevation setup."
+        case .notRecording:
+            elevationValidationMessage = "Start field-test recording before recording an elevation setup."
+        }
+    }
+
+    func recordElevationOutcome(_ outcome: String) {
+        guard let recorder = analyzer?.recorder, recorder.isRecording else { return }
+        switch recorder.recordElevationOutcome(outcome, environment: testEnvironment) {
+        case .recorded:
+            elevationValidationMessage = nil
+            lastMark = "Outcome: \(outcome)"
+        case .noActiveSetup:
+            elevationValidationMessage = "Record a complete elevation setup before its outcome."
+        case .noFramesRecorded:
+            elevationValidationMessage = "Wait for at least one analyzed frame before recording the outcome."
+        }
     }
 
     /// Starts steering towards `query`; an empty query cancels.
@@ -141,6 +181,13 @@ final class LiveSceneViewModel {
         }
         isDepthAvailable = analyzer.sessionManager.isDepthSupported
         if speaksAnnouncements { speaker.activate() }
+        elevationScenarioTask?.cancel()
+        elevationScenarioTask = Task { [weak self, recorder = analyzer.recorder] in
+            for await isActive in recorder.elevationScenarioStatuses() {
+                guard let self, !Task.isCancelled else { return }
+                self.hasActiveElevationSetup = isActive
+            }
+        }
         deliveryTask?.cancel()
         deliveryTask = Task { [weak self, announcements, recorder = analyzer.recorder] in
             for await event in announcements.deliveredEvents() {
@@ -171,6 +218,8 @@ final class LiveSceneViewModel {
     func stop() async {
         deliveryTask?.cancel()
         deliveryTask = nil
+        elevationScenarioTask?.cancel()
+        elevationScenarioTask = nil
         orientationTask?.cancel()
         orientationTask = nil
         UIDevice.current.endGeneratingDeviceOrientationNotifications()
@@ -250,6 +299,33 @@ final class LiveSceneViewModel {
         let fps = health.averageFPS.map { String(format: ", camera %.0f fps", $0) } ?? ""
         let checks = health.passes ? "" : ", move the phone to finish checks"
         return "Tracking \(tracking)\(fps)\(checks)"
+    }
+
+    private func validatedElevationSetup() -> FieldTestRecorder.ElevationSetup? {
+        let physicalSetup = elevationPhysicalSetup.trimmingCharacters(in: .whitespacesAndNewlines)
+        let surfaceType = elevationSurfaceType.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !physicalSetup.isEmpty, !surfaceType.isEmpty,
+              let expectedHeight = Float(elevationExpectedHeight), expectedHeight.isFinite, expectedHeight >= 0,
+              let expectedDistance = Float(elevationExpectedDistance), expectedDistance.isFinite, expectedDistance >= 0
+        else {
+            elevationValidationMessage = "Enter setup, surface, and nonnegative expected height and distance in metres."
+            return nil
+        }
+        return FieldTestRecorder.ElevationSetup(
+            scenarioID: UUID(),
+            physicalSetup: physicalSetup,
+            surfaceType: surfaceType,
+            expectedHeight: expectedHeight,
+            expectedDistance: expectedDistance,
+            expectedHazard: elevationExpectedHazard
+        )
+    }
+
+    private var testEnvironment: FieldTestRecorder.TestEnvironment {
+        FieldTestRecorder.TestEnvironment(
+            tracking: analyzer?.sessionManager.trackingStateDescription ?? "unavailable",
+            thermal: ProcessInfo.processInfo.thermalState.name
+        )
     }
 
     var countsDescription: String {

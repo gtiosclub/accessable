@@ -212,6 +212,10 @@ final class ScenePerception: Sendable {
             // Obstacles are cut out of the profile so a chair leg is not a step.
             if floor.isMeasured {
                 let profile = groundProfile(points: cloud, floor: floor.plane, corridor: corridor, excluding: found)
+                // Do not use `corridor.maxDistance` as `expectedMaxDistance`: it is where the
+                // app wants to inspect, not evidence that LiDAR should have returned depth.
+                // Until field recordings establish a reliable coverage model, a trailing
+                // depth loss stays unclassified rather than becoming an urgent false drop-off.
                 hazards = detectElevationHazards(samples: profile)
             }
         }
