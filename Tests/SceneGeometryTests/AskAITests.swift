@@ -28,6 +28,98 @@ private final class RecordingResponder: AskAIResponder {
     }
 }
 
+private actor BlockingResponder: AskAIResponder {
+    private var hasStarted = false
+    private var startWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func answer(_ question: String, facts: ImageFacts) async throws -> String {
+        hasStarted = true
+        let waiters = startWaiters
+        startWaiters = []
+        waiters.forEach { $0.resume() }
+        try await Task.sleep(for: .seconds(30))
+        return "unused"
+    }
+
+    func waitUntilStarted() async {
+        guard !hasStarted else { return }
+        await withCheckedContinuation { startWaiters.append($0) }
+    }
+}
+
+private final class QueuedExtractionScheduler: AskAIExtractionScheduling, @unchecked Sendable {
+    private struct State {
+        var work: [@Sendable () -> Void] = []
+        var queueWaiters: [CheckedContinuation<Void, Never>] = []
+    }
+
+    private let state = Mutex(State())
+
+    func schedule(_ work: @escaping @Sendable () -> Void) {
+        let waiters = state.withLock { state in
+            state.work.append(work)
+            defer { state.queueWaiters = [] }
+            return state.queueWaiters
+        }
+        waiters.forEach { $0.resume() }
+    }
+
+    func waitUntilQueued() async {
+        await withCheckedContinuation { continuation in
+            let resumeImmediately = state.withLock { state in
+                guard state.work.isEmpty else { return true }
+                state.queueWaiters.append(continuation)
+                return false
+            }
+            if resumeImmediately { continuation.resume() }
+        }
+    }
+
+    func runNext() {
+        let work: (@Sendable () -> Void)? = state.withLock { state in
+            guard !state.work.isEmpty else { return nil }
+            return state.work.removeFirst()
+        }
+        work?()
+    }
+}
+
+private final class BlockingExtractor: ImageFactExtracting, @unchecked Sendable {
+    private struct State {
+        var hasStarted = false
+        var startWaiters: [CheckedContinuation<Void, Never>] = []
+    }
+
+    private let state = Mutex(State())
+    private let release = DispatchSemaphore(value: 0)
+
+    func facts(from imageData: Data, colorsFor detections: [Detection]) throws -> ImageFacts {
+        let waiters = state.withLock { state in
+            state.hasStarted = true
+            defer { state.startWaiters = [] }
+            return state.startWaiters
+        }
+        waiters.forEach { $0.resume() }
+        release.wait()
+        return ImageFacts()
+    }
+
+    func waitUntilStarted() async {
+        await withCheckedContinuation { continuation in
+            let resumeImmediately = state.withLock { state in
+                guard !state.hasStarted else { return true }
+                state.startWaiters.append(continuation)
+                return false
+            }
+            if resumeImmediately { continuation.resume() }
+        }
+    }
+
+    func finish() {
+        release.signal()
+    }
+}
+
 private func roomSignData() throws -> Data {
     let url = try #require(Bundle.module.url(forResource: "room210", withExtension: "jpg"))
     return try Data(contentsOf: url)
@@ -119,6 +211,72 @@ struct AskAITests {
 
         #expect(response.latencyMilliseconds >= 50)
         #expect(response.latencyMilliseconds < 10_000)
+    }
+
+    @Test("cancelling a request reaches the caller without returning an answer")
+    func cancellationPropagates() async throws {
+        let responder = BlockingResponder()
+        let task = Task {
+            try await AskAI(responder: responder).answer(
+                "What is directly in front of me?", imageData: try roomSignData()
+            )
+        }
+
+        await responder.waitUntilStarted()
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+    }
+
+    @Test("cancelling queued Vision work returns immediately and discards its late result")
+    func queuedExtractionCancellation() async throws {
+        let scheduler = QueuedExtractionScheduler()
+        let responder = RecordingResponder { _ in "unused" }
+        var ask = AskAI(responder: responder)
+        ask.extractionScheduler = scheduler
+        let task = Task {
+            try await ask.answer("What is directly in front of me?", imageData: try roomSignData())
+        }
+
+        await scheduler.waitUntilQueued()
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(responder.calls.isEmpty)
+
+        // Completing the queued work after cancellation must be a no-op, not a second resume.
+        scheduler.runNext()
+        #expect(responder.calls.isEmpty)
+    }
+
+    @Test("a late extraction completion after cancellation is discarded exactly once")
+    func lateExtractionCompletionAfterCancellation() async throws {
+        let scheduler = QueuedExtractionScheduler()
+        let extractor = BlockingExtractor()
+        let responder = RecordingResponder { _ in "unused" }
+        var ask = AskAI(extractor: extractor, responder: responder)
+        ask.extractionScheduler = scheduler
+        let task = Task {
+            try await ask.answer("What is directly in front of me?", imageData: try roomSignData())
+        }
+
+        await scheduler.waitUntilQueued()
+        let worker = Task.detached { scheduler.runNext() }
+        await extractor.waitUntilStarted()
+        task.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            try await task.value
+        }
+        #expect(responder.calls.isEmpty)
+
+        extractor.finish()
+        await worker.value
+        #expect(responder.calls.isEmpty)
     }
 
     @Test("concurrent questions each get their own answer")
