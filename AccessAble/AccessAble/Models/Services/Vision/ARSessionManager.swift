@@ -62,6 +62,10 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         } else {
             log.notice("sceneDepth unsupported; running without LiDAR depth")
         }
+        // T36: classified mesh for doors and windows, where the device supports it
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
+            configuration.sceneReconstruction = .meshWithClassification
+        }
 
         health.withLock { $0.reset() }
         session.delegate = self
