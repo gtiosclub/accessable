@@ -40,6 +40,10 @@ final class HomeViewModel {
     func describeSurroundings() async {
         isDescribing = true
         defer { isDescribing = false }
+        // the camera takes a second or two to start from here, so say something first
+        await services.announcements.submit(
+            AnnouncementEvent(category: .system, priority: .normal, text: "Looking.", source: .userInteraction)
+        )
         let text = await services.sceneDescriber.describeCurrentScene()
         await services.announcements.submit(
             AnnouncementEvent(category: .ambient, priority: .high, text: text, source: .userInteraction)
