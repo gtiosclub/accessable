@@ -74,8 +74,17 @@ struct PlaceholderSceneProvider: SceneObservationProviding, SceneDescribing {
         SceneDescriptionBuilder().describe(Self.sample)
     }
 
+    /// Answers from the sample scene with Ask AI's offline template, so asking about the
+    /// camera can be tried in the Simulator.
     func ask(_ question: String, locationContext: String?) async throws -> String {
-        "Ask AI is not available yet."
+        var facts = ImageFacts()
+        facts.detections = Self.sample.prioritizedDetections
+        facts.elevationHazards = Self.sample.elevationHazards
+        // The sample scene has no sign, so add one: "where is the exit?" can then be tried here.
+        facts.text = Self.sample.recognizedText + [
+            RecognizedText(id: UUID(), string: "EXIT", confidence: 0.95, boundingBox: CGRect(x: 0.7, y: 0.1, width: 0.1, height: 0.05), worldPosition: nil)
+        ]
+        return TemplateAskAIResponder().answer(question, facts: facts)
     }
 }
 
