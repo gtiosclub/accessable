@@ -86,6 +86,8 @@ final class CommandViewModel {
         case .endTrip:
             await services.trip.endTrip()
             await reply("Trip ended.")
+        case .ask(let question) where VisualQuestion.needsCamera(question):
+            await askAboutCamera(question)
         case .ask(let question):
             let context = await services.locationContext.currentLocationDescription()
             do {
@@ -98,6 +100,21 @@ final class CommandViewModel {
         }
     }
  
+    /// T38: a question about what the camera sees goes to Ask AI with a fresh camera frame and
+    /// what the obstacle pipeline last found, not to the text-only assistant, which can't see
+    /// and would guess. Runs beside obstacle detection, which keeps warning while this waits.
+    private func askAboutCamera(_ question: String) async {
+        let context = await services.locationContext.currentLocationDescription()
+        do {
+            let answer = try await services.sceneDescriber.ask(question, locationContext: context)
+            await reply(answer, category: .ambient)
+        } catch {
+            // Not the text assistant as a fallback: without the camera it would make things up.
+            let message = (error as? LocalizedError)?.errorDescription ?? "Sorry, I couldn't look at the camera. Please try again."
+            await reply(message)
+        }
+    }
+
     /// Shows the reply on screen and speaks it through the AnnouncementEngine (so it's VoiceOver-safe).
     /// `.userInteraction` source means it skips the category filter and dedup: the user asked for it.
     private func reply(_ text: String, category: AnnouncementCategory = .system) async {

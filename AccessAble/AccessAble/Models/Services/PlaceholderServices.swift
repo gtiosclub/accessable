@@ -74,8 +74,14 @@ struct PlaceholderSceneProvider: SceneObservationProviding, SceneDescribing {
         SceneDescriptionBuilder().describe(Self.sample)
     }
 
+    /// Answers from the sample scene with Ask AI's offline template, so asking about the
+    /// camera can be tried in the Simulator.
     func ask(_ question: String, locationContext: String?) async throws -> String {
-        "Ask AI is not available yet."
+        var facts = ImageFacts()
+        facts.detections = Self.sample.prioritizedDetections
+        facts.elevationHazards = Self.sample.elevationHazards
+        facts.text = Self.sample.recognizedText
+        return TemplateAskAIResponder().answer(question, facts: facts)
     }
 }
 
