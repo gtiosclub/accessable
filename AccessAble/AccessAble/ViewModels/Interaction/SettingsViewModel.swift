@@ -46,6 +46,11 @@ final class SettingsViewModel {
         profile.aiPriorities = priorities
     }
 
+    /// Drag-to-reorder for the Ask AI ranking (T23).
+    func moveAIPriorities(from source: IndexSet, to destination: Int) {
+        profile.aiPriorities.move(fromOffsets: source, toOffset: destination)
+    }
+
     /// Moves an Ask AI category up (negative) or down (positive) in the ranking (T23).
     func moveAIPriority(_ category: AIInfoCategory, by offset: Int) {
         profile.aiPriorities.move(category, by: offset)

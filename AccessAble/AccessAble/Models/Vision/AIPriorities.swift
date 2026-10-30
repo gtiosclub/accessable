@@ -52,6 +52,17 @@ struct AIPriorities: Codable, Hashable, Sendable {
         order.insert(category, at: to)
     }
 
+    /// Drag-to-reorder, with the meaning SwiftUI's `onMove` gives `destination`: the index
+    /// in the list as it is before the move.
+    mutating func move(fromOffsets source: IndexSet, toOffset destination: Int) {
+        let moving = source.map { order[$0] }
+        let before = source.filter { $0 < destination }.count
+        var rest = order
+        for index in source.sorted(by: >) { rest.remove(at: index) }
+        rest.insert(contentsOf: moving, at: min(max(destination - before, 0), rest.count))
+        order = rest
+    }
+
     func rank(of category: AIInfoCategory) -> Int {
         order.firstIndex(of: category) ?? order.count
     }

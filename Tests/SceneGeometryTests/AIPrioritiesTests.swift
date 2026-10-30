@@ -43,6 +43,28 @@ struct AIPrioritiesTests {
         #expect(priorities.order.last == .hazards)
     }
 
+    @Test func dragReordersLikeSwiftUI() {
+        var down = AIPriorities.default   // hazards, navigation, people, signsText, landmarks
+        down.move(fromOffsets: IndexSet(integer: 0), toOffset: 3)
+        #expect(down.order == [.navigation, .people, .hazards, .signsText, .landmarks])
+
+        var up = AIPriorities.default
+        up.move(fromOffsets: IndexSet(integer: 4), toOffset: 1)
+        #expect(up.order == [.hazards, .landmarks, .navigation, .people, .signsText])
+
+        var toEnd = AIPriorities.default
+        toEnd.move(fromOffsets: IndexSet(integer: 1), toOffset: 5)
+        #expect(toEnd.order == [.hazards, .people, .signsText, .landmarks, .navigation])
+
+        var same = AIPriorities.default
+        same.move(fromOffsets: IndexSet(integer: 2), toOffset: 3)
+        #expect(same == .default)
+
+        var several = AIPriorities.default
+        several.move(fromOffsets: IndexSet([0, 1]), toOffset: 4)
+        #expect(several.order == [.people, .signsText, .hazards, .navigation, .landmarks])
+    }
+
     @Test func decodesOldOrUnknownRankingsSafely() throws {
         let json = #"{"order": ["signsText", "elevators"]}"#
         let decoded = try JSONDecoder().decode(AIPriorities.self, from: Data(json.utf8))
