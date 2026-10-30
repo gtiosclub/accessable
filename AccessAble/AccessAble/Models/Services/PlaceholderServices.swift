@@ -80,7 +80,7 @@ struct PlaceholderSceneProvider: SceneObservationProviding, SceneDescribing {
         var facts = ImageFacts()
         facts.detections = Self.sample.prioritizedDetections
         facts.elevationHazards = Self.sample.elevationHazards
-        // The sample scene has no sign, so a sample one lets "what does the sign say?" be tried.
+        // The sample scene has no sign, so add one: "where is the exit?" can then be tried here.
         facts.text = Self.sample.recognizedText + [
             RecognizedText(id: UUID(), string: "EXIT", confidence: 0.95, boundingBox: CGRect(x: 0.7, y: 0.1, width: 0.1, height: 0.05), worldPosition: nil)
         ]
