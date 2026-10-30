@@ -40,6 +40,14 @@ final class SettingsViewModel {
     }
 
     func applyPreset(_ level: VisionLevel) {
+        // A preset sets how guidance is delivered, not what the user wants to hear about.
+        let priorities = profile.aiPriorities
         profile = .preset(for: level)
+        profile.aiPriorities = priorities
+    }
+
+    /// Moves an Ask AI category up (negative) or down (positive) in the ranking (T23).
+    func moveAIPriority(_ category: AIInfoCategory, by offset: Int) {
+        profile.aiPriorities.move(category, by: offset)
     }
 }

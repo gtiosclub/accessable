@@ -41,6 +41,8 @@ struct GuidanceProfile: Codable, Hashable, Sendable {
     /// Core Haptics intensity multiplier, 0...1.
     var hapticIntensity: Float
     var enabledCategories: Set<AnnouncementCategory>
+    /// What Ask AI mentions first (T23). Close hazards come first regardless.
+    var aiPriorities: AIPriorities = .default
 
     /// Whether this profile wants to hear an event at all. Critical events and replies to
     /// something the user just asked for always pass.
@@ -94,4 +96,25 @@ extension GuidanceProfile {
     }
 
     static let `default` = GuidanceProfile.blind
+}
+
+// Profiles saved before a field existed still load, with that field's default, instead of
+// failing to decode and resetting the user's settings.
+extension GuidanceProfile {
+    private enum CodingKeys: String, CodingKey {
+        case visionLevel, channels, verbosity, speechRate, hapticIntensity, enabledCategories, aiPriorities
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            visionLevel: try container.decode(VisionLevel.self, forKey: .visionLevel),
+            channels: try container.decode(GuidanceChannels.self, forKey: .channels),
+            verbosity: try container.decode(Verbosity.self, forKey: .verbosity),
+            speechRate: try container.decode(Float.self, forKey: .speechRate),
+            hapticIntensity: try container.decode(Float.self, forKey: .hapticIntensity),
+            enabledCategories: try container.decode(Set<AnnouncementCategory>.self, forKey: .enabledCategories),
+            aiPriorities: try container.decodeIfPresent(AIPriorities.self, forKey: .aiPriorities) ?? .default
+        )
+    }
 }

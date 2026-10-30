@@ -13,19 +13,24 @@ import FoundationModels
 
 /// Answers with the T24 rules applied. Wraps the on-device model (or the template where
 /// Apple Intelligence is unavailable) and keeps what it said recently, so a repeated
-/// question gets "nothing new" instead of the same sentences again.
+/// question gets a short "same as before" instead of the same sentences again. Answers
+/// follow the user's T23 ranking in `settings`.
 final class RuledAskAIResponder: AskAIResponder {
     private let model: any AskAIResponder
     private let policy: AskAIPolicy
+    private let settings: AskAISettings
     private let now: @Sendable () -> Date
     private let history = Mutex<[(sentence: String, at: Date)]>([])
 
+    /// `model` defaults to the on-device model reading the same `settings`.
     init(
-        model: any AskAIResponder = RuledOnDeviceResponder(),
+        settings: AskAISettings = AskAISettings(),
+        model: (any AskAIResponder)? = nil,
         policy: AskAIPolicy = AskAIPolicy(),
         now: @escaping @Sendable () -> Date = { .now }
     ) {
-        self.model = model
+        self.settings = settings
+        self.model = model ?? RuledOnDeviceResponder(settings: settings)
         self.policy = policy
         self.now = now
     }
@@ -35,7 +40,10 @@ final class RuledAskAIResponder: AskAIResponder {
         let time = now()
         return history.withLock { history in
             history.removeAll { time.timeIntervalSince($0.at) > policy.repeatWindow }
-            let result = policy.apply(raw, question: question, facts: facts, recentlySaid: Set(history.map(\.sentence)))
+            let result = policy.apply(
+                raw, question: question, facts: facts,
+                priorities: settings.priorities, recentlySaid: Set(history.map(\.sentence))
+            )
             history += result.newlySaid.map { ($0, time) }
             return result.answer
         }
@@ -67,7 +75,15 @@ struct AskAIPolicy: Sendable {
     }
 
     /// `recentlySaid` holds normalized sentences (see `normalized(_:)`) from recent answers.
-    func apply(_ answer: String, question: String, facts: ImageFacts, recentlySaid: Set<String> = []) -> Result {
+    /// Content is put in `priorities` order (T23) before it is cut to length, so what the
+    /// user ranks highest is what survives the cut.
+    func apply(
+        _ answer: String,
+        question: String,
+        facts: ImageFacts,
+        priorities: AIPriorities = .default,
+        recentlySaid: Set<String> = []
+    ) -> Result {
         let asksAboutCrossing = Self.asksAboutCrossing(question)
 
         // Nothing was found, so anything the model says beyond that is invented.
@@ -75,7 +91,10 @@ struct AskAIPolicy: Sendable {
             return Result(answer: asksAboutCrossing ? "\(Self.crossingCaveat) \(Self.cannotTell)" : Self.cannotTell, newlySaid: [])
         }
 
-        let allowed = Self.sentences(in: answer).filter { !Self.claimsSafety($0) }
+        let allowed = priorities.ordered(
+            Self.sentences(in: answer).map(Self.withoutHeading).filter { !Self.claimsSafety($0) },
+            facts: facts
+        )
         let content = fit(allowed.filter { !recentlySaid.contains(Self.normalized($0)) })
 
         var spoken: [String] = []
@@ -174,6 +193,15 @@ struct AskAIPolicy: Sendable {
             .map { ".!?".contains($0.last!) ? $0 : $0 + "." }
     }
 
+    /// The model sometimes copies a heading from its fact list ("People: Person 2 metres
+    /// ahead."); that reads badly aloud, so it is removed.
+    static func withoutHeading(_ sentence: String) -> String {
+        let heading = #"^\s*[-•]?\s*(text( in the picture)?|people|hazards( and obstacles)?|other objects|landmarks|what the scene probably contains|signs( and text)?)\s*:\s*"#
+        guard let range = sentence.range(of: heading, options: [.regularExpression, .caseInsensitive]) else { return sentence }
+        let rest = sentence[range.upperBound...]
+        return rest.prefix(1).uppercased() + rest.dropFirst()
+    }
+
     /// Lowercased letters, digits and single spaces, for comparing sentences.
     static func normalized(_ sentence: String) -> String {
         sentence.lowercased()
@@ -200,31 +228,75 @@ enum AskAIRules {
         - Never say a street, crossing or path is safe or clear, or that the user can cross. \
         You cannot judge traffic.
         - Don't repeat yourself.
+        - Speak in plain sentences. Don't copy the list's headings or dashes.
         """
 
     /// Detections below this are passed to the model as uncertain.
     static let uncertainBelow: Float = 0.7
 
-    static func prompt(question: String, facts: ImageFacts) -> String {
+    /// The facts grouped by `AIInfoCategory` in the user's order (T23), with T19's wording
+    /// for each item, then the question.
+    static func prompt(question: String, facts: ImageFacts, priorities: AIPriorities = .default) -> String {
+        var lines: [String] = []
         let uncertain = facts.detections
             .filter { $0.origin != .geometric && $0.confidence < uncertainBelow }
             .map(\.label)
-        let base = AskAIPrompt.prompt(question: question, facts: facts)
-        guard !uncertain.isEmpty else { return base }
-        let unique = uncertain.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
-        return "Uncertain detections, say they might be there: \(unique.joined(separator: ", ")).\n" + base
+            .reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        if !uncertain.isEmpty {
+            lines.append("Uncertain detections, say they might be there: \(uncertain.joined(separator: ", ")).")
+        }
+        if facts.isEmpty {
+            lines.append("Vision found nothing it could read or recognize in the picture.")
+        } else {
+            lines.append("The user wants to hear about these first, in this order: \(priorities.order.map { $0.displayName.lowercased() }.joined(separator: ", ")). Answer in that order.")
+        }
+
+        func describe(_ detection: Detection) -> String {
+            let color = facts.detectionColors[detection.id].map { " Main colour: \($0)." } ?? ""
+            return "- \(SpokenPhrasing.describe(detection))\(color)"
+        }
+        let hazards = facts.elevationHazards.map { "- \(SpokenPhrasing.describe($0))" }
+            + facts.detections.filter { $0.isHazard && $0.label != "person" }.map(describe)
+        var people = facts.detections.filter { $0.label == "person" }.map(describe)
+        if !facts.people.isEmpty {
+            people.append("- \(facts.people.count) seen in the picture, \(facts.people.map { AskAIPrompt.position(of: $0) }.joined(separator: "; ")).")
+        }
+        let text = facts.text.map { "- \"\($0.string)\", \(AskAIPrompt.position(of: $0.boundingBox))" }
+        let landmarks = facts.labels.isEmpty ? [] : ["- Whole-picture guesses, no position: \(facts.labels.joined(separator: ", "))."]
+        let sections: [AIInfoCategory: (title: String, lines: [String])] = [
+            .hazards: ("Hazards and obstacles:", hazards),
+            .people: ("People:", people),
+            .signsText: ("Text in the picture:", text),
+            .landmarks: ("What the scene probably contains:", landmarks),
+        ]
+        for category in priorities.order {
+            guard let section = sections[category], !section.lines.isEmpty else { continue }
+            lines.append(section.title)
+            lines += section.lines
+        }
+        let others = facts.detections.filter { !$0.isHazard && $0.label != "person" }.map(describe)
+        if !others.isEmpty {
+            lines.append("Other objects:")
+            lines += others
+        }
+        lines.append("")
+        lines.append("Question: \(question)")
+        return lines.joined(separator: "\n")
     }
 }
 
-/// The on-device model with the T24 instructions; the T19 template where Apple
-/// Intelligence is unavailable or the model fails.
+/// The on-device model with the T24 instructions and the user's T23 ranking; the T19
+/// template where Apple Intelligence is unavailable or the model fails.
 struct RuledOnDeviceResponder: AskAIResponder {
+    var settings = AskAISettings()
+
     func answer(_ question: String, facts: ImageFacts) async throws -> String {
         #if canImport(FoundationModels)
         if #available(iOS 26, macOS 26, *), SystemLanguageModel.default.isAvailable {
             do {
                 let session = LanguageModelSession(instructions: AskAIRules.instructions)
-                return try await session.respond(to: AskAIRules.prompt(question: question, facts: facts)).content
+                let prompt = AskAIRules.prompt(question: question, facts: facts, priorities: settings.priorities)
+                return try await session.respond(to: prompt).content
             } catch {
                 try Task.checkCancellation()
             }

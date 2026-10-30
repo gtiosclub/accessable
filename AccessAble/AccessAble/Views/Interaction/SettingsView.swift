@@ -34,6 +34,32 @@ struct SettingsView: View {
             }
 
             Section {
+                let order = viewModel.profile.aiPriorities.order
+                ForEach(Array(order.enumerated()), id: \.element) { index, category in
+                    HStack {
+                        Text("\(index + 1). \(category.displayName)")
+                        Spacer()
+                        Button("Move up", systemImage: "chevron.up") { viewModel.moveAIPriority(category, by: -1) }
+                            .disabled(index == 0)
+                        Button("Move down", systemImage: "chevron.down") { viewModel.moveAIPriority(category, by: 1) }
+                            .disabled(index == order.count - 1)
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    // One VoiceOver element per row, moved with the rotor's Actions.
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(category.displayName)
+                    .accessibilityValue("\(index + 1) of \(order.count)")
+                    .accessibilityAction(named: "Move up") { viewModel.moveAIPriority(category, by: -1) }
+                    .accessibilityAction(named: "Move down") { viewModel.moveAIPriority(category, by: 1) }
+                }
+            } header: {
+                Text("Ask AI — mention first")
+            } footer: {
+                Text("Ask AI answers in this order. Hazards close ahead are always mentioned first.")
+            }
+
+            Section {
                 channelToggle("Speech", .speech)
                 channelToggle("Haptics", .haptics)
                 channelToggle("Spatial audio", .spatialAudio)
