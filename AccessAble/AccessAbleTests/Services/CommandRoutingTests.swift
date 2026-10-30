@@ -48,6 +48,12 @@ struct CommandRoutingTests {
     }
 
     @Test
+    func simulatorSceneCanFindASign() async throws {
+        let answer = try await PlaceholderSceneProvider().ask("Where is the exit?", locationContext: nil)
+        #expect(answer.contains("EXIT"))
+    }
+
+    @Test
     func simulatorSceneAnswersFromItsSample() async throws {
         let answer = try await PlaceholderSceneProvider().ask("Is there a chair?", locationContext: nil)
         #expect(answer != "Ask AI is not available yet.")

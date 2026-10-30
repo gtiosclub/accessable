@@ -80,7 +80,10 @@ struct PlaceholderSceneProvider: SceneObservationProviding, SceneDescribing {
         var facts = ImageFacts()
         facts.detections = Self.sample.prioritizedDetections
         facts.elevationHazards = Self.sample.elevationHazards
-        facts.text = Self.sample.recognizedText
+        // The sample scene has no sign, so a sample one lets "what does the sign say?" be tried.
+        facts.text = Self.sample.recognizedText + [
+            RecognizedText(id: UUID(), string: "EXIT", confidence: 0.95, boundingBox: CGRect(x: 0.7, y: 0.1, width: 0.1, height: 0.05), worldPosition: nil)
+        ]
         return TemplateAskAIResponder().answer(question, facts: facts)
     }
 }
