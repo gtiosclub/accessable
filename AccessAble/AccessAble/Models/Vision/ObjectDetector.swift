@@ -80,9 +80,15 @@ final class ObjectDetector: @unchecked Sendable {
     private var model: Result<VNCoreMLModel, any Error>?
 
     /// Returns nil when the compiled model is not in `bundle`.
-    init?(modelName: String = "yolo11n", bundle: Bundle = .main, minimumConfidence: Float = 0.6) {
+    convenience init?(modelName: String = "yolo11n", bundle: Bundle = .main, minimumConfidence: Float = 0.6) {
         guard let url = bundle.url(forResource: modelName, withExtension: "mlmodelc") else { return nil }
-        modelURL = url
+        self.init(compiledModelURL: url, minimumConfidence: minimumConfidence)
+    }
+
+    /// From a compiled model (`.mlmodelc`) anywhere on disk, e.g. one compiled for the
+    /// T20 test-set run, where the model isn't in a bundle.
+    init(compiledModelURL: URL, minimumConfidence: Float = 0.6) {
+        modelURL = compiledModelURL
         self.minimumConfidence = minimumConfidence
     }
 
