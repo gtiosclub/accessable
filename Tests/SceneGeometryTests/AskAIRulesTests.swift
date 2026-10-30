@@ -124,7 +124,7 @@ struct AskAIRulesTests {
 
     @Test func repeatedAnswerWithinTheWindowIsShortened() async throws {
         let clock = Mutex(Date(timeIntervalSince1970: 0))
-        let reply = "A bench is 4 metres ahead. A sign says Exit."
+        let reply = "A bench is 4 metres ahead. A cup is on the bench."
         let responder = RuledAskAIResponder(model: ScriptedModel(reply: reply), now: { clock.withLock { $0 } })
 
         #expect(try await responder.answer("What's ahead?", facts: someFacts) == reply)
