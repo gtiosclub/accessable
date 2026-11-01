@@ -23,6 +23,12 @@ import simd
 /// Call `analyze` from one queue at a time — `ARSceneAnalyzer` calls it from its
 /// latest-only processing queue. State that outlives a frame, or that the UI reads, lives
 /// behind a `Mutex`.
+
+private struct CameraQualityState: Sendable {
+    var lastFeedback: CameraQualityFeedback?
+    var lastAnnouncementTime: TimeInterval = -.infinity
+}
+
 final class ScenePerception: Sendable {
     struct Analysis: Sendable {
         let observation: SceneObservation
@@ -57,6 +63,8 @@ final class ScenePerception: Sendable {
     private let peopleDetector: PeopleDetector
     private let objectDetector: ObjectDetector?
     private let textReader: TextReader
+    private let cameraQualityEvaluator = CameraQualityEvaluator()
+    private let cameraQualityState = Mutex(CameraQualityState())
     private let corridorWidth: Float
     private let corridorDistance: Float
     private let log = Logger(subsystem: "AccessAble", category: "ScenePerception")
@@ -100,6 +108,10 @@ final class ScenePerception: Sendable {
         pendingNavigationQuery.withLock { $0 = nil }
         occupancy.withLock { $0.reset() }
         lastPathAnnouncement.withLock { $0 = -.infinity }
+        
+        cameraQualityState.withLock {
+            $0 = CameraQualityState()
+        }
     }
 
     /// Starts steering the user towards `query` ("the chair", "exit"), replacing any
@@ -116,9 +128,27 @@ final class ScenePerception: Sendable {
         let imageOrientation = CGImagePropertyOrientation(cameraImageIn: interfaceOrientation)
         let upright = uprightSize(for: frame.camera.imageResolution, orientation: interfaceOrientation)
         var diagnostics = Diagnostics(uprightAspectRatio: Float(upright.width / upright.height))
-
+        
         let depthMap = frame.sceneDepth.flatMap { DepthMap(depth: $0.depthMap, confidence: $0.confidenceMap) }
         let cameraTransform = frame.camera.transform
+        
+        let isMovingTooFast: Bool
+        
+        if case .limited(.excessiveMotion) = frame.camera.trackingState {
+            isMovingTooFast = true
+        } else {
+            isMovingTooFast = false
+        }
+        
+        let cameraQualityInput = CameraQualityInput(
+            forwardY: -cameraTransform.columns.2.y,
+            ambientIntensity: frame.lightEstimate.map {
+                Float($0.ambientIntensity)
+            },
+            sharpnessScore: imageSharpnessScore(frame.capturedImage),
+            isMovingTooFast: isMovingTooFast
+        )
+        
         // Text is read later, on its own queue; give it this frame's depth so each sign
         // gets a world position that matches the frame it was read from.
         let textLocator: TextReader.Locator? = depthMap.map { depthMap in
@@ -139,16 +169,16 @@ final class ScenePerception: Sendable {
         var blockedAhead: BlockedAhead?
         // `Detection.id`s of everything inside the walking corridor this frame.
         var inPath = Set<UUID>()
-
+        
         let corridor = corridor(for: frame.camera)
         // World space is gravity-aligned, so flattening onto world up gives a level
         // heading for bearings and the path test even before a floor has been found.
         let heading = corridor.flattened(ontoFloorNormal: [0, 1, 0]) ?? corridor
-
+        
         if let depthMap {
             let camera = frame.camera
             let intrinsics = depthIntrinsics(for: camera, depth: depthMap)
-
+            
             // T5 + T7 — distance and direction for each recognized object.
             recognized = recognized.map { detection in
                 let region = imageOrientation.sensorRect(fromUpright: detection.boundingBox)
@@ -166,9 +196,9 @@ final class ScenePerception: Sendable {
                 }
                 return located
             }
-
+            
             let cloud = unprojectDepthMap(depthMap, intrinsics: intrinsics, cameraTransform: camera.transform)
-
+            
             // T10 — the floor everything else is measured against. When none is in view
             // (close to a wall, the floor leaves the frame) the remembered one stands in.
             let floor = floorMemory.withLock {
@@ -177,14 +207,14 @@ final class ScenePerception: Sendable {
             diagnostics.floor = floor.plane
             diagnostics.cameraHeight = floor.cameraHeight
             diagnostics.isFloorMeasured = floor.isMeasured
-
+            
             // T11 — obstacles by geometry, no labels needed. Against a remembered floor
             // the tolerance is looser: the real floor may sit a few centimetres off it,
             // and must not become a knee-high obstacle.
             var obstacleTuning = ObstacleDetectionTuning.default
             if !floor.isMeasured { obstacleTuning.floorTolerance = 0.15 }
             let found = detectObstacles(points: cloud, floor: floor.plane, corridor: corridor, tuning: obstacleTuning)
-
+            
             // The map remembers what has been seen; the plan reads the map, not the frame.
             let plan = occupancy.withLock { map in
                 map.integrate(points: cloud, floor: floor.plane, cameraPosition: corridor.origin, floorIsMeasured: floor.isMeasured)
@@ -193,10 +223,10 @@ final class ScenePerception: Sendable {
             path = plan
             blockedAhead = BlockedAhead(distance: plan.blockedDistance)
             diagnostics.path = plan
-
+            
             // What the sensor could see sideways at each distance, for naming walls.
             let coverage = coverageProfile(points: cloud, floor: floor.plane, corridor: corridor, lookAhead: clearanceTuning.lookAhead)
-
+            
             obstacles = found
                 .filter(\.intersectsWalkingCorridor)
                 .compactMap {
@@ -206,7 +236,7 @@ final class ScenePerception: Sendable {
                     )
                 }
             inPath.formUnion(obstacles.map(\.id))
-
+            
             // T12 — kerbs and drop-offs in the surface itself. Only against a floor fitted
             // to this frame: a few centimetres of error in a remembered floor is a kerb.
             // Obstacles are cut out of the profile so a chair leg is not a step.
@@ -215,7 +245,7 @@ final class ScenePerception: Sendable {
                 hazards = detectElevationHazards(samples: profile)
             }
         }
-
+        
         let detections = tracker.withLock {
             $0.update(fuse(obstacles: obstacles, recognized: recognized), at: frame.timestamp)
         }
@@ -229,6 +259,31 @@ final class ScenePerception: Sendable {
                 at: frame.timestamp
             )
         }
+        
+        let cameraFeedback = cameraQualityEvaluator.evaluate(cameraQualityInput)
+        
+        if let cameraFeedback {
+            if shouldAnnounceCameraQuality(
+                cameraFeedback,
+                at: frame.timestamp
+            ) {
+                announcements.append(
+                    AnnouncementEvent(
+                        category: .system
+                        priority: .normal,
+                        text: cameraFeedback.spokenText,
+                        source: .system,
+                        expiresAt: Date().addingTimeInterval(2),
+                        dedupKey: "camera-quality-\(cameraFeedback.rawValue)"
+                    )
+                )
+            }
+        } else {
+            cameraQualityState.withLock {
+                $0.lastFeedback = nil
+            }
+        }
+        
         if !announcements.isEmpty {
             lastPathAnnouncement.withLock { $0 = frame.timestamp }
         }
@@ -293,6 +348,25 @@ private extension ScenePerception {
             log.error("object detection failed: \(error.localizedDescription, privacy: .public)")
         }
         return detections
+    }
+    
+    func shouldAnnounceCameraQuality(
+        _ feedback: CameraQualityFeedback,
+        at timestamp: TimeInterval
+    ) -> Bool {
+        cameraQualityState.withLock { state in
+            let changed = feedback != state.lastFeedback
+            let enoughTimePassed = timestamp - state.lastAnnouncementTime >= 5
+            
+            state.lastFeedback = feedback
+            
+            guard changed || enoughTimePassed else {
+                return false
+            }
+            
+            state.lastAnnouncementTime = timestamp
+            return true
+        }
     }
 
     /// The corridor straight ahead of the camera. The detectors re-orthogonalize these
