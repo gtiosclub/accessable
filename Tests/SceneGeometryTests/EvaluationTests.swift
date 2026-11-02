@@ -75,4 +75,117 @@ struct EvaluationTests {
         }
         #expect(metrics.recall == 1)
     }
+
+    @Test("T40 manifest stores environmental conditions")
+    func environmentalConditions() throws {
+        let json = """
+        {
+            "version": 1,
+            "frames": [
+                {
+                "scenario": "dim-lighting",
+                "image": "frames/dim-lighting/0001.jpg",
+                "objects": [],
+                "conditions": ["indoor", "dim-lighting", "busy"]
+                }
+            ]
+        }
+        """
+
+        let manifest = try JSONDecoder().decode(
+            TestSetManifest.self,
+            from: Data(json.utf8)
+        )
+
+        #expect(
+            manifest.frames[0].conditions == [
+                .indoor,
+                .dimLighting,
+                .busy
+            ]
+        )
+    }
+
+    @Test("T40 builds distance cases from measured dataset distances")
+    func recordedDistanceCases() throws {
+        let json = """
+        {
+            "version": 1,
+            "frames": [
+             {
+                "scenario": "chair-ahead",
+                "image": "frames/chair-ahead/0001.jpg",
+                "objects": [
+                  {
+                    "label": "chair",
+                    "x": 0.3,
+                    "y": 0.3,
+                    "width": 0.3,
+                    "height": 0.4
+                 }
+            ],
+            "measuredDistances": {
+                "chair": 2.0
+            },
+            "conditions": ["indoor", "bright-lighting"]
+            }
+          ]
+        }
+        """
+
+        let manifest = try JSONDecoder().decode(
+            TestSetManifest.self,
+            from: Data(json.utf8)
+        )
+
+        let cases = distanceTestCases(
+            from: manifest,
+            folder: URL(filePath: "/tmp")
+        ) { _ in
+            ["chair": 1.8]
+        }
+
+        #expect(cases.count == 1)
+        #expect(cases[0].estimatedMeters == 1.8)
+        #expect(cases[0].actualMeters == 2.0)
+    }
+
+    @Test("T40 evaluates distance error from recorded frames")
+    func recordedDistanceMetrics() throws {
+        let json = """
+        {
+            "version": 1,
+            "frames": [
+               {
+                "scenario": "chair-ahead",
+                "image": "frames/chair-ahead/0001.jpg",
+                "objects": [],
+                "measuredDistances": {
+                    "chair": 2.0
+                }
+            }
+          ]
+        }
+        """
+
+        let manifest = try JSONDecoder().decode(
+            TestSetManifest.self,
+            from: Data(json.utf8)
+        )
+
+        let metrics = try #require(
+            evaluateDistanceEstimates(
+                on: manifest,
+                folder: URL(filePath: "/tmp")
+            ) { _ in
+                ["chair": 1.8]
+            }
+        )
+
+        #expect(abs(metrics.meanAbsoluteError - 0.2) < 0.0001)
+        #expect(abs(metrics.rootMeanSquaredError - 0.2) < 0.001)
+        #expect(abs(metrics.meanBias + 0.2) < 0.0001)
+        #expect(metrics.sampleCount == 1)
+    }
+
 }
