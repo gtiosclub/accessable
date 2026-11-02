@@ -269,11 +269,11 @@ final class ScenePerception: Sendable {
             ) {
                 announcements.append(
                     AnnouncementEvent(
-                        category: .system
-                        priority: .normal,
+                        category: .system,
+                        priority: .high,
                         text: cameraFeedback.spokenText,
                         source: .system,
-                        expiresAt: Date().addingTimeInterval(2),
+                        expiresAt: Date().addingTimeInterval(5),
                         dedupKey: "camera-quality-\(cameraFeedback.rawValue)"
                     )
                 )

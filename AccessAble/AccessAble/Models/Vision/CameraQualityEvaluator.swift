@@ -58,6 +58,14 @@ struct CameraQualityEvaluator: Sendable {
             return .tooDark
         }
         
+        if input.forwardY < -maximumVerticalComponent {
+            return .tiltUp
+        }
+        
+        if input.forwardY > maximumVerticalComponent {
+            return .tiltDown
+        }
+        
         if input.isMovingTooFast {
             return .holdSteady
         }
@@ -65,14 +73,6 @@ struct CameraQualityEvaluator: Sendable {
         if let sharpnessScore = input.sharpnessScore,
            sharpnessScore < minimumSharpnessScore {
             return .holdSteady
-        }
-        
-        if input.forwardY < -maximumVerticalComponent {
-            return .tiltUp
-        }
-        
-        if input.forwardY > maximumVerticalComponent {
-            return .tiltDown
         }
         
         return nil
