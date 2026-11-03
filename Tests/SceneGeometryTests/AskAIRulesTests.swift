@@ -35,6 +35,8 @@ struct AskAIRulesTests {
         "The crosswalk is clear.",
         "It looks clear, go ahead.",
         "There is no traffic, so it is okay to cross.",
+        "There aren't any cars, so you can cross.",
+        "I don't see traffic and it's safe to cross.",
     ])
     func dropsSafetyClaims(_ claim: String) {
         #expect(AskAIPolicy.claimsSafety(claim))
@@ -47,6 +49,7 @@ struct AskAIRulesTests {
     @Test(arguments: [
         "I can't tell if it's safe to cross.",
         "It is not safe to cross here.",
+        "Don't cross yet, it's not safe.",
         "Never cross without checking the signal.",
         "A chair is 2 metres ahead.",
     ])

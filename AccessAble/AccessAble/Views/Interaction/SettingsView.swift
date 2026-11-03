@@ -33,23 +33,7 @@ struct SettingsView: View {
                 }
             }
 
-            Section {
-                let order = viewModel.profile.aiPriorities.order
-                ForEach(Array(order.enumerated()), id: \.element) { index, category in
-                    Text("\(index + 1). \(category.displayName)")
-                        // VoiceOver can't drag, so it moves rows with the rotor's Actions.
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityLabel(category.displayName)
-                        .accessibilityValue("\(index + 1) of \(order.count)")
-                        .accessibilityAction(named: "Move up") { viewModel.moveAIPriority(category, by: -1) }
-                        .accessibilityAction(named: "Move down") { viewModel.moveAIPriority(category, by: 1) }
-                }
-                .onMove { viewModel.moveAIPriorities(from: $0, to: $1) }
-            } header: {
-                Text("Ask AI — mention first")
-            } footer: {
-                Text("Drag the handles to reorder. Ask AI answers in this order. Hazards close ahead are always mentioned first.")
-            }
+            aiPrioritiesSection
 
             Section {
                 channelToggle("Speech", .speech)
@@ -81,6 +65,32 @@ struct SettingsView: View {
         // toggles and pickers behave as usual.
         .environment(\.editMode, .constant(.active))
         .navigationTitle("Settings")
+    }
+
+    /// T23's ranking. Its own property: inline, the whole form is too much for the type checker.
+    private var aiPrioritiesSection: some View {
+        Section {
+            ForEach(viewModel.profile.aiPriorities.order, id: \.self) { category in
+                aiPriorityRow(category)
+            }
+            .onMove { viewModel.moveAIPriorities(from: $0, to: $1) }
+        } header: {
+            Text("Ask AI — mention first")
+        } footer: {
+            Text("Drag the handles to reorder. Ask AI answers in this order. Hazards close ahead are always mentioned first.")
+        }
+    }
+
+    private func aiPriorityRow(_ category: AIInfoCategory) -> some View {
+        let order = viewModel.profile.aiPriorities.order
+        let position = (order.firstIndex(of: category) ?? 0) + 1
+        return Text("\(position). \(category.displayName)")
+            // VoiceOver can't drag, so it moves rows with the rotor's Actions.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(category.displayName)
+            .accessibilityValue("\(position) of \(order.count)")
+            .accessibilityAction(named: "Move up") { viewModel.moveAIPriority(category, by: -1) }
+            .accessibilityAction(named: "Move down") { viewModel.moveAIPriority(category, by: 1) }
     }
 
     private func channelToggle(_ title: LocalizedStringKey, _ channel: GuidanceChannels) -> some View {

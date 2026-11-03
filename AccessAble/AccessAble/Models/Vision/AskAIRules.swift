@@ -157,10 +157,12 @@ struct AskAIPolicy: Sendable {
 
     /// True for a sentence telling the user something is safe or clear to cross or walk.
     /// A negated sentence ("I can't tell if it's safe to cross") is not a claim.
+    /// The negation has to be in the claim's own clause: in "There aren't any cars, so you
+    /// can cross." the "n't" negates the cars, not the crossing, so it is still a claim.
     static func claimsSafety(_ sentence: String) -> Bool {
         let text = sentence.lowercased().replacingOccurrences(of: "’", with: "'")
         let negations = ["not ", "n't", "never", "cannot", "unable", "unsure"]
-        if negations.contains(where: text.contains) { return false }
+        let clauseBreaks = [",", ";", ":", "—", " so ", " but ", " and ", " because ", " since "]
         let claims = [
             #"\bsafe to (cross|go|walk|proceed)"#,
             #"\b(clear|okay|ok|fine|good) to (cross|go|walk|proceed)"#,
@@ -168,7 +170,18 @@ struct AskAIPolicy: Sendable {
             #"\b(it'?s|it is|looks|seems|appears) (to be )?(safe|clear)\b"#,
             #"\b(path|way|street|road|crossing|crosswalk|coast) (is|looks|seems) (clear|safe)"#,
         ]
-        return claims.contains { text.range(of: $0, options: .regularExpression) != nil }
+        for claim in claims {
+            var searchStart = text.startIndex
+            while let match = text.range(of: claim, options: .regularExpression, range: searchStart ..< text.endIndex) {
+                let before = text[..<match.lowerBound]
+                let clauseStart = clauseBreaks
+                    .compactMap { before.range(of: $0, options: .backwards)?.upperBound }
+                    .max() ?? text.startIndex
+                if !negations.contains(where: text[clauseStart ..< match.upperBound].contains) { return true }
+                searchStart = match.upperBound
+            }
+        }
+        return false
     }
 
     /// Splits after ".", "!" or "?" followed by a space, so "2.5 metres" stays whole.

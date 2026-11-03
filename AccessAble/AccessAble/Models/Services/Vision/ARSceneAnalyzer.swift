@@ -146,13 +146,19 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     /// Runs the pipeline for `frames` analyzed frames (or until `timeout`) and returns the
     /// last observation. A few frames instead of one so the floor fit and tracker settle.
     private func freshObservation(frames: Int = 8, timeout: Duration = .seconds(3)) async -> SceneObservation? {
+        try? await withFreshObservation(frames: frames, timeout: timeout) { $0 }
+    }
+
+    /// Turns the camera on, waits for `frames` fresh observations (or `timeout`), and runs
+    /// `body` with the last one while the camera is still on, so it can also take a still.
+    private func withFreshObservation<T>(
+        frames: Int = 8,
+        timeout: Duration = .seconds(3),
+        _ body: (SceneObservation?) async throws -> T
+    ) async throws -> T {
         let startedAt = Date.now
         let stream = broadcaster.stream()
-        do {
-            try await start()
-        } catch {
-            return nil
-        }
+        try await start()
         let ours = state.withLock { $0.subscription }
 
         let observation = await withTaskGroup(of: SceneObservation?.self) { group in
@@ -180,22 +186,40 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
             return result
         }
 
+        let result: Result<T, any Error>
+        do {
+            result = .success(try await body(observation))
+        } catch {
+            result = .failure(error)
+        }
+
         // if a camera screen opened meanwhile it owns the session now, so leave it running
         if state.withLock({ $0.subscription == ours }) {
             await stop()
         }
-        return observation
+        return try result.get()
     }
 
     /// Tier B, "Ask AI" (T19): the next camera frame as a still, plus what the pipeline
     /// last saw (the objects, distances and directions "Describe my surroundings" uses),
     /// answered on the device. Runs beside the obstacle pipeline, never in it.
-    /// `locationContext` is not used yet.
+    /// `locationContext` is not used yet. Asked with no camera screen open (by voice from
+    /// Home, T38), the camera is turned on for the question, as Describe does (T26).
     func ask(_ question: String, locationContext: String?) async throws -> String {
         state.withLock { $0.lastAskedImage = nil }
-        let imageData = try await captureStillImage()
+        let isRunning = state.withLock { $0.subscription != nil }
+        let imageData: Data
+        let observation: SceneObservation?
+        if isRunning {
+            imageData = try await captureStillImage()
+            observation = broadcaster.latest
+        } else {
+            (imageData, observation) = try await withFreshObservation { observation in
+                (try await captureStillImage(), observation)
+            }
+        }
         state.withLock { $0.lastAskedImage = imageData }
-        return try await askAI.answer(question, imageData: imageData, observation: broadcaster.latest ?? .empty).answer
+        return try await askAI.answer(question, imageData: imageData, observation: observation ?? .empty).answer
     }
 
     /// The next frame from the shared session as an upright JPEG. Frames only flow while
