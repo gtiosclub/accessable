@@ -111,7 +111,7 @@ final class LiveSceneViewModel {
     
     func identifyPointedAt() {
         let identification = pointIdentifier.identify(in: observation)
-        
+
         let event: AnnouncementEvent
         
         if let identification {

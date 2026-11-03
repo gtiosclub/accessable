@@ -39,10 +39,25 @@ struct PointIdentifier: Sendable {
     private func bestText(in items: [RecognizedText]) -> RecognizedText? {
         items
             .filter {
-                !$0.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && isNearCenter($0.boundingBox)
+                let text = $0.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                let area = $0.boundingBox.width * $0.boundingBox.height
+
+                return isUsefulText(text) &&
+                    $0.confidence >= 0.5 &&
+                    area >= 0.001 &&
+                    isNearCenter($0.boundingBox)
             }
             .sorted(by: isBetterText)
             .first
+    }
+    
+    private func isUsefulText(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let alphanumericCount = trimmed.filter {
+            $0.isLetter || $0.isNumber
+        }.count
+
+        return alphanumericCount >= 2
     }
     
     private func bestDetection(in detections: [Detection]) -> Detection? {
@@ -91,27 +106,28 @@ struct PointIdentifier: Sendable {
     
     private func isBetterDetection(_ lhs: Detection, _ rhs: Detection) -> Bool {
         let center = CGPoint(x: 0.5, y: 0.5)
-        let lhsContainsCenter = lhs.boundingBox.contains(center)
-        let rhsContainsCenter = rhs.boundingBox.contains(center)
-        
-        if lhsContainsCenter != rhsContainsCenter {
-            return lhsContainsCenter
-        }
-        
+
         let lhsRank = originRank(lhs.origin)
         let rhsRank = originRank(rhs.origin)
-        
+
         if lhsRank != rhsRank {
             return lhsRank < rhsRank
         }
-        
+
+        let lhsContainsCenter = lhs.boundingBox.contains(center)
+        let rhsContainsCenter = rhs.boundingBox.contains(center)
+
+        if lhsContainsCenter != rhsContainsCenter {
+            return lhsContainsCenter
+        }
+
         let lhsDistance = centerDistanceSquared(lhs.boundingBox)
         let rhsDistance = centerDistanceSquared(rhs.boundingBox)
-        
+
         if lhsDistance != rhsDistance {
             return lhsDistance < rhsDistance
         }
-        
+
         return lhs.confidence > rhs.confidence
     }
     
