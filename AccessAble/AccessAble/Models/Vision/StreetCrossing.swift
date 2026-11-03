@@ -18,7 +18,7 @@ struct LumaGrid: Sendable {
 
 struct CrosswalkTuning: Sendable {
     /// Part of the image searched, as fractions of its height. The ground is at the bottom.
-    var regionTop = 0.5
+    var regionTop = 0.4
     var regionBottom = 0.95
     /// Brightness gap between paint and road, out of 255.
     var minimumContrast = 50.0
@@ -28,8 +28,9 @@ struct CrosswalkTuning: Sendable {
     var minimumRunCells = 2
     /// Widest run over narrowest run. Perspective stretches near stripes, so this is loose.
     var maximumWidthRatio = 3.5
-    /// Fraction of lines that have to look striped.
-    var minimumStripedLines = 0.6
+    /// Fraction of lines that have to look striped. Low because the crossing often only
+    /// covers part of the searched area.
+    var minimumStripedLines = 0.3
 
     static let `default` = CrosswalkTuning()
 }
@@ -37,43 +38,57 @@ struct CrosswalkTuning: Sendable {
 private struct Run {
     let bright: Bool
     var length: Int
+    var sum: Int
 }
 
-/// True when the line crosses at least `minimumStripes` bright bars separated by dark gaps
-/// of similar width. Runs touching either end are ignored since the frame cuts them off.
+/// True when some stretch of the line crosses at least `minimumStripes` bright bars
+/// separated by dark gaps of similar width. Only a stretch has to look striped, since the
+/// crossing rarely fills the whole width (curb, cars, or a laptop bezel on either side).
 func isStriped(_ line: [UInt8], tuning: CrosswalkTuning = .default) -> Bool {
     guard line.count >= 8 else { return false }
     let mean = Double(line.reduce(0) { $0 + Int($1) }) / Double(line.count)
 
-    var brightSum = 0.0, brightCount = 0.0, darkSum = 0.0, darkCount = 0.0
     var runs: [Run] = []
     for value in line {
         let bright = Double(value) > mean
-        if bright {
-            brightSum += Double(value)
-            brightCount += 1
-        } else {
-            darkSum += Double(value)
-            darkCount += 1
-        }
         if let last = runs.last, last.bright == bright {
             runs[runs.count - 1].length += 1
+            runs[runs.count - 1].sum += Int(value)
         } else {
-            runs.append(Run(bright: bright, length: 1))
+            runs.append(Run(bright: bright, length: 1, sum: Int(value)))
         }
     }
-    guard brightCount > 0, darkCount > 0,
-          brightSum / brightCount - darkSum / darkCount >= tuning.minimumContrast,
-          runs.count > 2 else { return false }
-
-    let inner = runs.dropFirst().dropLast()
-    guard inner.count(where: { $0.bright }) >= tuning.minimumStripes else { return false }
-
-    let lengths = inner.map { $0.length }
+    // runs touching either end are cut off by the frame
+    guard runs.count > 2 else { return false }
+    let inner = Array(runs.dropFirst().dropLast())
     let longest = Int(Double(line.count) * tuning.maximumRunFraction)
-    guard lengths.allSatisfy({ $0 >= tuning.minimumRunCells && $0 <= longest }),
-          let shortest = lengths.min(), let widest = lengths.max() else { return false }
-    return Double(widest) / Double(shortest) <= tuning.maximumWidthRatio
+
+    // try every starting run and grow while the runs still look like stripes
+    for start in inner.indices {
+        var shortest = Int.max, widest = 0
+        var brightRuns = 0
+        var brightSum = 0, brightCells = 0, darkSum = 0, darkCells = 0
+        for run in inner[start...] {
+            guard run.length >= tuning.minimumRunCells, run.length <= longest else { break }
+            let newShortest = min(shortest, run.length), newWidest = max(widest, run.length)
+            guard Double(newWidest) / Double(newShortest) <= tuning.maximumWidthRatio else { break }
+            shortest = newShortest
+            widest = newWidest
+            if run.bright {
+                brightRuns += 1
+                brightSum += run.sum
+                brightCells += run.length
+            } else {
+                darkSum += run.sum
+                darkCells += run.length
+            }
+            if brightRuns >= tuning.minimumStripes, darkCells > 0 {
+                let contrast = Double(brightSum) / Double(brightCells) - Double(darkSum) / Double(darkCells)
+                if contrast >= tuning.minimumContrast { return true }
+            }
+        }
+    }
+    return false
 }
 
 /// 3-tap average, so one noisy cell doesn't split a stripe.

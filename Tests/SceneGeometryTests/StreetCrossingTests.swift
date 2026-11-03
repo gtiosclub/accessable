@@ -32,6 +32,24 @@ struct StreetCrossingTests {
         #expect(!isStriped(smoothed(tiles)))
     }
 
+    @Test("finds stripes that only cover the middle of the line")
+    func partialStripes() {
+        // dark edge, then 4 stripes, then a bright edge (like a laptop bezel and desk)
+        let middle: [UInt8] = (0..<50).map { ($0 / 6) % 2 == 1 ? 210 : 90 }
+        let line = [UInt8](repeating: 30, count: 20) + middle + [UInt8](repeating: 180, count: 26)
+        #expect(isStriped(smoothed(line)))
+    }
+
+    @Test("detects a crossing that fills only part of the frame")
+    func partialCrossing() {
+        var grid = zebraGrid()
+        // blank out the left 40% of every row, like a curb or a laptop bezel
+        for y in 0..<grid.height {
+            for x in 0..<38 { grid.values[y * grid.width + x] = 40 }
+        }
+        #expect(detectCrosswalk(in: grid) != nil)
+    }
+
     @Test("detects a zebra crossing in the lower part of the frame")
     func zebra() {
         #expect(detectCrosswalk(in: zebraGrid()) != nil)
