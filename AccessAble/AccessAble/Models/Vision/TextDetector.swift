@@ -32,7 +32,8 @@ struct TextDetector: Sendable {
 
     private func run(_ handler: VNImageRequestHandler) throws -> [RecognizedText] {
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .fast
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
         try handler.perform([request])
 
         return (request.results ?? []).compactMap { observation in

@@ -59,6 +59,7 @@ final class LiveSceneViewModel {
     @ObservationIgnored private let speaker = FieldTestSpeaker()
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
     @ObservationIgnored private var orientationTask: Task<Void, Never>?
+    @ObservationIgnored private let pointIdentifier = PointIdentifier()
 
     /// The device validation checklist in docs/ComputerVision.md, as markers for a recording.
     static let checklistMarks = [
@@ -106,6 +107,40 @@ final class LiveSceneViewModel {
     func mark(_ label: String) {
         analyzer?.recorder.mark(label)
         lastMark = label
+    }
+    
+    func identifyPointedAt() {
+        let identification = pointIdentifier.identify(in: observation)
+
+        let event: AnnouncementEvent
+        
+        if let identification {
+            let category: AnnouncementCategory = identification.kind == .text ? .landmark : .ambient
+            
+            let source: AnnouncementSource = identification.kind == .text ? .textRecognition : .sceneDescription
+            
+            event = AnnouncementEvent(
+                category: category,
+                priority: .normal,
+                text: identification.text,
+                source: source,
+                expiresAt: Date().addingTimeInterval(3),
+                dedupKey: "point-identify-\(identification.text.lowercased())"
+            )
+        } else {
+            event = AnnouncementEvent(
+                category: .ambient,
+                priority: .normal,
+                text: "Nothing recognized.",
+                source: .sceneDescription,
+                expiresAt: Date().addingTimeInterval(2),
+                dedupKey: "point-identify-none"
+            )
+        }
+        
+        Task { [announcements] in
+            await announcements.submit(event)
+        }
     }
 
     /// Starts steering towards `query`; an empty query cancels.
