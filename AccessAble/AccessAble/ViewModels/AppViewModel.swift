@@ -10,6 +10,7 @@ final class AppViewModel {
         didSet {
             save(profile, forKey: Keys.profile)
             let profile = profile
+            services.askAISettings.priorities = profile.aiPriorities
             Task { await services.announcements.updateProfile(profile) }
         }
     }
@@ -37,6 +38,7 @@ final class AppViewModel {
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarded)
 
         let profile = self.profile
+        self.services.askAISettings.priorities = profile.aiPriorities
         let announcements = self.services.announcements
         Task { await announcements.updateProfile(profile) }
     }
