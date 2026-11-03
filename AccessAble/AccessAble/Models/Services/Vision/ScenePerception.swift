@@ -295,7 +295,10 @@ final class ScenePerception: Sendable {
         let pathSpokeRecently = frame.timestamp - lastPathAnnouncement.withLock { $0 } < 2.5
         diagnostics.navigation = navigation.withLock { guide -> NavigationStatus? in
             guard guide != nil else { return nil }
-            let result = guide!.update(detections: detections, text: recognizedText, heading: heading, at: frame.timestamp)
+            // Mesh doors (T36) count too: "take me to the door" is the commonest request.
+            let result = guide!.update(
+                detections: detections + structureDetections, text: recognizedText, heading: heading, at: frame.timestamp
+            )
             if let event = result.announcement, !pathSpokeRecently || event.priority >= .high {
                 announcements.append(event)
             }
