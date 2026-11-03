@@ -45,12 +45,16 @@ func objectDetections(
     observations
         .compactMap { observation in
             guard let label = observation.topLabel?.lowercased(), !label.isEmpty,
-                !ignoredLabels.contains(label),
-                  confidencePolicy.accepts(
-                    label: label,
-                    confidence: observation.confidence
-                )
+                !ignoredLabels.contains(label)
             else { return nil }
+                  
+            guard confidencePolicy.accepts(
+                label: label,
+                confidence: observation.confidence
+            ) else {
+                return nil
+            }
+            
             return Detection(
                 label: label,
                 confidence: observation.confidence,
@@ -96,7 +100,7 @@ final class ObjectDetector: @unchecked Sendable {
     private var model: Result<VNCoreMLModel, any Error>?
 
     /// Returns nil when the compiled model is not in `bundle`.
-    init?(modelName: String = "yolo11n", bundle: Bundle = .main, confidencePolicy: DetectionConfidencePolicy = DetectionConfidencePolicy(defaultThreshold: 0.6)) {
+    init?(modelName: String = "yolo11n", bundle: Bundle = .main, confidencePolicy: DetectionConfidencePolicy = DetectionConfidencePolicy(defaultThreshold: 0.6, thresholdsByLabel: ["chair": 0.55])) {
         guard let url = bundle.url(forResource: modelName, withExtension: "mlmodelc") else { return nil }
         modelURL = url
         self.confidencePolicy = confidencePolicy
