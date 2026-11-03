@@ -88,7 +88,6 @@ struct SceneView: View {
         }
         .navigationTitle("Camera guidance")
         .task { await viewModel.start() }
-        .onDisappear { Task { await viewModel.stop() } }
     }
 
     private var trimmedQuestion: String {

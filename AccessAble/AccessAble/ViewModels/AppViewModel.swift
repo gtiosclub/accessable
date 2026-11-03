@@ -23,6 +23,7 @@ final class AppViewModel {
     let services: AppServices
 
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var tripCameraTask: Task<Void, Never>?
 
     private enum Keys {
         static let profile = "guidanceProfile"
@@ -41,6 +42,9 @@ final class AppViewModel {
         self.services.askAISettings.priorities = profile.aiPriorities
         let announcements = self.services.announcements
         Task { await announcements.updateProfile(profile) }
+
+        let tripCamera = TripCameraCoordinator(trip: self.services.trip, scene: self.services.scene)
+        tripCameraTask = Task { await tripCamera.run() }
     }
 
     func completeOnboarding(with profile: GuidanceProfile) {

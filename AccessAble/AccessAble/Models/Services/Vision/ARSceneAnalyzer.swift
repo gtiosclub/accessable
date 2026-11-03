@@ -11,6 +11,10 @@ import UIKit
 /// Frames go through a `LatestOnlyProcessor` (T3), so when analysis is slower than the
 /// camera, stale frames are dropped rather than queued. `PerformanceMode` thins the input
 /// further by only offering every Nth camera frame.
+///
+/// Every feature shares this one camera. `start()` and `stop()` nest: tracking starts with
+/// the first `start()`, later ones join it without resetting the world, and the session
+/// only pauses when every `start()` has had its `stop()`.
 final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, GuidanceStatusProviding, Sendable {
     let sessionManager: ARSessionManager
     let perception: ScenePerception
@@ -36,6 +40,13 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     }
 
     private let state = Mutex(State())
+    /// How many callers of `start()` have not yet called `stop()`.
+    @MainActor private var clientCount = 0
+
+    /// An observation older than this means the camera isn't running.
+    private static let observationFreshness: TimeInterval = 1
+    /// How long "Describe my surroundings" waits for a first frame when the camera was off.
+    private static let wakeTimeout: Duration = .seconds(4)
 
     init(
         sessionManager: ARSessionManager,
@@ -78,6 +89,20 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
                 announcementQueue.yield(event)
             }
         }
+
+        // ARKit can't run in the background, so a locked phone means no obstacle warnings.
+        // Someone relying on them has to be told, even though a trip's turns carry on.
+        sessionManager.setInterruptionHandler { [announcementQueue] isInterrupted in
+            announcementQueue.yield(AnnouncementEvent(
+                category: .system,
+                priority: .high,
+                text: isInterrupted
+                    ? "Camera paused. Obstacle warnings are off."
+                    : "Camera back on. Obstacle warnings are on.",
+                source: .system,
+                expiresAt: .now.addingTimeInterval(10)
+            ))
+        }
     }
 
     // MARK: - SceneObservationProviding
@@ -87,7 +112,21 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     }
 
     func start() async throws {
-        try await MainActor.run { try sessionManager.start() }
+        try await acquireCamera()
+    }
+
+    func stop() async {
+        await releaseCamera()
+    }
+
+    @MainActor
+    private func acquireCamera() throws {
+        guard clientCount == 0 else {
+            clientCount += 1
+            return
+        }
+        try sessionManager.start()
+        clientCount = 1
         // Tracking restarts from scratch, so nothing remembered about the old world holds.
         perception.reset()
 
@@ -111,7 +150,11 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         previous.1?.cancel()
     }
 
-    func stop() async {
+    @MainActor
+    private func releaseCamera() {
+        guard clientCount > 0 else { return }
+        clientCount -= 1
+        guard clientCount == 0 else { return }
         let (subscription, modeTask) = state.withLock { state in
             defer {
                 state.subscription = nil
@@ -122,7 +165,7 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         if let subscription { sessionManager.removeFrameHandler(subscription) }
         modeTask?.cancel()
         processor.cancelPending()
-        await MainActor.run { sessionManager.stop() }
+        sessionManager.stop()
     }
 
     // MARK: - GuidanceStatusProviding
@@ -131,11 +174,19 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     func guidanceStatuses() -> AsyncStream<GuidanceStatus> { sessionManager.guidanceStatuses() }
 
-    /// A session that could not relocalize comes back as a different world, so this goes
-    /// through `start()`: it re-runs tracking and clears the remembered floor and occupancy
-    /// map, which were anchored in coordinates that no longer mean anything.
+    /// A session that could not relocalize comes back as a different world, so tracking is
+    /// re-run from scratch and the remembered floor and occupancy map, anchored in
+    /// coordinates that no longer mean anything, are cleared. It doesn't go through
+    /// `start()`: that would add a camera hold nobody releases.
     func restartGuidance() async throws {
-        try await start()
+        try await restartTracking()
+    }
+
+    @MainActor
+    private func restartTracking() throws {
+        guard clientCount > 0 else { return }
+        try sessionManager.start()
+        perception.reset()
     }
 
     /// Tells the analyzer how the device is held, so Vision gets the right image
@@ -146,92 +197,68 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     // MARK: - SceneDescribing
 
-    /// Tier A: built from the latest observation, instantly and offline (T18).
-    /// If the camera isn't running (asked from Home, T26) it's turned on just long enough
-    /// to analyze a few fresh frames, then turned off again.
+    /// Tier A: built from the latest observation, offline (T18). Instant while the camera is
+    /// running; otherwise the camera is woken for one analyzed frame, so the answer works
+    /// from Home and never describes a room the user has left.
     func describeCurrentScene() async -> String {
-        let isRunning = state.withLock { $0.subscription != nil }
-        var observation = broadcaster.latest
-        if !isRunning {
-            observation = await freshObservation()
+        SceneDescriptionBuilder().describe(await currentObservation())
+    }
+
+    private func currentObservation() async -> SceneObservation {
+        if let latest = broadcaster.latest,
+           Date.now.timeIntervalSince(latest.timestamp) < Self.observationFreshness {
+            return latest
         }
-        return SceneDescriptionBuilder().describe(observation ?? .empty)
-    }
-
-    /// Runs the pipeline for `frames` analyzed frames (or until `timeout`) and returns the
-    /// last observation. A few frames instead of one so the floor fit and tracker settle.
-    private func freshObservation(frames: Int = 8, timeout: Duration = .seconds(3)) async -> SceneObservation? {
-        try? await withFreshObservation(frames: frames, timeout: timeout) { $0 }
-    }
-
-    /// Turns the camera on, waits for `frames` fresh observations (or `timeout`), and runs
-    /// `body` with the last one while the camera is still on, so it can also take a still.
-    private func withFreshObservation<T>(
-        frames: Int = 8,
-        timeout: Duration = .seconds(3),
-        _ body: (SceneObservation?) async throws -> T
-    ) async throws -> T {
-        let startedAt = Date.now
-        let stream = broadcaster.stream()
-        try await start()
-        let ours = state.withLock { $0.subscription }
-
+        let requested = Date.now
+        // Subscribed first, so the frame can't slip past. It may replay an old observation.
+        let observations = broadcaster.stream()
+        do {
+            try await start()
+        } catch {
+            return .empty
+        }
         let observation = await withTaskGroup(of: SceneObservation?.self) { group in
             group.addTask {
-                var latest: SceneObservation?
-                var count = 0
-                // skip the replayed observation from before the camera started
-                for await observation in stream where observation.timestamp > startedAt {
-                    latest = observation
-                    count += 1
-                    if count >= frames { break }
+                for await observation in observations where observation.timestamp >= requested {
+                    return observation
                 }
-                return latest
-            }
-            group.addTask {
-                try? await Task.sleep(for: timeout)
                 return nil
             }
-            // whichever finishes first cancels the other; the reader still returns what it saw
-            var result: SceneObservation?
-            for await value in group {
-                if let value { result = value }
-                group.cancelAll()
+            group.addTask {
+                try? await Task.sleep(for: Self.wakeTimeout)
+                return nil
             }
-            return result
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
         }
-
-        let result: Result<T, any Error>
-        do {
-            result = .success(try await body(observation))
-        } catch {
-            result = .failure(error)
-        }
-
-        // if a camera screen opened meanwhile it owns the session now, so leave it running
-        if state.withLock({ $0.subscription == ours }) {
-            await stop()
-        }
-        return try result.get()
+        await stop()
+        return observation ?? .empty
     }
 
     /// Tier B, "Ask AI" (T19): the next camera frame as a still, plus what the pipeline
     /// last saw (the objects, distances and directions "Describe my surroundings" uses),
     /// answered on the device. Runs beside the obstacle pipeline, never in it.
-    /// `locationContext` is not used yet. Asked with no camera screen open (by voice from
-    /// Home, T38), the camera is turned on for the question, as Describe does (T26).
+    /// `locationContext` is not used yet. Asked with no camera running (by voice from Home,
+    /// T38), the camera is woken for the question, as Describe does.
     func ask(_ question: String, locationContext: String?) async throws -> String {
         state.withLock { $0.lastAskedImage = nil }
-        let isRunning = state.withLock { $0.subscription != nil }
         let imageData: Data
         let observation: SceneObservation?
-        if isRunning {
+        if let latest = broadcaster.latest, Date.now.timeIntervalSince(latest.timestamp) < Self.observationFreshness {
             imageData = try await captureStillImage()
-            observation = broadcaster.latest
+            observation = latest
         } else {
-            (imageData, observation) = try await withFreshObservation { observation in
-                (try await captureStillImage(), observation)
+            try await start()
+            do {
+                let woken = await currentObservation()
+                imageData = try await captureStillImage()
+                observation = woken
+            } catch {
+                await stop()
+                throw error
             }
+            await stop()
         }
         state.withLock { $0.lastAskedImage = imageData }
         return try await askAI.answer(question, imageData: imageData, observation: observation ?? .empty).answer

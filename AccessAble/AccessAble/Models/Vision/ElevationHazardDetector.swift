@@ -32,6 +32,11 @@ struct ElevationTuning: Sendable {
     /// Absolute floor on what counts as a hole in coverage. The effective threshold also
     /// scales with the observed sample spacing — see `detectElevationHazards`.
     var maxSampleGap: Float = 0.40
+    /// Ground this much lower beyond a hole in coverage counts as a fall. A real edge hides
+    /// the ground just past it from a camera held above it, so a big drop always arrives
+    /// as a hole with lower ground beyond. Higher than `minStepHeight` because nothing
+    /// measures the slope across a hole, and a dark patch on a gentle downhill looks alike.
+    var minFallAcrossGap: Float = 0.10
     /// Never report two hazards closer together than this.
     var minHazardSpacing: Float = 0.15
     /// A rise followed within this distance by a matching fall is a thing lying on the
@@ -146,13 +151,18 @@ func detectElevationHazards(
         }
         hazards += withoutBumps(steps, maxLength: tuning.bumpMaxLength, tolerance: tuning.minStepHeight)
 
-        // 6. Coverage gaps. An interior hole is genuinely ambiguous, so say so rather
-        // than guessing at a height.
+        // 6. Coverage gaps. Lower ground beyond the hole is the shadow of an edge. Anything
+        // else is genuinely ambiguous, so say so rather than guessing at a height.
         let isLastSegment = segmentIndex == segments.count - 1
         if !isLastSegment {
-            hazards.append(
-                ElevationHazard(type: .unknown, distance: distances[segment.upperBound - 1], heightChange: 0)
-            )
+            let lastDistance = distances[segment.upperBound - 1]
+            let fall = heights[segment.upperBound - 1] - heights[segment.upperBound]
+            if fall >= tuning.minFallAcrossGap {
+                let type: ElevationHazardType = fall >= tuning.dropOffHeight ? .dropOff : .stepDown
+                hazards.append(ElevationHazard(type: type, distance: lastDistance, heightChange: -fall))
+            } else {
+                hazards.append(ElevationHazard(type: .unknown, distance: lastDistance, heightChange: 0))
+            }
         } else if let expected = tuning.expectedMaxDistance {
             // Dense coverage that simply stops is the classic drop-off signature: there
             // is nothing past the edge for the sensor to bounce off. heightChange stays 0

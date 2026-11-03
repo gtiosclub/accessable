@@ -125,6 +125,51 @@ struct ElevationHazardDetectorTests {
         #expect(abs(hazard.distance - 1.0) < 0.1)
     }
 
+    @Test("a real edge hides the ground just past it: lower ground across the hole is a drop-off")
+    func occludedDropOff() throws {
+        // Camera 1.3 m up, edge at 2 m, 60 cm drop: the ray grazing the edge lands at about
+        // 2.9 m, so the sensor returns nothing between the two.
+        let samples = groundProfile(from: 0.5, to: 2.0) { _ in 0 }
+            + groundProfile(from: 2.9, to: 4.0) { _ in -0.6 }
+
+        let hazards = detectElevationHazards(samples: samples)
+
+        #expect(hazards.count == 1)
+        let hazard = try #require(hazards.first)
+        #expect(hazard.type == .dropOff)
+        #expect(abs(hazard.heightChange + 0.6) < 0.02)
+        // The near side: the last place the ground was confirmed.
+        #expect(abs(hazard.distance - 2.0) < 0.1)
+    }
+
+    @Test("a smaller fall across a hole is a step down")
+    func occludedStepDown() throws {
+        let samples = groundProfile(from: 0.5, to: 2.0) { _ in 0 }
+            + groundProfile(from: 2.5, to: 4.0) { _ in -0.15 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .stepDown)
+    }
+
+    @Test("a few centimetres across a hole is still only a hole")
+    func noisyGapStaysUnknown() throws {
+        let samples = groundProfile(from: 0.5, to: 1.5) { _ in 0 }
+            + groundProfile(from: 2.5, to: 4.0) { _ in -0.04 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .unknown)
+        #expect(hazard.heightChange == 0)
+    }
+
+    @Test("higher ground across a hole is not guessed at")
+    func riseAcrossGapStaysUnknown() throws {
+        let samples = groundProfile(from: 0.5, to: 1.5) { _ in 0 }
+            + groundProfile(from: 2.5, to: 4.0) { _ in 0.2 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .unknown)
+    }
+
     @Test("coverage that simply stops is a drop-off")
     func trailingCliff() throws {
         // The real signature of a kerb edge: nothing past it reflects anything back.

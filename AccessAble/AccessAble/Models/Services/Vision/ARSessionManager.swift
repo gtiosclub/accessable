@@ -46,6 +46,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     private let status = Mutex(GuidanceStatus.idle)
     private let statusBroadcaster = Broadcaster<GuidanceStatus>(replaysLatest: true)
     private let recoveryTimeout = Mutex<Task<Void, Never>?>(nil)
+    private let interruptionHandler = Mutex<(@Sendable (_ isInterrupted: Bool) -> Void)?>(nil)
     private let log = Logger(subsystem: "AccessAble", category: "ARSessionManager")
 
     /// How long ARKit is given to relocalize after an interruption before guidance is
@@ -104,6 +105,12 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
 
     func removeFrameHandler(_ subscription: Subscription) {
         handlers.withLock { $0[subscription.id] = nil }
+    }
+
+    /// Called when the system takes the camera away (phone locked, app in the background, a
+    /// call) and when it gives it back. Not called for `stop()`.
+    func setInterruptionHandler(_ handler: (@Sendable (_ isInterrupted: Bool) -> Void)?) {
+        interruptionHandler.withLock { $0 = handler }
     }
 
     // MARK: - Diagnostics
@@ -218,6 +225,7 @@ extension ARSessionManager: ARSessionDelegate {
         log.notice("ARKit session interrupted")
         cancelRecoveryTimeout()
         setStatus(.interrupted)
+        interruptionHandler.withLock { $0 }?(true)
     }
 
     func sessionInterruptionEnded(_ session: ARSession) {
@@ -226,6 +234,7 @@ extension ARSessionManager: ARSessionDelegate {
         // and until it does, world coordinates mean nothing.
         setStatus(.recovering)
         scheduleRecoveryTimeout()
+        interruptionHandler.withLock { $0 }?(false)
     }
 }
 
@@ -268,13 +277,13 @@ extension GuidanceStatus {
     /// What to say on moving from `previous` into this status; nil when there is nothing
     /// worth saying.
     ///
-    /// Interruptions themselves stay silent. The user caused them by taking a call or
-    /// switching apps, iOS is already showing its own screen, and talking over a phone call
-    /// is worse than saying nothing. What has to be spoken is guidance failing to come
-    /// back, and guidance returning after the user has noticed it was gone.
+    /// An interruption and its end are announced by `ARSceneAnalyzer`'s interruption
+    /// handler ("Camera paused. Obstacle warnings are off." / "Camera back on…"), so they
+    /// say nothing here; saying them twice would bury the next warning. What this adds is
+    /// guidance failing to come back, and coming back after it had stopped.
     func announcement(after previous: GuidanceStatus) -> AnnouncementEvent? {
         switch (previous, self) {
-        case (.interrupted, .running), (.recovering, .running), (.stopped, .running):
+        case (.stopped, .running):
             AnnouncementEvent(
                 category: .system,
                 priority: .high,

@@ -32,7 +32,7 @@ struct LiveSceneView: View {
         .navigationTitle("Live detection")
         .navigationBarTitleDisplayMode(.inline)
         .task { await viewModel.start() }
-        .onDisappear { Task { await viewModel.stop() } }
+        .onDisappear { viewModel.stop() }
         .alert("Where do you want to go?", isPresented: $asksDestination) {
             TextField("For example: the chair, exit, room 210", text: $destination)
             Button("Go") { viewModel.navigate(to: destination) }
@@ -107,7 +107,7 @@ struct LiveSceneView: View {
         .ignoresSafeArea()
     }
 
-    /// Record / mark / speak controls for running the device validation checklist.
+    /// Record / mark controls for running the device validation checklist.
     private var fieldTestControls: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -128,12 +128,6 @@ struct LiveSceneView: View {
                 .disabled(!viewModel.isRecording)
 
                 Spacer()
-
-                Toggle(isOn: $viewModel.speaksAnnouncements) {
-                    Image(systemName: viewModel.speaksAnnouncements ? "speaker.wave.2.fill" : "speaker.slash")
-                }
-                .toggleStyle(.button)
-                .accessibilityLabel("Speak warnings")
             }
             .buttonStyle(.bordered)
 

@@ -5,7 +5,6 @@ import Foundation
 struct AppServices: Sendable {
     var announcements: any AnnouncementEngineProtocol
     var haptics: any HapticRendering
-    var obstacleAlert: any ObstacleAlerting
     var performance: any PerformanceModeProviding
     var scene: any SceneObservationProviding
     var sceneDescriber: any SceneDescribing
@@ -22,7 +21,9 @@ struct AppServices: Sendable {
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
     static func live(performance: PerformanceModeMonitor) -> AppServices {
-        let announcements = PlaceholderAnnouncementEngine() // TODO(UI 3.3): AnnouncementEngine
+        // One renderer, so the engine's haptics and anyone else's replace each other rather than overlap.
+        let haptics = CoreHapticsRenderer()
+        let announcements = AnnouncementEngine(speech: SpeechOutput(), haptics: haptics)
         let askAISettings = AskAISettings()
         let scene = liveScene(performance: performance, announcements: announcements, askAISettings: askAISettings)
         let trip = PlaceholderTripProvider()        // TODO(Maps 2.2): TripManager / RouteProgressTracker
@@ -30,9 +31,8 @@ struct AppServices: Sendable {
         var services = AppServices(
             // The same engine the camera pipeline submits to, so what the UI hears and shows
             // is what CV emitted. A second instance here would receive nothing.
-            announcements: announcements,                   // TODO(UI 3.3): AnnouncementEngine
-            haptics: CoreHapticsRenderer(),
-            obstacleAlert: ObstacleAlertPlayer(),
+            announcements: announcements,
+            haptics: haptics,
             performance: performance,
             scene: scene,
             sceneDescriber: scene,

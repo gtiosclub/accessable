@@ -14,6 +14,11 @@ struct AppServicesTests {
     }
 
     @Test
+    func liveDeliversThroughTheRealEngine() {
+        #expect(AppServices.live(performance: PerformanceModeMonitor()).announcements is AnnouncementEngine)
+    }
+
+    @Test
     func previewNeverStartsRealTrips() {
         #expect(AppServices.preview.trip is PlaceholderTripProvider)
     }

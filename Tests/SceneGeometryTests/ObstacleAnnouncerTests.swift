@@ -356,6 +356,24 @@ struct ObstacleAnnouncerTests {
         #expect(counts == [0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
     }
 
+    @Test("events carry the distance the engine scales obstacle haptics by")
+    func eventsCarryDistance() throws {
+        var announcer = ObstacleAnnouncer()
+        var path: [AnnouncementEvent] = []
+        for frame in 0 ..< 3 {
+            path += announcer.announcements(for: [chair(at: 1.0)], hazards: [], at: Double(frame) * 0.1)
+        }
+        #expect(try #require(path.first).distance == 1.0)
+
+        var kerbs = ObstacleAnnouncer()
+        let kerb = [ElevationHazard(type: .stepDown, distance: 1.0, heightChange: -0.15)]
+        var surface: [AnnouncementEvent] = []
+        for frame in 0 ..< 4 {
+            surface += kerbs.announcements(for: [], hazards: kerb, at: Double(frame) * 0.1)
+        }
+        #expect(try #require(surface.first).distance == 1.0)
+    }
+
     @Test("holes in depth coverage are not spoken")
     func unknownHazardsSilent() {
         var announcer = ObstacleAnnouncer()
