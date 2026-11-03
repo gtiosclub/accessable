@@ -262,6 +262,62 @@ final class ScenePerception: Sendable {
                 // depth loss stays unclassified rather than becoming an urgent false drop-off.
                 hazards = detectElevationHazards(samples: profile)
             }
+        } else {
+            // T33 — no depth sensor. ARKit still tracks with true metric scale, so the sparse
+            // feature cloud fits a floor (T10) and each detection's floor contact gives a
+            // metric position. Known object sizes cross-check it. What needs a dense cloud —
+            // geometric obstacles (T11), the occupancy map, the path plan and kerbs (T12) —
+            // has nothing to run on and stays absent, so warnings here are about recognized
+            // objects only.
+            let camera = frame.camera
+            let intrinsics = capturedIntrinsics(for: camera)
+            let features = frame.rawFeaturePoints?.points ?? []
+            // Feature points are sparse and cluster on texture, so a fit often fails. The
+            // remembered floor, and failing that a level plane at the assumed camera height,
+            // is what makes an estimate possible at all — at a wider uncertainty, which
+            // `GroundContactTuning` charges for.
+            let floor = floorMemory.withLock {
+                $0.update(fit: detectFloorPlane(points: features), cameraPosition: corridor.origin, at: frame.timestamp)
+            }
+            diagnostics.floor = floor.plane
+            diagnostics.cameraHeight = floor.cameraHeight
+            diagnostics.isFloorMeasured = floor.isMeasured
+
+            recognized = recognized.map { detection in
+                let contact = groundContactDistance(
+                    box: detection.boundingBox, orientation: imageOrientation, floor: floor,
+                    corridor: heading, intrinsics: intrinsics, cameraTransform: camera.transform
+                )
+                let sizeRange = ObjectSizePriors.prior(for: detection.label).flatMap {
+                    distanceRange(
+                        box: detection.boundingBox, orientation: imageOrientation,
+                        prior: $0, intrinsics: intrinsics
+                    )
+                }
+                guard let estimate = combinedDistance(groundContact: contact, sizeRange: sizeRange) else {
+                    return detection
+                }
+                // With a floor contact the position is known outright; from size alone the
+                // object is placed along the ray through its box, which still gives a usable
+                // bearing and in-path test.
+                let centre = imageOrientation.sensorPoint(
+                    fromUpright: CGPoint(x: detection.boundingBox.midX, y: detection.boundingBox.midY)
+                )
+                let position = contact?.position ?? worldPoint(
+                    sensorPoint: centre, atDistance: Float(estimate.meters),
+                    intrinsics: intrinsics, cameraTransform: camera.transform
+                )
+                var located = detection
+                located.distance = estimate.meters
+                located.distanceAccuracy = estimate.accuracy
+                located.worldPosition = position
+                guard let position else { return located }
+                located.bearing = heading.bearing(to: position)
+                if heading.contains(position), detection.isHazard || detection.label == "person" {
+                    inPath.insert(detection.id)
+                }
+                return located
+            }
         }
 
         let detections = tracker.withLock {
@@ -410,6 +466,19 @@ private extension ScenePerception {
 
     /// ARKit's intrinsics describe the captured image, which is far larger than the depth
     /// map. Using them unscaled gives a point cloud that looks plausible and is quietly wrong.
+    /// Intrinsics for the captured image itself, unscaled. T33 works against the camera
+    /// image because without a depth sensor there is no depth map to scale them to.
+    func capturedIntrinsics(for camera: ARCamera) -> CameraIntrinsics {
+        CameraIntrinsics(
+            focalX: camera.intrinsics[0][0],
+            focalY: camera.intrinsics[1][1],
+            principalX: camera.intrinsics[2][0],
+            principalY: camera.intrinsics[2][1],
+            imageWidth: Int(camera.imageResolution.width),
+            imageHeight: Int(camera.imageResolution.height)
+        )
+    }
+
     func depthIntrinsics(for camera: ARCamera, depth: DepthMap) -> CameraIntrinsics {
         CameraIntrinsics(
             focalX: camera.intrinsics[0][0],

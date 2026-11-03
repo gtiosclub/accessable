@@ -12,6 +12,16 @@ enum SpokenPhrasing {
     }
 
     /// Short form for scene lists: "2 metres", "1.5 metres".
+    /// "2 metres" for a measurement, "about 2 metres" for an estimate (T33). The hedge is
+    /// not politeness: a distance that may be out by half a metre must not be read out in
+    /// the same words as one that cannot.
+    static func hedgedDistance(_ metres: Double, accuracy: DistanceAccuracy?) -> String {
+        switch accuracy {
+        case .measured, .none: shortDistance(metres)
+        case .estimated: "about \(shortDistance(metres))"
+        }
+    }
+
     static func shortDistance(_ metres: Double) -> String {
         let rounded = max((metres * 2).rounded() / 2, 0.5)
         if rounded == 1 { return "1 metre" }
@@ -78,7 +88,7 @@ enum SpokenPhrasing {
             sentences.append("Stop.")
             sentences.append("\(name) \(place).")
         } else if priority == .normal, let distance = detection.distance {
-            sentences.append("\(name) \(place), \(shortDistance(distance)).")
+            sentences.append("\(name) \(place), \(hedgedDistance(distance, accuracy: detection.distanceAccuracy)).")
         } else {
             sentences.append("\(name) \(place).")
         }

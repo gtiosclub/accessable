@@ -3,7 +3,8 @@ import Foundation
 
 /// One tracked object as the announcer sees it in a frame.
 struct ObstacleAlertInput: Sendable {
-    /// Must carry a `distance`; anything without one is ignored.
+    /// Must carry a `distance`; anything without one is ignored. Where that distance is an
+    /// estimate rather than a measurement (T33), the bands act on `cautiousDistance`.
     let detection: Detection
     /// Whether the object is inside the walking corridor this frame.
     let isInPath: Bool
@@ -189,18 +190,21 @@ struct ObstacleAnnouncer: Sendable {
         at time: TimeInterval,
         now: Date
     ) -> AnnouncementEvent? {
+        // Banding uses the nearest distance consistent with each detection, so an estimate
+        // warns at the near end of its uncertainty. On a measured distance this is the
+        // distance itself, so LiDAR devices band exactly as they did before.
         let inPath = objects
-            .filter { $0.isInPath && $0.detection.distance != nil }
-            .sorted { $0.detection.distance! < $1.detection.distance! }
+            .filter { $0.isInPath && $0.detection.cautiousDistance != nil }
+            .sorted { $0.detection.cautiousDistance! < $1.detection.cautiousDistance! }
 
         // The map decides whether the path is blocked; detections say what by.
         let distance: Float? = if let blockedAhead {
             blockedAhead.distance
         } else {
-            inPath.first.flatMap { $0.detection.distance.map(Float.init) }
+            inPath.first.flatMap { $0.detection.cautiousDistance.map(Float.init) }
         }
         if let distance {
-            if let match = inPath.first(where: { abs(Float($0.detection.distance!) - distance) <= subjectTolerance }) {
+            if let match = inPath.first(where: { abs(Float($0.detection.cautiousDistance!) - distance) <= subjectTolerance }) {
                 subject = match.detection
             } else if blockedAhead != nil {
                 subject = Detection(
