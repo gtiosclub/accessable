@@ -12,10 +12,15 @@ struct SceneDescriptionBuilder: Sendable {
 
     func describe(_ observation: SceneObservation) -> String {
         let sentences = observation.elevationHazards.map(SpokenPhrasing.describe)
-            + observation.prioritizedDetections.map(SpokenPhrasing.describe)
+            + observation.prioritizedDetections.filter(isWorthDescribing).map(SpokenPhrasing.describe)
             + observation.recognizedText.map { "\($0.string) is visible \(direction(of: $0.boundingBox.midX))." }
         guard !sentences.isEmpty else { return "Nothing detected nearby." }
         return sentences.prefix(maxItems).joined(separator: " ")
+    }
+
+    /// From the mesh only doors (entrances) are described; windows are kept for other uses.
+    private func isWorthDescribing(_ detection: Detection) -> Bool {
+        detection.origin != .mesh || detection.label == "door"
     }
 
     /// Thirds of the upright frame.
