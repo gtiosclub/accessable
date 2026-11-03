@@ -11,6 +11,10 @@ import UIKit
 /// Frames go through a `LatestOnlyProcessor` (T3), so when analysis is slower than the
 /// camera, stale frames are dropped rather than queued. `PerformanceMode` thins the input
 /// further by only offering every Nth camera frame.
+///
+/// Every feature shares this one camera. `start()` and `stop()` nest: tracking starts with
+/// the first `start()`, later ones join it without resetting the world, and the session
+/// only pauses when every `start()` has had its `stop()`.
 final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, Sendable {
     let sessionManager: ARSessionManager
     let perception: ScenePerception
@@ -36,6 +40,13 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     }
 
     private let state = Mutex(State())
+    /// How many callers of `start()` have not yet called `stop()`.
+    @MainActor private var clientCount = 0
+
+    /// An observation older than this means the camera isn't running.
+    private static let observationFreshness: TimeInterval = 1
+    /// How long "Describe my surroundings" waits for a first frame when the camera was off.
+    private static let wakeTimeout: Duration = .seconds(4)
 
     init(
         sessionManager: ARSessionManager,
@@ -76,6 +87,20 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
                 cameraFPS: sessionManager.healthReport.averageFPS
             ))
         }
+
+        // ARKit can't run in the background, so a locked phone means no obstacle warnings.
+        // Someone relying on them has to be told, even though a trip's turns carry on.
+        sessionManager.setInterruptionHandler { [announcementQueue] isInterrupted in
+            announcementQueue.yield(AnnouncementEvent(
+                category: .system,
+                priority: .high,
+                text: isInterrupted
+                    ? "Camera paused. Obstacle warnings are off."
+                    : "Camera back on. Obstacle warnings are on.",
+                source: .system,
+                expiresAt: .now.addingTimeInterval(10)
+            ))
+        }
     }
 
     // MARK: - SceneObservationProviding
@@ -85,7 +110,21 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     }
 
     func start() async throws {
-        try await MainActor.run { try sessionManager.start() }
+        try await acquireCamera()
+    }
+
+    func stop() async {
+        await releaseCamera()
+    }
+
+    @MainActor
+    private func acquireCamera() throws {
+        guard clientCount == 0 else {
+            clientCount += 1
+            return
+        }
+        try sessionManager.start()
+        clientCount = 1
         // Tracking restarts from scratch, so nothing remembered about the old world holds.
         perception.reset()
 
@@ -109,7 +148,11 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         previous.1?.cancel()
     }
 
-    func stop() async {
+    @MainActor
+    private func releaseCamera() {
+        guard clientCount > 0 else { return }
+        clientCount -= 1
+        guard clientCount == 0 else { return }
         let (subscription, modeTask) = state.withLock { state in
             defer {
                 state.subscription = nil
@@ -120,7 +163,7 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         if let subscription { sessionManager.removeFrameHandler(subscription) }
         modeTask?.cancel()
         processor.cancelPending()
-        await MainActor.run { sessionManager.stop() }
+        sessionManager.stop()
     }
 
     /// Tells the analyzer how the device is held, so Vision gets the right image
@@ -131,9 +174,43 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     // MARK: - SceneDescribing
 
-    /// Tier A: built from the latest observation, instantly and offline (T18).
+    /// Tier A: built from the latest observation, offline (T18). Instant while the camera is
+    /// running; otherwise the camera is woken for one analyzed frame, so the answer works
+    /// from Home and never describes a room the user has left.
     func describeCurrentScene() async -> String {
-        SceneDescriptionBuilder().describe(broadcaster.latest ?? .empty)
+        SceneDescriptionBuilder().describe(await currentObservation())
+    }
+
+    private func currentObservation() async -> SceneObservation {
+        if let latest = broadcaster.latest,
+           Date.now.timeIntervalSince(latest.timestamp) < Self.observationFreshness {
+            return latest
+        }
+        let requested = Date.now
+        // Subscribed first, so the frame can't slip past. It may replay an old observation.
+        let observations = broadcaster.stream()
+        do {
+            try await start()
+        } catch {
+            return .empty
+        }
+        let observation = await withTaskGroup(of: SceneObservation?.self) { group in
+            group.addTask {
+                for await observation in observations where observation.timestamp >= requested {
+                    return observation
+                }
+                return nil
+            }
+            group.addTask {
+                try? await Task.sleep(for: Self.wakeTimeout)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        await stop()
+        return observation ?? .empty
     }
 
     /// Tier B, "Ask AI" (T19): the next camera frame as a still, plus what the pipeline

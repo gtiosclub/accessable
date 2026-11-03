@@ -47,16 +47,10 @@ final class LiveSceneViewModel {
     private(set) var recordingName: String?
     /// The checklist step most recently marked.
     private(set) var lastMark: String?
-    /// Speak delivered announcements and play their haptics here, standing in for the
-    /// announcement engine (3.3) until it lands.
-    var speaksAnnouncements = true {
-        didSet { speaksAnnouncements ? speaker.activate() : speaker.deactivate() }
-    }
     /// The most recent delivered announcement, mirrored on screen.
     private(set) var lastAnnouncement: AnnouncementEvent?
 
     @ObservationIgnored private let announcements: any AnnouncementEngineProtocol
-    @ObservationIgnored private let speaker = FieldTestSpeaker()
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
     @ObservationIgnored private var orientationTask: Task<Void, Never>?
 
@@ -127,6 +121,7 @@ final class LiveSceneViewModel {
         }
     }
 
+    /// Holds the shared camera until the calling task is cancelled.
     func start() async {
         guard let analyzer else {
             errorMessage = ARSessionManagerError.worldTrackingUnsupported.localizedDescription
@@ -140,14 +135,12 @@ final class LiveSceneViewModel {
             return
         }
         isDepthAvailable = analyzer.sessionManager.isDepthSupported
-        if speaksAnnouncements { speaker.activate() }
         deliveryTask?.cancel()
         deliveryTask = Task { [weak self, announcements, recorder = analyzer.recorder] in
             for await event in announcements.deliveredEvents() {
                 recorder.recordDelivered(event)
                 guard let self else { return }
                 self.lastAnnouncement = event
-                if self.speaksAnnouncements { self.speaker.deliver(event) }
             }
         }
 
@@ -166,18 +159,19 @@ final class LiveSceneViewModel {
             )
             imageAspectRatio = CGFloat(diagnostics.uprightAspectRatio)
         }
+        await analyzer.stop()
     }
 
-    func stop() async {
+    func stop() {
         deliveryTask?.cancel()
         deliveryTask = nil
         orientationTask?.cancel()
         orientationTask = nil
         UIDevice.current.endGeneratingDeviceOrientationNotifications()
-        speaker.deactivate()
         analyzer?.recorder.stop()
+        // Other features share the analyzer and don't follow the device's orientation.
+        analyzer?.setInterfaceOrientation(.portrait)
         isRecording = false
-        await analyzer?.stop()
     }
 
     var people: [Detection] {

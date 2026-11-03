@@ -43,6 +43,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     private let handlers = Mutex<[UUID: FrameHandler]>([:])
     private let health = Mutex(FrameHealthCheck())
     private let trackingState = Mutex("not started")
+    private let interruptionHandler = Mutex<(@Sendable (_ isInterrupted: Bool) -> Void)?>(nil)
     private let log = Logger(subsystem: "AccessAble", category: "ARSessionManager")
 
     // MARK: - Lifecycle
@@ -87,6 +88,12 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
 
     func removeFrameHandler(_ subscription: Subscription) {
         handlers.withLock { $0[subscription.id] = nil }
+    }
+
+    /// Called when the system takes the camera away (phone locked, app in the background, a
+    /// call) and when it gives it back. Not called for `stop()`.
+    func setInterruptionHandler(_ handler: (@Sendable (_ isInterrupted: Bool) -> Void)?) {
+        interruptionHandler.withLock { $0 = handler }
     }
 
     // MARK: - Diagnostics
@@ -139,10 +146,12 @@ extension ARSessionManager: ARSessionDelegate {
 
     func sessionWasInterrupted(_ session: ARSession) {
         log.notice("ARKit session interrupted")
+        interruptionHandler.withLock { $0 }?(true)
     }
 
     func sessionInterruptionEnded(_ session: ARSession) {
         log.notice("ARKit session interruption ended")
+        interruptionHandler.withLock { $0 }?(false)
     }
 }
 

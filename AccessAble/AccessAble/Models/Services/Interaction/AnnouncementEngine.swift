@@ -45,6 +45,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
         isPaused = true
         queue.removeAll()
         await speech.stop()
+        await haptics.stop()
     }
  
     func resume() async { isPaused = false }
@@ -76,6 +77,9 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
             delivered.send(event)
             if let haptic = event.haptic, profile.channels.contains(.haptics) {
                 await haptics.play(haptic, intensity: profile.hapticIntensity * distanceScale(for: event))
+            } else if event.haptic == nil, event.category == .hazard {
+                // "Path clear": a warning buzz still looping would say the opposite.
+                await haptics.stop()
             }
             if profile.channels.contains(.speech) {
                 await speech.speak(event.text, rate: profile.speechRate, interrupting: event.priority == .critical)

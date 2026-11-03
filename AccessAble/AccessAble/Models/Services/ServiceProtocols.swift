@@ -36,11 +36,6 @@ protocol HapticRendering: Sendable {
     func stop() async
 }
 
-/// Vibrates and beeps to warn that an obstacle was detected.
-protocol ObstacleAlerting: Sendable {
-    func alert(intensity: Float) async
-}
-
 /// Publishes the current PerformanceMode (3.3). CV (1.4) and Maps (2.1) subscribe.
 protocol PerformanceModeProviding: Sendable {
     func modes() -> AsyncStream<PerformanceMode>
@@ -51,6 +46,8 @@ protocol PerformanceModeProviding: Sendable {
 protocol SceneObservationProviding: Sendable {
     /// Latest-only stream of analyzed frames.
     func observations() -> AsyncStream<SceneObservation>
+    /// Calls nest, because features share the one camera: it keeps running until every
+    /// successful `start()` has had its `stop()`. Don't call `stop()` after a `start()` that threw.
     func start() async throws
     func stop() async
 }

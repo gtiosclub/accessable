@@ -15,6 +15,10 @@ engine:
 > camera + LiDAR → perception → spatial reasoning → tracking → what is in the path →
 > accessible speech and haptics
 
+The pipeline runs while Camera guidance or Live detection is open, and for the whole of an
+active trip (`TripCameraCoordinator`). "Describe my surroundings" wakes it for one frame when
+it is off. All of them share one camera: `ARSceneAnalyzer.start()` and `stop()` nest.
+
 Everything on that path runs on the device. Nothing in it waits on the network, and the
 future "Ask AI" feature (T19) stays outside it.
 
@@ -271,8 +275,16 @@ a physical device by the integrator; see **Device validation**.
   descriptions but not warnings. Tune the threshold, and possibly per class, with real data.
 - **Portrait only in practice.** The Live and guidance screens set portrait orientation;
   other orientations are mapped correctly but not exercised.
-- **Announcements are untested end to end with real speech**: the announcement engine is still
-  the placeholder until Interaction's engine (3.3) lands.
+- **Announcements are untested end to end on a device.** `AppServices.live` now runs
+  Interaction's `AnnouncementEngine` (3.3) with `CoreHapticsRenderer` (3.2).
+- **No obstacle warnings while the phone is locked or the app is in the background.** ARKit
+  cannot run there. A trip's turns carry on, and the user is told "Camera paused. Obstacle
+  warnings are off." when the session is interrupted.
+- **Coverage that simply stops is not a drop-off in the live pipeline.** A fall with lower
+  ground visible beyond the hole is reported, but `ElevationTuning.expectedMaxDistance` stays
+  nil: a pitched-down camera and dark ground also end coverage early, so it would cry wolf.
+- **Looping obstacle haptics stop after 3 s, or at "Path clear".** They mark a warning rather
+  than following the obstacle's distance continuously.
 - **Tracking is box-overlap only.** Fast lateral motion at a low analysis rate can split a
   track and repeat an announcement.
 - **Thresholds are fixed** (3/2/1 m bands, 0.9 m corridor); `GuidanceProfile` cannot adjust them yet.
@@ -342,7 +354,7 @@ Camera guidance for announcements:
 swift test --scratch-path /tmp/accessable-build
 ```
 
-228 tests in 33 suites cover everything in `Models/Vision` and the shared phrasing, including
+233 tests in 33 suites cover everything in `Models/Vision` and the shared phrasing, including
 the T5 orientation mapping against Vision for all eight orientations, T6 filtering on real
 pixel buffers, T13 and T17 against the bundled test image, the T16 announcement rules, the
 floor memory, the occupancy map (hits, rays, clearing, recentring), the planner on it, a
