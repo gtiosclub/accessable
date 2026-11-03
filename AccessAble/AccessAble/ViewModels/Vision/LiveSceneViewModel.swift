@@ -56,6 +56,8 @@ final class LiveSceneViewModel {
     private(set) var lastAnnouncement: AnnouncementEvent?
 
     @ObservationIgnored private let announcements: any AnnouncementEngineProtocol
+    /// Holds the screen awake and speaks up when guidance stops or returns (T27).
+    @ObservationIgnored private let guidance: GuidanceStatusMonitor
     @ObservationIgnored private let speaker = FieldTestSpeaker()
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
     @ObservationIgnored private var orientationTask: Task<Void, Never>?
@@ -85,6 +87,7 @@ final class LiveSceneViewModel {
     init(services: AppServices) {
         analyzer = services.scene as? ARSceneAnalyzer
         announcements = services.announcements
+        guidance = GuidanceStatusMonitor(announcements: services.announcements)
     }
 
     func toggleRecording() {
@@ -140,6 +143,7 @@ final class LiveSceneViewModel {
             return
         }
         isDepthAvailable = analyzer.sessionManager.isDepthSupported
+        guidance.watch(analyzer)
         if speaksAnnouncements { speaker.activate() }
         deliveryTask?.cancel()
         deliveryTask = Task { [weak self, announcements, recorder = analyzer.recorder] in
@@ -169,6 +173,7 @@ final class LiveSceneViewModel {
     }
 
     func stop() async {
+        guidance.stop()
         deliveryTask?.cancel()
         deliveryTask = nil
         orientationTask?.cancel()
