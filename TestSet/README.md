@@ -8,6 +8,8 @@ scenario. For distance, tape-measure to the object.
 
 Boxes are normalized 0-1 with the origin at the top-left, same as `Detection`.
 
+Record environmental conditions for each frame using 'conditions', such as 'indoor', 'outdoor', 'bright-lighting', 'dim-lighting', 'low-crowd', 'busy', or 'moving-people'.
+
 ```json
 {
   "version": 1,
@@ -16,7 +18,8 @@ Boxes are normalized 0-1 with the origin at the top-left, same as `Detection`.
       "scenario": "chair-ahead",
       "image": "frames/chair-ahead/0001.jpg",
       "objects": [{ "label": "chair", "x": 0.38, "y": 0.42, "width": 0.24, "height": 0.4 }],
-      "measuredDistances": { "chair": 2.0 }
+      "measuredDistances": { "chair": 2.0 },
+      "conditions": ["indoor", "bright-lighting", "low-crowd"]
     }
   ]
 }

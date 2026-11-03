@@ -17,6 +17,16 @@ enum TestScenario: String, Codable, CaseIterable, Sendable {
     case busyHallway = "busy-hallway"
 }
 
+enum EnvironmentalCondition: String, Codable, CaseIterable, Sendable {
+    case indoor
+    case outdoor
+    case brightLighting = "bright-lighting"
+    case dimLighting = "dim-lighting"
+    case lowCrowd = "low-crowd"
+    case busy
+    case movingPeople = "moving-people"
+}
+
 struct AnnotatedObject: Codable, Equatable, Sendable {
     let label: String
     let x, y, width, height: Double
@@ -31,6 +41,7 @@ struct AnnotatedFrame: Codable, Equatable, Sendable {
     let image: String // path relative to TestSet/
     let objects: [AnnotatedObject]
     let measuredDistances: [String: Float]? // label -> tape-measured meters
+    let conditions: [EnvironmentalCondition]?
 }
 
 struct TestSetManifest: Codable, Equatable, Sendable {
@@ -65,4 +76,65 @@ func evaluateDetector(
         )
     }
     return evaluateDetections(cases)
+}
+
+func distanceTestCases(
+    from manifest: TestSetManifest,
+    folder: URL,
+    estimate: (URL) throws -> [String: Float]
+) rethrows -> [DistanceTestCase] {
+    var cases: [DistanceTestCase] = []
+
+    for frame in manifest.frames {
+        guard let actualDistances = frame.measuredDistances else {
+            continue
+        }
+
+        let estimatedDistances = try estimate(
+            folder.appending(path: frame.image)
+        )
+
+        for (label, actualMeters) in actualDistances {
+            guard let estimatedMeters = estimatedDistances[label] else {
+                continue
+            }
+
+            cases.append(
+                DistanceTestCase(
+                    estimatedMeters: estimatedMeters,
+                    actualMeters: actualMeters
+                )
+            )
+        }
+    }
+
+    return cases
+}
+
+func evaluateDistanceEstimates(
+    on manifest: TestSetManifest,
+    folder: URL,
+    estimate: (URL) throws -> [String: Float]
+) rethrows -> DistanceMetrics? {
+    let cases = try distanceTestCases(
+        from: manifest,
+        folder: folder,
+        estimate: estimate
+    )
+
+    return evaluateDistances(cases)
+}
+
+func calibrateDistanceEstimates(
+    on manifest: TestSetManifest,
+    folder: URL,
+    estimate: (URL) throws -> [String: Float]
+) rethrows -> DistanceCalibration? {
+    let cases = try distanceTestCases(
+        from: manifest,
+        folder: folder,
+        estimate: estimate
+    )
+
+    return fitDistanceCalibration(from: cases)
 }

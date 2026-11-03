@@ -156,9 +156,12 @@ final class ScenePerception: Sendable {
                     ofRegion: region, in: depthMap, intrinsics: intrinsics, cameraTransform: camera.transform
                 ) else { return detection }
                 var located = detection
-                located.distance = Double(heading.distance(to: position))
+                let distance = heading.distance(to: position)
+
+                located.distance = Double(distance)
                 located.bearing = heading.bearing(to: position)
                 located.worldPosition = position
+
                 // Only things a walker can collide with are path hazards; a recognized cup
                 // on a table is left to the geometry to judge.
                 if heading.contains(position), detection.isHazard || detection.label == "person" {
@@ -251,10 +254,12 @@ final class ScenePerception: Sendable {
             return result.status
         }
         let end = CACurrentMediaTime()
+
         diagnostics.performance = frameTimer.withLock { timer in
             timer.record(start: start, end: end)
             return timer.metrics
         }
+
         diagnosticsState.withLock { $0 = diagnostics }
 
         let observation = SceneObservation(
