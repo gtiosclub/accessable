@@ -12,6 +12,16 @@ enum SpokenPhrasing {
     }
 
     /// Short form for scene lists: "2 metres", "1.5 metres".
+    /// "2 metres" for a measurement, "about 2 metres" for an estimate (T33). The hedge is
+    /// not politeness: a distance that may be out by half a metre must not be read out in
+    /// the same words as one that cannot.
+    static func hedgedDistance(_ metres: Double, accuracy: DistanceAccuracy?) -> String {
+        switch accuracy {
+        case .measured, .none: shortDistance(metres)
+        case .estimated: "about \(shortDistance(metres))"
+        }
+    }
+
     static func shortDistance(_ metres: Double) -> String {
         let rounded = max((metres * 2).rounded() / 2, 0.5)
         if rounded == 1 { return "1 metre" }
@@ -39,6 +49,37 @@ enum SpokenPhrasing {
             return "\(label) \(shortDistance(distance)) ahead."
         }
         return "\(label) \(side), \(shortDistance(distance))."
+    }
+
+    /// "A few people 3 metres ahead." / "About six people, 2 metres to 5 metres ahead,
+    /// spread out." — one sentence for a group instead of one per person (T35).
+    ///
+    /// The count is deliberately approximate: people occlude one another, so the detector's
+    /// number is a floor on the real one, and reading it out as exact would overstate what
+    /// is known. The group's near edge is what gets the distance, since that is what the
+    /// user reaches first.
+    static func describe(_ crowd: CrowdRegion) -> String {
+        let size = crowdSize(crowd.count)
+        let side = direction(crowd.bearing)
+        let spread = crowd.isSpreadOut ? ", spread out" : ""
+        if crowd.spansDistance {
+            let range = "\(shortDistance(crowd.nearestDistance)) to \(shortDistance(crowd.farthestDistance))"
+            return "\(size), \(range) \(side)\(spread)."
+        }
+        if side == "ahead" {
+            return "\(size) \(shortDistance(crowd.nearestDistance)) ahead\(spread)."
+        }
+        return "\(size) \(side), \(shortDistance(crowd.nearestDistance))\(spread)."
+    }
+
+    /// "A few people" / "About six people" / "A large group" — a count the detector can
+    /// actually support.
+    static func crowdSize(_ count: Int) -> String {
+        switch count {
+        case ..<5: "A few people"
+        case ..<10: "About \(count) people"
+        default: "A large group"
+        }
     }
 
     /// "Drop-off", "Step up"…
@@ -78,7 +119,7 @@ enum SpokenPhrasing {
             sentences.append("Stop.")
             sentences.append("\(name) \(place).")
         } else if priority == .normal, let distance = detection.distance {
-            sentences.append("\(name) \(place), \(shortDistance(distance)).")
+            sentences.append("\(name) \(place), \(hedgedDistance(distance, accuracy: detection.distanceAccuracy)).")
         } else {
             sentences.append("\(name) \(place).")
         }
@@ -86,6 +127,30 @@ enum SpokenPhrasing {
             sentences.append(advice)
         }
         return sentences.joined(separator: " ")
+    }
+
+    /// "Car approaching from your right." / "Stop. Cyclist from your left." (T34)
+    ///
+    /// Where it is coming *from* rather than where it is, which is what the listener needs:
+    /// a static obstacle is somewhere to be avoided, while an approaching one is a direction
+    /// to turn away from.
+    static func guidance(for threat: ApproachThreat, priority: AnnouncementPriority) -> String {
+        let name = threat.label.prefix(1).uppercased() + threat.label.dropFirst()
+        let side = approachSide(threat.bearing)
+        if priority == .critical {
+            return "Stop. \(name) \(side)."
+        }
+        return "\(name) approaching \(side)."
+    }
+
+    /// "from your left" / "from behind" / "ahead" — the direction an approach is coming from.
+    static func approachSide(_ bearing: RelativeBearing) -> String {
+        switch bearing.side {
+        case .slightlyLeft, .left: "from your left"
+        case .slightlyRight, .right: "from your right"
+        case .behind: "from behind"
+        case .ahead: "ahead"
+        }
     }
 
     /// "Step down ahead, 2 metres." / "Stop. Drop-off ahead."
