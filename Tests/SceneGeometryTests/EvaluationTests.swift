@@ -1,6 +1,10 @@
 import CoreGraphics
+import CoreML
 import Foundation
+import ImageIO
 import Testing
+import Vision
+
 @testable import SceneGeometry
 
 private func box(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> CGRect {
@@ -9,6 +13,40 @@ private func box(_ x: Double, _ y: Double, _ w: Double, _ h: Double) -> CGRect {
 
 private func prediction(_ label: String, _ rect: CGRect, confidence: Float = 0.9) -> Detection {
     Detection(label: label, confidence: confidence, boundingBox: rect, origin: .model, isHazard: false)
+}
+
+private var repositoryRoot: URL {
+    URL(filePath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+}
+
+private func loadImage(at url: URL) throws -> CGImage {
+    let source = try #require(CGImageSourceCreateWithURL(url as CFURL, nil))
+    return try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+}
+
+private func chairDetections(
+    in image: CGImage,
+    using model: VNCoreMLModel
+) throws -> [Detection] {
+    let request = VNCoreMLRequest(model: model)
+    request.imageCropAndScaleOption = .scaleFill
+
+    let handler = VNImageRequestHandler(
+        cgImage: image,
+        orientation: .up
+    )
+
+    try handler.perform([request])
+
+    return objectDetections(
+        from: request.results as? [VNRecognizedObjectObservation] ?? [],
+        minimumConfidence: 0.6,
+        ignoredLabels: ["person"]
+    )
+    .filter { $0.label == "chair" }
 }
 
 @Suite("T20 — detection and performance evaluation")
@@ -187,5 +225,64 @@ struct EvaluationTests {
         #expect(abs(metrics.meanBias + 0.2) < 0.0001)
         #expect(metrics.sampleCount == 1)
     }
-
+    
+    @Test("T40 measures chair precision and recall on recorded frames")
+    func recordedChairDetectionMetrics() throws {
+        let testSetFolder = repositoryRoot.appending(path: "TestSet")
+        
+        let annotationsURL = testSetFolder.appending(
+            path: "annotations.json"
+        )
+        
+        let manifestData = try Data(contentsOf: annotationsURL)
+        let manifest = try JSONDecoder().decode(
+            TestSetManifest.self,
+            from: manifestData
+        )
+        
+        let modelPackage = repositoryRoot.appending(
+            path: "AccessAble/AccessAble/Resources/yolo11n.mlpackage"
+        )
+        
+        let compiledModel = try MLModel.compileModel(at: modelPackage)
+        let coreMLModel = try MLModel(contentsOf: compiledModel)
+        let visionModel = try VNCoreMLModel(for: coreMLModel)
+        
+        var cases: [DetectionTestCase] = []
+        for frame in manifest.frames {
+            let imageURL = testSetFolder.appending(path: frame.image)
+            let image = try loadImage(at: imageURL)
+            
+            let predictions = try chairDetections(
+                in: image,
+                using: visionModel
+            )
+            
+            let expected = frame.objects
+                .map(\.groundTruth)
+                .filter { $0.label.lowercased() == "chair" }
+            
+            cases.append(
+                DetectionTestCase(
+                    expected: expected,
+                    predicted: predictions
+                )
+            )
+        }
+        
+        let metrics = evaluateDetections(cases)
+        
+        print(
+            String(
+                format: "T40 DETECTION: TP=%d FP=%d FN=%d precision=%.3f recall=%.3f",
+                metrics.truePositives,
+                metrics.falsePositives,
+                metrics.falseNegatives,
+                Double(metrics.precision),
+                Double(metrics.recall)
+            )
+        )
+        
+        #expect(cases.count == manifest.frames.count)
+    }
 }
