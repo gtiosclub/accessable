@@ -11,7 +11,6 @@ enum SpokenPhrasing {
         return "about \(number) metres"
     }
 
-    /// Short form for scene lists: "2 metres", "1.5 metres".
     /// "2 metres" for a measurement, "about 2 metres" for an estimate (T33). The hedge is
     /// not politeness: a distance that may be out by half a metre must not be read out in
     /// the same words as one that cannot.
@@ -22,6 +21,7 @@ enum SpokenPhrasing {
         }
     }
 
+    /// Short form for scene lists: "2 metres", "1.5 metres".
     static func shortDistance(_ metres: Double) -> String {
         let rounded = max((metres * 2).rounded() / 2, 0.5)
         if rounded == 1 { return "1 metre" }

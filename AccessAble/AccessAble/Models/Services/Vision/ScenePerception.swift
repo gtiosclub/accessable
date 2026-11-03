@@ -464,8 +464,6 @@ private extension ScenePerception {
         )
     }
 
-    /// ARKit's intrinsics describe the captured image, which is far larger than the depth
-    /// map. Using them unscaled gives a point cloud that looks plausible and is quietly wrong.
     /// Intrinsics for the captured image itself, unscaled. T33 works against the camera
     /// image because without a depth sensor there is no depth map to scale them to.
     func capturedIntrinsics(for camera: ARCamera) -> CameraIntrinsics {
@@ -479,6 +477,8 @@ private extension ScenePerception {
         )
     }
 
+    /// ARKit's intrinsics describe the captured image, which is far larger than the depth
+    /// map. Using them unscaled gives a point cloud that looks plausible and is quietly wrong.
     func depthIntrinsics(for camera: ARCamera, depth: DepthMap) -> CameraIntrinsics {
         CameraIntrinsics(
             focalX: camera.intrinsics[0][0],
