@@ -72,6 +72,9 @@ final class ScenePerception: Sendable {
     private let navigation = Mutex<NavigationGuide?>(nil)
     /// When the announcer last spoke about the path, so navigation cues keep out of its way.
     private let lastPathAnnouncement = Mutex<TimeInterval>(-.infinity)
+    /// Doors and windows from the classified mesh (T36), refreshed every few frames.
+    private let structures = Mutex<[StructuralFeature]>([])
+    private let structureFrameCount = Mutex(0)
     /// Set when a request arrives, consumed by the next frame, which knows the frame time.
     private let pendingNavigationQuery = Mutex<String??>(nil)
     private let clearanceTuning = PathClearanceTuning.default
@@ -102,8 +105,9 @@ final class ScenePerception: Sendable {
         pendingNavigationQuery.withLock { $0 = nil }
         occupancy.withLock { $0.reset() }
         lastPathAnnouncement.withLock { $0 = -.infinity }
-
         cameraQualityState.withLock { $0 = CameraQualityState() }
+        structures.withLock { $0 = [] }
+        structureFrameCount.withLock { $0 = 0 }
     }
 
     /// Starts steering the user towards `query` ("the chair", "exit"), replacing any
@@ -158,6 +162,21 @@ final class ScenePerception: Sendable {
         // World space is gravity-aligned, so flattening onto world up gives a level
         // heading for bearings and the path test even before a floor has been found.
         let heading = corridor.flattened(ontoFloorNormal: [0, 1, 0]) ?? corridor
+
+        // T36: walking the whole mesh is slow, so regroup it every 10th analyzed frame and
+        // just re-measure the known doors and windows on the others.
+        let refreshStructures = structureFrameCount.withLock { count in
+            count += 1
+            return count % 10 == 1
+        }
+        if refreshStructures {
+            let features = structuralFeatures(from: classifiedFaceSamples(in: frame))
+            structures.withLock { $0 = features }
+        }
+        let structureDetections = structuralDetections(
+            structures.withLock { $0 }, heading: heading, camera: frame.camera,
+            orientation: interfaceOrientation, viewportSize: upright
+        )
 
         if let depthMap {
             let camera = frame.camera
@@ -291,7 +310,7 @@ final class ScenePerception: Sendable {
 
         let observation = SceneObservation(
             timestamp: .now,
-            detections: detections,
+            detections: detections + structureDetections,
             ground: groundSurface(for: hazards),
             recognizedText: recognizedText,
             elevationHazards: hazards,
