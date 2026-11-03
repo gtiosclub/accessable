@@ -26,6 +26,8 @@ final class LiveSceneViewModel {
     private(set) var isFloorMeasured = false
     /// Which way the geometry says is open; nil without depth.
     private(set) var path: PathAssessment?
+    /// Moving things predicted to reach the walking path (T34), soonest first.
+    private(set) var approaching: [ApproachThreat] = []
     /// Progress of "Take me to…", nil when no request is active or finished.
     private(set) var navigation: NavigationStatus?
     /// How the phone is held. Landscape widens the horizontal field of view from about
@@ -158,6 +160,7 @@ final class LiveSceneViewModel {
             cameraHeight = diagnostics.cameraHeight
             isFloorMeasured = diagnostics.isFloorMeasured
             path = diagnostics.path
+            approaching = diagnostics.approaching
             navigation = diagnostics.navigation
             performance = diagnostics.performance
             sessionDescription = Self.describe(
@@ -212,6 +215,14 @@ final class LiveSceneViewModel {
             case nil: "Blocked — no clear path"
             }
         }
+    }
+
+    /// "Car from your right, 1.4 s, 6.2 m/s" — one approach, for checking T34 against what
+    /// is actually happening in front of the tester.
+    func approachLine(_ threat: ApproachThreat) -> String {
+        let name = threat.label.prefix(1).uppercased() + threat.label.dropFirst()
+        let side = SpokenPhrasing.approachSide(threat.bearing)
+        return String(format: "%@ %@, %.1f s, %.1f m/s", name, side, threat.timeToApproach, threat.speed)
     }
 
     var performanceDescription: String? {
