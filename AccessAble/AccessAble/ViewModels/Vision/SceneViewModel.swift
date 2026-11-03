@@ -22,9 +22,12 @@ final class SceneViewModel {
     var canNavigate: Bool { services.scene is any SceneNavigating }
 
     @ObservationIgnored private let services: AppServices
+    /// Holds the screen awake and speaks up when guidance stops or returns (T27).
+    @ObservationIgnored private let guidance: GuidanceStatusMonitor
 
     init(services: AppServices) {
         self.services = services
+        guidance = GuidanceStatusMonitor(announcements: services.announcements)
     }
 
     /// Holds the shared camera until the calling task is cancelled.
@@ -35,10 +38,14 @@ final class SceneViewModel {
             errorMessage = "Camera guidance is unavailable."
             return
         }
+        if let provider = services.scene as? any GuidanceStatusProviding {
+            guidance.watch(provider)
+        }
         for await observation in services.scene.observations() {
             self.observation = observation
             navigation = (services.scene as? any SceneNavigating)?.navigationStatus
         }
+        guidance.stop()
         await services.scene.stop()
     }
 

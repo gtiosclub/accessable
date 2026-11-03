@@ -43,8 +43,16 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     private let handlers = Mutex<[UUID: FrameHandler]>([:])
     private let health = Mutex(FrameHealthCheck())
     private let trackingState = Mutex("not started")
+    private let status = Mutex(GuidanceStatus.idle)
+    private let statusBroadcaster = Broadcaster<GuidanceStatus>(replaysLatest: true)
+    private let recoveryTimeout = Mutex<Task<Void, Never>?>(nil)
     private let interruptionHandler = Mutex<(@Sendable (_ isInterrupted: Bool) -> Void)?>(nil)
     private let log = Logger(subsystem: "AccessAble", category: "ARSessionManager")
+
+    /// How long ARKit is given to relocalize after an interruption before guidance is
+    /// declared stopped (T27). Relocalization normally lands in a second or two; past this
+    /// the user is standing still waiting for guidance that is not coming back.
+    private static let relocalizationTimeout: Duration = .seconds(5)
 
     // MARK: - Lifecycle
 
@@ -52,6 +60,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     @MainActor
     func start() throws {
         guard ARWorldTrackingConfiguration.isSupported else {
+            setStatus(.unavailable)
             throw ARSessionManagerError.worldTrackingUnsupported
         }
 
@@ -63,17 +72,25 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         } else {
             log.notice("sceneDepth unsupported; running without LiDAR depth")
         }
+        // T36: classified mesh for doors and windows, where the device supports it
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
+            configuration.sceneReconstruction = .meshWithClassification
+        }
 
         health.withLock { $0.reset() }
+        cancelRecoveryTimeout()
         session.delegate = self
         session.delegateQueue = frameQueue
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+        setStatus(.running)
     }
 
     /// Pauses the session. Subscribers stay registered and get frames again after `start()`.
     @MainActor
     func stop() {
+        cancelRecoveryTimeout()
         session.pause()
+        setStatus(.idle)
     }
 
     // MARK: - Subscribing to frames
@@ -104,6 +121,53 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
 
     /// ARKit's latest tracking state in words, e.g. "normal" or "limited: initializing".
     var trackingStateDescription: String { trackingState.withLock { $0 } }
+
+    // MARK: - Guidance status (T27)
+
+    /// Whether camera guidance is running right now. The session is the only thing that
+    /// observes this, and it outlives every screen, so it is the one source of truth.
+    var guidanceStatus: GuidanceStatus { status.withLock { $0 } }
+
+    /// Status changes, starting with the current value so a screen that appears later is
+    /// not left guessing. Only changes are sent; the same status twice is not republished.
+    func guidanceStatuses() -> AsyncStream<GuidanceStatus> {
+        statusBroadcaster.stream(bufferingPolicy: .bufferingNewest(4))
+    }
+
+    private func setStatus(_ newStatus: GuidanceStatus) {
+        let changed = status.withLock { current in
+            guard current != newStatus else { return false }
+            current = newStatus
+            return true
+        }
+        guard changed else { return }
+        log.notice("guidance status: \(String(describing: newStatus), privacy: .public)")
+        statusBroadcaster.send(newStatus)
+    }
+
+    /// ARKit relocalizes by itself once an interruption ends, and reports success by
+    /// returning to normal tracking. Nothing reports failure, so waiting is the only way
+    /// to notice that guidance is not coming back.
+    private func scheduleRecoveryTimeout() {
+        let task = Task { [weak self] in
+            try? await Task.sleep(for: Self.relocalizationTimeout)
+            guard !Task.isCancelled, let self, case .recovering = self.guidanceStatus else { return }
+            self.setStatus(.stopped(reason: "Tracking could not be recovered."))
+        }
+        let previous = recoveryTimeout.withLock { stored in
+            defer { stored = task }
+            return stored
+        }
+        previous?.cancel()
+    }
+
+    private func cancelRecoveryTimeout() {
+        let previous = recoveryTimeout.withLock { stored in
+            defer { stored = nil }
+            return stored
+        }
+        previous?.cancel()
+    }
 }
 
 // MARK: - ARSessionDelegate
@@ -138,19 +202,38 @@ extension ARSessionManager: ARSessionDelegate {
         case .limited: "limited"
         }
         trackingState.withLock { $0 = description }
+
+        // Normal tracking is the only signal ARKit gives that relocalization worked.
+        if case .normal = camera.trackingState {
+            switch guidanceStatus {
+            case .interrupted, .recovering:
+                cancelRecoveryTimeout()
+                setStatus(.running)
+            case .idle, .running, .stopped, .unavailable:
+                break
+            }
+        }
     }
 
     func session(_ session: ARSession, didFailWithError error: Error) {
         log.error("ARKit session failed: \(error.localizedDescription, privacy: .public)")
+        cancelRecoveryTimeout()
+        setStatus(.stopped(reason: error.localizedDescription))
     }
 
     func sessionWasInterrupted(_ session: ARSession) {
         log.notice("ARKit session interrupted")
+        cancelRecoveryTimeout()
+        setStatus(.interrupted)
         interruptionHandler.withLock { $0 }?(true)
     }
 
     func sessionInterruptionEnded(_ session: ARSession) {
         log.notice("ARKit session interruption ended")
+        // Not the same as "tracking works again": ARKit now has to recognize where it is,
+        // and until it does, world coordinates mean nothing.
+        setStatus(.recovering)
+        scheduleRecoveryTimeout()
         interruptionHandler.withLock { $0 }?(false)
     }
 }
@@ -162,6 +245,80 @@ enum ARSessionManagerError: LocalizedError {
         switch self {
         case .worldTrackingUnsupported:
             "This device does not support ARKit world tracking, so camera guidance is unavailable."
+        }
+    }
+}
+
+/// Whether camera guidance is actually running, for the screens that have to say so out
+/// loud (T27).
+///
+/// One value rather than three loose callbacks: `sessionWasInterrupted`,
+/// `sessionInterruptionEnded` and `didFailWithError` are transitions in a single lifecycle,
+/// and reacting to each as it arrives produces contradictions — "guidance stopped" spoken
+/// after the session already came back, because the speech was still queued behind
+/// something else.
+enum GuidanceStatus: Equatable, Sendable {
+    /// Before `start()`, and after `stop()`.
+    case idle
+    /// The session is running; frames are flowing.
+    case running
+    /// Backgrounded, a phone call, or Siri. ARKit delivers nothing at all until it ends.
+    case interrupted
+    /// The interruption ended and ARKit is relocalizing. The remembered floor and occupancy
+    /// map are anchored in world coordinates, so they hold only if relocalization succeeds.
+    case recovering
+    /// Guidance has stopped and will not come back on its own.
+    case stopped(reason: String)
+    /// No ARKit world tracking on this device.
+    case unavailable
+}
+
+extension GuidanceStatus {
+    /// What to say on moving from `previous` into this status; nil when there is nothing
+    /// worth saying.
+    ///
+    /// An interruption and its end are announced by `ARSceneAnalyzer`'s interruption
+    /// handler ("Camera paused. Obstacle warnings are off." / "Camera back on…"), so they
+    /// say nothing here; saying them twice would bury the next warning. What this adds is
+    /// guidance failing to come back, and coming back after it had stopped.
+    func announcement(after previous: GuidanceStatus) -> AnnouncementEvent? {
+        switch (previous, self) {
+        case (.stopped, .running):
+            AnnouncementEvent(
+                category: .system,
+                priority: .high,
+                text: "Camera guidance restored.",
+                source: .system,
+                dedupKey: "guidance-restored"
+            )
+        case (_, .stopped(let reason)):
+            AnnouncementEvent(
+                category: .system,
+                priority: .critical,
+                text: "Camera guidance has stopped. \(reason)",
+                source: .system,
+                dedupKey: "guidance-stopped"
+            )
+        case (_, .unavailable):
+            AnnouncementEvent(
+                category: .system,
+                priority: .critical,
+                text: "Camera guidance is unavailable on this device.",
+                source: .system,
+                dedupKey: "guidance-unavailable"
+            )
+        default:
+            nil
+        }
+    }
+
+    /// Whether the display must be kept awake. Interrupted and recovering count: guidance is
+    /// expected back within seconds, and letting the screen sleep in between would stop the
+    /// camera for good.
+    var keepsScreenAwake: Bool {
+        switch self {
+        case .running, .interrupted, .recovering: true
+        case .idle, .stopped, .unavailable: false
         }
     }
 }

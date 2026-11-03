@@ -45,6 +45,37 @@ struct ObjectDetectionTests {
     }
 }
 
+@Suite("T39 - class-specific detection threshold")
+struct ObjectDetectionConfidenceTests {
+
+    @Test("Different classes can use different confidence thresholds")
+    func classSpecificThresholds() {
+        let policy = DetectionConfidencePolicy(
+            defaultThreshold: 0.6,
+            thresholdsByLabel: [
+                "chair": 0.5,
+                "suitcase": 0.7
+            ]
+        )
+
+        let results = objectDetections(
+            from: [
+                FakeObservation(
+                    confidence: 0.55,
+                    topLabel: "Chair"
+                ),
+                FakeObservation(
+                    confidence: 0.55,
+                    topLabel: "Suitcase"
+                )
+            ],
+            confidencePolicy: policy
+        )
+
+        #expect(results.map(\.label) == ["chair"])
+    }
+}
+
 @Suite("Fusing recognized objects with geometric obstacles")
 struct DetectionFusionTests {
     private func obstacle(_ box: CGRect, distance: Double = 2) -> Detection {
