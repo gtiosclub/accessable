@@ -64,9 +64,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
             [perception, broadcaster, announcementQueue, recorder, sessionManager] captured in
             let analysis = perception.analyze(captured.frame, interfaceOrientation: captured.interfaceOrientation)
             broadcaster.send(analysis.observation)
-            for event in analysis.announcements {
-                announcementQueue.yield(event)
-            }
+            // Register emitted event IDs before delivery starts. A delivered warning can arrive
+            // after its field-test scenario closes, and the recorder must retain its origin.
             recorder.record(FieldTestRecorder.FrameRecord(
                 analysis: analysis,
                 diagnostics: perception.diagnostics,
@@ -75,6 +74,9 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
                 tracking: sessionManager.trackingStateDescription,
                 cameraFPS: sessionManager.healthReport.averageFPS
             ))
+            for event in analysis.announcements {
+                announcementQueue.yield(event)
+            }
         }
     }
 

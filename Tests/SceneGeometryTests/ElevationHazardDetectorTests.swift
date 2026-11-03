@@ -51,6 +51,15 @@ struct ElevationHazardDetectorTests {
         #expect(abs(hazard.heightChange - 0.15) < 0.02)
     }
 
+    @Test("a low 6 cm curb remains detectable above the documented 5 cm noise floor")
+    func lowCurb() throws {
+        let samples = groundProfile(from: 0.2, to: 2.0) { $0 < 1.0 ? 0 : 0.06 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .stepUp)
+        #expect(abs(hazard.heightChange - 0.06) < 0.02)
+    }
+
     @Test("a 1:12 ramp is not a hazard")
     func rampIsNotAStep() {
         // Rises 25 cm over 3 m — more total height than the drop-off above, but spread
@@ -165,5 +174,27 @@ struct ElevationHazardDetectorTests {
 
         #expect(fromShuffled == fromOrdered)
         #expect(try #require(fromOrdered.first).type == .stepDown)
+    }
+
+    @Test("detected drop-offs take the urgent announcement path over ordinary steps")
+    func detectedDropOffUrgency() throws {
+        let dropProfile = groundProfile(from: 0.2, to: 2.0) { $0 < 0.9 ? 0 : -0.40 }
+        let stepProfile = groundProfile(from: 0.2, to: 2.0) { $0 < 0.9 ? 0 : -0.12 }
+        let drop = try #require(detectElevationHazards(samples: dropProfile).first)
+        let step = try #require(detectElevationHazards(samples: stepProfile).first)
+        #expect(drop.type == .dropOff)
+        #expect(step.type == .stepDown)
+
+        var dropAnnouncer = ObstacleAnnouncer()
+        var stepAnnouncer = ObstacleAnnouncer()
+        let dropEvents = (0 ..< 3).flatMap {
+            dropAnnouncer.announcements(for: [], hazards: [drop], at: Double($0) * 0.1)
+        }
+        let stepEvents = (0 ..< 3).flatMap {
+            stepAnnouncer.announcements(for: [], hazards: [step], at: Double($0) * 0.1)
+        }
+
+        #expect(try #require(dropEvents.first).priority == .critical)
+        #expect(try #require(stepEvents.first).priority == .high)
     }
 }

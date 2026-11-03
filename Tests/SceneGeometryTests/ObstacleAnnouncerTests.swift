@@ -326,6 +326,23 @@ struct ObstacleAnnouncerTests {
         #expect(stepEvent?.text == "Step down ahead, 1 metre.")
     }
 
+    @Test("a drop-off preempts an ordinary step when both confirm in one announcement cycle")
+    func dropOffWinsHazardContention() {
+        var announcer = ObstacleAnnouncer()
+        // The nearer step is considered first, so this exercises the global admission gate:
+        // the following drop-off must still be admitted as a higher-priority escalation.
+        let hazards = [
+            ElevationHazard(type: .stepDown, distance: 0.8, heightChange: -0.12),
+            ElevationHazard(type: .dropOff, distance: 0.9, heightChange: -0.40),
+        ]
+        _ = announcer.announcements(for: [], hazards: hazards, at: 0)
+        _ = announcer.announcements(for: [], hazards: hazards, at: 0.1)
+        let events = announcer.announcements(for: [], hazards: hazards, at: 0.2)
+
+        #expect(events.map(\.priority) == [.critical, .high])
+        #expect(events.first?.text == "Stop. Drop-off ahead.")
+    }
+
     @Test("a kerb that flickers is not announced again for the hazard repeat interval")
     func hazardFlicker() {
         var announcer = ObstacleAnnouncer()
