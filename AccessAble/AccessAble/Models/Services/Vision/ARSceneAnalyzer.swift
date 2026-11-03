@@ -132,8 +132,59 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     // MARK: - SceneDescribing
 
     /// Tier A: built from the latest observation, instantly and offline (T18).
+    /// If the camera isn't running (asked from Home, T26) it's turned on just long enough
+    /// to analyze a few fresh frames, then turned off again.
     func describeCurrentScene() async -> String {
-        SceneDescriptionBuilder().describe(broadcaster.latest ?? .empty)
+        let isRunning = state.withLock { $0.subscription != nil }
+        var observation = broadcaster.latest
+        if !isRunning {
+            observation = await freshObservation()
+        }
+        return SceneDescriptionBuilder().describe(observation ?? .empty)
+    }
+
+    /// Runs the pipeline for `frames` analyzed frames (or until `timeout`) and returns the
+    /// last observation. A few frames instead of one so the floor fit and tracker settle.
+    private func freshObservation(frames: Int = 8, timeout: Duration = .seconds(3)) async -> SceneObservation? {
+        let startedAt = Date.now
+        let stream = broadcaster.stream()
+        do {
+            try await start()
+        } catch {
+            return nil
+        }
+        let ours = state.withLock { $0.subscription }
+
+        let observation = await withTaskGroup(of: SceneObservation?.self) { group in
+            group.addTask {
+                var latest: SceneObservation?
+                var count = 0
+                // skip the replayed observation from before the camera started
+                for await observation in stream where observation.timestamp > startedAt {
+                    latest = observation
+                    count += 1
+                    if count >= frames { break }
+                }
+                return latest
+            }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return nil
+            }
+            // whichever finishes first cancels the other; the reader still returns what it saw
+            var result: SceneObservation?
+            for await value in group {
+                if let value { result = value }
+                group.cancelAll()
+            }
+            return result
+        }
+
+        // if a camera screen opened meanwhile it owns the session now, so leave it running
+        if state.withLock({ $0.subscription == ours }) {
+            await stop()
+        }
+        return observation
     }
 
     /// Tier B, "Ask AI" (T19): the next camera frame as a still, plus what the pipeline
