@@ -52,6 +52,10 @@ final class ScenePerception: Sendable {
         var uprightAspectRatio: Float = 3.0 / 4.0
         /// Analysis rate and latency over the last few seconds (T20).
         var performance: PerformanceMetrics?
+        /// Moving things predicted to reach the walking path (T34), soonest first. Shown on
+        /// the Live detection screen, where an approach can be checked against what is
+        /// actually happening in front of the tester.
+        var approaching: [ApproachThreat] = []
     }
 
     private let peopleDetector: PeopleDetector
@@ -65,6 +69,11 @@ final class ScenePerception: Sendable {
     private let floorMemory = Mutex(FloorMemory())
     private let tracker = Mutex(ObjectTracker())
     private let announcer = Mutex(ObstacleAnnouncer())
+    private let motion = Mutex(MotionTracker())
+    private let approach = Mutex(ApproachAnnouncer())
+    /// The user's own travel, so an object's world velocity can be turned into a velocity
+    /// relative to them (T34).
+    private let cameraMotion = Mutex(MotionHistory())
     private let frameTimer = Mutex(FrameTimer())
     private let occupancy = Mutex(LocalOccupancyMap())
     private let navigation = Mutex<NavigationGuide?>(nil)
@@ -96,6 +105,9 @@ final class ScenePerception: Sendable {
         floorMemory.withLock { $0.reset() }
         tracker.withLock { $0 = ObjectTracker() }
         announcer.withLock { $0 = ObstacleAnnouncer() }
+        motion.withLock { $0.reset() }
+        approach.withLock { $0 = ApproachAnnouncer() }
+        cameraMotion.withLock { $0 = MotionHistory() }
         navigation.withLock { $0 = nil }
         pendingNavigationQuery.withLock { $0 = nil }
         occupancy.withLock { $0.reset() }
@@ -214,6 +226,62 @@ final class ScenePerception: Sendable {
                 let profile = groundProfile(points: cloud, floor: floor.plane, corridor: corridor, excluding: found)
                 hazards = detectElevationHazards(samples: profile)
             }
+        } else {
+            // T33 — no depth sensor. ARKit still tracks with true metric scale, so the sparse
+            // feature cloud fits a floor (T10) and each detection's floor contact gives a
+            // metric position. Known object sizes cross-check it. What needs a dense cloud —
+            // geometric obstacles (T11), the occupancy map, the path plan and kerbs (T12) —
+            // has nothing to run on and stays absent, so warnings here are about recognized
+            // objects only.
+            let camera = frame.camera
+            let intrinsics = capturedIntrinsics(for: camera)
+            let features = frame.rawFeaturePoints?.points ?? []
+            // Feature points are sparse and cluster on texture, so a fit often fails. The
+            // remembered floor, and failing that a level plane at the assumed camera height,
+            // is what makes an estimate possible at all — at a wider uncertainty, which
+            // `GroundContactTuning` charges for.
+            let floor = floorMemory.withLock {
+                $0.update(fit: detectFloorPlane(points: features), cameraPosition: corridor.origin, at: frame.timestamp)
+            }
+            diagnostics.floor = floor.plane
+            diagnostics.cameraHeight = floor.cameraHeight
+            diagnostics.isFloorMeasured = floor.isMeasured
+
+            recognized = recognized.map { detection in
+                let contact = groundContactDistance(
+                    box: detection.boundingBox, orientation: imageOrientation, floor: floor,
+                    corridor: heading, intrinsics: intrinsics, cameraTransform: camera.transform
+                )
+                let sizeRange = ObjectSizePriors.prior(for: detection.label).flatMap {
+                    distanceRange(
+                        box: detection.boundingBox, orientation: imageOrientation,
+                        prior: $0, intrinsics: intrinsics
+                    )
+                }
+                guard let estimate = combinedDistance(groundContact: contact, sizeRange: sizeRange) else {
+                    return detection
+                }
+                // With a floor contact the position is known outright; from size alone the
+                // object is placed along the ray through its box, which still gives a usable
+                // bearing and in-path test.
+                let centre = imageOrientation.sensorPoint(
+                    fromUpright: CGPoint(x: detection.boundingBox.midX, y: detection.boundingBox.midY)
+                )
+                let position = contact?.position ?? worldPoint(
+                    sensorPoint: centre, atDistance: Float(estimate.meters),
+                    intrinsics: intrinsics, cameraTransform: camera.transform
+                )
+                var located = detection
+                located.distance = estimate.meters
+                located.distanceAccuracy = estimate.accuracy
+                located.worldPosition = position
+                guard let position else { return located }
+                located.bearing = heading.bearing(to: position)
+                if heading.contains(position), detection.isHazard || detection.label == "person" {
+                    inPath.insert(detection.id)
+                }
+                return located
+            }
         }
 
         let detections = tracker.withLock {
@@ -229,6 +297,22 @@ final class ScenePerception: Sendable {
                 at: frame.timestamp
             )
         }
+        // T34 — what is moving toward the user. World velocities come from the tracks'
+        // world positions; the user's own travel is taken out so walking toward a parked car
+        // is not an approach, and a cyclist crossing ahead is one even while barely nearing.
+        let userVelocity = cameraMotion.withLock { history -> SIMD3<Float> in
+            history.record(position: corridor.origin, at: frame.timestamp)
+            return history.motion?.velocity ?? .zero
+        }
+        let motions = motion.withLock { $0.update(detections, at: frame.timestamp) }
+        let threats = approachThreats(
+            detections: detections, motions: motions,
+            userVelocity: userVelocity, corridor: heading
+        )
+        diagnostics.approaching = threats
+        announcements += approach.withLock { $0.announcements(for: threats, at: frame.timestamp, now: .now) }
+
+        // An approach warning holds navigation cues back in the same way a path warning does.
         if !announcements.isEmpty {
             lastPathAnnouncement.withLock { $0 = frame.timestamp }
         }
@@ -315,6 +399,19 @@ private extension ScenePerception {
 
     /// ARKit's intrinsics describe the captured image, which is far larger than the depth
     /// map. Using them unscaled gives a point cloud that looks plausible and is quietly wrong.
+    /// Intrinsics for the captured image itself, unscaled. T33 works against the camera
+    /// image because without a depth sensor there is no depth map to scale them to.
+    func capturedIntrinsics(for camera: ARCamera) -> CameraIntrinsics {
+        CameraIntrinsics(
+            focalX: camera.intrinsics[0][0],
+            focalY: camera.intrinsics[1][1],
+            principalX: camera.intrinsics[2][0],
+            principalY: camera.intrinsics[2][1],
+            imageWidth: Int(camera.imageResolution.width),
+            imageHeight: Int(camera.imageResolution.height)
+        )
+    }
+
     func depthIntrinsics(for camera: ARCamera, depth: DepthMap) -> CameraIntrinsics {
         CameraIntrinsics(
             focalX: camera.intrinsics[0][0],
