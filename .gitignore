@@ -67,3 +67,4 @@ fastlane/test_output
 # Claude Code
 .claude/
 CLAUDE.md
+.vibe-wise/

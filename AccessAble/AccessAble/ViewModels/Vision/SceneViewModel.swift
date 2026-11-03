@@ -22,6 +22,8 @@ final class SceneViewModel {
     var canNavigate: Bool { services.scene is any SceneNavigating }
 
     @ObservationIgnored private let services: AppServices
+    /// Holds the screen awake and speaks up when guidance stops or returns (T27).
+    @ObservationIgnored private let guidance: GuidanceStatusMonitor
     @ObservationIgnored private var obstaclePresent = false
     @ObservationIgnored private var lastObstacleAlert: Date = .distantPast
 
@@ -30,6 +32,7 @@ final class SceneViewModel {
 
     init(services: AppServices) {
         self.services = services
+        guidance = GuidanceStatusMonitor(announcements: services.announcements)
     }
 
     func start() async {
@@ -38,6 +41,9 @@ final class SceneViewModel {
         } catch {
             errorMessage = "Camera guidance is unavailable."
             return
+        }
+        if let provider = services.scene as? any GuidanceStatusProviding {
+            guidance.watch(provider)
         }
         for await observation in services.scene.observations() {
             self.observation = observation
@@ -61,6 +67,7 @@ final class SceneViewModel {
     }
 
     func stop() async {
+        guidance.stop()
         await services.scene.stop()
     }
 

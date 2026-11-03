@@ -11,7 +11,7 @@ import UIKit
 /// Frames go through a `LatestOnlyProcessor` (T3), so when analysis is slower than the
 /// camera, stale frames are dropped rather than queued. `PerformanceMode` thins the input
 /// further by only offering every Nth camera frame.
-final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, Sendable {
+final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, GuidanceStatusProviding, Sendable {
     let sessionManager: ARSessionManager
     let perception: ScenePerception
     /// Idle unless a field test is being recorded from the Live detection screen.
@@ -121,6 +121,19 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         modeTask?.cancel()
         processor.cancelPending()
         await MainActor.run { sessionManager.stop() }
+    }
+
+    // MARK: - GuidanceStatusProviding
+
+    var guidanceStatus: GuidanceStatus { sessionManager.guidanceStatus }
+
+    func guidanceStatuses() -> AsyncStream<GuidanceStatus> { sessionManager.guidanceStatuses() }
+
+    /// A session that could not relocalize comes back as a different world, so this goes
+    /// through `start()`: it re-runs tracking and clears the remembered floor and occupancy
+    /// map, which were anchored in coordinates that no longer mean anything.
+    func restartGuidance() async throws {
+        try await start()
     }
 
     /// Tells the analyzer how the device is held, so Vision gets the right image
@@ -294,6 +307,16 @@ private struct CapturedImage: @unchecked Sendable {
 protocol AskedImageProviding: Sendable {
     /// The JPEG of the latest question's still; nil before any question, or if capture failed.
     var lastAskedImage: Data? { get }
+}
+
+/// Lets a screen hear when camera guidance stops or comes back, so it can say so and keep
+/// the display awake while guidance runs (T27). Separate from `SceneObservationProviding`
+/// so that contract stays as it is; services without a camera don't conform.
+protocol GuidanceStatusProviding: Sendable {
+    var guidanceStatus: GuidanceStatus { get }
+    func guidanceStatuses() -> AsyncStream<GuidanceStatus>
+    /// Restarts guidance from scratch, discarding everything remembered about the old world.
+    func restartGuidance() async throws
 }
 
 /// "Take me to the chair": scan the room by turning on the spot, then be steered to it.
