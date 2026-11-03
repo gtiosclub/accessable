@@ -53,7 +53,12 @@ struct AppServices: Sendable {
         announcements: any AnnouncementSink
     ) -> any SceneObservationProviding & SceneDescribing {
         guard ARSessionManager.isSupported else { return PlaceholderSceneProvider() }
-        return ARSceneAnalyzer(sessionManager: ARSessionManager(), performance: performance, announcements: announcements)
+        return ARSceneAnalyzer(
+            sessionManager: ARSessionManager(),
+            performance: performance,
+            announcements: announcements,
+            askAI: AskAI(responder: RuledAskAIResponder()) // T24 rules
+        )
     }
 
     /// For SwiftUI previews and unit tests.
