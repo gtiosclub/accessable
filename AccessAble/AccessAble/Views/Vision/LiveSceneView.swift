@@ -5,7 +5,7 @@ import SwiftUI
 /// Owner: Computer Vision (1.1). The live camera screen: ARKit preview with detection
 /// boxes drawn over it, and a readout of what the geometry detectors found.
 ///
-/// Requireis a real device — ARKit world tracking does not run in the Simulator — and a
+/// Requires a real device — ARKit world tracking does not run in the Simulator — and a
 /// LiDAR device for the floor, obstacle and kerb readouts.
 struct LiveSceneView: View {
     @State private var viewModel: LiveSceneViewModel
@@ -90,7 +90,7 @@ struct LiveSceneView: View {
                         )
                     )
                 }
-                
+
                 Image(systemName: "viewfinder")
                     .font(.system(size: 48, weight: .medium))
                     .foregroundStyle(.white)
@@ -146,7 +146,7 @@ struct LiveSceneView: View {
                 elevationTestControls
             }
             navigationControls
-            
+
             Button {
                 viewModel.identifyPointedAt()
             } label: {

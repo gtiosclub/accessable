@@ -125,36 +125,19 @@ final class LiveSceneViewModel {
         analyzer?.recorder.mark(label)
         lastMark = label
     }
-    
-    func identifyPointedAt() {
-        let identification = pointIdentifier.identify(in: observation)
 
-        let event: AnnouncementEvent
-        
-        if let identification {
-            let category: AnnouncementCategory = identification.kind == .text ? .landmark : .ambient
-            
-            let source: AnnouncementSource = identification.kind == .text ? .textRecognition : .sceneDescription
-            
-            event = AnnouncementEvent(
-                category: category,
-                priority: .normal,
-                text: identification.text,
-                source: source,
-                expiresAt: Date().addingTimeInterval(3),
-                dedupKey: "point-identify-\(identification.text.lowercased())"
-            )
-        } else {
-            event = AnnouncementEvent(
-                category: .ambient,
-                priority: .normal,
-                text: "Nothing recognized.",
-                source: .sceneDescription,
-                expiresAt: Date().addingTimeInterval(2),
-                dedupKey: "point-identify-none"
-            )
-        }
-        
+    /// Speaks what is in the middle of the frame (T43). A reply to a tap, so it is sent as
+    /// `.userInteraction`: the engine neither filters it by category nor drops a second tap
+    /// on the same thing as a duplicate.
+    func identifyPointedAt() {
+        let text = pointIdentifier.spokenIdentification(in: observation) ?? "Nothing recognized."
+        let event = AnnouncementEvent(
+            category: .system,
+            priority: .normal,
+            text: text,
+            source: .userInteraction,
+            expiresAt: Date().addingTimeInterval(3)
+        )
         Task { [announcements] in
             await announcements.submit(event)
         }

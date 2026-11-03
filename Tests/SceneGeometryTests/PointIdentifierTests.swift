@@ -5,7 +5,7 @@ import Testing
 @Suite("T43 - Point and Identify")
 struct PointIdentifierTests {
     private let identifier = PointIdentifier()
-    
+
     @Test("Text near the center is preferred over an object")
     func textIsPreferred() {
         let observation = SceneObservation(
@@ -26,12 +26,12 @@ struct PointIdentifierTests {
                 )
             ]
         )
-        
+
         #expect(
             identifier.identify(in: observation) == PointIdentification(text: "Room 204", kind: .text)
         )
     }
-    
+
     @Test("Object is returned when there is no text")
     func objectFallback() {
         let observation = SceneObservation(
@@ -45,12 +45,12 @@ struct PointIdentifierTests {
                 )
             ]
         )
-        
+
         #expect(
             identifier.identify(in: observation) == PointIdentification(text: "chair", kind: .object)
         )
     }
-    
+
     @Test("Detection far from the center is ignored")
     func offCenterIsIngored() {
         let observation = SceneObservation(
@@ -64,10 +64,10 @@ struct PointIdentifierTests {
                 )
             ]
         )
-        
+
         #expect(identifier.identify(in: observation) == nil)
     }
-    
+
     @Test("Closer object wins")
     func closerObjectWins() {
         let observation = SceneObservation(
@@ -88,14 +88,25 @@ struct PointIdentifierTests {
                 )
             ]
         )
-        
+
         #expect(
             identifier.identify(in: observation) == PointIdentification(text: "chair", kind: .object)
         )
     }
-    
+
     @Test("Empty scene returns nothing")
     func emptyScene() {
         #expect(identifier.identify(in: .empty) == nil)
+    }
+
+    @Test("an object is spoken with its direction and distance")
+    func spokenObject() {
+        let chair = Detection(
+            label: "chair", confidence: 0.9, boundingBox: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.2),
+            distance: 2, bearing: .ahead, origin: .model, isHazard: true
+        )
+        let observation = SceneObservation(detections: [chair])
+        #expect(PointIdentifier().spokenIdentification(in: observation) == "Chair 2 metres ahead.")
+        #expect(PointIdentifier().spokenIdentification(in: .empty) == nil)
     }
 }
