@@ -51,6 +51,37 @@ enum SpokenPhrasing {
         return "\(label) \(side), \(shortDistance(distance))."
     }
 
+    /// "A few people 3 metres ahead." / "About six people, 2 metres to 5 metres ahead,
+    /// spread out." — one sentence for a group instead of one per person (T35).
+    ///
+    /// The count is deliberately approximate: people occlude one another, so the detector's
+    /// number is a floor on the real one, and reading it out as exact would overstate what
+    /// is known. The group's near edge is what gets the distance, since that is what the
+    /// user reaches first.
+    static func describe(_ crowd: CrowdRegion) -> String {
+        let size = crowdSize(crowd.count)
+        let side = direction(crowd.bearing)
+        let spread = crowd.isSpreadOut ? ", spread out" : ""
+        if crowd.spansDistance {
+            let range = "\(shortDistance(crowd.nearestDistance)) to \(shortDistance(crowd.farthestDistance))"
+            return "\(size), \(range) \(side)\(spread)."
+        }
+        if side == "ahead" {
+            return "\(size) \(shortDistance(crowd.nearestDistance)) ahead\(spread)."
+        }
+        return "\(size) \(side), \(shortDistance(crowd.nearestDistance))\(spread)."
+    }
+
+    /// "A few people" / "About six people" / "A large group" — a count the detector can
+    /// actually support.
+    static func crowdSize(_ count: Int) -> String {
+        switch count {
+        case ..<5: "A few people"
+        case ..<10: "About \(count) people"
+        default: "A large group"
+        }
+    }
+
     /// "Drop-off", "Step up"…
     static func name(of hazard: ElevationHazardType) -> String {
         switch hazard {
