@@ -47,7 +47,7 @@ struct ObjectDetectionTests {
 
 @Suite("T39 - class-specific detection threshold")
 struct ObjectDetectionConfidenceTests {
-    
+
     @Test("Different classes can use different confidence thresholds")
     func classSpecificThresholds() {
         let policy = DetectionConfidencePolicy(
@@ -57,7 +57,7 @@ struct ObjectDetectionConfidenceTests {
                 "suitcase": 0.7
             ]
         )
-        
+
         let results = objectDetections(
             from: [
                 FakeObservation(
@@ -71,7 +71,7 @@ struct ObjectDetectionConfidenceTests {
             ],
             confidencePolicy: policy
         )
-        
+
         #expect(results.map(\.label) == ["chair"])
     }
 }

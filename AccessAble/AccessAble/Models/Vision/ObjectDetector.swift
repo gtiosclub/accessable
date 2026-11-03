@@ -45,16 +45,9 @@ func objectDetections(
     observations
         .compactMap { observation in
             guard let label = observation.topLabel?.lowercased(), !label.isEmpty,
-                !ignoredLabels.contains(label)
+                  !ignoredLabels.contains(label),
+                  confidencePolicy.accepts(label: label, confidence: observation.confidence)
             else { return nil }
-                  
-            guard confidencePolicy.accepts(
-                label: label,
-                confidence: observation.confidence
-            ) else {
-                return nil
-            }
-            
             return Detection(
                 label: label,
                 confidence: observation.confidence,
@@ -89,8 +82,10 @@ func objectDetections(
 /// model is created once under `lock` and never mutated afterwards; Vision allows one model
 /// to serve concurrent requests.
 final class ObjectDetector: @unchecked Sendable {
-    /// Confidence filtering for model detections. The default remains 0.6,
-    /// while T39 can override thresholds for individual objec classes.
+    /// Detections below their class's threshold are discarded (T39). The default is 0.6: at
+    /// 0.4 the model reported a spoon on an abstract wallpaper at 0.51, and at 0.5 a hand in
+    /// front of the lens was a suitcase. Fewer, surer labels: a missed label still leaves
+    /// the geometric obstacle.
     let confidencePolicy: DetectionConfidencePolicy
     /// People come from T14's dedicated detector; reporting them here too would double them.
     let ignoredLabels: Set<String> = ["person"]
@@ -100,9 +95,15 @@ final class ObjectDetector: @unchecked Sendable {
     private var model: Result<VNCoreMLModel, any Error>?
 
     /// Returns nil when the compiled model is not in `bundle`.
-    init?(modelName: String = "yolo11n", bundle: Bundle = .main, confidencePolicy: DetectionConfidencePolicy = DetectionConfidencePolicy(defaultThreshold: 0.6, thresholdsByLabel: ["chair": 0.55])) {
+    convenience init?(modelName: String = "yolo11n", bundle: Bundle = .main, confidencePolicy: DetectionConfidencePolicy = .standard) {
         guard let url = bundle.url(forResource: modelName, withExtension: "mlmodelc") else { return nil }
-        modelURL = url
+        self.init(compiledModelURL: url, confidencePolicy: confidencePolicy)
+    }
+
+    /// From a compiled model (`.mlmodelc`) anywhere on disk, e.g. one compiled for the
+    /// T20 test-set run, where the model isn't in a bundle.
+    init(compiledModelURL: URL, confidencePolicy: DetectionConfidencePolicy = .standard) {
+        modelURL = compiledModelURL
         self.confidencePolicy = confidencePolicy
     }
 

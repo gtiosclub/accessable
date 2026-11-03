@@ -26,11 +26,30 @@ struct AnnotatedObject: Codable, Equatable, Sendable {
     }
 }
 
+/// The conditions a frame was recorded in, so results can be split by them (T40).
+struct FrameConditions: Codable, Equatable, Sendable {
+    enum Lighting: String, Codable, CaseIterable, Sendable {
+        case bright, normal, dim, dark
+    }
+
+    enum Setting: String, Codable, CaseIterable, Sendable {
+        case indoor, outdoor
+    }
+
+    var lighting: Lighting?
+    var setting: Setting?
+    var note: String?
+}
+
 struct AnnotatedFrame: Codable, Equatable, Sendable {
     let scenario: TestScenario
     let image: String // path relative to TestSet/
     let objects: [AnnotatedObject]
     let measuredDistances: [String: Float]? // label -> tape-measured meters
+    /// label -> what the app said on the phone when the frame was taken. A saved image has
+    /// no depth, so LiDAR distances can only be scored if they were recorded with it.
+    var estimatedDistances: [String: Float]? = nil
+    var conditions: FrameConditions? = nil
 }
 
 struct TestSetManifest: Codable, Equatable, Sendable {
