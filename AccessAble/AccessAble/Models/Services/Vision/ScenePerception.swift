@@ -75,6 +75,8 @@ final class ScenePerception: Sendable {
     /// Doors and windows from the classified mesh (T36), refreshed every few frames.
     private let structures = Mutex<[StructuralFeature]>([])
     private let structureFrameCount = Mutex(0)
+    private let crosswalkConfirmer = Mutex(CrosswalkConfirmer())
+    private let streetSignals = Mutex(StreetSignalAnnouncer())
     /// Set when a request arrives, consumed by the next frame, which knows the frame time.
     private let pendingNavigationQuery = Mutex<String??>(nil)
     private let clearanceTuning = PathClearanceTuning.default
@@ -108,6 +110,8 @@ final class ScenePerception: Sendable {
         cameraQualityState.withLock { $0 = CameraQualityState() }
         structures.withLock { $0 = [] }
         structureFrameCount.withLock { $0 = 0 }
+        crosswalkConfirmer.withLock { $0 = CrosswalkConfirmer() }
+        streetSignals.withLock { $0 = StreetSignalAnnouncer() }
     }
 
     /// Starts steering the user towards `query` ("the chair", "exit"), replacing any
@@ -151,6 +155,13 @@ final class ScenePerception: Sendable {
         textReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp, locate: textLocator)
         let wasReadingText = textReader.isReading
         var recognized = recognizeObjects(in: frame.capturedImage, orientation: imageOrientation)
+        // T37: crosswalk stripes. Skipped when the phone points up and there's no ground in view.
+        let lookingUp = -frame.camera.transform.columns.2.y > 0.3
+        let stripes = lookingUp ? nil : uprightLumaGrid(
+            from: frame.capturedImage, orientation: imageOrientation,
+            width: 96, height: max(Int(96 * upright.height / upright.width), 1)
+        ).flatMap { detectCrosswalk(in: $0) }
+        let crosswalkBox = crosswalkConfirmer.withLock { $0.update(stripes) }
         var obstacles: [Detection] = []
         var hazards: [ElevationHazard] = []
         var path: PathAssessment?
@@ -252,6 +263,10 @@ final class ScenePerception: Sendable {
         let detections = tracker.withLock {
             $0.update(fuse(obstacles: obstacles, recognized: recognized), at: frame.timestamp)
         }
+        var observed = detections
+        if let crosswalkBox {
+            observed.append(Detection(label: "crosswalk", confidence: 1, boundingBox: crosswalkBox, origin: .model, isHazard: false))
+        }
         let recognizedText = textReader.currentText(at: frame.timestamp)
         var announcements = announcer.withLock {
             $0.announcements(
@@ -283,6 +298,7 @@ final class ScenePerception: Sendable {
         if !announcements.isEmpty {
             lastPathAnnouncement.withLock { $0 = frame.timestamp }
         }
+        announcements += streetSignals.withLock { $0.announcements(for: observed, at: frame.timestamp) }
 
         // "Take me to…": sightings go in, one instruction at a time comes out.
         if let pending = pendingNavigationQuery.withLock({ query in
@@ -313,7 +329,7 @@ final class ScenePerception: Sendable {
 
         let observation = SceneObservation(
             timestamp: .now,
-            detections: detections + structureDetections,
+            detections: observed + structureDetections,
             ground: groundSurface(for: hazards),
             recognizedText: recognizedText,
             elevationHazards: hazards,
