@@ -56,6 +56,8 @@ final class ScenePerception: Sendable {
         /// the Live detection screen, where an approach can be checked against what is
         /// actually happening in front of the tester.
         var approaching: [ApproachThreat] = []
+        /// Groups of people (T35), nearest first.
+        var crowds: [CrowdRegion] = []
     }
 
     private let peopleDetector: PeopleDetector
@@ -71,6 +73,7 @@ final class ScenePerception: Sendable {
     private let announcer = Mutex(ObstacleAnnouncer())
     private let motion = Mutex(MotionTracker())
     private let approach = Mutex(ApproachAnnouncer())
+    private let crowdAnnouncer = Mutex(CrowdAnnouncer())
     /// The user's own travel, so an object's world velocity can be turned into a velocity
     /// relative to them (T34).
     private let cameraMotion = Mutex(MotionHistory())
@@ -107,6 +110,7 @@ final class ScenePerception: Sendable {
         announcer.withLock { $0 = ObstacleAnnouncer() }
         motion.withLock { $0.reset() }
         approach.withLock { $0 = ApproachAnnouncer() }
+        crowdAnnouncer.withLock { $0 = CrowdAnnouncer() }
         cameraMotion.withLock { $0 = MotionHistory() }
         navigation.withLock { $0 = nil }
         pendingNavigationQuery.withLock { $0 = nil }
@@ -311,6 +315,12 @@ final class ScenePerception: Sendable {
         )
         diagnostics.approaching = threats
         announcements += approach.withLock { $0.announcements(for: threats, at: frame.timestamp, now: .now) }
+
+        // T35 — people grouped into crowds. Ambient, and never instead of T16: anyone
+        // actually in the path is still announced as an obstacle.
+        let crowds = detectCrowds(among: detections.filter { $0.label.lowercased() == "person" })
+        diagnostics.crowds = crowds.crowds
+        announcements += crowdAnnouncer.withLock { $0.announcements(for: crowds.crowds, at: frame.timestamp, now: .now) }
 
         // An approach warning holds navigation cues back in the same way a path warning does.
         if !announcements.isEmpty {

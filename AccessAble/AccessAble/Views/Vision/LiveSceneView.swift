@@ -162,6 +162,12 @@ struct LiveSceneView: View {
                     .foregroundStyle(threat.timeToApproach <= 1.5 ? Color.red : Color.orange)
             }
 
+            ForEach(viewModel.crowds) { crowd in
+                Text(viewModel.crowdLine(crowd))
+                    .font(.subheadline)
+                    .foregroundStyle(.teal)
+            }
+
             Text(viewModel.countsDescription)
                 .font(.subheadline)
 
