@@ -17,6 +17,17 @@ enum TestScenario: String, Codable, CaseIterable, Sendable {
     case busyHallway = "busy-hallway"
 }
 
+/// A condition a test frame was recorded in (T40). A frame lists every one that applies.
+enum EnvironmentalCondition: String, Codable, CaseIterable, Sendable {
+    case indoor
+    case outdoor
+    case brightLighting = "bright-lighting"
+    case dimLighting = "dim-lighting"
+    case lowCrowd = "low-crowd"
+    case busy
+    case movingPeople = "moving-people"
+}
+
 struct AnnotatedObject: Codable, Equatable, Sendable {
     let label: String
     let x, y, width, height: Double
@@ -24,21 +35,6 @@ struct AnnotatedObject: Codable, Equatable, Sendable {
     var groundTruth: GroundTruthDetection {
         GroundTruthDetection(label: label, boundingBox: CGRect(x: x, y: y, width: width, height: height))
     }
-}
-
-/// The conditions a frame was recorded in, so results can be split by them (T40).
-struct FrameConditions: Codable, Equatable, Sendable {
-    enum Lighting: String, Codable, CaseIterable, Sendable {
-        case bright, normal, dim, dark
-    }
-
-    enum Setting: String, Codable, CaseIterable, Sendable {
-        case indoor, outdoor
-    }
-
-    var lighting: Lighting?
-    var setting: Setting?
-    var note: String?
 }
 
 struct AnnotatedFrame: Codable, Equatable, Sendable {
@@ -49,7 +45,8 @@ struct AnnotatedFrame: Codable, Equatable, Sendable {
     /// label -> what the app said on the phone when the frame was taken. A saved image has
     /// no depth, so LiDAR distances can only be scored if they were recorded with it.
     var estimatedDistances: [String: Float]? = nil
-    var conditions: FrameConditions? = nil
+    /// What the frame was recorded in (T40), so results can be split by it.
+    var conditions: [EnvironmentalCondition]? = nil
 }
 
 struct TestSetManifest: Codable, Equatable, Sendable {
@@ -84,4 +81,65 @@ func evaluateDetector(
         )
     }
     return evaluateDetections(cases)
+}
+
+func distanceTestCases(
+    from manifest: TestSetManifest,
+    folder: URL,
+    estimate: (URL) throws -> [String: Float]
+) rethrows -> [DistanceTestCase] {
+    var cases: [DistanceTestCase] = []
+
+    for frame in manifest.frames {
+        guard let actualDistances = frame.measuredDistances else {
+            continue
+        }
+
+        let estimatedDistances = try estimate(
+            folder.appending(path: frame.image)
+        )
+
+        for (label, actualMeters) in actualDistances {
+            guard let estimatedMeters = estimatedDistances[label] else {
+                continue
+            }
+
+            cases.append(
+                DistanceTestCase(
+                    estimatedMeters: estimatedMeters,
+                    actualMeters: actualMeters
+                )
+            )
+        }
+    }
+
+    return cases
+}
+
+func evaluateDistanceEstimates(
+    on manifest: TestSetManifest,
+    folder: URL,
+    estimate: (URL) throws -> [String: Float]
+) rethrows -> DistanceMetrics? {
+    let cases = try distanceTestCases(
+        from: manifest,
+        folder: folder,
+        estimate: estimate
+    )
+
+    return evaluateDistances(cases)
+}
+
+func calibrateDistanceEstimates(
+    on manifest: TestSetManifest,
+    folder: URL,
+    estimate: (URL) throws -> [String: Float]
+) rethrows -> DistanceCalibration? {
+    let cases = try distanceTestCases(
+        from: manifest,
+        folder: folder,
+        estimate: estimate
+    )
+
+    return fitDistanceCalibration(from: cases)
 }

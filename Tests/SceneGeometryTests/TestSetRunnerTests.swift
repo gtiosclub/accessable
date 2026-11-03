@@ -20,7 +20,7 @@ private func frame(
     objects: [AnnotatedObject],
     measured: [String: Float]? = nil,
     estimated: [String: Float]? = nil,
-    lighting: FrameConditions.Lighting? = nil
+    conditions: [EnvironmentalCondition]? = nil
 ) -> AnnotatedFrame {
     AnnotatedFrame(
         scenario: scenario,
@@ -28,7 +28,7 @@ private func frame(
         objects: objects,
         measuredDistances: measured,
         estimatedDistances: estimated,
-        conditions: lighting.map { FrameConditions(lighting: $0) }
+        conditions: conditions
     )
 }
 
@@ -62,10 +62,10 @@ private func detectWithAppDetectors() async throws -> (URL) throws -> [Detection
 
 @Suite("T20 — test set runner")
 struct TestSetRunnerTests {
-    @Test func splitsResultsByScenarioAndLighting() {
+    @Test func splitsResultsByScenarioAndCondition() {
         let manifest = TestSetManifest(version: 1, frames: [
-            frame(.chairAhead, "a.jpg", objects: [chair], lighting: .normal),
-            frame(.busyHallway, "b.jpg", objects: [person], lighting: .dim),
+            frame(.chairAhead, "a.jpg", objects: [chair], conditions: [.indoor]),
+            frame(.busyHallway, "b.jpg", objects: [person], conditions: [.indoor, .dimLighting]),
         ])
         // finds the chair, misses the person
         let report = evaluateTestSet(manifest, folder: URL(filePath: "/tmp")) { url in
@@ -75,8 +75,9 @@ struct TestSetRunnerTests {
         #expect(report.overall.truePositives == 1 && report.overall.falseNegatives == 1)
         #expect(report.byScenario[.chairAhead]?.recall == 1)
         #expect(report.byScenario[.busyHallway]?.recall == 0)
-        #expect(report.byLighting[.dim]?.recall == 0)
-        #expect(report.byLighting[.bright] == nil)
+        #expect(report.byCondition[.dimLighting]?.recall == 0)
+        #expect(report.byCondition[.indoor]?.recall == 0.5)
+        #expect(report.byCondition[.brightLighting] == nil)
         #expect(report.missingScenarios.count == TestScenario.allCases.count - 2)
         #expect(report.performance != nil)
     }
@@ -115,10 +116,10 @@ struct TestSetRunnerTests {
 
         let withConditions = """
         {"version": 1, "frames": [{"scenario": "dim-lighting", "image": "x.jpg", "objects": [],
-          "conditions": {"lighting": "dim", "setting": "indoor"}}]}
+          "conditions": ["indoor", "dim-lighting"]}]}
         """
         let decoded = try JSONDecoder().decode(TestSetManifest.self, from: Data(withConditions.utf8))
-        #expect(decoded.frames[0].conditions == FrameConditions(lighting: .dim, setting: .indoor))
+        #expect(decoded.frames[0].conditions == [.indoor, .dimLighting])
     }
 
     @Test func summaryNamesWhatIsMissing() {

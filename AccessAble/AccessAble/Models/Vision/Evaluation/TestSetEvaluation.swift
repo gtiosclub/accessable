@@ -3,15 +3,16 @@ import Foundation
 import ImageIO
 
 // T20: one run over the whole recorded test set — precision and recall overall, per
-// scenario and per lighting, distance error where tape measurements exist, and how long
+// scenario and per recording condition (T40), distance error where tape measurements exist, and how long
 // detection took per frame.
 
 struct TestSetReport: Sendable {
     let frameCount: Int
     let overall: DetectionMetrics
     let byScenario: [TestScenario: DetectionMetrics]
-    /// Only frames whose `conditions` give a lighting.
-    let byLighting: [FrameConditions.Lighting: DetectionMetrics]
+    /// A frame counts towards each condition it lists; frames without conditions only
+    /// count overall and per scenario.
+    let byCondition: [EnvironmentalCondition: DetectionMetrics]
     /// nil when no frame has both a measured and an estimated distance.
     let distance: DistanceMetrics?
     /// Timed on whatever ran the evaluation, so only comparable between runs on one machine.
@@ -25,8 +26,8 @@ struct TestSetReport: Sendable {
         for scenario in TestScenario.allCases {
             if let metrics = byScenario[scenario] { lines.append(Self.row(scenario.rawValue, metrics)) }
         }
-        for lighting in FrameConditions.Lighting.allCases {
-            if let metrics = byLighting[lighting] { lines.append(Self.row("lighting \(lighting.rawValue)", metrics)) }
+        for condition in EnvironmentalCondition.allCases {
+            if let metrics = byCondition[condition] { lines.append(Self.row("condition \(condition.rawValue)", metrics)) }
         }
         if let distance {
             lines.append(String(
@@ -50,7 +51,7 @@ struct TestSetReport: Sendable {
     }
 
     private static func row(_ name: String, _ metrics: DetectionMetrics) -> String {
-        let padded = name.padding(toLength: 24, withPad: " ", startingAt: 0)
+        let padded = name.padding(toLength: 28, withPad: " ", startingAt: 0)
         return String(
             format: "%@ precision %.2f  recall %.2f  (TP %d, FP %d, FN %d)",
             padded, metrics.precision, metrics.recall,
@@ -103,8 +104,8 @@ func evaluateTestSet(
         frameCount: manifest.frames.count,
         overall: evaluateDetections(cases.map(\.testCase)),
         byScenario: Dictionary(grouping: cases, by: \.frame.scenario).mapValues { evaluateDetections($0.map(\.testCase)) },
-        byLighting: Dictionary(grouping: cases.filter { $0.frame.conditions?.lighting != nil }) { $0.frame.conditions!.lighting! }
-            .mapValues { evaluateDetections($0.map(\.testCase)) },
+        byCondition: Dictionary(grouping: cases.flatMap { item in (item.frame.conditions ?? []).map { ($0, item.testCase) } }) { $0.0 }
+            .mapValues { evaluateDetections($0.map(\.1)) },
         distance: evaluateDistances(distances),
         performance: evaluatePerformance(timings),
         missingScenarios: manifest.missingScenarios
