@@ -52,6 +52,10 @@ final class ScenePerception: Sendable {
         var uprightAspectRatio: Float = 3.0 / 4.0
         /// Analysis rate and latency over the last few seconds (T20).
         var performance: PerformanceMetrics?
+        /// Moving things predicted to reach the walking path (T34), soonest first. Shown on
+        /// the Live detection screen, where an approach can be checked against what is
+        /// actually happening in front of the tester.
+        var approaching: [ApproachThreat] = []
     }
 
     private let peopleDetector: PeopleDetector
@@ -67,6 +71,11 @@ final class ScenePerception: Sendable {
     private let floorMemory = Mutex(FloorMemory())
     private let tracker = Mutex(ObjectTracker())
     private let announcer = Mutex(ObstacleAnnouncer())
+    private let motion = Mutex(MotionTracker())
+    private let approach = Mutex(ApproachAnnouncer())
+    /// The user's own travel, so an object's world velocity can be turned into a velocity
+    /// relative to them (T34).
+    private let cameraMotion = Mutex(MotionHistory())
     private let frameTimer = Mutex(FrameTimer())
     private let occupancy = Mutex(LocalOccupancyMap())
     private let navigation = Mutex<NavigationGuide?>(nil)
@@ -103,6 +112,9 @@ final class ScenePerception: Sendable {
         floorMemory.withLock { $0.reset() }
         tracker.withLock { $0 = ObjectTracker() }
         announcer.withLock { $0 = ObstacleAnnouncer() }
+        motion.withLock { $0.reset() }
+        approach.withLock { $0 = ApproachAnnouncer() }
+        cameraMotion.withLock { $0 = MotionHistory() }
         navigation.withLock { $0 = nil }
         pendingNavigationQuery.withLock { $0 = nil }
         occupancy.withLock { $0.reset() }
@@ -337,6 +349,20 @@ final class ScenePerception: Sendable {
                 at: frame.timestamp
             )
         }
+        // T34 — what is moving toward the user. World velocities come from the tracks'
+        // world positions; the user's own travel is taken out so walking toward a parked car
+        // is not an approach, and a cyclist crossing ahead is one even while barely nearing.
+        let userVelocity = cameraMotion.withLock { history -> SIMD3<Float> in
+            history.record(position: corridor.origin, at: frame.timestamp)
+            return history.motion?.velocity ?? .zero
+        }
+        let motions = motion.withLock { $0.update(detections, at: frame.timestamp) }
+        let threats = approachThreats(
+            detections: detections, motions: motions,
+            userVelocity: userVelocity, corridor: heading
+        )
+        diagnostics.approaching = threats
+        announcements += approach.withLock { $0.announcements(for: threats, at: frame.timestamp, now: .now) }
 
         // T32 — camera aiming and image quality. Normal priority, so it never talks over a
         // path warning, and only once a problem has lasted a moment: the phone dips and
@@ -355,6 +381,7 @@ final class ScenePerception: Sendable {
             )
         }
 
+        // An approach warning holds navigation cues back in the same way a path warning does.
         if !announcements.isEmpty {
             lastPathAnnouncement.withLock { $0 = frame.timestamp }
         }

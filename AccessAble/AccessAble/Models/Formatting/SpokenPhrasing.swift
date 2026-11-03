@@ -98,6 +98,30 @@ enum SpokenPhrasing {
         return sentences.joined(separator: " ")
     }
 
+    /// "Car approaching from your right." / "Stop. Cyclist from your left." (T34)
+    ///
+    /// Where it is coming *from* rather than where it is, which is what the listener needs:
+    /// a static obstacle is somewhere to be avoided, while an approaching one is a direction
+    /// to turn away from.
+    static func guidance(for threat: ApproachThreat, priority: AnnouncementPriority) -> String {
+        let name = threat.label.prefix(1).uppercased() + threat.label.dropFirst()
+        let side = approachSide(threat.bearing)
+        if priority == .critical {
+            return "Stop. \(name) \(side)."
+        }
+        return "\(name) approaching \(side)."
+    }
+
+    /// "from your left" / "from behind" / "ahead" — the direction an approach is coming from.
+    static func approachSide(_ bearing: RelativeBearing) -> String {
+        switch bearing.side {
+        case .slightlyLeft, .left: "from your left"
+        case .slightlyRight, .right: "from your right"
+        case .behind: "from behind"
+        case .ahead: "ahead"
+        }
+    }
+
     /// "Step down ahead, 2 metres." / "Stop. Drop-off ahead."
     static func guidance(for hazard: ElevationHazard, priority: AnnouncementPriority) -> String {
         let name = name(of: hazard.type)
