@@ -222,7 +222,32 @@ a physical device by the integrator; see **Device validation**.
 | T17 OCR | Smitha | #114 | Integrated | `TextDetector.swift`, `RecognizedTextMemory.swift`, `TextReader.swift` | Off the safety path at ≤1 Hz; confidence filter and de-duplication. |
 | T18 Instant descriptions | Smitha | #112 | Integrated | `SceneDescriptionBuilder.swift` | Hazards first, capped at four items, speakable empty scene; serves `describeCurrentScene()`. |
 | T19 Ask AI | Deshna, Nish | #144 | Integrated, not on device yet | `AskAI.swift`, `ImageFacts.swift`, `ARSceneAnalyzer.ask` | On-device only. Facts: the latest `SceneObservation` (objects, people, kerbs with distance and direction, as in T18) plus text (T17's `TextDetector`), scene labels and each object's main colour read from one still frame. Foundation Models answers from those facts, a template where Apple Intelligence is unavailable; iOS 26's model is text-only, so it never sees the image. Outside the obstacle pipeline. Camera guidance screen has an Ask AI section; Home has none yet. If the model fails (guardrail, context window), the template answers instead. The answer is spoken only through VoiceOver until the announcement engine (3.3) lands. |
-| T20 Test set & metrics | Deshna | #122 | Metrics integrated; data missing | `Evaluation/`, `TestSet/` | Live FPS/latency on the Live screen. `TestSet/annotations.json` has no frames yet. |
+| T20 Test set & metrics | Deshna | #122 | Integrated; little data | `Evaluation/`, `TestSet/` | Live FPS/latency on the Live screen. The recorded set has 4 chair frames (T40); the other 10 scenarios are still to record. `swift test --filter recordedTestSet` scores it (T20 runner, #174). |
+
+## Task status (T23–T45, second integration)
+
+Merged into `cv-integration-2` on top of `computer_vision` at `8489803` (which includes the
+direct commits for floor memory, the occupancy map, path clearance and "Take me to…").
+Same caveat: none of this has been checked on a device by the integrator.
+
+| Task | Owner | PR | Where | Notes |
+|---|---|---|---|---|
+| T23 Ask AI priorities | Nish | #176 | `AIPriorities.swift`, Settings | The user ranks hazards, navigation, people, signs, landmarks; the prompt and the answer's sentences follow that order. Close hazards still come first. Stacked on #175. |
+| T24 Ask AI rules | Nish | #175 | `AskAIRules.swift` | Every answer (model or template) is cut to two sentences / 40 words, "can't tell" when nothing was found, a close hazard prepended, recent sentences not repeated, and safety claims removed. Integration fix: a negation only cancels a claim in its own clause ("There aren't any cars, so you can cross." is removed). |
+| T26 Describe from Home | Deshna | #183 | `ARSceneAnalyzer.describeCurrentScene` | Starts the camera for up to 8 frames / 3 s when no camera screen is open, then stops it. |
+| T27 Guidance kept alive | Rison | #186 | `ARSessionManager` (`GuidanceStatus`), `GuidanceStatusMonitor` | Screen stays awake while guidance runs. Silent on interruptions, "Camera guidance restored." when it returns, one automatic restart if relocalization fails within 5 s. |
+| T32 Camera quality hints | Smitha | #178 | `CameraQualityEvaluator.swift`, `ImageSharpness.swift` | "Tilt your phone upward/downward", "Too dark", "Hold steady". Integration fix: normal priority, a problem must last 1 s, repeats at most every 10 s. Thresholds (±0.35 forward-Y, 250 lux, sharpness 4) need device tuning. |
+| T33 Non-LiDAR distances | Rison | #188 | `GroundContactDistance.swift`, `ObjectSizePrior.swift`, `EstimatedDistance.swift` | Floor contact from ARKit feature points plus a height prior per class. `Detection.distanceAccuracy`; estimates are spoken "about 2 metres" and warnings band on the near end of the uncertainty. LiDAR devices are unchanged. |
+| T34 Approaching objects | Rison | #189 | `MotionTracker.swift`, `ApproachAssessment.swift`, `ApproachAnnouncer.swift` | Least-squares velocity over 0.6 s, user motion removed, closest-approach time. "Stop." inside 1.5 s, a warning inside 3 s. Tune in a busy hallway: anyone passing within ~1 m counts. |
+| T35 Crowds | Rison | #190 | `CrowdDetector.swift`, `CrowdAnnouncer.swift` | 3+ people within 2 m become one sentence in descriptions and an ambient mention at most every 15 s. |
+| T36 Doors and windows | Deshna | #182 | `MeshFeatures.swift`, `StructuralFeatures.swift` | ARKit `meshWithClassification`, regrouped every 10th frame. Doors are described and (integration) found by "Take me to the door". Watch the mesh's battery and thermal cost. |
+| T37 Street signals | Deshna | #184 | `StreetCrossing.swift`, `LumaSampler.swift` | Traffic lights and stop signs from YOLO; crosswalks from a stripe detector on the lower image, 3 of 5 frames to confirm, once per 20 s. Never says "safe". Check indoor false positives (striped floors, stair edges, blinds). |
+| T38 Spoken camera questions | Nish | #177 | `VisualQuestion.swift`, `CommandViewModel` | Questions about what the camera sees go to Ask AI, the rest to the text assistant. Integration fix: asked with no camera screen open, Ask starts the camera for the question. |
+| T39 Per-class thresholds | Smitha | #179 | `DetectionConfidencePolicy.swift` | 0.6 default, chairs at 0.55 (`DetectionConfidencePolicy.standard`). |
+| T40 Test data | Smitha | #180 | `TestSet/`, `Evaluation/TestSet.swift` | 4 tape-measured chair frames with `conditions` tags; distance cases and calibration from recorded frames. `conditions` is a list of tags (#174 used an object; reconciled to the list). |
+| T41 Elevation validation | Petr | #171 | `FieldTestRecorder`, Live detection | Setup and outcome records for the elevation field procedure below. |
+| T45 Ask AI cancellation | Petr | #170 | `AskAI.swift` | Cancelling a question resumes once, including while Vision work is queued. |
+| T20 runner | Nish | #174 | `Evaluation/TestSetEvaluation.swift` | Precision/recall overall, per scenario and per condition, distance error, detection time. |
 
 ### Task descriptions that changed
 
@@ -261,8 +286,8 @@ a physical device by the integrator; see **Device validation**.
 ## Known limitations
 
 - **No device validation yet.** Everything below "Device validation" is unverified on hardware.
-- **Non-LiDAR devices** get recognized objects and people without distances. Nothing
-  distance-based is announced, and there is no relative-depth fallback.
+- **Non-LiDAR devices** get estimated distances for recognized objects and people (T33),
+  but no geometric obstacles, occupancy map, path plan or kerbs: those need dense depth.
 - **YOLO11 is AGPL-3.0** (Ultralytics). Fine for the club build; it must be replaced with a
   permissively licensed model, or licensed commercially, before any App Store or other public
   distribution.
