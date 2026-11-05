@@ -227,8 +227,9 @@ private struct DetectionBox: View {
 }
 
 /// Renders the app's shared ARKit session, so the preview and the detections come from
-/// the same frames.
-private struct ARCameraPreview: UIViewRepresentable {
+/// the same frames. Internal, not private: the "Camera guidance" screen (`SceneView`)
+/// reuses it so both previews come from the one session the same way.
+struct ARCameraPreview: UIViewRepresentable {
     let session: ARSession
 
     func makeUIView(context: Context) -> ARSCNView {
