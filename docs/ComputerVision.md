@@ -200,7 +200,7 @@ protocol AnnouncementSink { func submit(_ event: AnnouncementEvent) async }
 10. **Swappable object model.** `ObjectDetector` takes the model name; any Core ML detector
     exported with built-in NMS drops in. `hazardLabels` is the only COCO-specific part.
 
-## Task status (T1–T20)
+## Task status (T1–T20, T31)
 
 "Integrated" means the code runs in the live pipeline. Nothing below has been checked on
 a physical device by the integrator; see **Device validation**.
@@ -219,7 +219,7 @@ a physical device by the integrator; see **Device validation**.
 | T10 Floor plane | Rison | direct commit | Integrated | `FloorPlaneDetector.swift`, `FloorMemory.swift` | Support ratio lowered to 8% so a strip of floor at the bottom of the frame still fits; refinement re-checked for tilt (it could rotate a candidate into a wall). `FloorMemory` carries the floor across frames: the last fit for 1.5 s, then a level plane at the remembered camera height, so obstacles are still measured with no floor in view. Fits putting the camera outside 0.4–2.5 m, jumping more than 0.35 m, or tilted past 30° are rejected. |
 | T11 Geometric obstacles | Rison | direct commit | Integrated | `GeometricObstacleDetector.swift`, `LocalOccupancyMap.swift`, `PathClearance.swift` | Uses `WalkingCorridor.contains`. Obstacles carry corridor-relative extents and a shape `Kind` (wall, pole, low obstacle, obstacle); `coverageProfile` tells a wall from a narrow view of one. Guidance no longer comes from the frame: `LocalOccupancyMap` is a 16 m, 0.1 m grid in ARKit's world that every depth point updates — the cell it lands in is hit, the cells its ray crossed are seen through — one update per cell per frame as log-odds. `planPath` reads it: how far a corridor-wide lane stays free straight ahead, at each sidestep, and at each turn. Sidesteps are offered only into lanes the scan has seen free (≥40% known-free cells); turns may point at the unknown. The map remembers the wall after the user turns, which is what stops the advice flipping. |
 | T12 Curbs, drop-offs | Rison | direct commit | Integrated | `GroundProfiler.swift`, `ElevationHazardDetector.swift` | Hazards now in `SceneObservation` and announced. The profile starts 0.5 m out, takes nothing above 0.3 m, and cuts out T11's obstacle footprints — a chair leg standing in a bin otherwise outnumbers the floor and reads as "step up, then drop-off" (seen in the 17 Oct demo). A rise that falls back within 0.6 m is an object, not terrain, and is dropped. Hazards need 3 frames to confirm. |
-| T13 YOLO / Core ML | Deshna | #107 | Integrated | `ObjectDetector.swift`, `DetectionFusion.swift` | Lazy model load, 0.5 threshold, people left to T14, fusion with geometry added. Fusion is strict: only `fusableLabels` (collidable things and people) transfer, the boxes must overlap mutually (≥50% of the smaller, ≥20% of the larger) and their depths must agree within 0.5 m or 25%. Before that a seated person behind a chair renamed the chair "person", and a phone on a desk renamed the desk. |
+| T13 YOLO / Core ML | Deshna | #107 | Integrated | `ObjectDetector.swift`, `DetectionFusion.swift` | Lazy model load, 0.5 threshold, people left to T14, fusion with geometry added. Fusion is strict: only `fusableLabels` (collidable things and people) transfer, the boxes must overlap mutually (≥50% of the smaller, ≥20% of the larger) and their depths must agree within 0.5 m or 25%. Before that a seated person behind a chair renamed the chair "person", and a phone on a desk renamed the desk. The bundled model itself (originally YOLO11n) was replaced by T31 — see that row below and "Known limitations". |
 | T14 People detection | Rison | direct commit | Integrated | `PeopleDetector.swift` | Unchanged; people now get distances. |
 | T15 Object tracking | Petr | #103 | Integrated | `ObjectTracker.swift` | ARKit time, age-based expiry, generic "obstacle" label compatible, writes `trackID`. Image velocity dropped (unused). |
 | T16 Alert thresholds | Smitha | #105 | Rewritten twice, integrated | `ObstacleAnnouncer.swift` | Emits `AnnouncementEvent`s about the *path*, not per object. The occupancy map's blocked distance sets the band (`BlockedAhead`); detections only name what blocks ("chair", "wall", else "obstacle"). Two bands by default: a warning with the way round at 2.5 m, "Stop" at 1.2 m. Spoken when first confirmed (2 frames, 0.35 m hysteresis), on escalation, when the advice changes — and a new direction must hold 1 s to count, then wait 4 s since the last word — and as a reminder every 8 s at the stop band. "Path clear" only after a stop. At most one announcement per 2.5 s unless more urgent; navigation cues wait 2.5 s after a path warning. Phrasing is short: "Chair ahead. Go left." / "Stop. Wall ahead. Turn right." / "Stop. Wall ahead. No clear path. Turn around slowly." Kerbs and steps: same rules per type, 3 frames to confirm, 8 s repeat hold; `.unknown` not spoken. |
@@ -227,6 +227,7 @@ a physical device by the integrator; see **Device validation**.
 | T18 Instant descriptions | Smitha | #112 | Integrated | `SceneDescriptionBuilder.swift` | Hazards first, capped at four items, speakable empty scene; serves `describeCurrentScene()`. |
 | T19 Ask AI | Deshna, Nish | #144 | Integrated, not on device yet | `AskAI.swift`, `ImageFacts.swift`, `ARSceneAnalyzer.ask` | On-device only. Facts: the latest `SceneObservation` (objects, people, kerbs with distance and direction, as in T18) plus text (T17's `TextDetector`), scene labels and each object's main colour read from one still frame. Foundation Models answers from those facts, a template where Apple Intelligence is unavailable; iOS 26's model is text-only, so it never sees the image. Outside the obstacle pipeline. Camera guidance screen has an Ask AI section; Home has none yet. If the model fails (guardrail, context window), the template answers instead. The answer is spoken only through VoiceOver until the announcement engine (3.3) lands. |
 | T20 Test set & metrics | Deshna | #122 | Metrics integrated; data missing | `Evaluation/`, `TestSet/` | Live FPS/latency on the Live screen. `TestSet/annotations.json` has no frames yet. |
+| T31 Replace YOLO11 | Sahiti | pending | Integrated, not on device yet | `DFineObjectDetector.swift`, `ObjectDetector.swift` (`ObjectDetecting`) | Bundled model is now D-FINE-nano (Apache-2.0, `Peterande/D-FINE`, converted by `john-rocky/peaceofcake`); `yolo11n.mlpackage` removed. No built-in NMS, so it's a separate class behind a new `ObjectDetecting` protocol rather than a `modelName` swap on `ObjectDetector`, which stays as-is for a future NMS-included model. Picked after evaluating it and the full/tiny YOLOv3 (also Apple, MIT) headlessly with `coremltools` against three real COCO images — see "Known limitations" for the numbers and what was rejected. |
 
 ### Task descriptions that changed
 
@@ -267,12 +268,23 @@ a physical device by the integrator; see **Device validation**.
 - **No device validation yet.** Everything below "Device validation" is unverified on hardware.
 - **Non-LiDAR devices** get recognized objects and people without distances. Nothing
   distance-based is announced, and there is no relative-depth fallback.
-- **YOLO11 is AGPL-3.0** (Ultralytics). Fine for the club build; it must be replaced with a
-  permissively licensed model, or licensed commercially, before any App Store or other public
-  distribution.
-- **Model false positives.** On abstract wallpapers the model reported "spoon" (0.51) and
+- **Object-detection model license (T31).** Resolved: the bundled model is now D-FINE-nano
+  (Apache-2.0), not YOLO11n (AGPL-3.0). Picked after evaluating it and both full and Tiny
+  YOLOv3 (Apple's own Core ML gallery, also MIT) headlessly with `coremltools` against three
+  real COCO images, not just this project's one text-reading test photo — full YOLOv3 matched
+  or beat D-FINE on accuracy but ran 5–6x slower and 11x larger on disk for it; YOLOv3-Tiny
+  got close to D-FINE on speed/size but missed objects (a cat, a bear) D-FINE and YOLO11n both
+  caught. D-FINE itself: ~8ms/frame on a Mac vs YOLO11n's ~3-4ms (still well inside T20's
+  <100ms p95 budget) and 13MB vs 5.2MB on disk, for equal-or-better detections in that
+  comparison. It has no NMS stage of its own (DETR-style: a fixed set of candidate boxes,
+  trained not to duplicate one object) — `nonMaxSuppressed` in `DFineObjectDetector.swift` is
+  a safety net, not load-bearing so far. `minimumConfidence` (0.6, same as before) is carried
+  over from YOLO11n untuned; it has not been checked against this model's own false-positive
+  behavior on real data the way the line below describes for YOLO11n.
+- **Model false positives.** On abstract wallpapers YOLO11n reported "spoon" (0.51) and
   "vase" (0.59) even at the 0.5 threshold. They are non-hazard classes, so they reach scene
-  descriptions but not warnings. Tune the threshold, and possibly per class, with real data.
+  descriptions but not warnings. Tune the threshold, and possibly per class, with real data —
+  this was never re-run against D-FINE (T31).
 - **Portrait only in practice.** The Live and guidance screens set portrait orientation;
   other orientations are mapped correctly but not exercised.
 - **Announcements are untested end to end on a device.** `AppServices.live` now runs
@@ -343,7 +355,10 @@ Camera guidance for announcements:
 - **Motion** — track velocity and approach rate for people and moving objects (deferred from T15).
 - **Recorded test set** — capture and annotate the eleven T20 scenarios; run detection and
   distance evaluation on every model or threshold change.
-- **Model licence** — choose and integrate a permissively licensed detector.
+- **D-FINE on device (T31)** — check real accuracy, speed and false-positive rate on an
+  iPhone; the evaluation so far is headless (`coremltools` on a Mac, three stock COCO
+  images), not the recorded test set this project doesn't have yet (T20). Re-tune
+  `minimumConfidence` against that, not carried over from YOLO11n untouched.
 - **Profile-driven thresholds** — let `GuidanceProfile` set announcement bands and verbosity.
 - **ARKit mesh classification** (`Detection.Origin.mesh`, `PerformanceMode.meshReconstructionEnabled`)
   is reserved in the contracts but unused.
