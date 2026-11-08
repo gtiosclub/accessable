@@ -5,9 +5,8 @@ import UIKit
 /// runs, announces when guidance stops or comes back, and asks for one restart when a
 /// session cannot recover on its own.
 ///
-/// Shared by both camera screens (`SceneViewModel`, `LiveSceneViewModel`) rather than
-/// written twice: there is one `ARSession` behind both, and either screen may be the one in
-/// front of the user when it fails, so they have to behave the same way.
+/// Used by the camera screen (`LiveSceneViewModel`). Kept separate from it because it is
+/// about the one shared `ARSession`, which trips and Describe also run.
 @MainActor
 final class GuidanceStatusMonitor {
     private(set) var status: GuidanceStatus = .idle

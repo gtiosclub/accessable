@@ -502,7 +502,7 @@ final class ScenePerception: Sendable {
             announcements += surfaceAnnouncer.withLock { $0.announcements(for: surface, at: frame.timestamp) }
                 .filter { _ in diagnostics.surfaceAhead.map { filter.allows(DangerLevel(of: $0.kind)) } ?? false }
         }
-        if mode.readsText {
+        if mode.announcesSigns {
             announcements += signs.withLock {
                 $0.readsAllText = mode == .read
                 return $0.announcements(for: recognizedText, heading: heading, at: frame.timestamp)

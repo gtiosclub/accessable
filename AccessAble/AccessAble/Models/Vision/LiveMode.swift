@@ -12,7 +12,7 @@ enum LiveMode: String, CaseIterable, Codable, Sendable {
     case find
     /// Reading signs and text aloud; obstacle warnings down to "Stop".
     case read
-    /// Describe or identify on request; obstacle warnings down to "Stop".
+    /// Describe, identify, or ask about the view on request; obstacle warnings down to "Stop".
     case describe
 
     var title: String {
@@ -24,8 +24,11 @@ enum LiveMode: String, CaseIterable, Codable, Sendable {
         }
     }
 
-    /// OCR runs (signs for Read, room numbers and exits for Find).
-    var readsText: Bool { self == .find || self == .read }
+    /// OCR runs: signs for Read, room numbers and exits for Find, and the text "Describe"
+    /// mentions ("Exit is visible on your left").
+    var readsText: Bool { self != .walk }
+    /// Signs are spoken as they are found. Describe reads text too, but only speaks when asked.
+    var announcesSigns: Bool { self == .find || self == .read }
     /// ARKit's classified mesh is built, for doors. It costs camera frame rate, so only Find.
     var usesMesh: Bool { self == .find }
     /// Crosswalk stripes, street signs, approaching people and vehicles, and crowds.

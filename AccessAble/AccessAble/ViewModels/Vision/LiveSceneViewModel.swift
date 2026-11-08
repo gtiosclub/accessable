@@ -80,6 +80,12 @@ final class LiveSceneViewModel {
     }
     /// True while "Describe" is waiting for its answer.
     private(set) var isDescribing = false
+    /// Ask AI (T19), in Describe mode: the latest answer, or why there isn't one.
+    private(set) var answer: String?
+    private(set) var askError: String?
+    private(set) var isAsking = false
+    /// The camera image the latest answer was based on, for a sighted helper to check.
+    private(set) var askedImage: UIImage?
     /// What the voice is warning about right now, nil when the path is clear.
     private(set) var warning: PathWarning?
     /// The object that warning is about, when it is one we can see. What the screen outlines,
@@ -132,7 +138,8 @@ final class LiveSceneViewModel {
         "10 Long run (thermal)",
     ]
 
-    init(services: AppServices) {
+    init(services: AppServices, mode: LiveMode = .walk) {
+        self.mode = mode
         analyzer = services.scene as? ARSceneAnalyzer
         announcements = services.announcements
         guidance = GuidanceStatusMonitor(announcements: services.announcements)
@@ -225,6 +232,34 @@ final class LiveSceneViewModel {
                 AnnouncementEvent(category: .ambient, priority: .high, text: text, source: .userInteraction)
             )
             self?.isDescribing = false
+        }
+    }
+
+    /// Answers a question about the next camera frame on the device, and speaks the answer.
+    /// One question at a time.
+    func ask(_ question: String) {
+        let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let analyzer, !isAsking, !question.isEmpty else { return }
+        isAsking = true
+        answer = nil
+        askError = nil
+        askedImage = nil
+        Task { [weak self, announcements] in
+            var spoken: String
+            do {
+                let reply = try await analyzer.ask(question, locationContext: nil)
+                self?.answer = reply
+                spoken = reply
+            } catch {
+                self?.askError = error.localizedDescription
+                spoken = error.localizedDescription
+            }
+            // Also after a failure: a model error still has the image that was captured.
+            self?.askedImage = analyzer.lastAskedImage.flatMap { UIImage(data: $0) }
+            self?.isAsking = false
+            await announcements.submit(
+                AnnouncementEvent(category: .ambient, priority: .high, text: spoken, source: .userInteraction)
+            )
         }
     }
 

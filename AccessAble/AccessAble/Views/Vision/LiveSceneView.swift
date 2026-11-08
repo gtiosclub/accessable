@@ -17,11 +17,16 @@ struct LiveSceneView: View {
     @State private var viewModel: LiveSceneViewModel
     @State private var asksDestination = false
     @State private var destination = ""
+    @State private var asksQuestion = false
+    @State private var question = ""
+    @State private var showsAskedImage = false
     /// Developer tools are compiled into debug builds only, and off until switched on.
     @AppStorage("liveSceneShowsDeveloperTools") private var showsDeveloperTools = false
 
-    init(services: AppServices) {
-        _viewModel = State(initialValue: LiveSceneViewModel(services: services))
+    /// - Parameter mode: The mode to open in: Walk from "Camera guidance", Read from "Read
+    ///   signs & text".
+    init(services: AppServices, mode: LiveMode = .walk) {
+        _viewModel = State(initialValue: LiveSceneViewModel(services: services, mode: mode))
     }
 
     private var isDeveloperMode: Bool {
@@ -50,6 +55,9 @@ struct LiveSceneView: View {
                     Spacer()
                     if isDeveloperMode {
                         readout
+                    }
+                    if viewModel.mode == .describe {
+                        answerCard
                     }
                     if let message = viewModel.navigationMessage {
                         Text(message)
@@ -89,6 +97,16 @@ struct LiveSceneView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Then turn slowly all the way around so the camera can find it.")
+        }
+        .alert("Ask about what the camera sees", isPresented: $asksQuestion) {
+            TextField("For example: where is Room 210?", text: $question)
+            Button("Ask") {
+                viewModel.ask(question)
+                question = ""
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Answered on this device from the camera view. The answer is spoken.")
         }
     }
 
@@ -244,12 +262,47 @@ struct LiveSceneView: View {
                 .disabled(viewModel.isDescribing)
                 .accessibilityHint("Describes what the camera sees.")
                 identifyButton
+                controlButton("Ask", systemImage: "questionmark.bubble.fill") {
+                    asksQuestion = true
+                }
+                .disabled(viewModel.isAsking)
+                .accessibilityHint("Ask a question about what the camera sees, for example where a room is.")
             }
 
             alertMenu
         }
         .padding(10)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
+    }
+
+    /// Ask AI's answer, and the image it was based on for a sighted helper to check.
+    @ViewBuilder
+    private var answerCard: some View {
+        if viewModel.isAsking || viewModel.answer != nil || viewModel.askError != nil {
+            VStack(alignment: .leading, spacing: 8) {
+                if viewModel.isAsking {
+                    ProgressView("Looking…")
+                } else if let answer = viewModel.answer {
+                    Text(answer).font(.body)
+                } else if let error = viewModel.askError {
+                    Text(error).foregroundStyle(.red)
+                }
+                if let image = viewModel.askedImage {
+                    DisclosureGroup("Image used for the answer", isExpanded: $showsAskedImage) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFit()
+                            .frame(maxHeight: 180)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .accessibilityLabel("The camera image the answer was based on")
+                    }
+                    .font(.subheadline)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        }
     }
 
     private var identifyButton: some View {

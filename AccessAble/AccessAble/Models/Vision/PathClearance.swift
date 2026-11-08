@@ -13,7 +13,8 @@ import simd
 // already does, integrated with `ObstacleAnnouncer` below. A sidestep is only ever offered
 // into a lane with `knownFreeFraction >= minimumKnownFree` — see
 // `PathClearanceTests.noSidestepIntoUnknown()` — and `ObstacleAnnouncer.pathAnnouncement`
-// turns the result into short directions ("Go left" / "Stop. Wall ahead. Turn right."). No
+// turns the result into short directions ("One step left" / "Bear right, 2 o'clock" /
+// "Stop. Turn right."), followed by "Straight ahead now" once the user is clear. No
 // new code was added for T28; it should be marked done against T11/T16 rather than
 // reimplemented.
 

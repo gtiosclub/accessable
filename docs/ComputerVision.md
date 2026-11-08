@@ -15,7 +15,7 @@ engine:
 > camera + LiDAR → perception → spatial reasoning → tracking → what is in the path →
 > accessible speech and haptics
 
-The pipeline runs while Camera guidance or Live detection is open, and for the whole of an
+The pipeline runs while the camera screen (Camera guidance) is open, and for the whole of an
 active trip (`TripCameraCoordinator`). "Describe my surroundings" wakes it for one frame when
 it is off. All of them share one camera: `ARSceneAnalyzer.start()` and `stop()` nest.
 
@@ -60,7 +60,7 @@ ScenePerception.analyze             Services/Vision — one frame in, observatio
   ├─ TextReader (T17): OCR ≤ 1 Hz on its own queue; latest text attached
   └─ FrameTimer (T20): analysis FPS and latency
         │
-        ├─► SceneObservation  → Broadcaster → UI (Camera guidance, Live detection)
+        ├─► SceneObservation  → Broadcaster → UI (the camera screen, LiveSceneView)
         ├─► AnnouncementEvent → services.announcements (engine owned by Interaction, 3.3)
         └─► SceneDescriptionBuilder (T18) on request → "Describe my surroundings"
 ```
@@ -261,6 +261,13 @@ protocol AnnouncementSink { func submit(_ event: AnnouncementEvent) async }
     grey carpet "road" while the outdoor share was 0% in every indoor frame. The 86 MB model is
     not in git: `sh Scripts/download-models.sh`. Without it the app runs as before.
 
+23. **One camera screen.** T29's "Read signs & text" screen and T30's Camera guidance preview
+    became modes of `LiveSceneView` rather than separate screens: the Home buttons and the Siri
+    shortcut open it in Walk or Read. T29's per-session dedup gave way to `SignAnnouncer` (two
+    agreeing reads, a 30 s repeat, clock and distance); T30's Ask AI moved into Describe mode,
+    where the answer is now also spoken; its all-boxes overlay, coloured by raw distance, gave
+    way to the one outline that follows the spoken warning and the user's alert distance.
+
 ## Task status (T1–T20, T31)
 
 "Integrated" means the code runs in the live pipeline. Nothing below has been checked on
@@ -268,7 +275,7 @@ a physical device by the integrator; see **Device validation**.
 
 | Task | Owner | PR | Status | Where | What changed in integration |
 |---|---|---|---|---|---|
-| T1 Shared ARKit session | Deshna | #106 | Integrated | `ARSessionManager`, `FrameHealthCheck` | Became the only session; analyzer moved onto it. Health checks shown on Live detection. |
+| T1 Shared ARKit session | Deshna | #106 | Integrated | `ARSessionManager`, `FrameHealthCheck` | Became the only session; analyzer moved onto it. Health checks shown in the camera screen's developer readout. |
 | T2 LiDAR depth | Smitha | #104 | Integrated | `ARSessionManager`, `DepthMap` | Config lives in the session manager. `sceneDepth` only. `DepthMap` instead of `DepthFrame`. |
 | T3 Latest-frame-only queue | Sahiti | #101 | Rewritten, integrated | `LatestOnlyProcessor` | Generic, ARKit-free, `Mutex`-based, own queue, `cancelPending()`; tested. |
 | T4 Camera orientation | Sahiti | #101 | Rewritten, integrated | `CameraImageOrientation.swift` | One mapping, replacing a duplicate; lives in Services (UIKit). |
@@ -310,7 +317,7 @@ Same caveat: none of this has been checked on a device by the integrator.
 | T38 Spoken camera questions | Nish | #177 | `VisualQuestion.swift`, `CommandViewModel` | Questions about what the camera sees go to Ask AI, the rest to the text assistant. Integration fix: asked with no camera screen open, Ask starts the camera for the question. |
 | T39 Per-class thresholds | Smitha | #179 | `DetectionConfidencePolicy.swift` | 0.6 default, chairs at 0.55 (`DetectionConfidencePolicy.standard`). |
 | T40 Test data | Smitha | #180 | `TestSet/`, `Evaluation/TestSet.swift` | 4 tape-measured chair frames with `conditions` tags; distance cases and calibration from recorded frames. `conditions` is a list of tags (#174 used an object; reconciled to the list). |
-| T41 Elevation validation | Petr | #171 | `FieldTestRecorder`, Live detection | Setup and outcome records for the elevation field procedure below. |
+| T41 Elevation validation | Petr | #171 | `FieldTestRecorder`, camera screen (developer tools) | Setup and outcome records for the elevation field procedure below. |
 | T45 Ask AI cancellation | Petr | #170 | `AskAI.swift` | Cancelling a question resumes once, including while Vision work is queued. |
 | T20 runner | Nish | #174 | `Evaluation/TestSetEvaluation.swift` | Precision/recall overall, per scenario and per condition, distance error, detection time. |
 | T31 Replace YOLO11 | Sahiti | #199 | `DFineObjectDetector.swift`, `ObjectDetector.swift` (`ObjectDetecting`) | Bundled model is now D-FINE-nano (Apache-2.0, `Peterande/D-FINE`, converted by `john-rocky/peaceofcake`); `yolo11n.mlpackage` removed. No built-in NMS, so it's a separate class behind a new `ObjectDetecting` protocol rather than a `modelName` swap on `ObjectDetector`, which stays as-is for a future NMS-included model. Picked after evaluating it and the full/tiny YOLOv3 (also Apple, MIT) headlessly with `coremltools` against three real COCO images — see "Known limitations" for the numbers and what was rejected. |
@@ -331,7 +338,7 @@ Same caveat: none of this has been checked on a device by the integrator.
 - **New: semantic–geometric fusion** — labelling geometric obstacles with recognized objects (`DetectionFusion.swift`). Done.
 - **New: pipeline wiring (1.4)** — `AppServices.live` runs the analyzer on ARKit devices. Done.
 - **New: "Take me to…" (`NavigationGuide.swift`)** — the user names a target ("the chair",
-  "exit", "room 210") from the Live detection or Camera guidance screen and turns slowly on
+  "exit", "room 210") in the camera screen's Find mode and turns slowly on
   the spot. Every detection (T13/T14, geometric obstacles) and every sign (T17) now carries a
   `worldPosition`; signs are placed with the depth of the frame they were read from. A
   sighting that matches the request (label, text, or an everyday synonym such as "seat" or
@@ -390,8 +397,8 @@ Same caveat: none of this has been checked on a device by the integrator.
 
 ## Device validation checklist
 
-Run on a LiDAR iPhone (12 Pro or newer), using Home → Live detection for readouts and
-Camera guidance for announcements:
+Run on a LiDAR iPhone (12 Pro or newer) from a debug build: Home → Camera guidance, with
+the wrench in its toolbar on for readouts and recording:
 
 1. T1: tracking reads "normal", camera ~60 fps, and the "move the phone" hint clears.
 2. Analysis rate and latency (T20 line): target ≥ 10 fps and p95 under 100 ms in normal mode;
@@ -435,7 +442,8 @@ iPhone (12 Pro or newer), a sighted safety spotter, and a tape measure. Do not a
 unprotected edge while relying on the app.
 
 1. For each setup, measure and enter the physical setup name, surface material, edge distance,
-   and expected vertical height in Live detection's **Elevation test setup** controls. Start a
+   and expected vertical height in the camera screen's **Elevation test setup** controls
+   (developer tools on, recording started). Start a
    recording, then tap **Record setup** before each approach.
 2. Test a low curb up and down, standard stair risers in both directions, a compliant 1:12 ramp,
    and an abrupt protected drop-off. Include flat concrete/asphalt and a visually challenging

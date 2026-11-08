@@ -138,7 +138,9 @@ struct LiveModeTests {
         #expect(LiveMode.walk.watchesStreet && !LiveMode.walk.readsText && !LiveMode.walk.usesMesh)
         #expect(LiveMode.find.readsText && LiveMode.find.usesMesh)
         #expect(LiveMode.read.readsText && !LiveMode.read.usesMesh)
-        #expect(!LiveMode.describe.readsText && !LiveMode.describe.watchesStreet)
+        // Describe reads text for its descriptions but only speaks when asked.
+        #expect(LiveMode.describe.readsText && !LiveMode.describe.announcesSigns && !LiveMode.describe.watchesStreet)
+        #expect(LiveMode.read.announcesSigns && LiveMode.find.announcesSigns && !LiveMode.walk.announcesSigns)
     }
 }
 

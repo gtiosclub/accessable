@@ -13,7 +13,7 @@ struct RootView: View {
                     .navigationDestination(for: AppDestination.self) { destination in
                         switch destination {
                         case .scene:
-                            SceneView(services: app.services)
+                            LiveSceneView(services: app.services, mode: .walk)
                         case .trip:
                             TripView(services: app.services)
                         }

@@ -59,7 +59,7 @@ AccessAble/                              Xcode project folder
     │   ├── AppViewModel.swift           app-wide state (profile, onboarding, services)
     │   ├── HomeViewModel.swift          reference example of the view model pattern
     │   ├── Vision/                      Subteam 1 — Computer Vision
-    │   │   ├── LiveSceneViewModel.swift debug view of the shared services.scene pipeline
+    │   │   ├── LiveSceneViewModel.swift the camera screen: modes, warnings, signs, Ask AI
     │   │   └── PhotoDetectionViewModel.swift  T14 against a still image (works in the Simulator)
     │   ├── Maps/                        Subteam 2 — Maps + Location
     │   └── Interaction/                 Subteam 3 — User Interaction
@@ -113,12 +113,13 @@ whole `Vision` directory.
 
 ## Seeing the detectors run
 
-Home → **Camera guidance** runs the real pipeline and announces obstacles through the
-announcement engine. Home → **Live detection** opens `LiveSceneView`, a debug view of the
-same pipeline: the ARKit camera feed with boxes drawn over it (green = recognized objects
-and people, orange = geometric obstacles, relabelled when a model recognizes them), the
-fitted floor, any kerbs or drop-offs ahead, measured analysis FPS and latency, and the
-ARKit tracking state.
+Home → **Camera guidance** opens `LiveSceneView`, the one camera screen, in Walk mode
+(**Read signs & text** opens it in Read). Walk / Find / Read / Describe are switched at its
+top. In debug builds the wrench in its toolbar adds the developer view of the same
+pipeline: every box (green = recognized objects and people, orange = geometric obstacles,
+relabelled when a model recognizes them), the fitted floor, kerbs or drop-offs ahead,
+analysis FPS, latency and per-stage timing, the ground segmentation, ARKit tracking state,
+and the field-test recorder.
 
 Both need a **physical device** — ARKit world tracking does not run in the Simulator — and
 a **LiDAR device** (iPhone 12 Pro or newer) for distances, the floor, obstacles and kerbs.
