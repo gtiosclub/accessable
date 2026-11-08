@@ -23,6 +23,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     private let performance: any PerformanceModeProviding
     private let askAI: AskAI
+    /// Plays the steering beep; nil where there is no audio (tests).
+    private let steering: SteeringTones?
     private let broadcaster = Broadcaster<SceneObservation>(replaysLatest: true)
     private let processor: LatestOnlyProcessor<CapturedFrame>
     /// Announcements go through a stream drained by one task, so they reach the sink in
@@ -53,12 +55,14 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         perception: ScenePerception = ScenePerception(),
         performance: any PerformanceModeProviding,
         announcements: any AnnouncementSink,
-        askAI: AskAI = AskAI()
+        askAI: AskAI = AskAI(),
+        steering: SteeringTones? = nil
     ) {
         self.sessionManager = sessionManager
         self.perception = perception
         self.performance = performance
         self.askAI = askAI
+        self.steering = steering
 
         let (pending, announcementQueue) = AsyncStream.makeStream(
             of: AnnouncementEvent.self, bufferingPolicy: .bufferingNewest(16)
@@ -72,9 +76,13 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         }
 
         processor = LatestOnlyProcessor(label: "AccessAble.ARSceneAnalyzer.analysis") {
-            [perception, broadcaster, announcementQueue, recorder, sessionManager] captured in
+            [perception, broadcaster, announcementQueue, recorder, sessionManager, steering] captured in
             let analysis = perception.analyze(captured.frame, interfaceOrientation: captured.interfaceOrientation)
             broadcaster.send(analysis.observation)
+            if let steering {
+                let cue = perception.diagnostics.steering
+                Task { @MainActor in steering.update(cue) }
+            }
             // Register emitted event IDs before delivery starts. A delivered warning can arrive
             // after its field-test scenario closes, and the recorder must retain its origin.
             recorder.record(FieldTestRecorder.FrameRecord(
@@ -168,6 +176,7 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         modeTask?.cancel()
         processor.cancelPending()
         sessionManager.stop()
+        steering?.update(nil)
     }
 
     // MARK: - GuidanceStatusProviding

@@ -33,6 +33,9 @@ struct PathWarning: Sendable, Equatable {
     let trackID: UUID?
     /// Which way the advice points, for an arrow on screen; nil when it is straight on.
     var side: TurnSide?
+    /// How far to the side the clear line is, in metres, negative left; nil for a turn with
+    /// no gap in view.
+    var offset: Float?
 }
 
 /// Decides what the user hears about their path, and when. Owner: Computer Vision (1.1 / task T16).
@@ -271,7 +274,8 @@ struct ObstacleAnnouncer: Sendable {
                 advice: SpokenPhrasing.advice(for: advicePath, bearing: subject.bearing, critical: isStop)
                     .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".")) },
                 trackID: subject.trackID,
-                side: side(of: advicePath)
+                side: side(of: advicePath),
+                offset: advicePath?.clearDirection == .blocked ? nil : advicePath?.sidestep
             ))
         }
         for (type, state) in hazards {
@@ -422,7 +426,16 @@ struct ObstacleAnnouncer: Sendable {
         }
         guard shouldSpeak, let subject else { return nil }
 
-        let (priority, haptic) = urgency(ofBand: band, of: bands.count)
+        var (priority, haptic) = urgency(ofBand: band, of: bands.count)
+        // Short of "Stop", a buzz that says which way beats one that only says "near": the
+        // haptics team's turn patterns, so it can be followed with the phone in a pocket.
+        if band < stopBand {
+            switch side(of: advicePath) {
+            case .left: haptic = .turnLeft
+            case .right: haptic = .turnRight
+            case nil: break
+            }
+        }
         guard admit(priority, at: time) else { return nil }
         // Only a fresh warning can go quiet; a nearer band or new advice within one is news.
         let hapticOnly = path.announcedBand == nil && band < stopBand

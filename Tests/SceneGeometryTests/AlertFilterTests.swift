@@ -256,7 +256,7 @@ struct PathWarningTests {
         _ = announcer.announcements(for: [object("chair", at: 2, track: track)], hazards: [], path: left, at: 0.1)
         let warning = try #require(announcer.currentWarning)
         #expect(warning == PathWarning(
-            name: "Chair", distance: 2, isStop: false, advice: "One step left", trackID: track, side: .left
+            name: "Chair", distance: 2, isStop: false, advice: "One step left", trackID: track, side: .left, offset: -0.7
         ))
     }
 
@@ -372,5 +372,47 @@ struct StraightAheadTests {
             spoken += announcer.announcements(for: [], hazards: [], at: Double(frame) * 0.1).map(\.text)
         }
         #expect(spoken == ["Stop. Chair ahead.", "Path clear."])
+    }
+}
+
+@Suite("Steering by ear and by feel")
+struct SteeringTests {
+    private func warning(side: TurnSide?, offset: Float?, distance: Double = 2) -> PathWarning {
+        PathWarning(name: "Chair", distance: distance, isStop: false, advice: nil, trackID: nil, side: side, offset: offset)
+    }
+
+    @Test("the beep comes from the side to move towards, harder over for a bigger sidestep")
+    func side() throws {
+        let small = try #require(SteeringCue(warning: warning(side: .right, offset: 0.5)))
+        let big = try #require(SteeringCue(warning: warning(side: .left, offset: -1.5)))
+        #expect(small.side > 0 && small.side < big.side.magnitude)
+        #expect(big.side == -1)
+        #expect(big.interval < small.interval)
+    }
+
+    @Test("closer is more urgent; no direction means no beep")
+    func urgency() throws {
+        let far = try #require(SteeringCue(warning: warning(side: .right, offset: 0.5, distance: 2.5)))
+        let near = try #require(SteeringCue(warning: warning(side: .right, offset: 0.5, distance: 1.2)))
+        #expect(far.urgency == 0 && near.urgency == 1)
+        #expect(SteeringCue(warning: warning(side: nil, offset: nil)) == nil)
+        #expect(SteeringCue(warning: nil) == nil)
+    }
+
+    @Test("a warning with a way round buzzes the turn pattern for that side")
+    func directionalHaptic() throws {
+        var announcer = ObstacleAnnouncer()
+        let left = PathAssessment(clearDirection: .left, sidestep: -0.5)
+        let chair = ObstacleAlertInput(
+            detection: Detection(
+                trackID: UUID(), label: "chair", confidence: 0.9, boundingBox: .zero,
+                distance: 2, bearing: .ahead, origin: .geometric, isHazard: true
+            ),
+            isInPath: true
+        )
+        _ = announcer.announcements(for: [chair], hazards: [], path: left, at: 0)
+        let event = try #require(announcer.announcements(for: [chair], hazards: [], path: left, at: 0.1).first)
+        #expect(event.haptic == .turnLeft)
+        #expect(announcer.currentWarning?.offset == -0.5)
     }
 }

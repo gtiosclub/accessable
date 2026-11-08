@@ -87,6 +87,7 @@ struct AlertFilter: Codable, Hashable, Sendable {
 /// profile, the way `AskAISettings` follows the Ask AI ranking.
 final class AlertSettings: Sendable {
     private let state = Mutex(AlertFilter.default)
+    private let tones = Mutex(false)
 
     init(filter: AlertFilter = .default) {
         state.withLock { $0 = filter }
@@ -95,5 +96,11 @@ final class AlertSettings: Sendable {
     var filter: AlertFilter {
         get { state.withLock { $0 } }
         set { state.withLock { $0 = newValue } }
+    }
+
+    /// Whether steering tones play (`SteeringCue`): the profile's spatial audio channel.
+    var soundCues: Bool {
+        get { tones.withLock { $0 } }
+        set { tones.withLock { $0 = newValue } }
     }
 }

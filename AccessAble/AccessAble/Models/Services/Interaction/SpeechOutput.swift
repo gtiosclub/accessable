@@ -7,11 +7,20 @@ final class SpeechOutput: NSObject {
     private var waiting: [ObjectIdentifier: CheckedContinuation<Void, Never>] = [:]
     private var voiceOverWaiter: (text: String, continuation: CheckedContinuation<Void, Never>)?
     private var announcementObserver: NSObjectProtocol?
+    /// The best voice installed for the user's language: Premium or Enhanced when they have
+    /// downloaded one (Settings → Accessibility → Spoken Content → Voices), far clearer than
+    /// the compact default. Listing voices takes a moment, so it is looked up off the main
+    /// thread; until then the default voice speaks.
+    private var voice: AVSpeechSynthesisVoice?
  
     override init() {
         super.init()
         synthesizer.delegate = self
         synthesizer.usesApplicationAudioSession = true
+        Task { [weak self] in
+            let best = await Task.detached(priority: .utility) { Self.bestVoice() }.value
+            self?.voice = best
+        }
         announcementObserver = NotificationCenter.default.addObserver(
             forName: UIAccessibility.announcementDidFinishNotification, object: nil, queue: .main
         ) { [weak self] note in
@@ -53,6 +62,7 @@ final class SpeechOutput: NSObject {
         )
         try? session.setActive(true)
         let utterance = AVSpeechUtterance(string: text)
+        utterance.voice = voice
         utterance.rate = rate // GuidanceProfile.speechRate is already in AVSpeechUtterance units
         await withCheckedContinuation { continuation in
             waiting[ObjectIdentifier(utterance)] = continuation
@@ -60,6 +70,21 @@ final class SpeechOutput: NSObject {
         }
     }
  
+    /// Highest quality for the current language, else for any variant of it ("en-GB" when
+    /// only British English is installed), else the system default.
+    nonisolated private static func bestVoice() -> AVSpeechSynthesisVoice? {
+        let language = AVSpeechSynthesisVoice.currentLanguageCode()
+        let base = language.split(separator: "-").first.map(String.init) ?? language
+        // Novelty voices ("Bells", "Albert") are default quality; skip them, and only pick a
+        // voice ourselves when it is better than the system's default.
+        let voices = AVSpeechSynthesisVoice.speechVoices()
+            .filter { !$0.voiceTraits.contains(.isNoveltyVoice) && $0.quality != .default }
+        let exact = voices.filter { $0.language == language }
+        let family = voices.filter { $0.language.hasPrefix(base + "-") }
+        return (exact.isEmpty ? family : exact).max { $0.quality.rawValue < $1.quality.rawValue }
+            ?? AVSpeechSynthesisVoice(language: language)
+    }
+
     private func utteranceEnded(_ id: ObjectIdentifier) {
         waiting.removeValue(forKey: id)?.resume()
         if waiting.isEmpty, !synthesizer.isSpeaking {

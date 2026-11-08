@@ -68,6 +68,8 @@ final class ScenePerception: Sendable {
         var warning: PathWarning?
         /// Where this frame's time went, in order.
         var stages: [StageTiming] = []
+        /// The steering beep to play, nil when silent or sound cues are off.
+        var steering: SteeringCue?
     }
 
     private let peopleDetector: PeopleDetector
@@ -405,6 +407,9 @@ final class ScenePerception: Sendable {
                 isUserMoving: isUserMoving
             )
             diagnostics.warning = $0.currentWarning
+            if alertSettings.soundCues {
+                diagnostics.steering = SteeringCue(warning: $0.currentWarning, warningDistance: filter.maximumDistance)
+            }
             return events
         }
         let motions = motion.withLock { $0.update(detections, at: frame.timestamp) }

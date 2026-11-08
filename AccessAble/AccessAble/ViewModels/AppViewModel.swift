@@ -12,6 +12,7 @@ final class AppViewModel {
             let profile = profile
             services.askAISettings.priorities = profile.aiPriorities
             services.alertSettings.filter = profile.alertFilter
+            services.alertSettings.soundCues = profile.channels.contains(.spatialAudio)
             Task { await services.announcements.updateProfile(profile) }
         }
     }
@@ -42,6 +43,7 @@ final class AppViewModel {
         let profile = self.profile
         self.services.askAISettings.priorities = profile.aiPriorities
         self.services.alertSettings.filter = profile.alertFilter
+        self.services.alertSettings.soundCues = profile.channels.contains(.spatialAudio)
         let announcements = self.services.announcements
         Task { await announcements.updateProfile(profile) }
 

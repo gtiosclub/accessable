@@ -258,12 +258,9 @@ struct LiveSceneView: View {
                 }
             }
             .pickerStyle(.menu)
-            Toggle("Vibration", isOn: Binding(
-                get: { app.profile.channels.contains(.haptics) },
-                set: { isOn in
-                    if isOn { app.profile.channels.insert(.haptics) } else { app.profile.channels.remove(.haptics) }
-                }
-            ))
+            Toggle("Vibration", isOn: channelBinding(.haptics, in: $app.profile))
+            // Steering beeps from the side to move towards; best with headphones.
+            Toggle("Sound cues", isOn: channelBinding(.spatialAudio, in: $app.profile))
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: "slider.horizontal.3")
@@ -279,8 +276,18 @@ struct LiveSceneView: View {
             "\(app.profile.alertFilter.minimumDanger.displayName), within "
                 + String(format: "%g metres", app.profile.alertFilter.maximumDistance)
                 + (app.profile.channels.contains(.haptics) ? ", vibration on" : ", vibration off")
+                + (app.profile.channels.contains(.spatialAudio) ? ", sound cues on" : ", sound cues off")
         )
         .accessibilityHint("Choose how dangerous and how close something must be before you are warned, and whether the phone vibrates.")
+    }
+
+    private func channelBinding(_ channel: GuidanceChannels, in profile: Binding<GuidanceProfile>) -> Binding<Bool> {
+        Binding(
+            get: { profile.wrappedValue.channels.contains(channel) },
+            set: { isOn in
+                if isOn { profile.wrappedValue.channels.insert(channel) } else { profile.wrappedValue.channels.remove(channel) }
+            }
+        )
     }
 
     // MARK: - Developer tools

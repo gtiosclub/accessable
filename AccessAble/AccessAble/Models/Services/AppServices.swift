@@ -61,6 +61,7 @@ struct AppServices: Sendable {
 
     /// The camera pipeline where ARKit world tracking runs; the sample scene elsewhere
     /// (the Simulator, previews).
+    @MainActor
     private static func liveScene(
         performance: PerformanceModeMonitor,
         announcements: any AnnouncementSink,
@@ -73,7 +74,8 @@ struct AppServices: Sendable {
             perception: ScenePerception(alertSettings: alertSettings),
             performance: performance,
             announcements: announcements,
-            askAI: AskAI(responder: RuledAskAIResponder(settings: askAISettings)) // T23 order, T24 rules
+            askAI: AskAI(responder: RuledAskAIResponder(settings: askAISettings)), // T23 order, T24 rules
+            steering: SteeringTones()
         )
     }
 
