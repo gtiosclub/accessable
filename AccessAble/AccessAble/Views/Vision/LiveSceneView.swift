@@ -50,10 +50,10 @@ struct LiveSceneView: View {
                     if isDeveloperMode {
                         readout
                     }
-                    if let navigation = viewModel.navigation {
-                        Text(navigation.description)
+                    if let message = viewModel.navigationMessage {
+                        Text(message)
                             .font(.headline)
-                            .foregroundStyle(navigation.phase == .notFound ? Color.red : Color.primary)
+                            .foregroundStyle(viewModel.navigation?.phase == .notFound ? Color.red : Color.primary)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 8)
                             .background(.regularMaterial, in: Capsule())

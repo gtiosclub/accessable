@@ -161,6 +161,24 @@ struct ElevationHazardDetectorTests {
         #expect(hazard.heightChange == 0)
     }
 
+    @Test("a fall across a hole beyond 3 m is only a hole: far LiDAR returns are too noisy to call")
+    func farGapStaysUnknown() throws {
+        let samples = groundProfile(from: 0.5, to: 3.4) { _ in 0 }
+            + groundProfile(from: 4.0, to: 4.8) { _ in -0.4 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .unknown)
+    }
+
+    @Test("one stray patch of lower ground past a hole is not believed")
+    func thinGapStaysUnknown() throws {
+        let samples = groundProfile(from: 0.5, to: 1.5) { _ in 0 }
+            + groundProfile(from: 2.0, to: 2.1) { _ in -0.4 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .unknown)
+    }
+
     @Test("higher ground across a hole is not guessed at")
     func riseAcrossGapStaysUnknown() throws {
         let samples = groundProfile(from: 0.5, to: 1.5) { _ in 0 }

@@ -58,8 +58,8 @@ final class ScenePerception: Sendable {
         var approaching: [ApproachThreat] = []
         /// Groups of people (T35), nearest first.
         var crowds: [CrowdRegion] = []
-        /// `Detection.id`s inside the walking corridor, so the screen can show what is in the way.
-        var inPath: Set<UUID> = []
+        /// What the voice is currently warning about, so the screen shows the same thing.
+        var warning: PathWarning?
     }
 
     private let peopleDetector: PeopleDetector
@@ -377,7 +377,7 @@ final class ScenePerception: Sendable {
             // Band indices mean different distances under a new filter, so start over.
             if filterChanged { $0 = ObstacleAnnouncer() }
             $0.alertFilter = filter
-            return $0.announcements(
+            let events = $0.announcements(
                 for: detections.map { ObstacleAlertInput(detection: $0, isInPath: inPath.contains($0.id)) },
                 hazards: hazards,
                 path: path,
@@ -385,6 +385,8 @@ final class ScenePerception: Sendable {
                 at: frame.timestamp,
                 isUserMoving: isUserMoving
             )
+            diagnostics.warning = $0.currentWarning
+            return events
         }
         let motions = motion.withLock { $0.update(detections, at: frame.timestamp) }
         let threats = approachThreats(
@@ -455,7 +457,6 @@ final class ScenePerception: Sendable {
             timer.record(start: start, end: end)
             return timer.metrics
         }
-        diagnostics.inPath = inPath
         diagnosticsState.withLock { $0 = diagnostics }
         // Every announcer has had its say; now the one shared limit on how much is spoken.
         announcements = speechBudget.withLock { $0.admit(announcements, at: frame.timestamp) }

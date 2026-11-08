@@ -232,3 +232,54 @@ struct SpeechBudgetTests {
         #expect(admitted.map(\.text) == ["buzz"])
     }
 }
+
+@Suite("What the screen shows matches what the voice decided")
+struct PathWarningTests {
+    private func object(_ label: String, at distance: Double, track: UUID = UUID()) -> ObstacleAlertInput {
+        ObstacleAlertInput(
+            detection: Detection(
+                trackID: track, label: label, confidence: 0.9,
+                boundingBox: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.3),
+                distance: distance, bearing: .ahead, origin: .geometric, isHazard: true
+            ),
+            isInPath: true
+        )
+    }
+
+    @Test("a confirmed warning carries its name, distance, track and advice")
+    func warningMirrorsVoice() throws {
+        var announcer = ObstacleAnnouncer()
+        let track = UUID()
+        let left = PathAssessment(clearDirection: .left, sidestep: -0.7)
+        _ = announcer.announcements(for: [object("chair", at: 2, track: track)], hazards: [], path: left, at: 0)
+        #expect(announcer.currentWarning == nil)  // not confirmed yet
+        _ = announcer.announcements(for: [object("chair", at: 2, track: track)], hazards: [], path: left, at: 0.1)
+        let warning = try #require(announcer.currentWarning)
+        #expect(warning == PathWarning(name: "Chair", distance: 2, isStop: false, advice: "Go left", trackID: track))
+    }
+
+    @Test("an unnamed blockage from the map is a warning too, with nothing to outline")
+    func mapBlockage() throws {
+        var announcer = ObstacleAnnouncer()
+        for step in 0 ..< 2 {
+            _ = announcer.announcements(for: [], hazards: [], blockedAhead: BlockedAhead(distance: 1), at: Double(step) * 0.1)
+        }
+        let warning = try #require(announcer.currentWarning)
+        #expect(warning.isStop && warning.name == "Obstacle" && warning.trackID == nil)
+    }
+
+    @Test("a stop beats a nearer-looking but calmer hazard, and the warning clears with the path")
+    func stopWinsThenClears() {
+        var announcer = ObstacleAnnouncer()
+        let step = [ElevationHazard(type: .stepUp, distance: 2, heightChange: 0.12)]
+        for frame in 0 ..< 3 {
+            _ = announcer.announcements(for: [object("chair", at: 1)], hazards: step, at: Double(frame) * 0.1)
+        }
+        #expect(announcer.currentWarning?.isStop == true)
+        #expect(announcer.currentWarning?.name == "Chair")
+        for frame in 3 ..< 30 {
+            _ = announcer.announcements(for: [], hazards: [], at: Double(frame) * 0.1)
+        }
+        #expect(announcer.currentWarning == nil)
+    }
+}

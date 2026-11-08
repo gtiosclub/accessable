@@ -37,6 +37,13 @@ struct ElevationTuning: Sendable {
     /// as a hole with lower ground beyond. Higher than `minStepHeight` because nothing
     /// measures the slope across a hole, and a dark patch on a gentle downhill looks alike.
     var minFallAcrossGap: Float = 0.10
+    /// A fall across a hole is only believed this close. Farther out, LiDAR returns get
+    /// sparse and noisy, and indoors a hole is far more often a dark rug, a chair base or a
+    /// person's feet than an edge, so a far hole stays `.unknown`.
+    var maxFallAcrossGapDistance: Float = 3.0
+    /// Bins of ground needed on each side of a hole before a fall across it is believed.
+    /// One stray bin past a hole is how a shadow or a table top reads as lower ground.
+    var minBinsAcrossGap = 3
     /// Never report two hazards closer together than this.
     var minHazardSpacing: Float = 0.15
     /// A rise followed within this distance by a matching fall is a thing lying on the
@@ -157,7 +164,10 @@ func detectElevationHazards(
         if !isLastSegment {
             let lastDistance = distances[segment.upperBound - 1]
             let fall = heights[segment.upperBound - 1] - heights[segment.upperBound]
-            if fall >= tuning.minFallAcrossGap {
+            let isTrusted = lastDistance <= tuning.maxFallAcrossGapDistance
+                && segment.count >= tuning.minBinsAcrossGap
+                && segments[segmentIndex + 1].count >= tuning.minBinsAcrossGap
+            if isTrusted, fall >= tuning.minFallAcrossGap {
                 let type: ElevationHazardType = fall >= tuning.dropOffHeight ? .dropOff : .stepDown
                 hazards.append(ElevationHazard(type: type, distance: lastDistance, heightChange: -fall))
             } else {

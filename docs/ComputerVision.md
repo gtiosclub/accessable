@@ -213,11 +213,18 @@ protocol AnnouncementSink { func submit(_ event: AnnouncementEvent) async }
 13. **Quiet by default.** The 2.5 m warning goes haptic-only for a repeat of the same kind of
     thing within 20 s; "Stop" is not repeated to someone standing still; advice changes are
     spoken at most every 8 s; approaching people are announced only when urgent (< 1.5 s).
-14. **The Live screen shows what the voice says.** Users see one outline (the nearest in-path
-    object their filter lets through, held for two frames before it moves, animated between
-    positions) and a colour-coded status strip. Every detection box, the readout and the
+14. **The Live screen shows what the voice says.** The status strip and the one outline come
+    from the announcer's own confirmed warning (`ObstacleAnnouncer.currentWarning`), not a
+    separate per-frame guess, so the screen can't say "Path clear" while the voice says "Stop",
+    and it inherits the announcer's confirmation and hysteresis instead of flickering. Every detection box, the readout and the
     field-test recorder are developer tools, compiled into debug builds only and switched on
     with the wrench in the toolbar.
+
+15. **A fall across a depth hole is believed only up close.** Lower ground past a hole is how a
+    real edge looks (the edge hides the ground just beyond it), but indoors a hole is usually
+    a dark rug, a chair base or someone's feet. The fall is reported as a step down or
+    drop-off only within 3 m and with at least three bins of ground on each side; otherwise
+    it stays `.unknown`, which is never spoken.
 
 ## Task status (T1–T20)
 

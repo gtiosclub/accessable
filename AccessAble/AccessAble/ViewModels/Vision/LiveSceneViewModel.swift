@@ -66,13 +66,16 @@ final class LiveSceneViewModel {
     /// The last announcement while it is fresh; cleared a few seconds after delivery so the
     /// banner doesn't sit over the camera.
     private(set) var visibleAnnouncement: AnnouncementEvent?
-    /// The nearest thing in the path the user asked to hear about, once it has held for two
-    /// frames. What the screen outlines, so one box moves smoothly instead of many flickering.
+    /// What the voice is warning about right now, nil when the path is clear.
+    private(set) var warning: PathWarning?
+    /// The object that warning is about, when it is one we can see. What the screen outlines,
+    /// so one box moves smoothly instead of many flickering.
     private(set) var focus: Detection?
     /// False until the first analyzed frame arrives.
     private(set) var hasObservation = false
-    /// `Detection.id`s inside the walking corridor in the current observation.
-    private(set) var inPath: Set<UUID> = []
+    /// "Take me to…" progress for the screen. A finished request ("Arrived", "Could not
+    /// find") is shown for a few seconds, then cleared.
+    private(set) var navigationMessage: String?
 
     @ObservationIgnored private let announcements: any AnnouncementEngineProtocol
     /// Holds the screen awake and speaks up when guidance stops or returns (T27).
@@ -81,18 +84,15 @@ final class LiveSceneViewModel {
     @ObservationIgnored private var elevationScenarioTask: Task<Void, Never>?
     @ObservationIgnored private var orientationTask: Task<Void, Never>?
     @ObservationIgnored private let pointIdentifier = PointIdentifier()
-    @ObservationIgnored private let alertSettings: AlertSettings
     @ObservationIgnored private var bannerTask: Task<Void, Never>?
-    /// Track of the current `focus`, and a new one waiting to be confirmed.
-    @ObservationIgnored private var focusTrack: UUID?
-    @ObservationIgnored private var focusCandidate: UUID?
-    @ObservationIgnored private var focusCandidateFrames = 0
     @ObservationIgnored private var focusLastSeen: TimeInterval = 0
+    /// When the current "take me to…" request finished, if it has.
+    @ObservationIgnored private var navigationEndedAt: TimeInterval?
 
-    /// Inside this, in metres, the announcer says "Stop" and nothing is filtered out.
-    static let stopDistance = Double(ObstacleAnnouncer().thresholds.last ?? 1.2)
     /// How long the focus outline outlives its last sighting, so one missed frame doesn't blink it.
     private static let focusGrace: TimeInterval = 0.6
+    /// How long "Arrived" or "Could not find" stays on screen.
+    private static let finishedNavigationDuration: TimeInterval = 4
     /// How long the banner stays up after an announcement.
     private static let bannerDuration: Duration = .seconds(4)
 
@@ -121,7 +121,6 @@ final class LiveSceneViewModel {
     init(services: AppServices) {
         analyzer = services.scene as? ARSceneAnalyzer
         announcements = services.announcements
-        alertSettings = services.alertSettings
         guidance = GuidanceStatusMonitor(announcements: services.announcements)
     }
 
@@ -248,7 +247,7 @@ final class LiveSceneViewModel {
             let diagnostics = analyzer.perception.diagnostics
             self.observation = observation
             hasObservation = true
-            inPath = diagnostics.inPath
+            warning = diagnostics.warning
             updateFocus()
             hazards = observation.elevationHazards
             cameraHeight = diagnostics.cameraHeight
@@ -257,6 +256,7 @@ final class LiveSceneViewModel {
             approaching = diagnostics.approaching
             crowds = diagnostics.crowds
             navigation = diagnostics.navigation
+            updateNavigationMessage()
             performance = diagnostics.performance
             sessionDescription = Self.describe(
                 tracking: analyzer.sessionManager.trackingStateDescription,
@@ -297,82 +297,49 @@ final class LiveSceneViewModel {
 
     var status: PathStatus {
         guard hasObservation else { return PathStatus(level: .starting, title: "Starting camera…", detail: nil) }
-        let filter = alertSettings.filter
-        var nearest: (name: String, distance: Double, bearing: RelativeBearing?)?
-        if let focus, let distance = focus.cautiousDistance {
-            nearest = (Self.displayName(of: focus), distance, focus.bearing)
-        }
-        for hazard in hazards where hazard.type != .unknown
-            && (hazard.type == .dropOff || filter.allows(DangerLevel(of: hazard.type))) {
-            // As in the announcer, a drop-off keeps at least the default warning distance.
-            let reach = hazard.type == .dropOff ? max(filter.maximumDistance, AlertFilter.default.maximumDistance) : filter.maximumDistance
-            let distance = Double(hazard.distance)
-            guard hazard.distance <= reach, distance < nearest?.distance ?? .infinity else { continue }
-            nearest = (SpokenPhrasing.name(of: hazard.type), distance, .ahead)
-        }
-        guard let nearest else {
+        guard let warning else {
             // Without depth, nothing seen doesn't mean nothing there.
             return PathStatus(level: .clear, title: isDepthAvailable ? "Path clear" : "Watching ahead", detail: nil)
         }
-        let isStop = nearest.distance <= Self.stopDistance
-        let advice = SpokenPhrasing.advice(for: path, bearing: nearest.bearing, critical: isStop)
-            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".")) }
-        if isStop {
-            return PathStatus(level: .stop, title: "Stop · \(nearest.name)", detail: advice)
+        if warning.isStop {
+            return PathStatus(level: .stop, title: "Stop · \(warning.name)", detail: warning.advice)
         }
-        return PathStatus(level: .caution, title: String(format: "%@ · %.1f m", nearest.name, nearest.distance), detail: advice)
+        let title = warning.distance.map { String(format: "%@ · %.1f m", warning.name, $0) } ?? warning.name
+        return PathStatus(level: .caution, title: title, detail: warning.advice)
     }
 
     /// What the outline's tag says: "Chair · 1.2 m".
     var focusCaption: String? {
-        guard let focus else { return nil }
-        guard let distance = focus.distance else { return Self.displayName(of: focus) }
-        return String(format: "%@ · %.1f m", Self.displayName(of: focus), distance)
+        guard focus != nil, let warning else { return nil }
+        return warning.distance.map { String(format: "%@ · %.1f m", warning.name, $0) } ?? warning.name
     }
 
-    private static func displayName(of detection: Detection) -> String {
-        detection.label.prefix(1).uppercased() + detection.label.dropFirst()
-    }
-
-    /// Picks the nearest in-path detection the user's filter lets through, and only moves the
-    /// outline to a different object once that object has been nearest for two frames.
+    /// Outlines the object the warning is about, following its track from frame to frame.
     private func updateFocus() {
-        let filter = alertSettings.filter
-        let candidates = observation.detections.filter { detection in
-            guard inPath.contains(detection.id), let distance = detection.cautiousDistance,
-                  distance <= Double(filter.maximumDistance)
-            else { return false }
-            return filter.allows(DangerLevel(of: detection)) || distance <= Self.stopDistance
-        }
         let now = ProcessInfo.processInfo.systemUptime
-        let nearest = candidates.min { $0.cautiousDistance! < $1.cautiousDistance! }
-        let key = nearest.map { $0.trackID ?? $0.id }
-
-        if let nearest, let key {
-            if key == focusTrack {
-                focus = nearest
-                focusLastSeen = now
-            } else if key == focusCandidate {
-                focusCandidateFrames += 1
-                if focusCandidateFrames >= 2 {
-                    focus = nearest
-                    focusTrack = key
-                    focusLastSeen = now
-                    focusCandidate = nil
-                }
-            } else {
-                focusCandidate = key
-                focusCandidateFrames = 1
-            }
-        }
-        // Still visible but no longer nearest: follow it until its grace runs out.
-        if let focusTrack, key != focusTrack,
-           let current = candidates.first(where: { ($0.trackID ?? $0.id) == focusTrack }) {
-            focus = current
-        }
-        if focus != nil, now - focusLastSeen > Self.focusGrace {
+        if let track = warning?.trackID, let match = observation.detections.first(where: { $0.trackID == track }) {
+            focus = match
+            focusLastSeen = now
+        } else if focus != nil, now - focusLastSeen > Self.focusGrace {
             focus = nil
-            focusTrack = nil
+        }
+    }
+
+    private func updateNavigationMessage() {
+        guard let navigation else {
+            navigationMessage = nil
+            navigationEndedAt = nil
+            return
+        }
+        switch navigation.phase {
+        case .scanning, .guiding:
+            navigationEndedAt = nil
+            navigationMessage = navigation.description
+        case .arrived, .notFound:
+            let now = ProcessInfo.processInfo.systemUptime
+            let ended = navigationEndedAt ?? now
+            navigationEndedAt = ended
+            navigationMessage = now - ended < Self.finishedNavigationDuration ? navigation.description : nil
         }
     }
 

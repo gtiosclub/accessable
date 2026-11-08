@@ -19,6 +19,20 @@ struct BlockedAhead: Sendable, Equatable {
     var distance: Float?
 }
 
+/// What the announcer is currently warning about, for the screen to show. The same decision
+/// the voice made, with the same confirmation and hysteresis, so the two never disagree.
+struct PathWarning: Sendable, Equatable {
+    /// "Chair", "Wall", "Step down".
+    let name: String
+    let distance: Double?
+    let isStop: Bool
+    /// The way round, e.g. "Go left", from the same debounced advice the voice uses.
+    let advice: String?
+    /// The track it is about, so the screen can outline it; nil for a surface hazard or an
+    /// unnamed blockage from the map.
+    let trackID: UUID?
+}
+
 /// Decides what the user hears about their path, and when. Owner: Computer Vision (1.1 / task T16).
 ///
 /// The subject is the path, not each object. Whatever is nearest in the walking corridor
@@ -94,6 +108,8 @@ struct ObstacleAnnouncer: Sendable {
         var candidate: Int?
         var candidateFrames = 0
         var lastPresent: TimeInterval = -.infinity
+        /// Where it was last seen, in metres.
+        var lastDistance: Float?
         /// The band last spoken in this episode; nil once the subject has cleared.
         var announcedBand: Int?
         var announcedDirection: ClearDirection?
@@ -114,6 +130,7 @@ struct ObstacleAnnouncer: Sendable {
                 return
             }
             lastPresent = time
+            lastDistance = distance
 
             var observed = bands.lastIndex(where: { distance <= $0 })
             if let current = band, current < bands.count, (observed ?? -1) < current,
@@ -167,6 +184,12 @@ struct ObstacleAnnouncer: Sendable {
     /// The kind of thing the last spoken path warning was about, and when.
     private var lastWarnedLabel: String?
     private var lastWarnedAt: TimeInterval = -.infinity
+    /// The debounced advice as of the last frame, phrased with that frame's detail when the
+    /// two agree.
+    private var advicePath: PathAssessment?
+
+    /// What the path warning currently is, nil when the path is clear. Updated every frame.
+    private(set) var currentWarning: PathWarning?
 
     init() {}
 
@@ -206,7 +229,46 @@ struct ObstacleAnnouncer: Sendable {
             events.append(event)
         }
         events += hazardAnnouncements(for: hazards, at: time, now: now)
+        currentWarning = warning()
         return events.sorted { $0.priority > $1.priority }
+    }
+
+    /// The most pressing confirmed warning: a stop before anything else, then the nearest.
+    private func warning() -> PathWarning? {
+        var best: PathWarning?
+        func consider(_ candidate: PathWarning) {
+            guard let current = best else { best = candidate; return }
+            if candidate.isStop != current.isStop {
+                if candidate.isStop { best = candidate }
+            } else if (candidate.distance ?? .infinity) < (current.distance ?? .infinity) {
+                best = candidate
+            }
+        }
+        if let band = path.band, let subject {
+            let isStop = band == bands.count - 1
+            consider(PathWarning(
+                name: subject.label.prefix(1).uppercased() + subject.label.dropFirst(),
+                distance: path.lastDistance.map(Double.init),
+                isStop: isStop,
+                advice: SpokenPhrasing.advice(for: advicePath, bearing: subject.bearing, critical: isStop)
+                    .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".")) },
+                trackID: subject.trackID
+            ))
+        }
+        for (type, state) in hazards {
+            guard let band = state.band, let distance = state.lastDistance else { continue }
+            let (priority, _) = urgency(of: type, band: band, of: hazardBands(for: type).count)
+            consider(PathWarning(
+                name: SpokenPhrasing.name(of: type), distance: Double(distance),
+                isStop: priority == .critical, advice: nil, trackID: nil
+            ))
+        }
+        return best
+    }
+
+    /// A drop-off keeps at least the default warning distance, whatever the user chose.
+    private func hazardBands(for type: ElevationHazardType) -> [Float] {
+        type == .dropOff && (bands.first ?? 0) < (thresholds.first ?? 0) ? thresholds : bands
     }
 
     // MARK: - The path
@@ -258,6 +320,12 @@ struct ObstacleAnnouncer: Sendable {
         }
         path.observe(distance: distance, at: time, bands: bands, rules: self, confirmationFrames: confirmationFrames)
         let direction = debouncedDirection(assessment?.clearDirection, at: time)
+        // Phrase the debounced direction, with the current assessment's detail when they agree.
+        advicePath = if let direction {
+            assessment?.clearDirection == direction ? assessment : PathAssessment(clearDirection: direction, sidestep: nil)
+        } else {
+            nil
+        }
 
         guard let band = path.band else {
             // The corridor is clear. Say so once if the user was warned, then start over.
@@ -314,16 +382,10 @@ struct ObstacleAnnouncer: Sendable {
             lastWarnedLabel = subject.label
             lastWarnedAt = time
         }
-        // Phrase the debounced direction, with the current assessment's detail when they agree.
-        let spokenPath: PathAssessment? = if let direction {
-            assessment?.clearDirection == direction ? assessment : PathAssessment(clearDirection: direction, sidestep: nil)
-        } else {
-            nil
-        }
         return AnnouncementEvent(
             category: .hazard,
             priority: priority,
-            text: SpokenPhrasing.guidance(for: subject, priority: priority, path: spokenPath),
+            text: SpokenPhrasing.guidance(for: subject, priority: priority, path: advicePath),
             haptic: haptic,
             distance: subject.distance,
             bearing: subject.bearing,
@@ -362,8 +424,7 @@ struct ObstacleAnnouncer: Sendable {
             var state = self.hazards[type] ?? BandState()
             defer { self.hazards[type] = state }
             let hazard = nearest[type]
-            // A drop-off keeps at least the default warning distance, whatever the user chose.
-            let hazardBands = type == .dropOff && (bands.first ?? 0) < (thresholds.first ?? 0) ? thresholds : bands
+            let hazardBands = hazardBands(for: type)
             state.observe(
                 distance: hazard?.distance, at: time, bands: hazardBands, rules: self, confirmationFrames: hazardConfirmationFrames
             )
