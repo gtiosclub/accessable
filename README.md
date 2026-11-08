@@ -48,7 +48,7 @@ AccessAble/                              Xcode project folder
     │       ├── GeometricObstacleDetector.swift  obstacles by geometry, no labels (T11)
     │       ├── GroundProfiler.swift, ElevationHazardDetector.swift  kerbs, steps, drop-offs (T12)
     │       ├── PeopleDetector.swift, PeopleDetection.swift  Vision people detection (T14)
-    │       ├── ObjectDetector.swift     Core ML object detection, YOLO11n (T13)
+    │       ├── ObjectDetector.swift, DFineObjectDetector.swift  Core ML object detection, D-FINE-nano (T13, T31)
     │       ├── DetectionFusion.swift    labels geometric obstacles with recognized objects
     │       ├── ObjectTracker.swift      stable track IDs across frames (T15)
     │       ├── ObstacleAnnouncer.swift  when to announce what (T16)

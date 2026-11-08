@@ -39,14 +39,14 @@ private let repoRoot = URL(filePath: #filePath).deletingLastPathComponent().dele
 private let testSetFolder = repoRoot.appending(path: "TestSet")
 private let repoManifest = try? TestSetManifest.load(from: testSetFolder.appending(path: "annotations.json"))
 
-/// The bundled YOLO model, compiled once per test run (SwiftPM can't compile it as a resource).
+/// The bundled D-FINE model (T31), compiled once per test run (SwiftPM can't compile it as a resource).
 private let compiledModel = Task {
-    try await MLModel.compileModel(at: repoRoot.appending(path: "AccessAble/AccessAble/Resources/yolo11n.mlpackage"))
+    try await MLModel.compileModel(at: repoRoot.appending(path: "AccessAble/AccessAble/Resources/dfine_n_coco.mlpackage"))
 }
 
 /// What the app runs on a frame: the object model (T13) and people detection (T14).
 private func detectWithAppDetectors() async throws -> (URL) throws -> [Detection] {
-    let objects = ObjectDetector(compiledModelURL: try await compiledModel.value)
+    let objects = DFineObjectDetector(compiledModelURL: try await compiledModel.value)
     let people = PeopleDetector()
     // Load the model now so the first frame's time is detection, not loading.
     if let blank = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 0,

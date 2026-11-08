@@ -29,24 +29,10 @@ private func loadImage(at url: URL) throws -> CGImage {
 
 private func chairDetections(
     in image: CGImage,
-    using model: VNCoreMLModel
+    using detector: DFineObjectDetector
 ) throws -> [Detection] {
-    let request = VNCoreMLRequest(model: model)
-    request.imageCropAndScaleOption = .scaleFill
-
-    let handler = VNImageRequestHandler(
-        cgImage: image,
-        orientation: .up
-    )
-
-    try handler.perform([request])
-
-    return objectDetections(
-        from: request.results as? [VNRecognizedObjectObservation] ?? [],
-        minimumConfidence: 0.6,
-        ignoredLabels: ["person"]
-    )
-    .filter { $0.label == "chair" }
+    try detector.detect(cgImage: image, orientation: .up)
+        .filter { $0.label == "chair" }
 }
 
 @Suite("T20 — detection and performance evaluation")
@@ -241,12 +227,14 @@ struct EvaluationTests {
         )
         
         let modelPackage = repositoryRoot.appending(
-            path: "AccessAble/AccessAble/Resources/yolo11n.mlpackage"
+            path: "AccessAble/AccessAble/Resources/dfine_n_coco.mlpackage"
         )
         
         let compiledModel = try MLModel.compileModel(at: modelPackage)
-        let coreMLModel = try MLModel(contentsOf: compiledModel)
-        let visionModel = try VNCoreMLModel(for: coreMLModel)
+        let detector = DFineObjectDetector(
+            compiledModelURL: compiledModel,
+            confidencePolicy: DetectionConfidencePolicy(defaultThreshold: 0.6)
+        )
         
         var cases: [DetectionTestCase] = []
         for frame in manifest.frames {
@@ -255,7 +243,7 @@ struct EvaluationTests {
             
             let predictions = try chairDetections(
                 in: image,
-                using: visionModel
+                using: detector
             )
             
             let expected = frame.objects

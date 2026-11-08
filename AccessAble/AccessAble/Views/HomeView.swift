@@ -50,6 +50,16 @@ struct HomeView: View {
                 .accessibilityHint("Shows what the camera detects right now. Needs a LiDAR device.")
 
                 NavigationLink {
+                    ReadingModeView(services: app.services)
+                } label: {
+                    Label("Read signs & text", systemImage: "text.viewfinder")
+                        .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                        .padding(.horizontal)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityHint("Announces signs and text as the camera finds them")
+
+                NavigationLink {
                     TripView(services: app.services)
                 } label: {
                     Label("Trip", systemImage: "figure.walk")

@@ -77,7 +77,7 @@ final class ScenePerception: Sendable {
     }
 
     private let peopleDetector: PeopleDetector
-    private let objectDetector: ObjectDetector?
+    private let objectDetector: (any ObjectDetecting)?
     private let textReader: TextReader
     /// Ground segmentation; nil when the model isn't bundled.
     private let surfaceReader: SurfaceReader?
@@ -126,7 +126,7 @@ final class ScenePerception: Sendable {
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
-        objectDetector: ObjectDetector? = ObjectDetector(),
+        objectDetector: (any ObjectDetecting)? = DFineObjectDetector(),
         textReader: TextReader = TextReader(),
         surfaceReader: SurfaceReader? = SurfaceReader(),
         corridorWidth: Float = WalkingCorridor.default.width,
