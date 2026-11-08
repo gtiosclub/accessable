@@ -61,7 +61,7 @@ final class ScenePerception: Sendable {
     }
 
     private let peopleDetector: PeopleDetector
-    private let objectDetector: ObjectDetector?
+    private let objectDetector: (any ObjectDetecting)?
     private let textReader: TextReader
     private let cameraQualityEvaluator = CameraQualityEvaluator()
     private let cameraQualityState = Mutex(CameraQualityState())
@@ -95,7 +95,7 @@ final class ScenePerception: Sendable {
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
-        objectDetector: ObjectDetector? = ObjectDetector(),
+        objectDetector: (any ObjectDetecting)? = DFineObjectDetector(),
         textReader: TextReader = TextReader(),
         corridorWidth: Float = WalkingCorridor.default.width,
         corridorDistance: Float = WalkingCorridor.default.maxDistance
