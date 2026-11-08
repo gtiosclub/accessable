@@ -101,6 +101,8 @@ final class ScenePerception: Sendable {
     private let structureFrameCount = Mutex(0)
     private let crosswalkConfirmer = Mutex(CrosswalkConfirmer())
     private let streetSignals = Mutex(StreetSignalAnnouncer())
+    /// Signs read aloud in Read and Find (T17 / T29).
+    private let signs = Mutex(SignAnnouncer())
     /// Set when a request arrives, consumed by the next frame, which knows the frame time.
     private let pendingNavigationQuery = Mutex<String??>(nil)
     private let clearanceTuning = PathClearanceTuning.default
@@ -112,6 +114,8 @@ final class ScenePerception: Sendable {
     private let speechBudget = Mutex(SpeechBudget())
     /// Slower than this, in metres per second, counts as standing still.
     private let walkingSpeed: Float = 0.3
+    /// What the Live screen is doing; decides which stages run and what is spoken.
+    private let liveMode = Mutex(LiveMode.walk)
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
@@ -150,10 +154,18 @@ final class ScenePerception: Sendable {
         structureFrameCount.withLock { $0 = 0 }
         crosswalkConfirmer.withLock { $0 = CrosswalkConfirmer() }
         streetSignals.withLock { $0 = StreetSignalAnnouncer() }
+        signs.withLock { $0 = SignAnnouncer() }
         appliedFilter.withLock { $0 = nil }
         speechBudget.withLock { $0 = SpeechBudget() }
         // Otherwise the rate is averaged over the time the camera was off, and reads ~1 fps.
         frameTimer.withLock { $0 = FrameTimer() }
+    }
+
+    var mode: LiveMode { liveMode.withLock { $0 } }
+
+    /// Switches what runs and what is spoken, from the next analyzed frame.
+    func setMode(_ mode: LiveMode) {
+        liveMode.withLock { $0 = mode }
     }
 
     /// Starts steering the user towards `query` ("the chair", "exit"), replacing any
@@ -194,7 +206,11 @@ final class ScenePerception: Sendable {
                 )
             }
         }
-        textReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp, locate: textLocator)
+        let mode = liveMode.withLock { $0 }
+        // OCR only where text is wanted: Find and Read, or any "take me to…" (room numbers).
+        if mode.readsText || navigation.withLock({ $0 != nil }) {
+            textReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp, locate: textLocator)
+        }
         let wasReadingText = textReader.isReading
         var lapStart = start
         func lap(_ name: String) {
@@ -207,7 +223,7 @@ final class ScenePerception: Sendable {
         lap("Objects")
         // T37: crosswalk stripes. Skipped when the phone points up and there's no ground in view.
         let lookingUp = -frame.camera.transform.columns.2.y > 0.3
-        let stripes = lookingUp ? nil : uprightLumaGrid(
+        let stripes = lookingUp || !mode.watchesStreet ? nil : uprightLumaGrid(
             from: frame.capturedImage, orientation: imageOrientation,
             width: 96, height: max(Int(96 * upright.height / upright.width), 1)
         ).flatMap { detectCrosswalk(in: $0) }
@@ -418,9 +434,11 @@ final class ScenePerception: Sendable {
             userVelocity: userVelocity, corridor: heading
         )
         diagnostics.approaching = threats
-        announcements += approach.withLock {
-            $0.alertFilter = filter
-            return $0.announcements(for: threats, at: frame.timestamp, now: .now)
+        if mode.watchesStreet {
+            announcements += approach.withLock {
+                $0.alertFilter = filter
+                return $0.announcements(for: threats, at: frame.timestamp, now: .now)
+            }
         }
 
         // T35 — people grouped into crowds. Ambient, and never instead of T16: anyone
@@ -429,13 +447,14 @@ final class ScenePerception: Sendable {
         diagnostics.crowds = crowds.crowds
         // Crowds and camera hints are only nice to know: below anything but the lowest bar.
         let crowdEvents = crowdAnnouncer.withLock { $0.announcements(for: crowds.crowds, at: frame.timestamp, now: .now) }
-        if filter.allows(.low) { announcements += crowdEvents }
+        if filter.allows(.low), mode.watchesStreet { announcements += crowdEvents }
 
         // T32 — camera aiming and image quality. Normal priority, so it never talks over a
         // path warning, and only once a problem has lasted a moment: the phone dips and
         // blurs for an instant with every step.
         let cameraFeedback = cameraQualityEvaluator.evaluate(cameraQualityInput)
-        if shouldAnnounceCameraQuality(cameraFeedback, at: frame.timestamp), let cameraFeedback, filter.allows(.low) {
+        if shouldAnnounceCameraQuality(cameraFeedback, at: frame.timestamp), let cameraFeedback,
+           filter.allows(.low), mode.givesCameraHints {
             announcements.append(
                 AnnouncementEvent(
                     category: .system,
@@ -452,8 +471,16 @@ final class ScenePerception: Sendable {
         if !announcements.isEmpty {
             lastPathAnnouncement.withLock { $0 = frame.timestamp }
         }
-        announcements += streetSignals.withLock {
-            $0.announcements(for: observed.filter { filter.allows(DangerLevel(of: $0)) }, at: frame.timestamp)
+        if mode.readsText {
+            announcements += signs.withLock {
+                $0.readsAllText = mode == .read
+                return $0.announcements(for: recognizedText, heading: heading, at: frame.timestamp)
+            }
+        }
+        if mode.watchesStreet {
+            announcements += streetSignals.withLock {
+                $0.announcements(for: observed.filter { filter.allows(DangerLevel(of: $0)) }, at: frame.timestamp)
+            }
         }
 
         // "Take me to…": sightings go in, one instruction at a time comes out.
@@ -484,6 +511,8 @@ final class ScenePerception: Sendable {
         }
         diagnosticsState.withLock { $0 = diagnostics }
         // Every announcer has had its say; now the one shared limit on how much is spoken.
+        // Outside Walk only "Stop" gets through from the obstacle announcers.
+        announcements = announcements.filter(mode.admits)
         announcements = speechBudget.withLock { $0.admit(announcements, at: frame.timestamp) }
 
         let observation = SceneObservation(

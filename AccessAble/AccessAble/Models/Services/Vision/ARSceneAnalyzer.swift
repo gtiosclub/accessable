@@ -39,6 +39,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         var modeTask: Task<Void, Never>?
         /// The still the latest Ask AI question was answered from.
         var lastAskedImage: Data?
+        /// Whether a "take me to…" request is active, which needs the mesh in any mode.
+        var isNavigating = false
     }
 
     private let state = Mutex(State())
@@ -133,8 +135,9 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
             clientCount += 1
             return
         }
-        // A new session starts with no "take me to…" request, so without the mesh.
-        sessionManager.setMeshReconstruction(false)
+        // A new session starts with no "take me to…" request; the mode decides the mesh.
+        state.withLock { $0.isNavigating = false }
+        sessionManager.setMeshReconstruction(perception.mode.usesMesh)
         try sessionManager.start()
         clientCount = 1
         // Tracking restarts from scratch, so nothing remembered about the old world holds.
@@ -309,8 +312,20 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     func navigate(to query: String?) {
         perception.navigate(to: query)
-        // Doors come from the mesh, which is only built while something is being looked for.
-        Task { @MainActor [sessionManager] in sessionManager.setMeshReconstruction(query != nil) }
+        state.withLock { $0.isNavigating = query != nil }
+        updateMesh()
+    }
+
+    /// Switches what the pipeline runs and speaks (Walk, Find, Read, Describe).
+    func setMode(_ mode: LiveMode) {
+        perception.setMode(mode)
+        updateMesh()
+    }
+
+    /// Doors come from the mesh, which is only built in Find or during a "take me to…".
+    private func updateMesh() {
+        let wanted = perception.mode.usesMesh || state.withLock { $0.isNavigating }
+        Task { @MainActor [sessionManager] in sessionManager.setMeshReconstruction(wanted) }
     }
 
     var navigationStatus: NavigationStatus? { perception.navigationStatus }

@@ -29,6 +29,13 @@ enum SpokenPhrasing {
         return "\(number) metres"
     }
 
+    /// "12 o'clock" straight ahead, "3 o'clock" to the right: the clock face blind travellers
+    /// learn in orientation and mobility training. Hours are 30 degrees.
+    static func clock(_ bearing: RelativeBearing) -> String {
+        let hour = (Int((bearing.degrees / 30).rounded()) % 12 + 12) % 12
+        return "\(hour == 0 ? 12 : hour) o'clock"
+    }
+
     static func direction(_ bearing: RelativeBearing) -> String {
         switch bearing.side {
         case .ahead: "ahead"

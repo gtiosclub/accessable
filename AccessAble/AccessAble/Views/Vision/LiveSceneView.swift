@@ -39,6 +39,7 @@ struct LiveSceneView: View {
             } else {
                 preview
                 VStack(spacing: 10) {
+                    modePicker
                     if let event = viewModel.visibleAnnouncement {
                         AnnouncementBanner(event: event)
                             .transition(.move(edge: .top).combined(with: .opacity))
@@ -199,29 +200,63 @@ struct LiveSceneView: View {
         }
     }
 
-    /// "Take me to…", "Identify" and the alert settings.
+    /// Walk / Find / Read / Describe, after Magnifier's detection modes.
+    private var modePicker: some View {
+        Picker("Mode", selection: $viewModel.mode) {
+            ForEach(LiveMode.allCases, id: \.self) { mode in
+                Text(mode.title).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .controlSize(.large)
+        .padding(6)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .accessibilityHint("Walk warns about obstacles. Find takes you somewhere. Read reads signs aloud. Describe tells you what is around you.")
+    }
+
+    /// What each mode can do, plus the alert settings.
     private var controlBar: some View {
         HStack(spacing: 10) {
-            if viewModel.isNavigating {
-                controlButton("Stop guiding", systemImage: "xmark.circle.fill", tint: .red) {
-                    viewModel.stopNavigating()
+            switch viewModel.mode {
+            case .walk:
+                identifyButton
+            case .find:
+                if viewModel.isNavigating {
+                    controlButton("Stop guiding", systemImage: "xmark.circle.fill", tint: .red) {
+                        viewModel.stopNavigating()
+                    }
+                } else {
+                    controlButton("Take me to…", systemImage: "location.north.circle.fill") {
+                        asksDestination = true
+                    }
+                    .accessibilityHint("Type what to find. Turn around slowly, then follow the spoken directions.")
                 }
-            } else {
-                controlButton("Take me to…", systemImage: "location.north.circle.fill") {
-                    asksDestination = true
+            case .read:
+                controlButton("Read again", systemImage: "text.bubble.fill") {
+                    viewModel.readAgain()
                 }
-                .accessibilityHint("Type what to find. Turn around slowly, then follow the spoken directions.")
+                .disabled(viewModel.lastReading == nil)
+                .accessibilityHint("Repeats the last sign that was read.")
+            case .describe:
+                controlButton("Describe", systemImage: "eye.fill") {
+                    viewModel.describe()
+                }
+                .disabled(viewModel.isDescribing)
+                .accessibilityHint("Describes what the camera sees.")
+                identifyButton
             }
-
-            controlButton("Identify", systemImage: "viewfinder") {
-                viewModel.identifyPointedAt()
-            }
-            .accessibilityHint("Identifies text or an object near the center of the camera.")
 
             alertMenu
         }
         .padding(10)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
+    }
+
+    private var identifyButton: some View {
+        controlButton("Identify", systemImage: "viewfinder") {
+            viewModel.identifyPointedAt()
+        }
+        .accessibilityHint("Identifies text or an object near the center of the camera.")
     }
 
     private func controlButton(

@@ -68,6 +68,16 @@ final class LiveSceneViewModel {
     /// The last announcement while it is fresh; cleared a few seconds after delivery so the
     /// banner doesn't sit over the camera.
     private(set) var visibleAnnouncement: AnnouncementEvent?
+    /// Walk, Find, Read or Describe. Each runs only the parts of the pipeline it needs.
+    var mode: LiveMode = .walk {
+        didSet {
+            guard mode != oldValue else { return }
+            analyzer?.setMode(mode)
+            if oldValue == .find, isNavigating { stopNavigating() }
+        }
+    }
+    /// True while "Describe" is waiting for its answer.
+    private(set) var isDescribing = false
     /// What the voice is warning about right now, nil when the path is clear.
     private(set) var warning: PathWarning?
     /// The object that warning is about, when it is one we can see. What the screen outlines,
@@ -195,6 +205,27 @@ final class LiveSceneViewModel {
         }
     }
 
+    /// Says the last sign again.
+    func readAgain() {
+        guard let text = lastReading else { return }
+        let event = AnnouncementEvent(category: .landmark, priority: .high, text: text, source: .userInteraction)
+        Task { [announcements] in await announcements.submit(event) }
+    }
+
+    /// Speaks a description of what the camera sees: the same answer as "Describe my
+    /// surroundings" on Home, from the live session the screen is already running.
+    func describe() {
+        guard let analyzer, !isDescribing else { return }
+        isDescribing = true
+        Task { [weak self, announcements] in
+            let text = await analyzer.describeCurrentScene()
+            await announcements.submit(
+                AnnouncementEvent(category: .ambient, priority: .high, text: text, source: .userInteraction)
+            )
+            self?.isDescribing = false
+        }
+    }
+
     /// Starts steering towards `query`; an empty query cancels.
     func navigate(to query: String) {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -221,6 +252,7 @@ final class LiveSceneViewModel {
             return
         }
         followDeviceOrientation(analyzer)
+        analyzer.setMode(mode)
         do {
             try await analyzer.start()
         } catch {
@@ -282,8 +314,10 @@ final class LiveSceneViewModel {
         orientationTask = nil
         UIDevice.current.endGeneratingDeviceOrientationNotifications()
         analyzer?.recorder.stop()
-        // Other features share the analyzer and don't follow the device's orientation.
+        // Other features share the analyzer and don't follow the device's orientation, and
+        // trips expect the full obstacle warnings of Walk.
         analyzer?.setInterfaceOrientation(.portrait)
+        analyzer?.setMode(.walk)
         isRecording = false
     }
 
@@ -300,6 +334,10 @@ final class LiveSceneViewModel {
 
     var status: PathStatus {
         guard hasObservation else { return PathStatus(level: .starting, title: "Starting camera…", detail: nil) }
+        // Read and Describe only ever warn with "Stop"; otherwise the strip says what to do.
+        if mode == .read || mode == .describe, warning?.isStop != true {
+            return modeHint
+        }
         guard let warning else {
             // Without depth, nothing seen doesn't mean nothing there.
             return PathStatus(level: .clear, title: isDepthAvailable ? "Path clear" : "Watching ahead", detail: nil)
@@ -309,6 +347,23 @@ final class LiveSceneViewModel {
         }
         let title = warning.distance.map { String(format: "%@ · %.1f m", warning.name, $0) } ?? warning.name
         return PathStatus(level: .caution, title: title, detail: warning.advice)
+    }
+
+    private var modeHint: PathStatus {
+        switch mode {
+        case .read:
+            PathStatus(level: .starting, title: lastReading ?? "Point at a sign", detail: lastReading == nil ? "Text is read aloud" : nil)
+        case .describe:
+            PathStatus(level: .starting, title: isDescribing ? "Looking…" : "Tap Describe or Identify", detail: nil)
+        case .walk, .find:
+            PathStatus(level: .starting, title: "", detail: nil)
+        }
+    }
+
+    /// The last sign or text read aloud in Read mode.
+    var lastReading: String? {
+        guard let event = lastAnnouncement, event.source == .textRecognition else { return nil }
+        return event.text
     }
 
     /// What the outline's tag says: "Chair · 1.2 m".
