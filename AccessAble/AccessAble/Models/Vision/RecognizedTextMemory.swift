@@ -27,7 +27,9 @@ struct RecognizedTextMemory: Sendable {
         return entries.values.map(\.text).sorted { $0.confidence > $1.confidence }
     }
 
-    private static func key(for string: String) -> String {
+    /// The case-/whitespace-insensitive identity a reading is matched by. Exposed so other
+    /// consumers (e.g. reading-mode's "announce each sign once") dedup the same way this does.
+    static func key(for string: String) -> String {
         string.lowercased().split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 }
