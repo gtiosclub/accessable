@@ -1,62 +1,65 @@
+import CoreLocation
 import SwiftUI
 
-/// Owner: Maps (2.x) + Interaction (3.x). The walking screen: camera or map, spoken
-/// announcements, and Call Help / microphone / Pause Trip.
-/// Front end only: announcements are samples and voice commands are simulated.
+/// Owner: Maps (2.x) + Interaction (3.x). The walking screen: the live camera or the map,
+/// spoken announcements as red (obstacles) and blue (directions) bars, and Call Help /
+/// microphone / Pause Trip.
+///
+/// With services it walks a real trip (`TripSessionViewModel`): the camera behind it is the
+/// real camera pipeline, with none of the camera screen's own controls, and obstacle
+/// warnings carry on in map view. Without services (previews) it shows only what is added.
 struct ActiveTripView: View {
     @Environment(AppRouter.self) private var router
     @State private var session: TripSessionViewModel
     @State private var showsCommands = false
+    private let services: AppServices?
 
-    init(plan: TripPlan) {
-        _session = State(initialValue: TripSessionViewModel(plan: plan))
+    init(plan: TripPlan, services: AppServices? = nil) {
+        _session = State(initialValue: TripSessionViewModel(plan: plan, services: services))
+        self.services = services
     }
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            if session.showsMap {
-                CampusMap(routeLine: SampleContent.sampleRouteLine)
-            } else {
-                CameraBackdrop()
-            }
+            background
 
-            VStack(spacing: 12) {
-                HStack {
-                    if session.plan.isRecording {
-                        Label("Recording route", systemImage: "record.circle")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                            .background(Theme.red, in: Capsule())
-                    }
-                    Spacer()
-                    CircleIconButton(systemImage: "info", label: "Voice commands") {
-                        showsCommands = true
-                    }
+            VStack(spacing: 10) {
+                topBar
+                    .padding(.horizontal, 24)
+                if let status = session.directionsStatus {
+                    Text(status)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(.black.opacity(0.7), in: Capsule())
+                        .padding(.horizontal, 24)
+                        .accessibilityAddTraits(.updatesFrequently)
                 }
-                .padding(.horizontal, 24)
 
                 Spacer()
 
-                if session.isRouteBlocked {
-                    RouteBlockedCard(
-                        onCallHelp: { router.push(.callHelp) },
-                        onReroute: { session.reroute() },
-                        onPause: { session.pause() },
-                        onContinue: { session.resume() }
-                    )
-                    .transition(.move(edge: .bottom))
-                } else {
-                    AnnouncementStack(announcements: session.announcements)
-                        .padding(.horizontal, 24)
-                    TripControlPanel(
-                        isMicMuted: session.isMicMuted,
-                        onCallHelp: { router.push(.callHelp) },
-                        onMicrophone: { session.isMicMuted.toggle() },
-                        onPauseTrip: { session.pause() }
-                    )
-                }
+                AnnouncementStack(announcements: session.announcements)
+                    .padding(.horizontal, 24)
+                TripControlPanel(
+                    isMicMuted: session.isMicMuted,
+                    onCallHelp: { router.push(.callHelp) },
+                    onMicrophone: { session.isMicMuted.toggle() },
+                    onPauseTrip: { session.pause() }
+                )
+            }
+            .accessibilityHidden(session.isRouteBlocked || session.isPaused)
+
+            if session.isRouteBlocked {
+                RouteBlockedScreen(
+                    postsAnnouncement: !session.isSpokenByEngine,
+                    onCallHelp: { router.push(.callHelp) },
+                    onReroute: { session.reroute() },
+                    onPause: { session.pause() },
+                    onContinue: { session.resume() }
+                )
+                .transition(.opacity)
             }
 
             if session.isPaused {
@@ -66,7 +69,10 @@ struct ActiveTripView: View {
                 TripPausedCard(
                     isRecording: session.plan.isRecording,
                     onContinue: { session.resume() },
-                    onExit: { router.popToRoot() },
+                    onExit: {
+                        session.exit()
+                        router.popToRoot()
+                    },
                     onSettings: { router.push(.settings) },
                     onCallHelp: { router.push(.callHelp) }
                 )
@@ -83,8 +89,11 @@ struct ActiveTripView: View {
             session.showsMap.toggle()
         }
         .toolbar(.hidden, for: .navigationBar)
+        .task { await session.run() }
         .onChange(of: session.latestAnnouncement) { _, announcement in
-            guard let announcement else { return }
+            // On a real trip the announcement engine has already spoken it, through VoiceOver
+            // when that is on; posting it again would read it twice.
+            guard let announcement, !session.isSpokenByEngine else { return }
             AccessibilityNotification.Announcement(announcement.text).post()
         }
         .sheet(isPresented: $showsCommands) {
@@ -101,6 +110,88 @@ struct ActiveTripView: View {
                 }
             )
         }
+    }
+
+    /// The live camera, or the map with the real route once there is one. Leaving the camera
+    /// view doesn't stop obstacle warnings: the session holds the camera for the whole trip.
+    @ViewBuilder
+    private var background: some View {
+        if session.showsMap {
+            CampusMap(routeLine: session.directions?.route?.coordinates.map {
+                CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
+            } ?? (services == nil ? SampleContent.sampleRouteLine : nil))
+        } else if let services {
+            LiveSceneView(services: services, mode: .walk, chrome: .cameraOnly)
+        } else {
+            CameraBackdrop()
+        }
+    }
+
+    private var topBar: some View {
+        HStack(spacing: 12) {
+            if session.plan.isRecording {
+                Label("Recording", systemImage: "record.circle")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Theme.red, in: Capsule())
+                    .accessibilityLabel("Recording route")
+            }
+            Spacer(minLength: 0)
+            viewSwitch
+            Spacer(minLength: 0)
+            CircleIconButton(systemImage: "info", label: "Voice commands") {
+                showsCommands = true
+            }
+        }
+    }
+
+    /// Camera or map, also switched by a two-finger swipe or the VoiceOver action.
+    private var viewSwitch: some View {
+        Picker("View", selection: $session.showsMap) {
+            Label("Camera", systemImage: "camera").tag(false)
+            Label("Map", systemImage: "map").tag(true)
+        }
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 200)
+        .padding(4)
+        .background(.black.opacity(0.6), in: Capsule())
+        .accessibilityHint("Obstacle warnings continue in both views")
+    }
+}
+
+/// Route Blocked Ahead: takes the whole screen, since the user has to choose before going on.
+struct RouteBlockedScreen: View {
+    var postsAnnouncement = true
+    let onCallHelp: () -> Void
+    let onReroute: () -> Void
+    let onPause: () -> Void
+    let onContinue: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.85)
+                .ignoresSafeArea()
+                .accessibilityHidden(true)
+            VStack(spacing: 0) {
+                Spacer()
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 88, weight: .semibold))
+                    .foregroundStyle(Theme.red)
+                    .accessibilityHidden(true)
+                Spacer()
+                RouteBlockedCard(
+                    postsAnnouncement: postsAnnouncement,
+                    onCallHelp: onCallHelp,
+                    onReroute: onReroute,
+                    onPause: onPause,
+                    onContinue: onContinue
+                )
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(.isModal)
     }
 }
 
@@ -150,6 +241,8 @@ struct TripPausedCard: View {
 }
 
 struct RouteBlockedCard: View {
+    /// False when the announcement engine says "Route blocked ahead" itself.
+    var postsAnnouncement = true
     let onCallHelp: () -> Void
     let onReroute: () -> Void
     let onPause: () -> Void
@@ -182,7 +275,9 @@ struct RouteBlockedCard: View {
         .foregroundStyle(.white)
         .onAppear {
             isTitleFocused = true
-            AccessibilityNotification.Announcement("Route blocked ahead").post()
+            if postsAnnouncement {
+                AccessibilityNotification.Announcement("Route blocked ahead").post()
+            }
         }
     }
 }

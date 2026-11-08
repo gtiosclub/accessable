@@ -48,6 +48,26 @@ struct TripSessionViewModelTests {
     }
 
     @Test
+    func barsFadeAwayAfterTheirLifetime() async throws {
+        let session = TripSessionViewModel(
+            plan: plan, warningLifetime: .milliseconds(50), infoLifetime: .milliseconds(400)
+        )
+        session.add(TripAnnouncement(text: "Pillar ahead", kind: .warning))
+        session.add(TripAnnouncement(text: "Turn left", kind: .info))
+        try await Task.sleep(for: .milliseconds(200))
+        // The warning has gone; the direction lasts longer.
+        #expect(session.announcements.map(\.text) == ["Turn left"])
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(session.announcements.isEmpty)
+    }
+
+    @Test
+    func frontEndOnlyIsNotSpokenByTheEngine() {
+        #expect(!TripSessionViewModel(plan: plan).isSpokenByEngine)
+        #expect(TripSessionViewModel(plan: plan).directionsStatus == nil)
+    }
+
+    @Test
     func describeCommandsAddTheirSampleResponse() {
         let session = TripSessionViewModel(plan: plan, announcements: [])
         #expect(session.run(.describeLocation))

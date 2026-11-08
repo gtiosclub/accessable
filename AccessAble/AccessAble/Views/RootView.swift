@@ -49,7 +49,7 @@ struct MainFlowView: View {
         case .routes(let place, let mode):
             RoutePickerView(place: place, mode: mode)
         case .trip(let plan):
-            ActiveTripView(plan: plan)
+            ActiveTripView(plan: plan, services: app.services)
         case .settings:
             SettingsView(app: app)
         case .callHelp:

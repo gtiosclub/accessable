@@ -22,16 +22,28 @@ struct LiveSceneView: View {
     @State private var showsAskedImage = false
     /// Developer tools are compiled into debug builds only, and off until switched on.
     @AppStorage("liveSceneShowsDeveloperTools") private var showsDeveloperTools = false
+    private let chrome: Chrome
 
-    /// - Parameter mode: The mode to open in: Walk from "Camera guidance", Read from "Read
-    ///   signs & text".
-    init(services: AppServices, mode: LiveMode = .walk) {
+    /// How much of the screen comes with the camera.
+    enum Chrome {
+        /// The full camera screen: modes, status strip, controls.
+        case full
+        /// The camera and the outline around what is in the way, nothing else, for another
+        /// screen to put its own controls over (the trip screen). Warnings are still spoken.
+        case cameraOnly
+    }
+
+    /// - Parameters:
+    ///   - mode: The mode to open in: Walk from "Camera guidance", Read from "Read signs & text".
+    ///   - chrome: `.cameraOnly` to embed the camera under another screen's controls.
+    init(services: AppServices, mode: LiveMode = .walk, chrome: Chrome = .full) {
         _viewModel = State(initialValue: LiveSceneViewModel(services: services, mode: mode))
+        self.chrome = chrome
     }
 
     private var isDeveloperMode: Bool {
         #if DEBUG
-        showsDeveloperTools
+        showsDeveloperTools && chrome == .full
         #else
         false
         #endif
@@ -39,7 +51,15 @@ struct LiveSceneView: View {
 
     var body: some View {
         ZStack {
-            if let error = viewModel.errorMessage {
+            if chrome == .cameraOnly {
+                // No camera (no ARKit, or no permission): a plain background. The host
+                // screen's own text says what is going on.
+                if viewModel.errorMessage == nil {
+                    preview
+                } else {
+                    Theme.navy.ignoresSafeArea().accessibilityHidden(true)
+                }
+            } else if let error = viewModel.errorMessage {
                 unavailable(error)
             } else {
                 preview

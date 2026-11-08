@@ -1,53 +1,25 @@
 import MapKit
 import SwiftUI
 
-/// Owner: Maps (2.x). Home screen: camera (or map) behind Settings, Info, and Search Destination.
+/// Owner: Maps (2.x). Home screen: Settings, Dev Tools and Voice commands at the top, Search
+/// Destination at the bottom, over a plain background for now (a static image is to come).
 ///
-/// The camera is the real camera screen (`LiveSceneView`, in Walk mode), so obstacle warnings
-/// run from the moment the app opens. Its mode picker, status strip and controls sit between
-/// this page's top buttons and Search Destination. Switching to the map, or opening another
-/// screen, releases the camera.
+/// There is no camera or map here, so no camera/map switch either: the camera runs on the
+/// trip screen, where the switch is, and from Dev Tools.
 struct LandingView: View {
-    @Environment(AppViewModel.self) private var app
     @Environment(AppRouter.self) private var router
-    @State private var showsMap = false
     @State private var showsCommands = false
 
     var body: some View {
-        Group {
-            if showsMap {
-                ZStack {
-                    CampusMap()
-                    VStack(spacing: 12) {
-                        topBar
-                        Spacer()
-                        Text("Two fingers swipe right for camera view.")
-                            .font(.footnote)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(.black.opacity(0.7), in: Capsule())
-                            .accessibilityHidden(true)
-                        searchButton
-                    }
-                    .padding(.horizontal, 24)
-                    .padding(.bottom, 12)
-                }
-            } else {
-                LiveSceneView(services: app.services, mode: .walk)
-                    .safeAreaInset(edge: .top) {
-                        topBar.padding(.horizontal, 24)
-                    }
-                    .safeAreaInset(edge: .bottom) {
-                        searchButton
-                            .padding(.horizontal, 24)
-                            .padding(.bottom, 12)
-                    }
-            }
+        VStack(spacing: 12) {
+            topBar
+            Spacer()
+            searchButton
         }
-        .gesture(TwoFingerSwipe { showsMap.toggle() })
-        .accessibilityAction(named: showsMap ? "Show camera view" : "Show map view") { showsMap.toggle() }
-        .animation(.easeInOut(duration: 0.25), value: showsMap)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.navy.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showsCommands) {
             VoiceCommandsSheet()
@@ -116,7 +88,6 @@ struct CampusMap: View {
     NavigationStack {
         LandingView()
     }
-    .environment(AppViewModel.preview)
     .environment(AppRouter())
     .preferredColorScheme(.dark)
 }
