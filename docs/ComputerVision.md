@@ -200,7 +200,7 @@ protocol AnnouncementSink { func submit(_ event: AnnouncementEvent) async }
 10. **Swappable object model.** `ObjectDetector` takes the model name; any Core ML detector
     exported with built-in NMS drops in. `hazardLabels` is the only COCO-specific part.
 
-## Task status (T1–T20)
+## Task status (T1–T20, T31)
 
 "Integrated" means the code runs in the live pipeline. Nothing below has been checked on
 a physical device by the integrator; see **Device validation**.
@@ -219,14 +219,40 @@ a physical device by the integrator; see **Device validation**.
 | T10 Floor plane | Rison | direct commit | Integrated | `FloorPlaneDetector.swift`, `FloorMemory.swift` | Support ratio lowered to 8% so a strip of floor at the bottom of the frame still fits; refinement re-checked for tilt (it could rotate a candidate into a wall). `FloorMemory` carries the floor across frames: the last fit for 1.5 s, then a level plane at the remembered camera height, so obstacles are still measured with no floor in view. Fits putting the camera outside 0.4–2.5 m, jumping more than 0.35 m, or tilted past 30° are rejected. |
 | T11 Geometric obstacles | Rison | direct commit | Integrated | `GeometricObstacleDetector.swift`, `LocalOccupancyMap.swift`, `PathClearance.swift` | Uses `WalkingCorridor.contains`. Obstacles carry corridor-relative extents and a shape `Kind` (wall, pole, low obstacle, obstacle); `coverageProfile` tells a wall from a narrow view of one. Guidance no longer comes from the frame: `LocalOccupancyMap` is a 16 m, 0.1 m grid in ARKit's world that every depth point updates — the cell it lands in is hit, the cells its ray crossed are seen through — one update per cell per frame as log-odds. `planPath` reads it: how far a corridor-wide lane stays free straight ahead, at each sidestep, and at each turn. Sidesteps are offered only into lanes the scan has seen free (≥40% known-free cells); turns may point at the unknown. The map remembers the wall after the user turns, which is what stops the advice flipping. |
 | T12 Curbs, drop-offs | Rison | direct commit | Integrated | `GroundProfiler.swift`, `ElevationHazardDetector.swift` | Hazards now in `SceneObservation` and announced. The profile starts 0.5 m out, takes nothing above 0.3 m, and cuts out T11's obstacle footprints — a chair leg standing in a bin otherwise outnumbers the floor and reads as "step up, then drop-off" (seen in the 17 Oct demo). A rise that falls back within 0.6 m is an object, not terrain, and is dropped. Hazards need 3 frames to confirm. |
-| T13 YOLO / Core ML | Deshna | #107 | Integrated | `ObjectDetector.swift`, `DetectionFusion.swift` | Lazy model load, 0.5 threshold, people left to T14, fusion with geometry added. Fusion is strict: only `fusableLabels` (collidable things and people) transfer, the boxes must overlap mutually (≥50% of the smaller, ≥20% of the larger) and their depths must agree within 0.5 m or 25%. Before that a seated person behind a chair renamed the chair "person", and a phone on a desk renamed the desk. |
+| T13 YOLO / Core ML | Deshna | #107 | Integrated | `ObjectDetector.swift`, `DetectionFusion.swift` | Lazy model load, 0.5 threshold, people left to T14, fusion with geometry added. Fusion is strict: only `fusableLabels` (collidable things and people) transfer, the boxes must overlap mutually (≥50% of the smaller, ≥20% of the larger) and their depths must agree within 0.5 m or 25%. Before that a seated person behind a chair renamed the chair "person", and a phone on a desk renamed the desk. The bundled model itself (originally YOLO11n) was replaced by T31 — see that row below and "Known limitations". |
 | T14 People detection | Rison | direct commit | Integrated | `PeopleDetector.swift` | Unchanged; people now get distances. |
 | T15 Object tracking | Petr | #103 | Integrated | `ObjectTracker.swift` | ARKit time, age-based expiry, generic "obstacle" label compatible, writes `trackID`. Image velocity dropped (unused). |
 | T16 Alert thresholds | Smitha | #105 | Rewritten twice, integrated | `ObstacleAnnouncer.swift` | Emits `AnnouncementEvent`s about the *path*, not per object. The occupancy map's blocked distance sets the band (`BlockedAhead`); detections only name what blocks ("chair", "wall", else "obstacle"). Two bands by default: a warning with the way round at 2.5 m, "Stop" at 1.2 m. Spoken when first confirmed (2 frames, 0.35 m hysteresis), on escalation, when the advice changes — and a new direction must hold 1 s to count, then wait 4 s since the last word — and as a reminder every 8 s at the stop band. "Path clear" only after a stop. At most one announcement per 2.5 s unless more urgent; navigation cues wait 2.5 s after a path warning. Phrasing is short: "Chair ahead. Go left." / "Stop. Wall ahead. Turn right." / "Stop. Wall ahead. No clear path. Turn around slowly." Kerbs and steps: same rules per type, 3 frames to confirm, 8 s repeat hold; `.unknown` not spoken. |
 | T17 OCR | Smitha | #114 | Integrated | `TextDetector.swift`, `RecognizedTextMemory.swift`, `TextReader.swift` | Off the safety path at ≤1 Hz; confidence filter and de-duplication. |
 | T18 Instant descriptions | Smitha | #112 | Integrated | `SceneDescriptionBuilder.swift` | Hazards first, capped at four items, speakable empty scene; serves `describeCurrentScene()`. |
 | T19 Ask AI | Deshna, Nish | #144 | Integrated, not on device yet | `AskAI.swift`, `ImageFacts.swift`, `ARSceneAnalyzer.ask` | On-device only. Facts: the latest `SceneObservation` (objects, people, kerbs with distance and direction, as in T18) plus text (T17's `TextDetector`), scene labels and each object's main colour read from one still frame. Foundation Models answers from those facts, a template where Apple Intelligence is unavailable; iOS 26's model is text-only, so it never sees the image. Outside the obstacle pipeline. Camera guidance screen has an Ask AI section; Home has none yet. If the model fails (guardrail, context window), the template answers instead. The answer is spoken only through VoiceOver until the announcement engine (3.3) lands. |
-| T20 Test set & metrics | Deshna | #122 | Metrics integrated; data missing | `Evaluation/`, `TestSet/` | Live FPS/latency on the Live screen. `TestSet/annotations.json` has no frames yet. |
+| T20 Test set & metrics | Deshna | #122 | Integrated; little data | `Evaluation/`, `TestSet/` | Live FPS/latency on the Live screen. The recorded set has 4 chair frames (T40); the other 10 scenarios are still to record. `swift test --filter recordedTestSet` scores it (T20 runner, #174). |
+
+## Task status (T23–T45, second integration)
+
+Merged into `cv-integration-2` on top of `computer_vision` at `8489803` (which includes the
+direct commits for floor memory, the occupancy map, path clearance and "Take me to…").
+Same caveat: none of this has been checked on a device by the integrator.
+
+| Task | Owner | PR | Where | Notes |
+|---|---|---|---|---|
+| T23 Ask AI priorities | Nish | #176 | `AIPriorities.swift`, Settings | The user ranks hazards, navigation, people, signs, landmarks; the prompt and the answer's sentences follow that order. Close hazards still come first. Stacked on #175. |
+| T24 Ask AI rules | Nish | #175 | `AskAIRules.swift` | Every answer (model or template) is cut to two sentences / 40 words, "can't tell" when nothing was found, a close hazard prepended, recent sentences not repeated, and safety claims removed. Integration fix: a negation only cancels a claim in its own clause ("There aren't any cars, so you can cross." is removed). |
+| T26 Describe from Home | Deshna | #183 | `ARSceneAnalyzer.describeCurrentScene` | Starts the camera for up to 8 frames / 3 s when no camera screen is open, then stops it. |
+| T27 Guidance kept alive | Rison | #186 | `ARSessionManager` (`GuidanceStatus`), `GuidanceStatusMonitor` | Screen stays awake while guidance runs. Silent on interruptions, "Camera guidance restored." when it returns, one automatic restart if relocalization fails within 5 s. |
+| T32 Camera quality hints | Smitha | #178 | `CameraQualityEvaluator.swift`, `ImageSharpness.swift` | "Tilt your phone upward/downward", "Too dark", "Hold steady". Integration fix: normal priority, a problem must last 1 s, repeats at most every 10 s. Thresholds (±0.35 forward-Y, 250 lux, sharpness 4) need device tuning. |
+| T33 Non-LiDAR distances | Rison | #188 | `GroundContactDistance.swift`, `ObjectSizePrior.swift`, `EstimatedDistance.swift` | Floor contact from ARKit feature points plus a height prior per class. `Detection.distanceAccuracy`; estimates are spoken "about 2 metres" and warnings band on the near end of the uncertainty. LiDAR devices are unchanged. |
+| T34 Approaching objects | Rison | #189 | `MotionTracker.swift`, `ApproachAssessment.swift`, `ApproachAnnouncer.swift` | Least-squares velocity over 0.6 s, user motion removed, closest-approach time. "Stop." inside 1.5 s, a warning inside 3 s. Tune in a busy hallway: anyone passing within ~1 m counts. |
+| T35 Crowds | Rison | #190 | `CrowdDetector.swift`, `CrowdAnnouncer.swift` | 3+ people within 2 m become one sentence in descriptions and an ambient mention at most every 15 s. |
+| T36 Doors and windows | Deshna | #182 | `MeshFeatures.swift`, `StructuralFeatures.swift` | ARKit `meshWithClassification`, regrouped every 10th frame. Doors are described and (integration) found by "Take me to the door". Watch the mesh's battery and thermal cost. |
+| T37 Street signals | Deshna | #184 | `StreetCrossing.swift`, `LumaSampler.swift` | Traffic lights and stop signs from YOLO; crosswalks from a stripe detector on the lower image, 3 of 5 frames to confirm, once per 20 s. Never says "safe". Check indoor false positives (striped floors, stair edges, blinds). |
+| T38 Spoken camera questions | Nish | #177 | `VisualQuestion.swift`, `CommandViewModel` | Questions about what the camera sees go to Ask AI, the rest to the text assistant. Integration fix: asked with no camera screen open, Ask starts the camera for the question. |
+| T39 Per-class thresholds | Smitha | #179 | `DetectionConfidencePolicy.swift` | 0.6 default, chairs at 0.55 (`DetectionConfidencePolicy.standard`). |
+| T40 Test data | Smitha | #180 | `TestSet/`, `Evaluation/TestSet.swift` | 4 tape-measured chair frames with `conditions` tags; distance cases and calibration from recorded frames. `conditions` is a list of tags (#174 used an object; reconciled to the list). |
+| T41 Elevation validation | Petr | #171 | `FieldTestRecorder`, Live detection | Setup and outcome records for the elevation field procedure below. |
+| T45 Ask AI cancellation | Petr | #170 | `AskAI.swift` | Cancelling a question resumes once, including while Vision work is queued. |
+| T20 runner | Nish | #174 | `Evaluation/TestSetEvaluation.swift` | Precision/recall overall, per scenario and per condition, distance error, detection time. |
+| T31 Replace YOLO11 | Sahiti | #199 | `DFineObjectDetector.swift`, `ObjectDetector.swift` (`ObjectDetecting`) | Bundled model is now D-FINE-nano (Apache-2.0, `Peterande/D-FINE`, converted by `john-rocky/peaceofcake`); `yolo11n.mlpackage` removed. No built-in NMS, so it's a separate class behind a new `ObjectDetecting` protocol rather than a `modelName` swap on `ObjectDetector`, which stays as-is for a future NMS-included model. Picked after evaluating it and the full/tiny YOLOv3 (also Apple, MIT) headlessly with `coremltools` against three real COCO images — see "Known limitations" for the numbers and what was rejected. |
 
 ### Task descriptions that changed
 
@@ -265,14 +291,25 @@ a physical device by the integrator; see **Device validation**.
 ## Known limitations
 
 - **No device validation yet.** Everything below "Device validation" is unverified on hardware.
-- **Non-LiDAR devices** get recognized objects and people without distances. Nothing
-  distance-based is announced, and there is no relative-depth fallback.
-- **YOLO11 is AGPL-3.0** (Ultralytics). Fine for the club build; it must be replaced with a
-  permissively licensed model, or licensed commercially, before any App Store or other public
-  distribution.
-- **Model false positives.** On abstract wallpapers the model reported "spoon" (0.51) and
+- **Non-LiDAR devices** get estimated distances for recognized objects and people (T33),
+  but no geometric obstacles, occupancy map, path plan or kerbs: those need dense depth.
+- **Object-detection model license (T31).** Resolved: the bundled model is now D-FINE-nano
+  (Apache-2.0), not YOLO11n (AGPL-3.0). Picked after evaluating it and both full and Tiny
+  YOLOv3 (Apple's own Core ML gallery, also MIT) headlessly with `coremltools` against three
+  real COCO images, not just this project's one text-reading test photo — full YOLOv3 matched
+  or beat D-FINE on accuracy but ran 5–6x slower and 11x larger on disk for it; YOLOv3-Tiny
+  got close to D-FINE on speed/size but missed objects (a cat, a bear) D-FINE and YOLO11n both
+  caught. D-FINE itself: ~8ms/frame on a Mac vs YOLO11n's ~3-4ms (still well inside T20's
+  <100ms p95 budget) and 13MB vs 5.2MB on disk, for equal-or-better detections in that
+  comparison. It has no NMS stage of its own (DETR-style: a fixed set of candidate boxes,
+  trained not to duplicate one object) — `nonMaxSuppressed` in `DFineObjectDetector.swift` is
+  a safety net, not load-bearing so far. T39's per-class thresholds (0.6, chairs 0.55) are
+  carried over from YOLO11n untuned; it has not been checked against this model's own false-positive
+  behavior on real data the way the line below describes for YOLO11n.
+- **Model false positives.** On abstract wallpapers YOLO11n reported "spoon" (0.51) and
   "vase" (0.59) even at the 0.5 threshold. They are non-hazard classes, so they reach scene
-  descriptions but not warnings. Tune the threshold, and possibly per class, with real data.
+  descriptions but not warnings. Tune the threshold, and possibly per class, with real data —
+  this was never re-run against D-FINE (T31).
 - **Portrait only in practice.** The Live and guidance screens set portrait orientation;
   other orientations are mapped correctly but not exercised.
 - **Announcements are untested end to end on a device.** `AppServices.live` now runs
@@ -308,7 +345,8 @@ Camera guidance for announcements:
    still (a reminder every 8 s at the stop band only) or when it flickers at the corridor
    edge, and one "Path clear." after stepping round it (T16). Sweep the phone left and right
    while stopped in front of it: the advice must not change.
-8. Kerb and step down outdoors are announced; a drop-off is at least high priority (T12, T16).
+8. Run the **Elevation field procedure** below before treating kerb, stair, ramp, or drop-off
+   behavior as device-validated (T12, T16).
 11. Wall: walk straight at a wall from 4 m. The readout switches from "Floor found" to
     "Floor remembered" around 2 m and the wall is still announced as "Wall", ending in
     "Stop. Wall ahead." Turn until the wall's end is in view and the advice becomes "Go left"
@@ -329,6 +367,48 @@ Camera guidance for announcements:
    after looking away (T17, T18).
 10. No "delegate is retaining N ARFrames" warnings in the console (T3).
 
+### Elevation field procedure (T41 — pending on-device execution)
+
+This procedure has **not** been run by the repository maintainer. Run it only with a LiDAR
+iPhone (12 Pro or newer), a sighted safety spotter, and a tape measure. Do not approach an
+unprotected edge while relying on the app.
+
+1. For each setup, measure and enter the physical setup name, surface material, edge distance,
+   and expected vertical height in Live detection's **Elevation test setup** controls. Start a
+   recording, then tap **Record setup** before each approach.
+2. Test a low curb up and down, standard stair risers in both directions, a compliant 1:12 ramp,
+   and an abrupt protected drop-off. Include flat concrete/asphalt and a visually challenging
+   surface where safe. Make at least three slow approaches per feature from 3–4 m.
+3. For each pass, verify tracking is normal and note thermal state. The JSONL frame records keep
+   tracking, thermal state, measured hazard distance/height, emitted events, and actually
+   delivered events. Tap **Record outcome** as `tester heard warning`, `warning missing`, `wrong
+   warning`, `false warning`, or `inconclusive` after the pass.
+4. Run controls: the ramp must not become a step; an object, chair leg, or low box on level
+   ground must not become a surface hazard; ordinary sparse or missing-depth frames must not be
+   called a drop-off. Interior coverage holes remain ambiguous, never safe.
+5. Confirm a detected close drop-off yields `Stop. Drop-off ahead.` with critical priority, while
+   an equivalently close curb/step is high priority. Confirm the delivered-event record agrees
+   with the on-screen banner/audio outcome.
+6. Repeat after a sustained run to capture fair/serious thermal conditions if they occur. Export
+   the JSONL file from `Documents/FieldTests/` and compare tape-measured values to the recorded
+   `HazardRecord` values before proposing any threshold change.
+
+`expectedMaxDistance` intentionally remains unset in the live elevation pipeline. The walking
+corridor range is an application look-ahead preference, not proof that LiDAR should return depth
+that far; using it would turn ordinary sparse frames into false urgent drop-offs. The detector's
+missing-depth drop-off mode is covered by explicit synthetic tests only until field recordings
+support a reliable coverage model.
+
+Elevation JSONL records use five kinds: `frame`, `delivered`, `mark`, `elevationSetup`, and
+`elevationOutcome`. Each elevation setup receives a UUID `scenarioID`; its outcome includes the
+same immutable setup, and every analyzed frame and delivered announcement while it is active
+contains `elevationScenarioID`. Emitted-event IDs preserve that association if delivery happens
+after closure. Calibration tooling must group only records with the same ID. An outcome requires
+at least one queued frame and closes the scenario, so later frames/events cannot contaminate that
+pass. `outcome` is the tester's observation; `deliveredEventCount` is separate machine-recorded
+delivery evidence available before the outcome. Setup entry requires a nonempty physical setup
+and surface plus finite, nonnegative tape-measured expected height and distance.
+
 ## Next phase
 
 - **Phone pose check** — use the camera pitch from the pose to tell the user when the camera
@@ -343,7 +423,10 @@ Camera guidance for announcements:
 - **Motion** — track velocity and approach rate for people and moving objects (deferred from T15).
 - **Recorded test set** — capture and annotate the eleven T20 scenarios; run detection and
   distance evaluation on every model or threshold change.
-- **Model licence** — choose and integrate a permissively licensed detector.
+- **D-FINE on device (T31)** — check real accuracy, speed and false-positive rate on an
+  iPhone; the evaluation so far is headless (`coremltools` on a Mac, three stock COCO
+  images), not the recorded test set, which has only 4 chair frames so far (T40). Re-tune
+  T39's thresholds against that, not carried over from YOLO11n untouched.
 - **Profile-driven thresholds** — let `GuidanceProfile` set announcement bands and verbosity.
 - **ARKit mesh classification** (`Detection.Origin.mesh`, `PerformanceMode.meshReconstructionEnabled`)
   is reserved in the contracts but unused.

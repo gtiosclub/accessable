@@ -15,7 +15,7 @@ import UIKit
 /// Every feature shares this one camera. `start()` and `stop()` nest: tracking starts with
 /// the first `start()`, later ones join it without resetting the world, and the session
 /// only pauses when every `start()` has had its `stop()`.
-final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, Sendable {
+final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, GuidanceStatusProviding, Sendable {
     let sessionManager: ARSessionManager
     let perception: ScenePerception
     /// Idle unless a field test is being recorded from the Live detection screen.
@@ -75,9 +75,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
             [perception, broadcaster, announcementQueue, recorder, sessionManager] captured in
             let analysis = perception.analyze(captured.frame, interfaceOrientation: captured.interfaceOrientation)
             broadcaster.send(analysis.observation)
-            for event in analysis.announcements {
-                announcementQueue.yield(event)
-            }
+            // Register emitted event IDs before delivery starts. A delivered warning can arrive
+            // after its field-test scenario closes, and the recorder must retain its origin.
             recorder.record(FieldTestRecorder.FrameRecord(
                 analysis: analysis,
                 diagnostics: perception.diagnostics,
@@ -86,6 +85,9 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
                 tracking: sessionManager.trackingStateDescription,
                 cameraFPS: sessionManager.healthReport.averageFPS
             ))
+            for event in analysis.announcements {
+                announcementQueue.yield(event)
+            }
         }
 
         // ARKit can't run in the background, so a locked phone means no obstacle warnings.
@@ -166,6 +168,27 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         sessionManager.stop()
     }
 
+    // MARK: - GuidanceStatusProviding
+
+    var guidanceStatus: GuidanceStatus { sessionManager.guidanceStatus }
+
+    func guidanceStatuses() -> AsyncStream<GuidanceStatus> { sessionManager.guidanceStatuses() }
+
+    /// A session that could not relocalize comes back as a different world, so tracking is
+    /// re-run from scratch and the remembered floor and occupancy map, anchored in
+    /// coordinates that no longer mean anything, are cleared. It doesn't go through
+    /// `start()`: that would add a camera hold nobody releases.
+    func restartGuidance() async throws {
+        try await restartTracking()
+    }
+
+    @MainActor
+    private func restartTracking() throws {
+        guard clientCount > 0 else { return }
+        try sessionManager.start()
+        perception.reset()
+    }
+
     /// Tells the analyzer how the device is held, so Vision gets the right image
     /// orientation and boxes come back upright.
     func setInterfaceOrientation(_ orientation: UIInterfaceOrientation) {
@@ -216,12 +239,29 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     /// Tier B, "Ask AI" (T19): the next camera frame as a still, plus what the pipeline
     /// last saw (the objects, distances and directions "Describe my surroundings" uses),
     /// answered on the device. Runs beside the obstacle pipeline, never in it.
-    /// `locationContext` is not used yet.
+    /// `locationContext` is not used yet. Asked with no camera running (by voice from Home,
+    /// T38), the camera is woken for the question, as Describe does.
     func ask(_ question: String, locationContext: String?) async throws -> String {
         state.withLock { $0.lastAskedImage = nil }
-        let imageData = try await captureStillImage()
+        let imageData: Data
+        let observation: SceneObservation?
+        if let latest = broadcaster.latest, Date.now.timeIntervalSince(latest.timestamp) < Self.observationFreshness {
+            imageData = try await captureStillImage()
+            observation = latest
+        } else {
+            try await start()
+            do {
+                let woken = await currentObservation()
+                imageData = try await captureStillImage()
+                observation = woken
+            } catch {
+                await stop()
+                throw error
+            }
+            await stop()
+        }
         state.withLock { $0.lastAskedImage = imageData }
-        return try await askAI.answer(question, imageData: imageData, observation: broadcaster.latest ?? .empty).answer
+        return try await askAI.answer(question, imageData: imageData, observation: observation ?? .empty).answer
     }
 
     /// The next frame from the shared session as an upright JPEG. Frames only flow while
@@ -296,6 +336,16 @@ private struct CapturedImage: @unchecked Sendable {
 protocol AskedImageProviding: Sendable {
     /// The JPEG of the latest question's still; nil before any question, or if capture failed.
     var lastAskedImage: Data? { get }
+}
+
+/// Lets a screen hear when camera guidance stops or comes back, so it can say so and keep
+/// the display awake while guidance runs (T27). Separate from `SceneObservationProviding`
+/// so that contract stays as it is; services without a camera don't conform.
+protocol GuidanceStatusProviding: Sendable {
+    var guidanceStatus: GuidanceStatus { get }
+    func guidanceStatuses() -> AsyncStream<GuidanceStatus>
+    /// Restarts guidance from scratch, discarding everything remembered about the old world.
+    func restartGuidance() async throws
 }
 
 /// "Take me to the chair": scan the room by turning on the spot, then be steered to it.

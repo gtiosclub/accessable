@@ -1,4 +1,89 @@
 {
   "version": 1,
-  "frames": []
+  "frames": [
+    {
+      "scenario": "chair-ahead",
+      "image": "frames/chair-ahead/0001.jpeg",
+      "objects": [
+        {
+          "label": "chair",
+          "x": 0.01,
+          "y": 0.17,
+          "width": 0.98,
+          "height": 0.83
+        }
+      ],
+      "measuredDistances": {
+        "chair": 0.8
+      },
+      "conditions": [
+        "indoor",
+        "bright-lighting",
+        "low-crowd"
+      ]
+    },
+    {
+      "scenario": "chair-ahead",
+      "image": "frames/chair-ahead/0002.jpeg",
+      "objects": [
+        {
+          "label": "chair",
+          "x": 0.25,
+          "y": 0.32,
+          "width": 0.48,
+          "height": 0.46
+        }
+      ],
+      "measuredDistances": {
+        "chair": 1.57
+      },
+      "conditions": [
+        "indoor",
+        "bright-lighting",
+        "low-crowd"
+      ]
+    },
+    {
+      "scenario": "chair-ahead",
+      "image": "frames/chair-ahead/0003.jpeg",
+      "objects": [
+        {
+          "label": "chair",
+          "x": 0.30,
+          "y": 0.32,
+          "width": 0.33,
+          "height": 0.31
+        }
+      ],
+      "measuredDistances": {
+        "chair": 2.07
+      },
+      "conditions": [
+        "indoor",
+        "bright-lighting",
+        "low-crowd"
+      ]
+    },
+    {
+      "scenario": "chair-ahead",
+      "image": "frames/chair-ahead/0004.jpeg",
+      "objects": [
+        {
+          "label": "chair",
+          "x": 0.39,
+          "y": 0.08,
+          "width": 0.28,
+          "height": 0.28
+        }
+      ],
+      "measuredDistances": {
+        "chair": 2.43
+      },
+      "conditions": [
+        "indoor",
+        "bright-lighting",
+        "low-crowd"
+      ]
+    }
+  ]
 }

@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Synchronization
 #if canImport(FoundationModels)
 import FoundationModels
 #endif
@@ -17,12 +18,10 @@ import FoundationModels
 /// On demand only: one question, one image. It is not part of the obstacle pipeline and
 /// is never used for warnings.
 struct AskAI: Sendable {
-    var extractor = ImageFactExtractor()
+    var extractor: any ImageFactExtracting = ImageFactExtractor()
     var responder: any AskAIResponder = OnDeviceAskAIResponder()
-
-    /// Vision blocks while it works, so it runs here rather than on the caller's actor or
-    /// the concurrency pool, where several waiting calls can starve Vision's own work.
-    private static let visionQueue = DispatchQueue(label: "AccessAble.AskAI.vision", qos: .userInitiated)
+    /// Kept injectable so cancellation can be tested without running Vision work.
+    var extractionScheduler: any AskAIExtractionScheduling = VisionExtractionScheduler()
 
     /// Detections passed on to the model; the observation is already in priority order.
     var maxDetections = 8
@@ -34,24 +33,23 @@ struct AskAI: Sendable {
         imageData: Data,
         observation: SceneObservation = .empty
     ) async throws -> AskAIResponse {
+        try Task.checkCancellation()
         let start = ContinuousClock.now
 
         let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty else { throw AskAIError.emptyQuestion }
         let detections = Array(observation.prioritizedDetections.prefix(maxDetections))
-        var facts = try await withCheckedThrowingContinuation { continuation in
-            Self.visionQueue.async { [extractor] in
-                continuation.resume(with: Result { try extractor.facts(from: imageData, colorsFor: detections) })
-            }
-        }
+        var facts = try await extractFacts(imageData, detections: detections)
         facts.detections = detections
         facts.elevationHazards = observation.elevationHazards
         // The pipeline's people have distances; Vision's would only count them twice.
         if facts.detections.contains(where: { $0.label == "person" }) {
             facts.people = []
         }
+        try Task.checkCancellation()
         let answer = try await responder.answer(question, facts: facts)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        try Task.checkCancellation()
         guard !answer.isEmpty else { throw AskAIError.emptyAnswer }
 
         let elapsed = (ContinuousClock.now - start).components
@@ -59,6 +57,83 @@ struct AskAI: Sendable {
             answer: answer,
             latencyMilliseconds: Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15
         )
+    }
+
+    /// A cancelled caller is resumed immediately even if its Vision work is waiting in the
+    /// serial queue. Vision itself is synchronous, so an extraction already underway is
+    /// allowed to finish, but its result is discarded.
+    private func extractFacts(_ imageData: Data, detections: [Detection]) async throws -> ImageFacts {
+        let request = AskAIExtractionRequest()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                request.install(continuation)
+                extractionScheduler.schedule { [extractor] in
+                    guard request.isPending else { return }
+                    request.finish(Result { try extractor.facts(from: imageData, colorsFor: detections) })
+                }
+            }
+        } onCancel: {
+            request.cancel()
+        }
+    }
+}
+
+/// Serializes blocking Vision work away from the caller's executor.
+protocol AskAIExtractionScheduling: Sendable {
+    func schedule(_ work: @escaping @Sendable () -> Void)
+}
+
+/// Produces grounded facts from one still. Kept behind a seam for deterministic extraction tests.
+protocol ImageFactExtracting: Sendable {
+    func facts(from imageData: Data, colorsFor detections: [Detection]) throws -> ImageFacts
+}
+
+extension ImageFactExtractor: ImageFactExtracting {}
+
+struct VisionExtractionScheduler: AskAIExtractionScheduling {
+    /// Vision blocks while it works, so it runs here rather than on the caller's actor or
+    /// the concurrency pool, where several waiting calls can starve Vision's own work.
+    private static let queue = DispatchQueue(label: "AccessAble.AskAI.vision", qos: .userInitiated)
+
+    func schedule(_ work: @escaping @Sendable () -> Void) {
+        Self.queue.async(execute: work)
+    }
+}
+
+/// Synchronizes cancellation and the queued Vision completion so the continuation resumes once.
+private final class AskAIExtractionRequest: @unchecked Sendable {
+    private struct State {
+        var continuation: CheckedContinuation<ImageFacts, Error>?
+        var finished = false
+    }
+
+    private let state = Mutex(State())
+
+    var isPending: Bool {
+        state.withLock { !$0.finished }
+    }
+
+    func install(_ continuation: CheckedContinuation<ImageFacts, Error>) {
+        let cancelled = state.withLock { state in
+            guard !state.finished else { return true }
+            state.continuation = continuation
+            return false
+        }
+        if cancelled { continuation.resume(throwing: CancellationError()) }
+    }
+
+    func cancel() {
+        finish(.failure(CancellationError()))
+    }
+
+    func finish(_ result: Result<ImageFacts, Error>) {
+        let continuation = state.withLock { state -> CheckedContinuation<ImageFacts, Error>? in
+            guard !state.finished else { return nil }
+            state.finished = true
+            defer { state.continuation = nil }
+            return state.continuation
+        }
+        continuation?.resume(with: result)
     }
 }
 

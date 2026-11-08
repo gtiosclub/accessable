@@ -26,6 +26,10 @@ final class LiveSceneViewModel {
     private(set) var isFloorMeasured = false
     /// Which way the geometry says is open; nil without depth.
     private(set) var path: PathAssessment?
+    /// Moving things predicted to reach the walking path (T34), soonest first.
+    private(set) var approaching: [ApproachThreat] = []
+    /// Groups of people (T35), nearest first.
+    private(set) var crowds: [CrowdRegion] = []
     /// Progress of "Take me to…", nil when no request is active or finished.
     private(set) var navigation: NavigationStatus?
     /// How the phone is held. Landscape widens the horizontal field of view from about
@@ -47,12 +51,24 @@ final class LiveSceneViewModel {
     private(set) var recordingName: String?
     /// The checklist step most recently marked.
     private(set) var lastMark: String?
+    /// Ground truth entered by the tester before recording an elevation scenario. These stay
+    /// as strings for SwiftUI editing and are parsed only when written to the JSONL record.
+    var elevationPhysicalSetup = ""
+    var elevationSurfaceType = ""
+    var elevationExpectedHeight = ""
+    var elevationExpectedDistance = ""
+    var elevationExpectedHazard = "step / curb"
+    private(set) var elevationValidationMessage: String?
     /// The most recent delivered announcement, mirrored on screen.
     private(set) var lastAnnouncement: AnnouncementEvent?
 
     @ObservationIgnored private let announcements: any AnnouncementEngineProtocol
+    /// Holds the screen awake and speaks up when guidance stops or returns (T27).
+    @ObservationIgnored private let guidance: GuidanceStatusMonitor
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
+    @ObservationIgnored private var elevationScenarioTask: Task<Void, Never>?
     @ObservationIgnored private var orientationTask: Task<Void, Never>?
+    @ObservationIgnored private let pointIdentifier = PointIdentifier()
 
     /// The device validation checklist in docs/ComputerVision.md, as markers for a recording.
     static let checklistMarks = [
@@ -79,6 +95,7 @@ final class LiveSceneViewModel {
     init(services: AppServices) {
         analyzer = services.scene as? ARSceneAnalyzer
         announcements = services.announcements
+        guidance = GuidanceStatusMonitor(announcements: services.announcements)
     }
 
     func toggleRecording() {
@@ -92,6 +109,7 @@ final class LiveSceneViewModel {
             recordingName = try recorder.start().lastPathComponent
             isRecording = true
             lastMark = nil
+            elevationValidationMessage = nil
         } catch {
             errorMessage = "Could not start recording: \(error.localizedDescription)"
         }
@@ -100,6 +118,53 @@ final class LiveSceneViewModel {
     func mark(_ label: String) {
         analyzer?.recorder.mark(label)
         lastMark = label
+    }
+
+    /// Speaks what is in the middle of the frame (T43). A reply to a tap, so it is sent as
+    /// `.userInteraction`: the engine neither filters it by category nor drops a second tap
+    /// on the same thing as a duplicate.
+    func identifyPointedAt() {
+        let text = pointIdentifier.spokenIdentification(in: observation) ?? "Nothing recognized."
+        let event = AnnouncementEvent(
+            category: .system,
+            priority: .normal,
+            text: text,
+            source: .userInteraction,
+            expiresAt: Date().addingTimeInterval(3)
+        )
+        Task { [announcements] in
+            await announcements.submit(event)
+        }
+    }
+
+    /// Mirrored from the recorder's status stream; lifecycle ownership remains in the recorder.
+    private(set) var hasActiveElevationSetup = false
+
+    func recordElevationSetup() {
+        guard let recorder = analyzer?.recorder, recorder.isRecording else { return }
+        guard let setup = validatedElevationSetup() else { return }
+        switch recorder.recordElevationSetup(setup, environment: testEnvironment) {
+        case .recorded:
+            elevationValidationMessage = nil
+            lastMark = "Elevation setup recorded"
+        case .activeSetupExists:
+            elevationValidationMessage = "Record an outcome before starting another elevation setup."
+        case .notRecording:
+            elevationValidationMessage = "Start field-test recording before recording an elevation setup."
+        }
+    }
+
+    func recordElevationOutcome(_ outcome: String) {
+        guard let recorder = analyzer?.recorder, recorder.isRecording else { return }
+        switch recorder.recordElevationOutcome(outcome, environment: testEnvironment) {
+        case .recorded:
+            elevationValidationMessage = nil
+            lastMark = "Outcome: \(outcome)"
+        case .noActiveSetup:
+            elevationValidationMessage = "Record a complete elevation setup before its outcome."
+        case .noFramesRecorded:
+            elevationValidationMessage = "Wait for at least one analyzed frame before recording the outcome."
+        }
     }
 
     /// Starts steering towards `query`; an empty query cancels.
@@ -135,6 +200,14 @@ final class LiveSceneViewModel {
             return
         }
         isDepthAvailable = analyzer.sessionManager.isDepthSupported
+        guidance.watch(analyzer)
+        elevationScenarioTask?.cancel()
+        elevationScenarioTask = Task { [weak self, recorder = analyzer.recorder] in
+            for await isActive in recorder.elevationScenarioStatuses() {
+                guard let self, !Task.isCancelled else { return }
+                self.hasActiveElevationSetup = isActive
+            }
+        }
         deliveryTask?.cancel()
         deliveryTask = Task { [weak self, announcements, recorder = analyzer.recorder] in
             for await event in announcements.deliveredEvents() {
@@ -151,6 +224,8 @@ final class LiveSceneViewModel {
             cameraHeight = diagnostics.cameraHeight
             isFloorMeasured = diagnostics.isFloorMeasured
             path = diagnostics.path
+            approaching = diagnostics.approaching
+            crowds = diagnostics.crowds
             navigation = diagnostics.navigation
             performance = diagnostics.performance
             sessionDescription = Self.describe(
@@ -163,8 +238,11 @@ final class LiveSceneViewModel {
     }
 
     func stop() {
+        guidance.stop()
         deliveryTask?.cancel()
         deliveryTask = nil
+        elevationScenarioTask?.cancel()
+        elevationScenarioTask = nil
         orientationTask?.cancel()
         orientationTask = nil
         UIDevice.current.endGeneratingDeviceOrientationNotifications()
@@ -208,6 +286,20 @@ final class LiveSceneViewModel {
         }
     }
 
+    /// "Car from your right, 1.4 s, 6.2 m/s" — one approach, for checking T34 against what
+    /// is actually happening in front of the tester.
+    func approachLine(_ threat: ApproachThreat) -> String {
+        let name = threat.label.prefix(1).uppercased() + threat.label.dropFirst()
+        let side = SpokenPhrasing.approachSide(threat.bearing)
+        return String(format: "%@ %@, %.1f s, %.1f m/s", name, side, threat.timeToApproach, threat.speed)
+    }
+
+    /// "6 people, 3.5 m, 2.4 m wide" — one group, for checking T35 against the pavement in
+    /// front of the tester.
+    func crowdLine(_ crowd: CrowdRegion) -> String {
+        String(format: "%d people, %.1f m, %.1f m wide", crowd.count, crowd.nearestDistance, crowd.extent)
+    }
+
     var performanceDescription: String? {
         performance.map {
             String(format: "%.0f fps, %.0f ms (p95 %.0f ms)", $0.averageFPS, $0.averageLatencyMilliseconds, $0.p95LatencyMilliseconds)
@@ -244,6 +336,33 @@ final class LiveSceneViewModel {
         let fps = health.averageFPS.map { String(format: ", camera %.0f fps", $0) } ?? ""
         let checks = health.passes ? "" : ", move the phone to finish checks"
         return "Tracking \(tracking)\(fps)\(checks)"
+    }
+
+    private func validatedElevationSetup() -> FieldTestRecorder.ElevationSetup? {
+        let physicalSetup = elevationPhysicalSetup.trimmingCharacters(in: .whitespacesAndNewlines)
+        let surfaceType = elevationSurfaceType.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !physicalSetup.isEmpty, !surfaceType.isEmpty,
+              let expectedHeight = Float(elevationExpectedHeight), expectedHeight.isFinite, expectedHeight >= 0,
+              let expectedDistance = Float(elevationExpectedDistance), expectedDistance.isFinite, expectedDistance >= 0
+        else {
+            elevationValidationMessage = "Enter setup, surface, and nonnegative expected height and distance in metres."
+            return nil
+        }
+        return FieldTestRecorder.ElevationSetup(
+            scenarioID: UUID(),
+            physicalSetup: physicalSetup,
+            surfaceType: surfaceType,
+            expectedHeight: expectedHeight,
+            expectedDistance: expectedDistance,
+            expectedHazard: elevationExpectedHazard
+        )
+    }
+
+    private var testEnvironment: FieldTestRecorder.TestEnvironment {
+        FieldTestRecorder.TestEnvironment(
+            tracking: analyzer?.sessionManager.trackingStateDescription ?? "unavailable",
+            thermal: ProcessInfo.processInfo.thermalState.name
+        )
     }
 
     var countsDescription: String {
