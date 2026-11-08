@@ -17,13 +17,21 @@ final class SceneViewModel {
     private(set) var askedImage: UIImage?
     /// Progress of "Take me to…"; nil without a request, or where the service cannot navigate.
     private(set) var navigation: NavigationStatus?
+    /// The most recently delivered announcement, for the visual warning banner. VoiceOver
+    /// users already hear it; this is the "visually distinct urgent warning" for everyone else.
+    private(set) var lastAnnouncement: AnnouncementEvent?
+    /// Width / height of the upright camera image, for placing overlay boxes on the preview.
+    private(set) var imageAspectRatio: CGFloat = 3.0 / 4.0
 
     /// False where the scene service has no camera (previews, the Simulator).
     var canNavigate: Bool { services.scene is any SceneNavigating }
+    /// Non-nil only where a live ARKit preview can be shown; nil in previews and the Simulator.
+    var analyzer: ARSceneAnalyzer? { services.scene as? ARSceneAnalyzer }
 
     @ObservationIgnored private let services: AppServices
     /// Holds the screen awake and speaks up when guidance stops or returns (T27).
     @ObservationIgnored private let guidance: GuidanceStatusMonitor
+    @ObservationIgnored private var deliveryTask: Task<Void, Never>?
 
     init(services: AppServices) {
         self.services = services
@@ -41,11 +49,22 @@ final class SceneViewModel {
         if let provider = services.scene as? any GuidanceStatusProviding {
             guidance.watch(provider)
         }
+        deliveryTask?.cancel()
+        deliveryTask = Task { [weak self, announcements = services.announcements] in
+            for await event in announcements.deliveredEvents() {
+                self?.lastAnnouncement = event
+            }
+        }
         for await observation in services.scene.observations() {
             self.observation = observation
             navigation = (services.scene as? any SceneNavigating)?.navigationStatus
+            if let analyzer {
+                imageAspectRatio = CGFloat(analyzer.perception.diagnostics.uprightAspectRatio)
+            }
         }
         guidance.stop()
+        deliveryTask?.cancel()
+        deliveryTask = nil
         await services.scene.stop()
     }
 
