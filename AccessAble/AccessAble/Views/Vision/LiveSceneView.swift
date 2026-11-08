@@ -98,7 +98,7 @@ struct LiveSceneView: View {
         } message: {
             Text("Then turn slowly all the way around so the camera can find it.")
         }
-        .alert("Ask about what the camera sees", isPresented: $asksQuestion) {
+        .alert("Type a question", isPresented: $asksQuestion) {
             TextField("For example: where is Room 210?", text: $question)
             Button("Ask") {
                 viewModel.ask(question)
@@ -262,11 +262,16 @@ struct LiveSceneView: View {
                 .disabled(viewModel.isDescribing)
                 .accessibilityHint("Describes what the camera sees.")
                 identifyButton
-                controlButton("Ask", systemImage: "questionmark.bubble.fill") {
-                    asksQuestion = true
+                controlButton(
+                    viewModel.isListening ? "Done" : "Talk",
+                    systemImage: viewModel.isListening ? "stop.circle.fill" : "mic.fill",
+                    tint: viewModel.isListening ? .red : .accentColor
+                ) {
+                    Task { await viewModel.toggleListening() }
                 }
-                .disabled(viewModel.isAsking)
-                .accessibilityHint("Ask a question about what the camera sees, for example where a room is.")
+                .disabled(viewModel.isAsking && !viewModel.isListening)
+                .accessibilityLabel(viewModel.isListening ? "Done talking" : "Talk to Ask AI")
+                .accessibilityHint("Ask about what the camera sees, out loud. Follow-up questions remember the conversation.")
             }
 
             alertMenu
@@ -275,29 +280,65 @@ struct LiveSceneView: View {
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
     }
 
-    /// Ask AI's answer, and the image it was based on for a sighted helper to check.
+    /// The Ask AI conversation: what was asked and answered, what is being heard, and the
+    /// image the latest answer used, for a sighted helper to check.
     @ViewBuilder
     private var answerCard: some View {
-        if viewModel.isAsking || viewModel.answer != nil || viewModel.askError != nil {
+        let turns = viewModel.conversation.turns
+        if viewModel.isListening || viewModel.isAsking || !turns.isEmpty || viewModel.askError != nil {
             VStack(alignment: .leading, spacing: 8) {
-                if viewModel.isAsking {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(turns.enumerated()), id: \.offset) { _, turn in
+                            Text(turn.question)
+                                .font(.subheadline.weight(.semibold))
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                                .accessibilityLabel("You asked: \(turn.question)")
+                            Text(turn.answer)
+                                .font(.body)
+                                .accessibilityLabel("Answer: \(turn.answer)")
+                        }
+                    }
+                }
+                .frame(maxHeight: 160)
+                .defaultScrollAnchor(.bottom)
+
+                if viewModel.isListening {
+                    Label(viewModel.heard.isEmpty ? "Listening…" : viewModel.heard, systemImage: "waveform")
+                        .font(.subheadline)
+                        .foregroundStyle(.red)
+                } else if viewModel.isLookingAgain {
+                    ProgressView("Turn slowly, still looking…")
+                } else if viewModel.isAsking {
                     ProgressView("Looking…")
-                } else if let answer = viewModel.answer {
-                    Text(answer).font(.body)
                 } else if let error = viewModel.askError {
                     Text(error).foregroundStyle(.red)
                 }
+
                 if let image = viewModel.askedImage {
                     DisclosureGroup("Image used for the answer", isExpanded: $showsAskedImage) {
                         Image(uiImage: image)
                             .resizable()
                             .scaledToFit()
-                            .frame(maxHeight: 180)
+                            .frame(maxHeight: 160)
                             .clipShape(RoundedRectangle(cornerRadius: 8))
                             .accessibilityLabel("The camera image the answer was based on")
                     }
                     .font(.subheadline)
                 }
+
+                HStack {
+                    Button("New conversation", systemImage: "arrow.counterclockwise") {
+                        viewModel.newConversation()
+                    }
+                    .disabled(turns.isEmpty && !viewModel.isAsking)
+                    Spacer()
+                    Button("Type instead", systemImage: "keyboard") {
+                        asksQuestion = true
+                    }
+                }
+                .font(.subheadline)
+                .buttonStyle(.borderless)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)

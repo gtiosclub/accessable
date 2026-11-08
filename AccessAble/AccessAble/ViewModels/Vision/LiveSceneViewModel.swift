@@ -86,6 +86,15 @@ final class LiveSceneViewModel {
     private(set) var isAsking = false
     /// The camera image the latest answer was based on, for a sighted helper to check.
     private(set) var askedImage: UIImage?
+    /// The questions and answers so far, so follow-ups make sense. Kept until "New
+    /// conversation" or leaving the screen.
+    private(set) var conversation = AskAIConversation()
+    /// What dictation has heard so far, shown while listening.
+    private(set) var heard = ""
+    /// True while the answer was "not in view" and the camera keeps looking as the user turns.
+    private(set) var isLookingAgain = false
+    /// True while the microphone is listening for a question.
+    var isListening: Bool { dictation.isRecording }
     /// What the voice is warning about right now, nil when the path is clear.
     private(set) var warning: PathWarning?
     /// The object that warning is about, when it is one we can see. What the screen outlines,
@@ -105,6 +114,15 @@ final class LiveSceneViewModel {
     @ObservationIgnored private var orientationTask: Task<Void, Never>?
     @ObservationIgnored private let pointIdentifier = PointIdentifier()
     @ObservationIgnored private var bannerTask: Task<Void, Never>?
+    @ObservationIgnored private let dictation = SpeechDictation()
+    @ObservationIgnored private var silenceTask: Task<Void, Never>?
+    @ObservationIgnored private var askTask: Task<Void, Never>?
+
+    /// Dictation stops after this long without new words, so a question needs no second tap.
+    private static let silenceTimeout: Duration = .milliseconds(1_500)
+    /// After "not in view", how long to keep looking while the user turns, and how often.
+    private static let keepLookingFor: Duration = .seconds(20)
+    private static let lookAgainEvery: Duration = .seconds(2)
     @ObservationIgnored private var focusLastSeen: TimeInterval = 0
     /// When the current "take me to…" request finished, if it has.
     @ObservationIgnored private var navigationEndedAt: TimeInterval?
@@ -235,32 +253,114 @@ final class LiveSceneViewModel {
         }
     }
 
-    /// Answers a question about the next camera frame on the device, and speaks the answer.
-    /// One question at a time.
+    // MARK: Ask AI conversation
+
+    /// Starts listening for a spoken question; tapping again while listening sends what was
+    /// heard. Listening also stops on its own after a pause.
+    func toggleListening() async {
+        if isListening {
+            dictation.stop()
+            return
+        }
+        guard !isAsking else { return }
+        heard = ""
+        dictation.onTranscript = { [weak self] text, isFinal in self?.didHear(text, isFinal: isFinal) }
+        dictation.onError = { [weak self] message in self?.speak(message) }
+        await dictation.start()
+        if isListening { armSilenceTimer() }
+    }
+
+    private func didHear(_ text: String, isFinal: Bool) {
+        heard = text
+        guard isFinal else {
+            armSilenceTimer()
+            return
+        }
+        silenceTask?.cancel()
+        ask(text)
+    }
+
+    private func armSilenceTimer() {
+        silenceTask?.cancel()
+        silenceTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.silenceTimeout)
+            guard !Task.isCancelled else { return }
+            self?.dictation.stop()
+        }
+    }
+
+    /// Asks about the camera view with the conversation so far, and speaks the answer. When
+    /// the answer is that it isn't in view, says to turn slowly and keeps looking with fresh
+    /// frames for a while, speaking once it finds an answer.
     func ask(_ question: String) {
         let question = question.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let analyzer, !isAsking, !question.isEmpty else { return }
+        guard let analyzer, !question.isEmpty else { return }
+        askTask?.cancel()
         isAsking = true
         answer = nil
         askError = nil
-        askedImage = nil
-        Task { [weak self, announcements] in
-            var spoken: String
-            do {
-                let reply = try await analyzer.ask(question, locationContext: nil)
-                self?.answer = reply
-                spoken = reply
-            } catch {
-                self?.askError = error.localizedDescription
-                spoken = error.localizedDescription
-            }
-            // Also after a failure: a model error still has the image that was captured.
-            self?.askedImage = analyzer.lastAskedImage.flatMap { UIImage(data: $0) }
-            self?.isAsking = false
-            await announcements.submit(
-                AnnouncementEvent(category: .ambient, priority: .high, text: spoken, source: .userInteraction)
-            )
+        askTask = Task { [weak self] in
+            await self?.converse(question, with: analyzer)
         }
+    }
+
+    private func converse(_ question: String, with analyzer: ARSceneAnalyzer) async {
+        defer {
+            isAsking = false
+            isLookingAgain = false
+        }
+        let history = conversation.turns
+        var reply: String
+        do {
+            reply = try await analyzer.ask(question, conversation: history)
+        } catch {
+            guard !Task.isCancelled else { return }
+            askError = error.localizedDescription
+            askedImage = analyzer.lastAskedImage.flatMap { UIImage(data: $0) }
+            speak(error.localizedDescription)
+            return
+        }
+
+        if AskAIConversation.meansNotInView(reply) {
+            speak("I can't see that yet. Turn slowly and I'll tell you when I find it.")
+            isLookingAgain = true
+            let deadline = ContinuousClock.now + Self.keepLookingFor
+            var found: String?
+            while found == nil, ContinuousClock.now < deadline {
+                try? await Task.sleep(for: Self.lookAgainEvery)
+                guard !Task.isCancelled else { return }
+                if let again = try? await analyzer.ask(question, conversation: history),
+                   !AskAIConversation.meansNotInView(again) {
+                    found = again
+                }
+            }
+            reply = found ?? "I couldn't find it. Try moving closer, or ask again."
+        }
+        guard !Task.isCancelled else { return }
+        answer = reply
+        askedImage = analyzer.lastAskedImage.flatMap { UIImage(data: $0) }
+        conversation.record(question: question, answer: reply)
+        speak(reply)
+    }
+
+    /// Forgets the conversation and stops anything in progress.
+    func newConversation() {
+        askTask?.cancel()
+        silenceTask?.cancel()
+        dictation.cancel()
+        conversation.reset()
+        answer = nil
+        askError = nil
+        askedImage = nil
+        heard = ""
+        isAsking = false
+        isLookingAgain = false
+        speak("New conversation.")
+    }
+
+    private func speak(_ text: String) {
+        let event = AnnouncementEvent(category: .ambient, priority: .high, text: text, source: .userInteraction)
+        Task { [announcements] in await announcements.submit(event) }
     }
 
     /// Starts steering towards `query`; an empty query cancels.
@@ -344,6 +444,9 @@ final class LiveSceneViewModel {
     }
 
     func stop() {
+        askTask?.cancel()
+        silenceTask?.cancel()
+        dictation.cancel()
         guidance.stop()
         deliveryTask?.cancel()
         deliveryTask = nil

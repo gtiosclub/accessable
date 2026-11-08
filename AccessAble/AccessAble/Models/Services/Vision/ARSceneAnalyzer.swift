@@ -256,6 +256,11 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     /// `locationContext` is not used yet. Asked with no camera running (by voice from Home,
     /// T38), the camera is woken for the question, as Describe does.
     func ask(_ question: String, locationContext: String?) async throws -> String {
+        try await ask(question, conversation: [])
+    }
+
+    /// Ask AI with the conversation so far, for follow-ups (the camera screen's Describe mode).
+    func ask(_ question: String, conversation: [AskAITurn]) async throws -> String {
         state.withLock { $0.lastAskedImage = nil }
         let imageData: Data
         let observation: SceneObservation?
@@ -275,7 +280,9 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
             await stop()
         }
         state.withLock { $0.lastAskedImage = imageData }
-        return try await askAI.answer(question, imageData: imageData, observation: observation ?? .empty).answer
+        return try await askAI.answer(
+            question, imageData: imageData, observation: observation ?? .empty, conversation: conversation
+        ).answer
     }
 
     /// The next frame from the shared session as an upright JPEG. Frames only flow while

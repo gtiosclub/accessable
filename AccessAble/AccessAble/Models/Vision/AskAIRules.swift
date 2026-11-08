@@ -36,7 +36,11 @@ final class RuledAskAIResponder: AskAIResponder {
     }
 
     func answer(_ question: String, facts: ImageFacts) async throws -> String {
-        let raw = try await model.answer(question, facts: facts)
+        try await answer(question, facts: facts, conversation: [])
+    }
+
+    func answer(_ question: String, facts: ImageFacts, conversation: [AskAITurn]) async throws -> String {
+        let raw = try await model.answer(question, facts: facts, conversation: conversation)
         let time = now()
         return history.withLock { history in
             history.removeAll { time.timeIntervalSince($0.at) > policy.repeatWindow }
@@ -242,6 +246,8 @@ enum AskAIRules {
         You cannot judge traffic.
         - Don't repeat yourself.
         - Speak in plain sentences. Don't copy the list's headings or dashes.
+        - Earlier questions and answers may come first, so a follow-up like "what about the \
+        door?" makes sense. They were about earlier views: answer from the current list only.
         """
 
     /// Detections below this are passed to the model as uncertain.
@@ -249,8 +255,13 @@ enum AskAIRules {
 
     /// The facts grouped by `AIInfoCategory` in the user's order (T23), with T19's wording
     /// for each item, then the question.
-    static func prompt(question: String, facts: ImageFacts, priorities: AIPriorities = .default) -> String {
+    static func prompt(
+        question: String, facts: ImageFacts, priorities: AIPriorities = .default, conversation: [AskAITurn] = []
+    ) -> String {
         var lines: [String] = []
+        if let transcript = AskAIConversation.transcript(of: conversation) {
+            lines += [transcript, "", "Now, from the current camera view:"]
+        }
         let uncertain = facts.detections
             .filter { $0.origin != .geometric && $0.confidence < uncertainBelow }
             .map(\.label)
@@ -304,11 +315,17 @@ struct RuledOnDeviceResponder: AskAIResponder {
     var settings = AskAISettings()
 
     func answer(_ question: String, facts: ImageFacts) async throws -> String {
+        try await answer(question, facts: facts, conversation: [])
+    }
+
+    func answer(_ question: String, facts: ImageFacts, conversation: [AskAITurn]) async throws -> String {
         #if canImport(FoundationModels)
         if #available(iOS 26, macOS 26, *), SystemLanguageModel.default.isAvailable {
             do {
                 let session = LanguageModelSession(instructions: AskAIRules.instructions)
-                let prompt = AskAIRules.prompt(question: question, facts: facts, priorities: settings.priorities)
+                let prompt = AskAIRules.prompt(
+                    question: question, facts: facts, priorities: settings.priorities, conversation: conversation
+                )
                 return try await session.respond(to: prompt).content
             } catch {
                 try Task.checkCancellation()

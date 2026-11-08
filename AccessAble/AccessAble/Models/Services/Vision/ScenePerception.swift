@@ -450,7 +450,9 @@ final class ScenePerception: Sendable {
                 isUserMoving: isUserMoving
             )
             diagnostics.warning = $0.currentWarning
-            if alertSettings.soundCues {
+            // Not while reading or describing: the user isn't walking a route, and Describe
+            // listens through the microphone.
+            if alertSettings.soundCues, mode == .walk || mode == .find {
                 diagnostics.steering = SteeringCue(warning: $0.currentWarning, warningDistance: filter.maximumDistance)
             }
             return events

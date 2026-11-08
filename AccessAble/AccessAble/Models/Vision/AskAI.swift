@@ -28,10 +28,12 @@ struct AskAI: Sendable {
 
     /// `observation` is what the live pipeline last saw around the still; `.empty` when
     /// there is no pipeline, as with a saved image.
+    /// `conversation` is what was asked and answered before, oldest first, for follow-ups.
     func answer(
         _ question: String,
         imageData: Data,
-        observation: SceneObservation = .empty
+        observation: SceneObservation = .empty,
+        conversation: [AskAITurn] = []
     ) async throws -> AskAIResponse {
         try Task.checkCancellation()
         let start = ContinuousClock.now
@@ -47,7 +49,7 @@ struct AskAI: Sendable {
             facts.people = []
         }
         try Task.checkCancellation()
-        let answer = try await responder.answer(question, facts: facts)
+        let answer = try await responder.answer(question, facts: facts, conversation: conversation)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         try Task.checkCancellation()
         guard !answer.isEmpty else { throw AskAIError.emptyAnswer }
@@ -164,6 +166,15 @@ enum AskAIError: LocalizedError, Equatable {
 /// Answers a question from what was found in and around the image. The seam tests replace.
 protocol AskAIResponder: Sendable {
     func answer(_ question: String, facts: ImageFacts) async throws -> String
+    /// The same, with the conversation so far, so a follow-up can refer back. Responders
+    /// that can't use it answer the question alone.
+    func answer(_ question: String, facts: ImageFacts, conversation: [AskAITurn]) async throws -> String
+}
+
+extension AskAIResponder {
+    func answer(_ question: String, facts: ImageFacts, conversation: [AskAITurn]) async throws -> String {
+        try await answer(question, facts: facts)
+    }
 }
 
 /// The on-device model when Apple Intelligence is available, the template otherwise.
