@@ -17,6 +17,11 @@ final class AppViewModel {
         }
     }
 
+    /// Settings-page choices that are not part of the GuidanceProfile.
+    var preferences: SettingsPreferences {
+        didSet { save(preferences, forKey: Keys.preferences) }
+    }
+
     var hasCompletedOnboarding: Bool {
         didSet { defaults.set(hasCompletedOnboarding, forKey: Keys.onboarded) }
     }
@@ -30,6 +35,7 @@ final class AppViewModel {
     private enum Keys {
         static let profile = "guidanceProfile"
         static let onboarded = "hasCompletedOnboarding"
+        static let preferences = "settingsPreferences"
     }
 
     init(defaults: UserDefaults = .standard, services: AppServices? = nil) {
@@ -38,6 +44,7 @@ final class AppViewModel {
         self.performance = performance
         self.services = services ?? .live(performance: performance)
         self.profile = Self.load(GuidanceProfile.self, forKey: Keys.profile, from: defaults) ?? .default
+        self.preferences = Self.load(SettingsPreferences.self, forKey: Keys.preferences, from: defaults) ?? .default
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarded)
 
         let profile = self.profile
