@@ -31,6 +31,8 @@ struct PathWarning: Sendable, Equatable {
     /// The track it is about, so the screen can outline it; nil for a surface hazard or an
     /// unnamed blockage from the map.
     let trackID: UUID?
+    /// Which way the advice points, for an arrow on screen; nil when it is straight on.
+    var side: TurnSide?
 }
 
 /// Decides what the user hears about their path, and when. Owner: Computer Vision (1.1 / task T16).
@@ -44,7 +46,8 @@ struct PathWarning: Sendable, Equatable {
 ///
 /// What keeps it quiet:
 /// - A band must hold for `confirmationFrames` frames before it counts, so one frame of
-///   depth speckle says nothing.
+///   depth speckle says nothing. Moving from the warning band into "Stop" is the
+///   exception: the object is already confirmed, and at 1.2 m there is no frame to spare.
 /// - Leaving a band outward needs `hysteresis` metres beyond its threshold, so an object
 ///   sitting on a threshold does not toggle.
 /// - Nothing is spoken within `minimumInterval` of the last announcement unless it is more
@@ -74,6 +77,9 @@ struct ObstacleAnnouncer: Sendable {
     var hazardConfirmationFrames = 3
     /// How long the corridor must stay empty before the path counts as clear.
     var clearAfter: TimeInterval = 1.0
+    /// The same once the user has been told which way to go. They are moving onto the clear
+    /// line and waiting to hear "Straight ahead now", so it comes sooner.
+    var guidedClearAfter: TimeInterval = 0.4
     /// Minimum gap between two announcements, unless the second is more urgent.
     var minimumInterval: TimeInterval = 2.5
     /// After the path clears, the same band is not announced again for this long. A
@@ -115,18 +121,21 @@ struct ObstacleAnnouncer: Sendable {
         var announcedDirection: ClearDirection?
         /// Whether this episode included a warning at 2 m or nearer, which earns "Path clear".
         var warned = false
+        /// Whether this episode told the user which way to go, which earns "Straight ahead now".
+        var directed = false
         /// The last band ever spoken and when, across episodes, for re-arming.
         var lastSpokenBand: Int?
         var lastSpoken: TimeInterval = -.infinity
 
         mutating func observe(
-            distance: Float?, at time: TimeInterval, bands: [Float], rules: ObstacleAnnouncer, confirmationFrames: Int
+            distance: Float?, at time: TimeInterval, bands: [Float], rules: ObstacleAnnouncer,
+            confirmationFrames: Int, immediateBand: Int? = nil
         ) {
             guard let distance else {
                 // An absent frame breaks a run of consecutive sightings.
                 candidate = nil
                 candidateFrames = 0
-                if time - lastPresent > rules.clearAfter { band = nil }
+                if time - lastPresent > (directed ? rules.guidedClearAfter : rules.clearAfter) { band = nil }
                 return
             }
             lastPresent = time
@@ -148,25 +157,30 @@ struct ObstacleAnnouncer: Sendable {
                 candidate = observed
                 candidateFrames = 1
             }
-            if candidateFrames >= confirmationFrames {
+            // Something already confirmed nearer than the outer band and now inside the
+            // immediate one has been seen enough; a first sighting there has not.
+            let escalates = band != nil && observed != nil && observed == immediateBand
+            if candidateFrames >= confirmationFrames || escalates {
                 band = observed
                 candidate = nil
                 candidateFrames = 0
             }
         }
 
-        mutating func spoke(band: Int, direction: ClearDirection?, isStop: Bool, at time: TimeInterval) {
+        mutating func spoke(band: Int, direction: ClearDirection?, isStop: Bool, directed: Bool = false, at time: TimeInterval) {
             announcedBand = band
             announcedDirection = direction
             lastSpokenBand = band
             lastSpoken = time
             if isStop { warned = true }
+            if directed { self.directed = true }
         }
 
         mutating func clearEpisode() {
             announcedBand = nil
             announcedDirection = nil
             warned = false
+            directed = false
         }
     }
 
@@ -190,6 +204,10 @@ struct ObstacleAnnouncer: Sendable {
 
     /// What the path warning currently is, nil when the path is clear. Updated every frame.
     private(set) var currentWarning: PathWarning?
+
+    /// The dedup key of "Straight ahead now", which `SpeechBudget` lets through: it answers
+    /// the instruction just given.
+    static let straightAheadKey = "path-straight"
 
     init() {}
 
@@ -252,7 +270,8 @@ struct ObstacleAnnouncer: Sendable {
                 isStop: isStop,
                 advice: SpokenPhrasing.advice(for: advicePath, bearing: subject.bearing, critical: isStop)
                     .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: ".")) },
-                trackID: subject.trackID
+                trackID: subject.trackID,
+                side: side(of: advicePath)
             ))
         }
         for (type, state) in hazards {
@@ -264,6 +283,16 @@ struct ObstacleAnnouncer: Sendable {
             ))
         }
         return best
+    }
+
+    /// Which way advice sends the user: a sidestep or a turn, not a nudge within the corridor.
+    private func side(of advice: PathAssessment?) -> TurnSide? {
+        switch advice?.clearDirection {
+        case .left: .left
+        case .right: .right
+        case .blocked: advice?.turn
+        case .ahead, nil: nil
+        }
     }
 
     /// A drop-off keeps at least the default warning distance, whatever the user chose.
@@ -318,7 +347,10 @@ struct ObstacleAnnouncer: Sendable {
                 )
             }
         }
-        path.observe(distance: distance, at: time, bands: bands, rules: self, confirmationFrames: confirmationFrames)
+        path.observe(
+            distance: distance, at: time, bands: bands, rules: self,
+            confirmationFrames: confirmationFrames, immediateBand: bands.count - 1
+        )
         let direction = debouncedDirection(assessment?.clearDirection, at: time)
         // Phrase the debounced direction, with the current assessment's detail when they agree.
         advicePath = if let direction {
@@ -328,8 +360,26 @@ struct ObstacleAnnouncer: Sendable {
         }
 
         guard let band = path.band else {
-            // The corridor is clear. Say so once if the user was warned, then start over.
+            // The corridor is clear. Say so once if the user was warned or told which way to
+            // go, then start over.
             guard path.announcedBand != nil else { return nil }
+            if path.directed {
+                // The answer to "One step right": not held back by the gap since that
+                // instruction, which is exactly when it is due.
+                lastAnnouncement = time
+                lastPriority = .high
+                path.clearEpisode()
+                return AnnouncementEvent(
+                    category: .hazard,
+                    priority: .high,
+                    text: SpokenPhrasing.straightAhead,
+                    bearing: .ahead,
+                    source: .obstacleDetection,
+                    createdAt: now,
+                    expiresAt: now.addingTimeInterval(announcementLifetime),
+                    dedupKey: Self.straightAheadKey
+                )
+            }
             guard path.warned else {
                 path.clearEpisode()
                 return nil
@@ -377,7 +427,7 @@ struct ObstacleAnnouncer: Sendable {
         // Only a fresh warning can go quiet; a nearer band or new advice within one is news.
         let hapticOnly = path.announcedBand == nil && band < stopBand
             && subject.label == lastWarnedLabel && time - lastWarnedAt < quietRepeatWindow
-        path.spoke(band: band, direction: direction, isStop: band == stopBand, at: time)
+        path.spoke(band: band, direction: direction, isStop: band == stopBand, directed: !hapticOnly && side(of: advicePath) != nil, at: time)
         if !hapticOnly {
             lastWarnedLabel = subject.label
             lastWarnedAt = time

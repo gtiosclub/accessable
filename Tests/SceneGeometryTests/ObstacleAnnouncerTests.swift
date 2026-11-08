@@ -50,12 +50,13 @@ struct ObstacleAnnouncerTests {
     func defaultBands() {
         var announcer = ObstacleAnnouncer()
         let events = run([chair(at: 2.6), chair(at: 2.6), chair(at: 2.4), chair(at: 2.4), chair(at: 1.1), chair(at: 1.1)], announcer: &announcer)
-        #expect(events.map(\.count) == [0, 0, 0, 1, 0, 1])
+        // Already confirmed at 2.5 m, so "Stop" comes on the first frame inside 1.2 m.
+        #expect(events.map(\.count) == [0, 0, 0, 1, 1, 0])
         #expect(events[3].first?.priority == .high)
         #expect(events[3].first?.text == "Chair ahead.")
-        #expect(events[5].first?.priority == .critical)
-        #expect(events[5].first?.text == "Stop. Chair ahead.")
-        #expect(events[5].first?.haptic == .stop)
+        #expect(events[4].first?.priority == .critical)
+        #expect(events[4].first?.text == "Stop. Chair ahead.")
+        #expect(events[4].first?.haptic == .stop)
     }
 
     @Test("with three bands, the farthest is an information notice with the distance")
@@ -70,15 +71,15 @@ struct ObstacleAnnouncerTests {
             chair(at: 0.9), chair(at: 0.9),
         ], announcer: &announcer)
 
-        #expect(events.map(\.count) == [0, 0, 0, 1, 0, 0, 1, 0, 0, 1])
+        #expect(events.map(\.count) == [0, 0, 0, 1, 0, 0, 1, 0, 1, 0])
         #expect(events[3].first?.priority == .normal)
         #expect(events[3].first?.haptic == .obstacleNear)
         #expect(events[3].first?.text == "Chair ahead, 3 metres.")
         #expect(events[6].first?.priority == .high)
         #expect(events[6].first?.haptic == .obstacleNearer)
         #expect(events[6].first?.text == "Chair ahead.")
-        #expect(events[9].first?.priority == .critical)
-        #expect(events[9].first?.text == "Stop. Chair ahead.")
+        #expect(events[8].first?.priority == .critical)
+        #expect(events[8].first?.text == "Stop. Chair ahead.")
     }
 
     @Test("an object first seen up close goes straight to the urgent announcement")
@@ -218,8 +219,8 @@ struct ObstacleAnnouncerTests {
         )
         // Spoken at 1 s; the change can't be news until 8 s have passed.
         #expect(events.map(\.count) == [0, 1, 0, 0, 0, 0, 0, 0, 0, 1])
-        #expect(events[1].first?.text == "Chair ahead. Go left.")
-        #expect(events[9].first?.text == "Chair ahead. Go right.")
+        #expect(events[1].first?.text == "Chair ahead. One step left.")
+        #expect(events[9].first?.text == "Chair ahead. One step right.")
     }
 
     @Test("a direction that flips for one frame never reaches the user")
@@ -248,7 +249,8 @@ struct ObstacleAnnouncerTests {
     func blocked() {
         var announcer = ObstacleAnnouncer()
         let events = run([object("wall", at: 0.7), object("wall", at: 0.7)], path: [.blocked, .blocked], announcer: &announcer)
-        #expect(events[1].first?.text == "Stop. Wall ahead. No clear path. Turn around slowly.")
+        // What to do, not what it is: the screen shows the wall.
+        #expect(events[1].first?.text == "Stop. No clear path. Turn around slowly.")
     }
 
     @Test("a blocked path with room on one side says which way to turn")
@@ -395,10 +397,10 @@ struct ObstacleAnnouncerTests {
         #expect(counts == [0, 1, 0, 0, 0, 0, 1])
     }
 
-    @Test("an escalation is not held back by the minimum interval")
+    @Test("an escalation is not held back by the minimum interval, nor by confirmation")
     func escalationBypassesGate() {
         var announcer = ObstacleAnnouncer()
         let events = run([chair(at: 2.4), chair(at: 2.4), chair(at: 1.1), chair(at: 1.1)], announcer: &announcer)
-        #expect(events.map(\.count) == [0, 1, 0, 1])
+        #expect(events.map(\.count) == [0, 1, 1, 0])
     }
 }

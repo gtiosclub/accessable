@@ -146,7 +146,7 @@ struct LiveSceneView: View {
     private var statusStrip: some View {
         let status = viewModel.status
         return HStack(spacing: 14) {
-            Image(systemName: statusSymbol(status.level))
+            Image(systemName: statusSymbol(status.level, side: viewModel.warning?.side))
                 .font(.title.weight(.semibold))
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
@@ -178,12 +178,15 @@ struct LiveSceneView: View {
         }
     }
 
-    private func statusSymbol(_ level: LiveSceneViewModel.PathStatus.Level) -> String {
-        switch level {
-        case .starting: "camera"
-        case .clear: "checkmark.circle.fill"
-        case .caution: "exclamationmark.triangle.fill"
-        case .stop: "hand.raised.fill"
+    /// Stop is always a hand. Otherwise an arrow points the way the advice sends the user.
+    private func statusSymbol(_ level: LiveSceneViewModel.PathStatus.Level, side: TurnSide?) -> String {
+        switch (level, side) {
+        case (.starting, _): "camera"
+        case (.clear, _): "checkmark.circle.fill"
+        case (.stop, _): "hand.raised.fill"
+        case (.caution, .left): "arrow.up.left.circle.fill"
+        case (.caution, .right): "arrow.up.right.circle.fill"
+        case (.caution, nil): "exclamationmark.triangle.fill"
         }
     }
 
@@ -255,6 +258,12 @@ struct LiveSceneView: View {
                 }
             }
             .pickerStyle(.menu)
+            Toggle("Vibration", isOn: Binding(
+                get: { app.profile.channels.contains(.haptics) },
+                set: { isOn in
+                    if isOn { app.profile.channels.insert(.haptics) } else { app.profile.channels.remove(.haptics) }
+                }
+            ))
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: "slider.horizontal.3")
@@ -269,8 +278,9 @@ struct LiveSceneView: View {
         .accessibilityValue(
             "\(app.profile.alertFilter.minimumDanger.displayName), within "
                 + String(format: "%g metres", app.profile.alertFilter.maximumDistance)
+                + (app.profile.channels.contains(.haptics) ? ", vibration on" : ", vibration off")
         )
-        .accessibilityHint("Choose how dangerous and how close something must be before you are warned.")
+        .accessibilityHint("Choose how dangerous and how close something must be before you are warned, and whether the phone vibrates.")
     }
 
     // MARK: - Developer tools
@@ -380,6 +390,11 @@ struct LiveSceneView: View {
             if let performance = viewModel.performanceDescription {
                 Text(performance)
                     .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            if let stages = viewModel.stagesDescription {
+                Text(stages)
+                    .font(.caption2.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
 

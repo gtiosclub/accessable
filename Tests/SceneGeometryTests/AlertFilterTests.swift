@@ -255,7 +255,9 @@ struct PathWarningTests {
         #expect(announcer.currentWarning == nil)  // not confirmed yet
         _ = announcer.announcements(for: [object("chair", at: 2, track: track)], hazards: [], path: left, at: 0.1)
         let warning = try #require(announcer.currentWarning)
-        #expect(warning == PathWarning(name: "Chair", distance: 2, isStop: false, advice: "Go left", trackID: track))
+        #expect(warning == PathWarning(
+            name: "Chair", distance: 2, isStop: false, advice: "One step left", trackID: track, side: .left
+        ))
     }
 
     @Test("an unnamed blockage from the map is a warning too, with nothing to outline")
@@ -281,5 +283,94 @@ struct PathWarningTests {
             _ = announcer.announcements(for: [], hazards: [], at: Double(frame) * 0.1)
         }
         #expect(announcer.currentWarning == nil)
+    }
+}
+
+@Suite("How far left or right")
+struct PreciseAdviceTests {
+    @Test("a sidestep is counted in steps of half a metre, up to three")
+    func steps() {
+        #expect(SpokenPhrasing.sidestep(0.3, ahead: 2, side: "right") == "One step right.")
+        #expect(SpokenPhrasing.sidestep(-1.0, ahead: 2, side: "left") == "Two steps left.")
+        #expect(SpokenPhrasing.sidestep(1.4, ahead: 2, side: "right") == "Three steps right.")
+    }
+
+    @Test("farther to the side, it is a clock direction instead")
+    func clock() {
+        // 2 m across at 2 m ahead is 45 degrees: between 1 and 2 o'clock, rounds to 2.
+        #expect(SpokenPhrasing.sidestep(2, ahead: 2, side: "right") == "Bear right, 2 o'clock.")
+        #expect(SpokenPhrasing.sidestep(-2, ahead: 4, side: "left") == "Bear left, 11 o'clock.")
+    }
+
+    @Test("without a measured offset it says only which way")
+    func noOffset() {
+        #expect(SpokenPhrasing.sidestep(nil, ahead: 2, side: "left") == "Go left.")
+    }
+
+    @Test("Stop gives the instruction, not the name")
+    func shortStop() {
+        let chair = Detection(label: "chair", confidence: 0.9, boundingBox: .zero, bearing: .ahead, origin: .model, isHazard: true)
+        let right = PathAssessment(clearDirection: .right, sidestep: 0.5)
+        #expect(SpokenPhrasing.guidance(for: chair, priority: .critical, path: right) == "Stop. One step right.")
+        #expect(SpokenPhrasing.guidance(for: chair, priority: .critical, path: nil) == "Stop. Chair ahead.")
+    }
+}
+
+@Suite("Telling the user when they have gone far enough")
+struct StraightAheadTests {
+    private func chair(at distance: Double) -> ObstacleAlertInput {
+        ObstacleAlertInput(
+            detection: Detection(
+                trackID: UUID(), label: "chair", confidence: 0.9,
+                boundingBox: CGRect(x: 0.4, y: 0.4, width: 0.2, height: 0.3),
+                distance: distance, bearing: .ahead, origin: .geometric, isHazard: true
+            ),
+            isInPath: true
+        )
+    }
+
+    @Test("after 'One step right', an emptied corridor says 'Straight ahead now', soon and once")
+    func straightAhead() throws {
+        var announcer = ObstacleAnnouncer()
+        let right = PathAssessment(clearDirection: .right, sidestep: 0.5)
+        var events: [[AnnouncementEvent]] = []
+        for frame in 0 ..< 2 {
+            events.append(announcer.announcements(for: [chair(at: 2)], hazards: [], path: right, at: Double(frame) * 0.1))
+        }
+        #expect(events[1].first?.text == "Chair ahead. One step right.")
+        // The user steps right; the chair leaves the corridor. 0.5 s later, well inside
+        // the 2.5 s gap since the instruction, the answer comes.
+        for frame in 2 ..< 12 {
+            events.append(announcer.announcements(for: [], hazards: [], path: .clear, at: Double(frame) * 0.1))
+        }
+        let spoken = events.flatMap { $0 }.map(\.text)
+        #expect(spoken == ["Chair ahead. One step right.", "Straight ahead now."])
+        let answer = try #require(events.flatMap { $0 }.last)
+        #expect(answer.dedupKey == ObstacleAnnouncer.straightAheadKey)
+    }
+
+    @Test("the shared speech budget lets the answer through right after the instruction")
+    func budgetLetsItThrough() {
+        var budget = SpeechBudget()
+        let instruction = AnnouncementEvent(category: .hazard, priority: .high, text: "Chair ahead. One step right.", source: .obstacleDetection)
+        let answer = AnnouncementEvent(
+            category: .hazard, priority: .high, text: "Straight ahead now.", source: .obstacleDetection,
+            dedupKey: ObstacleAnnouncer.straightAheadKey
+        )
+        #expect(budget.admit([instruction], at: 0).count == 1)
+        #expect(budget.admit([answer], at: 1).count == 1)
+    }
+
+    @Test("a warning with no direction still ends with 'Path clear', not 'Straight ahead now'")
+    func plainClear() {
+        var announcer = ObstacleAnnouncer()
+        var spoken: [String] = []
+        for frame in 0 ..< 3 {
+            spoken += announcer.announcements(for: [chair(at: 1)], hazards: [], at: Double(frame) * 0.1).map(\.text)
+        }
+        for frame in 3 ..< 40 {
+            spoken += announcer.announcements(for: [], hazards: [], at: Double(frame) * 0.1).map(\.text)
+        }
+        #expect(spoken == ["Stop. Chair ahead.", "Path clear."])
     }
 }

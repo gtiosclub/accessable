@@ -226,6 +226,20 @@ protocol AnnouncementSink { func submit(_ event: AnnouncementEvent) async }
     drop-off only within 3 m and with at least three bins of ground on each side; otherwise
     it stays `.unknown`, which is never spoken.
 
+16. **Say how far, then say when.** A sidestep is spoken in steps of half a metre ("Two steps
+    right"), up to three; farther than that it is a clock direction ("Bear right, 2 o'clock").
+    Once the user has followed it and the corridor ahead is empty, they hear "Straight ahead
+    now" after 0.4 s instead of the usual 1 s, and the speech limits don't hold it back. "Stop"
+    gives the instruction rather than the name ("Stop. One step right."); the screen names it.
+17. **"Stop" doesn't wait when it is an escalation.** Something already confirmed at warning
+    distance that comes inside 1.2 m is "Stop" on that frame. A first sighting that close still
+    needs two frames, so one frame of depth speckle never says "Stop".
+18. **The mesh runs only for "take me to…".** Building the classified mesh (T36) pulled the
+    camera from 60 to about 34 fps on device and slowed every frame. It is now switched on
+    when a request starts and off when it ends, without restarting tracking. Outside a
+    request, doors from the mesh are not available (Describe still has the camera's view).
+    The developer readout shows each stage's time (Objects, Crosswalk, Mesh, Depth, Warnings).
+
 ## Task status (T1–T20)
 
 "Integrated" means the code runs in the live pipeline. Nothing below has been checked on

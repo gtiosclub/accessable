@@ -125,6 +125,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
             clientCount += 1
             return
         }
+        // A new session starts with no "take me to…" request, so without the mesh.
+        sessionManager.setMeshReconstruction(false)
         try sessionManager.start()
         clientCount = 1
         // Tracking restarts from scratch, so nothing remembered about the old world holds.
@@ -298,6 +300,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     func navigate(to query: String?) {
         perception.navigate(to: query)
+        // Doors come from the mesh, which is only built while something is being looked for.
+        Task { @MainActor [sessionManager] in sessionManager.setMeshReconstruction(query != nil) }
     }
 
     var navigationStatus: NavigationStatus? { perception.navigationStatus }

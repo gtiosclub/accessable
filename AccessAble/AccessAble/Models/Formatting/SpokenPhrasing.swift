@@ -102,11 +102,19 @@ enum SpokenPhrasing {
     /// Spoken when the corridor has emptied after a warning.
     static let pathClear = "Path clear."
 
+    /// Spoken once the user has followed "One step right" or "Turn left" far enough that the
+    /// way ahead is open, so they don't have to guess when to stop.
+    static let straightAhead = "Straight ahead now."
+
+    /// How far one sidestep moves a walker, in metres; what "One step right" means.
+    static let stepLength: Float = 0.5
+
     /// The sentence for something blocking the path, at the urgency of its distance band:
     ///
     /// - normal: "Chair ahead, 3 metres." — information, no instruction yet.
     /// - high: "Wall ahead. Go left." — the instruction comes from `path`.
-    /// - critical: "Stop. Wall ahead. Go left."
+    /// - critical: "Stop. One step left." — what to do, in as few words as possible. The
+    ///   screen shows what it is; without advice it is "Stop. Wall ahead."
     ///
     /// Short on purpose: a warning is heard while walking, and the band already says how
     /// close. The place is always "ahead" because the thing is in the corridor; the side
@@ -116,8 +124,8 @@ enum SpokenPhrasing {
         let place = placeInPath(detection.bearing)
         var sentences: [String] = []
         if priority == .critical {
-            sentences.append("Stop.")
-            sentences.append("\(name) \(place).")
+            let advice = advice(for: path, bearing: detection.bearing, critical: true)
+            return advice.map { "Stop. \($0)" } ?? "Stop. \(name) \(place)."
         } else if priority == .normal, let distance = detection.distance {
             sentences.append("\(name) \(place), \(hedgedDistance(distance, accuracy: detection.distanceAccuracy)).")
         } else {
@@ -160,14 +168,15 @@ enum SpokenPhrasing {
         return "\(name) ahead, \(shortDistance(Double(hazard.distance)))."
     }
 
-    /// "Go left." / "Keep right." / "Turn left." / "Narrow gap ahead." — what to do about
-    /// what is in the way. "Go" is a sidestep into a gap that was seen; "Turn" means nothing
-    /// passable is in view and that side has more room. nil when there is nothing to add.
+    /// "One step left." / "Bear right, 2 o'clock." / "Keep right." / "Turn left." / "Narrow gap
+    /// ahead." — what to do about what is in the way. A gap that was seen is a number of
+    /// steps, or a clock direction when it is too far to the side to step to; "Turn" means
+    /// nothing passable is in view and that side has more room. nil when there is nothing to add.
     static func advice(for path: PathAssessment?, bearing: RelativeBearing?, critical: Bool) -> String? {
         guard let path else { return nil }
         switch path.clearDirection {
-        case .left: return "Go left."
-        case .right: return "Go right."
+        case .left, .right:
+            return sidestep(path.sidestep, ahead: path.blockedDistance, side: path.clearDirection == .left ? "left" : "right")
         case .blocked:
             if let turn = path.turn { return turn == .left ? "Turn left." : "Turn right." }
             return critical ? "No clear path. Turn around slowly." : nil
@@ -182,6 +191,22 @@ enum SpokenPhrasing {
             default: return nil
             }
         }
+    }
+
+    /// "One step right." for up to three steps; beyond that a clock direction, which blind
+    /// travellers learn in orientation and mobility training: "Bear right, 2 o'clock".
+    static func sidestep(_ offset: Float?, ahead: Float?, side: String) -> String {
+        guard let offset = offset.map(abs), offset > 0 else { return "Go \(side)." }
+        let steps = max(1, Int((offset / stepLength).rounded()))
+        if steps <= 3 {
+            let count = ["One", "Two", "Three"][steps - 1]
+            return "\(count) step\(steps == 1 ? "" : "s") \(side)."
+        }
+        // Too far to sidestep: walk towards it instead. The angle is to the gap at the
+        // obstacle's distance, as clock hours of 30 degrees.
+        let degrees = atan2(offset, max(ahead ?? 2, 0.5)) * 180 / .pi
+        let hours = min(max(Int((degrees / 30).rounded()), 1), 3)
+        return "Bear \(side), \(side == "right" ? hours : 12 - hours) o'clock."
     }
 
     /// Where in the corridor something is: "ahead", "ahead on your left", "ahead on your right".

@@ -47,6 +47,10 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     private let statusBroadcaster = Broadcaster<GuidanceStatus>(replaysLatest: true)
     private let recoveryTimeout = Mutex<Task<Void, Never>?>(nil)
     private let interruptionHandler = Mutex<(@Sendable (_ isInterrupted: Bool) -> Void)?>(nil)
+    /// Whether the classified mesh (T36) is wanted. Building it is heavy enough to pull the
+    /// camera from 60 to about 34 fps and slow every analyzed frame, and only "take me to…"
+    /// uses it (to find doors), so it runs only while that is active.
+    private let wantsMesh = Mutex(false)
     private let log = Logger(subsystem: "AccessAble", category: "ARSessionManager")
 
     /// How long ARKit is given to relocalize after an interruption before guidance is
@@ -72,10 +76,8 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         } else {
             log.notice("sceneDepth unsupported; running without LiDAR depth")
         }
-        // T36: classified mesh for doors and windows, where the device supports it
-        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
-            configuration.sceneReconstruction = .meshWithClassification
-        }
+        // T36: classified mesh for doors and windows, only while something needs it
+        configuration.sceneReconstruction = meshReconstruction(wanted: wantsMesh.withLock { $0 })
 
         health.withLock { $0.reset() }
         cancelRecoveryTimeout()
@@ -83,6 +85,28 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         session.delegateQueue = frameQueue
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
         setStatus(.running)
+    }
+
+    /// Turns the classified mesh on or off without restarting tracking. Takes effect at the
+    /// next `start()` when the session isn't running.
+    @MainActor
+    func setMeshReconstruction(_ enabled: Bool) {
+        let changed = wantsMesh.withLock { wanted in
+            defer { wanted = enabled }
+            return wanted != enabled
+        }
+        guard changed,
+              let configuration = session.configuration?.copy() as? ARWorldTrackingConfiguration
+        else { return }
+        configuration.sceneReconstruction = meshReconstruction(wanted: enabled)
+        // Re-running without .resetTracking keeps the world; dropping the mesh's anchors
+        // stops stale doors from being found after it is switched off.
+        session.run(configuration, options: enabled ? [] : [.removeExistingAnchors])
+    }
+
+    private func meshReconstruction(wanted: Bool) -> ARConfiguration.SceneReconstruction {
+        wanted && ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification)
+            ? .meshWithClassification : []
     }
 
     /// Pauses the session. Subscribers stay registered and get frames again after `start()`.

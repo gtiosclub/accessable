@@ -35,6 +35,12 @@ final class ScenePerception: Sendable {
         let wasReadingText: Bool
     }
 
+    /// How long one part of `analyze` took, for finding what makes a frame slow.
+    struct StageTiming: Sendable, Equatable {
+        let name: String
+        let milliseconds: Double
+    }
+
     /// What the live debug screen shows besides the observation itself.
     struct Diagnostics: Sendable {
         var floor: Plane3D?
@@ -60,6 +66,8 @@ final class ScenePerception: Sendable {
         var crowds: [CrowdRegion] = []
         /// What the voice is currently warning about, so the screen shows the same thing.
         var warning: PathWarning?
+        /// Where this frame's time went, in order.
+        var stages: [StageTiming] = []
     }
 
     private let peopleDetector: PeopleDetector
@@ -186,7 +194,15 @@ final class ScenePerception: Sendable {
         }
         textReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp, locate: textLocator)
         let wasReadingText = textReader.isReading
+        var lapStart = start
+        func lap(_ name: String) {
+            let now = CACurrentMediaTime()
+            diagnostics.stages.append(StageTiming(name: name, milliseconds: (now - lapStart) * 1000))
+            lapStart = now
+        }
+        lap("Setup")
         var recognized = recognizeObjects(in: frame.capturedImage, orientation: imageOrientation)
+        lap("Objects")
         // T37: crosswalk stripes. Skipped when the phone points up and there's no ground in view.
         let lookingUp = -frame.camera.transform.columns.2.y > 0.3
         let stripes = lookingUp ? nil : uprightLumaGrid(
@@ -194,6 +210,7 @@ final class ScenePerception: Sendable {
             width: 96, height: max(Int(96 * upright.height / upright.width), 1)
         ).flatMap { detectCrosswalk(in: $0) }
         let crosswalkBox = crosswalkConfirmer.withLock { $0.update(stripes) }
+        lap("Crosswalk")
         var obstacles: [Detection] = []
         var hazards: [ElevationHazard] = []
         var path: PathAssessment?
@@ -220,6 +237,7 @@ final class ScenePerception: Sendable {
             structures.withLock { $0 }, heading: heading, camera: frame.camera,
             orientation: interfaceOrientation, viewportSize: upright
         )
+        lap("Mesh")
 
         if let depthMap {
             let camera = frame.camera
@@ -352,6 +370,7 @@ final class ScenePerception: Sendable {
             }
         }
 
+        lap("Depth")
         let detections = tracker.withLock {
             $0.update(fuse(obstacles: obstacles, recognized: recognized), at: frame.timestamp)
         }
@@ -452,6 +471,7 @@ final class ScenePerception: Sendable {
             }
             return result.status
         }
+        lap("Warnings")
         let end = CACurrentMediaTime()
         diagnostics.performance = frameTimer.withLock { timer in
             timer.record(start: start, end: end)

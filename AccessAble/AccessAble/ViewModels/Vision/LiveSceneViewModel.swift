@@ -39,6 +39,8 @@ final class LiveSceneViewModel {
     private(set) var interfaceOrientation: UIInterfaceOrientation = .portrait
     /// Measured analysis rate and latency (T20); nil until a few frames have been timed.
     private(set) var performance: PerformanceMetrics?
+    /// Milliseconds per stage of `analyze`, smoothed over the last second or so, in order.
+    private(set) var stageTimes: [(name: String, milliseconds: Double)] = []
     /// ARKit tracking state and camera frame rate, for checking the session on a device (T1).
     private(set) var sessionDescription = ""
 
@@ -258,6 +260,7 @@ final class LiveSceneViewModel {
             navigation = diagnostics.navigation
             updateNavigationMessage()
             performance = diagnostics.performance
+            smoothStageTimes(diagnostics.stages)
             sessionDescription = Self.describe(
                 tracking: analyzer.sessionManager.trackingStateDescription,
                 health: analyzer.sessionManager.healthReport
@@ -402,6 +405,21 @@ final class LiveSceneViewModel {
     /// front of the tester.
     func crowdLine(_ crowd: CrowdRegion) -> String {
         String(format: "%d people, %.1f m, %.1f m wide", crowd.count, crowd.nearestDistance, crowd.extent)
+    }
+
+    /// "Objects 80 · Mesh 2 · Depth 70 · Warnings 3 ms" — where each frame's time goes.
+    var stagesDescription: String? {
+        guard !stageTimes.isEmpty else { return nil }
+        return stageTimes.map { String(format: "%@ %.0f", $0.name, $0.milliseconds) }.joined(separator: " · ") + " ms"
+    }
+
+    /// Averages each stage over roughly the last ten frames, so the readout can be read.
+    private func smoothStageTimes(_ stages: [ScenePerception.StageTiming]) {
+        let previous = Dictionary(stageTimes.map { ($0.name, $0.milliseconds) }, uniquingKeysWith: { a, _ in a })
+        stageTimes = stages.map { stage in
+            let smoothed = previous[stage.name].map { $0 * 0.9 + stage.milliseconds * 0.1 } ?? stage.milliseconds
+            return (stage.name, smoothed)
+        }
     }
 
     var performanceDescription: String? {

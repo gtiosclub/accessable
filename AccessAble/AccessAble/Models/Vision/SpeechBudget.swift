@@ -9,6 +9,8 @@ import Foundation
 /// - A spoken event within `minimumGap` of the last one is dropped unless it is more urgent
 ///   than that one was. "Stop" always gets through.
 /// - Haptic-only events never use up the gap, since they say nothing.
+/// - "Straight ahead now" is the answer to the instruction just given, so the gap since that
+///   instruction doesn't hold it back.
 struct SpeechBudget: Sendable {
     var minimumGap: TimeInterval = 3
 
@@ -21,7 +23,7 @@ struct SpeechBudget: Sendable {
     mutating func admit(_ events: [AnnouncementEvent], at time: TimeInterval) -> [AnnouncementEvent] {
         // max(by:) keeps the first of equals, so ties go to the order the announcers ran in.
         let spoken = events.filter { !$0.hapticOnly }.max { $0.priority < $1.priority }
-        if let spoken, isAllowed(spoken.priority, at: time) {
+        if let spoken, isAllowed(spoken, at: time) {
             lastSpoken = time
             lastPriority = spoken.priority
             return [spoken]
@@ -29,7 +31,9 @@ struct SpeechBudget: Sendable {
         return events.filter(\.hapticOnly).max { $0.priority < $1.priority }.map { [$0] } ?? []
     }
 
-    private func isAllowed(_ priority: AnnouncementPriority, at time: TimeInterval) -> Bool {
+    private func isAllowed(_ event: AnnouncementEvent, at time: TimeInterval) -> Bool {
+        if event.dedupKey == ObstacleAnnouncer.straightAheadKey { return true }
+        let priority = event.priority
         if priority == .critical || time - lastSpoken >= minimumGap { return true }
         return lastPriority.map { priority > $0 } ?? true
     }
