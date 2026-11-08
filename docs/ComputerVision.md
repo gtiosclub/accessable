@@ -240,6 +240,27 @@ protocol AnnouncementSink { func submit(_ event: AnnouncementEvent) async }
     request, doors from the mesh are not available (Describe still has the camera's view).
     The developer readout shows each stage's time (Objects, Crosswalk, Mesh, Depth, Warnings).
 
+19. **Modes, after Apple Magnifier.** Walk / Find / Read / Describe (`LiveMode`). Each runs only
+    what it needs: OCR in Find and Read, the mesh in Find, crosswalks, street signs, approaches,
+    crowds and ground segmentation in Walk. Outside Walk, obstacle announcers are heard only at
+    "Stop". Trips run in Walk.
+20. **Signs, after InView.** `SignInterpreter` (adapted from InView's AccessCore) normalizes plates
+    ("RM. 204A / CHEMISTRY LAB" → "Room 204A, Chemistry Lab"), repairs OCR's O-for-0 in numbers,
+    and rejects posters and prices. `SignAnnouncer` groups lines into plates and speaks a sign
+    once two reads agree, with a clock direction and distance from depth. "Take me to Room 0266"
+    matches room numbers, not the word "room".
+21. **Direction you can hear and feel, after Project Guideline.** Short of "Stop", a warning with a
+    way round buzzes the turnLeft / turnRight pattern. With Sound cues on (the profile's spatial
+    audio channel), a beep placed in 3D on the side to move towards repeats faster for a bigger
+    sidestep and rises in pitch as the obstacle nears (`SteeringCue`, `SteeringTones`).
+22. **Ground segmentation checks drop-offs.** Apple's Core ML DETR (COCO-panoptic, about 18 ms on the
+    Neural Engine) runs beside the pipeline in Walk, every 0.4 s (`SurfaceReader`). A step down or
+    drop-off with the same level ground just before and after it, and no stairs, is dismissed.
+    "Stairs ahead" is spoken from segmentation; "Road / water / railway ahead" only with outdoor
+    evidence (sky, trees, buildings, no ceiling), because on field recordings the model called
+    grey carpet "road" while the outdoor share was 0% in every indoor frame. The 86 MB model is
+    not in git: `sh Scripts/download-models.sh`. Without it the app runs as before.
+
 ## Task status (T1–T20)
 
 "Integrated" means the code runs in the live pipeline. Nothing below has been checked on

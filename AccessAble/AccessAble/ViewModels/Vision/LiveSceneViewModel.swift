@@ -39,6 +39,8 @@ final class LiveSceneViewModel {
     private(set) var interfaceOrientation: UIInterfaceOrientation = .portrait
     /// Measured analysis rate and latency (T20); nil until a few frames have been timed.
     private(set) var performance: PerformanceMetrics?
+    /// "Ground ahead: floor 92%" from segmentation, plus how many drops it dismissed.
+    private(set) var surfaceDescription: String?
     /// Milliseconds per stage of `analyze`, smoothed over the last second or so, in order.
     private(set) var stageTimes: [(name: String, milliseconds: Double)] = []
     /// ARKit tracking state and camera frame rate, for checking the session on a device (T1).
@@ -293,6 +295,10 @@ final class LiveSceneViewModel {
             updateNavigationMessage()
             performance = diagnostics.performance
             smoothStageTimes(diagnostics.stages)
+            surfaceDescription = diagnostics.surfaceAhead.map { surface in
+                String(format: "Ground ahead: %@ %.0f%%", surface.kind.rawValue, surface.share * 100)
+                    + (diagnostics.hazardsDismissedBySurface > 0 ? ", \(diagnostics.hazardsDismissedBySurface) drop(s) dismissed" : "")
+            }
             sessionDescription = Self.describe(
                 tracking: analyzer.sessionManager.trackingStateDescription,
                 health: analyzer.sessionManager.healthReport

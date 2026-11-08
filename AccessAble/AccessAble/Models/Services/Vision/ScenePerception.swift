@@ -70,11 +70,18 @@ final class ScenePerception: Sendable {
         var stages: [StageTiming] = []
         /// The steering beep to play, nil when silent or sound cues are off.
         var steering: SteeringCue?
+        /// What the ground ahead is, and how much of it, from segmentation.
+        var surfaceAhead: (kind: SurfaceKind, share: Float)?
+        /// Step downs and drop-offs segmentation showed to be flat floor, this frame.
+        var hazardsDismissedBySurface = 0
     }
 
     private let peopleDetector: PeopleDetector
     private let objectDetector: ObjectDetector?
     private let textReader: TextReader
+    /// Ground segmentation; nil when the model isn't bundled.
+    private let surfaceReader: SurfaceReader?
+    private let surfaceAnnouncer = Mutex(SurfaceAnnouncer())
     private let cameraQualityEvaluator = CameraQualityEvaluator()
     private let cameraQualityState = Mutex(CameraQualityState())
     private let corridorWidth: Float
@@ -121,6 +128,7 @@ final class ScenePerception: Sendable {
         peopleDetector: PeopleDetector = PeopleDetector(),
         objectDetector: ObjectDetector? = ObjectDetector(),
         textReader: TextReader = TextReader(),
+        surfaceReader: SurfaceReader? = SurfaceReader(),
         corridorWidth: Float = WalkingCorridor.default.width,
         corridorDistance: Float = WalkingCorridor.default.maxDistance,
         alertSettings: AlertSettings = AlertSettings()
@@ -129,6 +137,7 @@ final class ScenePerception: Sendable {
         self.peopleDetector = peopleDetector
         self.objectDetector = objectDetector
         self.textReader = textReader
+        self.surfaceReader = surfaceReader
         self.corridorWidth = corridorWidth
         self.corridorDistance = corridorDistance
     }
@@ -155,6 +164,7 @@ final class ScenePerception: Sendable {
         crosswalkConfirmer.withLock { $0 = CrosswalkConfirmer() }
         streetSignals.withLock { $0 = StreetSignalAnnouncer() }
         signs.withLock { $0 = SignAnnouncer() }
+        surfaceAnnouncer.withLock { $0 = SurfaceAnnouncer() }
         appliedFilter.withLock { $0 = nil }
         speechBudget.withLock { $0 = SpeechBudget() }
         // Otherwise the rate is averaged over the time the camera was off, and reads ~1 fps.
@@ -388,6 +398,23 @@ final class ScenePerception: Sendable {
             }
         }
 
+        // Segmentation (walking only): the ground's material, read beside the pipeline.
+        var surface: SurfaceMap?
+        if mode.watchesStreet, let surfaceReader {
+            surfaceReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp)
+            surface = surfaceReader.current(at: frame.timestamp)
+        }
+        // A "drop" with the same flat floor on both sides is a hole in depth, not an edge.
+        if let surface, let height = diagnostics.cameraHeight, !hazards.isEmpty {
+            let checked = checkingSurface(hazards) { ahead in
+                let ground = heading.origin + heading.forward * ahead - SIMD3<Float>(0, height, 0)
+                let point = frame.camera.projectPoint(ground, orientation: interfaceOrientation, viewportSize: upright)
+                return surface.kind(at: CGPoint(x: point.x / upright.width, y: point.y / upright.height))
+            }
+            diagnostics.hazardsDismissedBySurface = zip(hazards, checked).count { $0.type != $1.type }
+            hazards = checked
+        }
+        diagnostics.surfaceAhead = surface?.dominant(in: SurfaceMap.groundAhead)
         lap("Depth")
         let detections = tracker.withLock {
             $0.update(fuse(obstacles: obstacles, recognized: recognized), at: frame.timestamp)
@@ -470,6 +497,10 @@ final class ScenePerception: Sendable {
         // An approach warning holds navigation cues back in the same way a path warning does.
         if !announcements.isEmpty {
             lastPathAnnouncement.withLock { $0 = frame.timestamp }
+        }
+        if mode.watchesStreet {
+            announcements += surfaceAnnouncer.withLock { $0.announcements(for: surface, at: frame.timestamp) }
+                .filter { _ in diagnostics.surfaceAhead.map { filter.allows(DangerLevel(of: $0.kind)) } ?? false }
         }
         if mode.readsText {
             announcements += signs.withLock {

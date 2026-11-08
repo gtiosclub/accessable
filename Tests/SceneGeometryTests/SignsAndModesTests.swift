@@ -141,3 +141,59 @@ struct LiveModeTests {
         #expect(!LiveMode.describe.readsText && !LiveMode.describe.watchesStreet)
     }
 }
+
+@Suite("What the ground is made of")
+struct WalkingSurfaceTests {
+    /// A 10 × 10 map: `top` fills rows 0–4, `bottom` rows 5–9; `generation` tells reads apart.
+    private func map(top: SurfaceKind, bottom: SurfaceKind, generation: Int = 1) -> SurfaceMap {
+        SurfaceMap(width: 10, height: 10, kinds: Array(repeating: top, count: 50) + Array(repeating: bottom, count: 50), generation: generation)
+    }
+
+    @Test("model labels map onto the kinds that matter")
+    func labels() {
+        #expect(SurfaceKind(label: "floor (wood)") == .floor)
+        #expect(SurfaceKind(label: "rug") == .floor)
+        #expect(SurfaceKind(label: "road") == .road)
+        #expect(SurfaceKind(label: "stairs") == .stairs)
+        #expect(SurfaceKind(label: "sky (other)") == .outdoors)
+        #expect(SurfaceKind(label: "laptop") == .other)
+    }
+
+    @Test("a drop with the same flat floor on both sides is a hole in depth, not an edge")
+    func dismissesFlat() {
+        let drop = [ElevationHazard(type: .dropOff, distance: 2, heightChange: 0)]
+        #expect(checkingSurface(drop) { _ in .floor }.first?.type == .unknown)
+        // Carpet the model calls road on one side and floor on the other is still level.
+        #expect(checkingSurface(drop) { $0 < 2 ? .road : .road }.first?.type == .unknown)
+    }
+
+    @Test("stairs, a kerb onto the road, or ground out of view keep the warning")
+    func keepsReal() {
+        let drop = [ElevationHazard(type: .stepDown, distance: 2, heightChange: -0.15)]
+        #expect(checkingSurface(drop) { $0 == 2 ? .stairs : .floor }.first?.type == .stepDown)
+        #expect(checkingSurface(drop) { $0 < 2 ? .pavement : .grass }.first?.type == .stepDown)
+        #expect(checkingSurface(drop) { $0 < 2 ? .floor : nil }.first?.type == .stepDown)
+        let stepUp = [ElevationHazard(type: .stepUp, distance: 2, heightChange: 0.15)]
+        #expect(checkingSurface(stepUp) { _ in .floor }.first?.type == .stepUp)
+    }
+
+    @Test("'Road ahead' needs outdoor evidence: grey carpet indoors reads as road")
+    func roadNeedsOutdoors() {
+        var indoors = SurfaceAnnouncer()
+        for generation in 1 ... 3 {
+            #expect(indoors.announcements(for: map(top: .ceiling, bottom: .road, generation: generation), at: Double(generation)).isEmpty)
+        }
+        var outdoors = SurfaceAnnouncer()
+        _ = outdoors.announcements(for: map(top: .outdoors, bottom: .road, generation: 1), at: 0)
+        #expect(outdoors.announcements(for: map(top: .outdoors, bottom: .road, generation: 2), at: 0.5).first?.text == "Road ahead.")
+    }
+
+    @Test("stairs ahead are announced after two separate reads, not twice from one")
+    func stairsConfirmed() {
+        var announcer = SurfaceAnnouncer()
+        let first = map(top: .floor, bottom: .stairs, generation: 1)
+        #expect(announcer.announcements(for: first, at: 0).isEmpty)
+        #expect(announcer.announcements(for: first, at: 0.1).isEmpty)
+        #expect(announcer.announcements(for: map(top: .floor, bottom: .stairs, generation: 2), at: 0.5).first?.text == "Stairs ahead.")
+    }
+}

@@ -434,6 +434,11 @@ struct LiveSceneView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
             }
+            if let surface = viewModel.surfaceDescription {
+                Text(surface)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
             if let stages = viewModel.stagesDescription {
                 Text(stages)
                     .font(.caption2.monospacedDigit())
