@@ -2,54 +2,48 @@ import MapKit
 import SwiftUI
 
 /// Owner: Maps (2.x). Home screen: camera (or map) behind Settings, Info, and Search Destination.
+///
+/// The camera is the real camera screen (`LiveSceneView`, in Walk mode), so obstacle warnings
+/// run from the moment the app opens. Its mode picker, status strip and controls sit between
+/// this page's top buttons and Search Destination. Switching to the map, or opening another
+/// screen, releases the camera.
 struct LandingView: View {
+    @Environment(AppViewModel.self) private var app
     @Environment(AppRouter.self) private var router
     @State private var showsMap = false
     @State private var showsCommands = false
 
     var body: some View {
-        ZStack {
+        Group {
             if showsMap {
-                CampusMap()
+                ZStack {
+                    CampusMap()
+                    VStack(spacing: 12) {
+                        topBar
+                        Spacer()
+                        Text("Two fingers swipe right for camera view.")
+                            .font(.footnote)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(.black.opacity(0.7), in: Capsule())
+                            .accessibilityHidden(true)
+                        searchButton
+                    }
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 12)
+                }
             } else {
-                CameraBackdrop()
+                LiveSceneView(services: app.services, mode: .walk)
+                    .safeAreaInset(edge: .top) {
+                        topBar.padding(.horizontal, 24)
+                    }
+                    .safeAreaInset(edge: .bottom) {
+                        searchButton
+                            .padding(.horizontal, 24)
+                            .padding(.bottom, 12)
+                    }
             }
-
-            VStack(spacing: 12) {
-                HStack {
-                    CircleIconButton(systemImage: "gearshape", label: "Settings") {
-                        router.push(.settings)
-                    }
-                    Spacer()
-                    Button {
-                        router.push(.developerTools)
-                    } label: {
-                        Label("Dev Tools", systemImage: "hammer.fill")
-                    }
-                    .buttonStyle(.pill(.outline, size: .compact))
-                    .background(.black.opacity(0.6), in: Capsule())
-                    .accessibilityLabel("Developer tools")
-                    .accessibilityHint("Computer vision, maps, haptics, and command features")
-                    Spacer()
-                    CircleIconButton(systemImage: "info", label: "Voice commands") {
-                        showsCommands = true
-                    }
-                }
-                Spacer()
-                if showsMap {
-                    Text("Two fingers swipe right for camera view.")
-                        .font(.footnote)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(.black.opacity(0.7), in: Capsule())
-                        .accessibilityHidden(true)
-                }
-                Button("Search Destination") { router.push(.search) }
-                    .buttonStyle(.pill(.primary))
-            }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 12)
         }
         .gesture(TwoFingerSwipe { showsMap.toggle() })
         .accessibilityAction(named: showsMap ? "Show camera view" : "Show map view") { showsMap.toggle() }
@@ -58,6 +52,33 @@ struct LandingView: View {
         .sheet(isPresented: $showsCommands) {
             VoiceCommandsSheet()
         }
+    }
+
+    private var topBar: some View {
+        HStack {
+            CircleIconButton(systemImage: "gearshape", label: "Settings") {
+                router.push(.settings)
+            }
+            Spacer()
+            Button {
+                router.push(.developerTools)
+            } label: {
+                Label("Dev Tools", systemImage: "hammer.fill")
+            }
+            .buttonStyle(.pill(.outline, size: .compact))
+            .background(.black.opacity(0.6), in: Capsule())
+            .accessibilityLabel("Developer tools")
+            .accessibilityHint("Computer vision, maps, haptics, and command features")
+            Spacer()
+            CircleIconButton(systemImage: "info", label: "Voice commands") {
+                showsCommands = true
+            }
+        }
+    }
+
+    private var searchButton: some View {
+        Button("Search Destination") { router.push(.search) }
+            .buttonStyle(.pill(.primary))
     }
 }
 
@@ -95,6 +116,7 @@ struct CampusMap: View {
     NavigationStack {
         LandingView()
     }
+    .environment(AppViewModel.preview)
     .environment(AppRouter())
     .preferredColorScheme(.dark)
 }
