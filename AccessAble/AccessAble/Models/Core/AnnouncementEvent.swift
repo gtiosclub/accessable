@@ -52,6 +52,10 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
     var expiresAt: Date?
     /// Events with the same key are treated as duplicates (e.g. "track-12@2m").
     var dedupKey: String?
+    /// Play the haptic but don't speak `text`, which is still shown on screen. For a repeat
+    /// of a warning the user just heard, where a buzz says enough. Spoken anyway when the
+    /// user has haptics off or the event has no haptic.
+    var hapticOnly: Bool
 
     init(
         id: UUID = UUID(),
@@ -64,7 +68,8 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
         source: AnnouncementSource,
         createdAt: Date = .now,
         expiresAt: Date? = nil,
-        dedupKey: String? = nil
+        dedupKey: String? = nil,
+        hapticOnly: Bool = false
     ) {
         self.id = id
         self.category = category
@@ -77,6 +82,7 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
         self.createdAt = createdAt
         self.expiresAt = expiresAt
         self.dedupKey = dedupKey
+        self.hapticOnly = hapticOnly
     }
 
     func isExpired(at date: Date = .now) -> Bool {

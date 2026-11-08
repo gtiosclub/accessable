@@ -43,6 +43,9 @@ struct GuidanceProfile: Codable, Hashable, Sendable {
     var enabledCategories: Set<AnnouncementCategory>
     /// What Ask AI mentions first (T23). Close hazards come first regardless.
     var aiPriorities: AIPriorities = .default
+    /// What the camera warns about: the danger bar and warning distance, set on the Live
+    /// detection screen.
+    var alertFilter: AlertFilter = .default
 
     /// Whether this profile wants to hear an event at all. Critical events and replies to
     /// something the user just asked for always pass.
@@ -102,7 +105,7 @@ extension GuidanceProfile {
 // failing to decode and resetting the user's settings.
 extension GuidanceProfile {
     private enum CodingKeys: String, CodingKey {
-        case visionLevel, channels, verbosity, speechRate, hapticIntensity, enabledCategories, aiPriorities
+        case visionLevel, channels, verbosity, speechRate, hapticIntensity, enabledCategories, aiPriorities, alertFilter
     }
 
     init(from decoder: any Decoder) throws {
@@ -114,7 +117,8 @@ extension GuidanceProfile {
             speechRate: try container.decode(Float.self, forKey: .speechRate),
             hapticIntensity: try container.decode(Float.self, forKey: .hapticIntensity),
             enabledCategories: try container.decode(Set<AnnouncementCategory>.self, forKey: .enabledCategories),
-            aiPriorities: try container.decodeIfPresent(AIPriorities.self, forKey: .aiPriorities) ?? .default
+            aiPriorities: try container.decodeIfPresent(AIPriorities.self, forKey: .aiPriorities) ?? .default,
+            alertFilter: try container.decodeIfPresent(AlertFilter.self, forKey: .alertFilter) ?? .default
         )
     }
 }

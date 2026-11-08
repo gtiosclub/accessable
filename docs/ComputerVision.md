@@ -112,6 +112,8 @@ Both were approved by the tech lead and kept to the minimum. Nothing outside CV 
 |---|---|---|
 | `Detection.trackID` | `Int?` → `UUID?` | Tracking (T15) and announcement state (T16) key objects by UUID; this is now how track identity reaches everyone. |
 | `SceneObservation.elevationHazards` | New `[ElevationHazard]`, nearest first. `ElevationHazard` moved from `Models/Vision` to `Models/Core` with it. | The UI was reading hazards from the analyzer outside the contract. |
+| `AnnouncementEvent.hapticOnly` | New `Bool`, default `false`. The engine plays the haptic and skips speech, unless the user has haptics off or the event has no haptic. | A second warning about the same kind of thing within 20 s is a buzz, not another sentence. |
+| `GuidanceProfile.alertFilter` | New `AlertFilter` (danger bar and warning distance), default medium-and-above within 2.5 m. Older saved profiles load with the default. | The user's alert settings from the Live screen apply on trips too. |
 
 ### Contracts CV produces and consumes
 
@@ -199,6 +201,23 @@ protocol AnnouncementSink { func submit(_ event: AnnouncementEvent) async }
 9. **OCR is off the safety path.** It runs beside the pipeline at most once a second.
 10. **Swappable object model.** `ObjectDetector` takes the model name; any Core ML detector
     exported with built-in NMS drops in. `hazardLabels` is the only COCO-specific part.
+11. **One limit on how much the camera says.** Each announcer keeps itself quiet, but none
+    knows what the others said. `SpeechBudget` runs after all of them: at most one event per
+    frame (the most urgent), and nothing spoken within 3 s of the last unless it is more
+    urgent. "Stop" always gets through; haptic-only events don't use up the gap.
+12. **The user chooses what is worth hearing.** `DangerLevel` rates every label (vehicles and
+    drop-offs critical; poles, kerbs and anything unnamed high; furniture and people medium;
+    things on a table low). `AlertFilter` drops what is below the user's bar and moves the
+    first warning to their distance. Two things are never filtered: anything in the path
+    inside the 1.2 m "Stop" band, and drop-offs, which also keep at least 2.5 m.
+13. **Quiet by default.** The 2.5 m warning goes haptic-only for a repeat of the same kind of
+    thing within 20 s; "Stop" is not repeated to someone standing still; advice changes are
+    spoken at most every 8 s; approaching people are announced only when urgent (< 1.5 s).
+14. **The Live screen shows what the voice says.** Users see one outline (the nearest in-path
+    object their filter lets through, held for two frames before it moves, animated between
+    positions) and a colour-coded status strip. Every detection box, the readout and the
+    field-test recorder are developer tools, compiled into debug builds only and switched on
+    with the wrench in the toolbar.
 
 ## Task status (T1–T20)
 

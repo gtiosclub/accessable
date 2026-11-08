@@ -36,6 +36,11 @@ struct ApproachAnnouncer: Sendable {
     /// An announcement not delivered within this long is stale; approaches go out of date
     /// quickly, so this is shorter than T16's.
     var announcementLifetime: TimeInterval = 1.0
+    /// Kinds of thing warned about only once they are urgent. Indoors people walk toward
+    /// you all the time, and "Person approaching" for each of them is noise.
+    var urgentOnlyLabels: Set<String> = ["person"]
+    /// What the user asked to hear about. An urgent approach gets through regardless.
+    var alertFilter: AlertFilter?
 
     private struct TrackState {
         var level: Int?
@@ -67,11 +72,16 @@ struct ApproachAnnouncer: Sendable {
         var events: [AnnouncementEvent] = []
 
         for threat in threats {
+            let level = urgencyLevel(forTimeToApproach: threat.timeToApproach)
+            if level < 2 {
+                if urgentOnlyLabels.contains(threat.label.lowercased()) { continue }
+                if let alertFilter, !alertFilter.allows(DangerLevel(approaching: threat.label)) { continue }
+            }
+
             var state = states[threat.trackID] ?? TrackState()
             defer { states[threat.trackID] = state }
             state.lastSeen = time
 
-            let level = urgencyLevel(forTimeToApproach: threat.timeToApproach)
             if level == state.candidate {
                 state.candidateFrames += 1
             } else if level != state.level {

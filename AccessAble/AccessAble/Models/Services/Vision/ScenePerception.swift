@@ -58,6 +58,8 @@ final class ScenePerception: Sendable {
         var approaching: [ApproachThreat] = []
         /// Groups of people (T35), nearest first.
         var crowds: [CrowdRegion] = []
+        /// `Detection.id`s inside the walking corridor, so the screen can show what is in the way.
+        var inPath: Set<UUID> = []
     }
 
     private let peopleDetector: PeopleDetector
@@ -92,14 +94,24 @@ final class ScenePerception: Sendable {
     /// Set when a request arrives, consumed by the next frame, which knows the frame time.
     private let pendingNavigationQuery = Mutex<String??>(nil)
     private let clearanceTuning = PathClearanceTuning.default
+    /// The user's danger bar and warning distance, read every frame.
+    private let alertSettings: AlertSettings
+    /// The filter the announcers were last set up with; a change starts them afresh.
+    private let appliedFilter = Mutex<AlertFilter?>(nil)
+    /// The single limit on camera speech across every announcer.
+    private let speechBudget = Mutex(SpeechBudget())
+    /// Slower than this, in metres per second, counts as standing still.
+    private let walkingSpeed: Float = 0.3
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
         objectDetector: ObjectDetector? = ObjectDetector(),
         textReader: TextReader = TextReader(),
         corridorWidth: Float = WalkingCorridor.default.width,
-        corridorDistance: Float = WalkingCorridor.default.maxDistance
+        corridorDistance: Float = WalkingCorridor.default.maxDistance,
+        alertSettings: AlertSettings = AlertSettings()
     ) {
+        self.alertSettings = alertSettings
         self.peopleDetector = peopleDetector
         self.objectDetector = objectDetector
         self.textReader = textReader
@@ -128,6 +140,10 @@ final class ScenePerception: Sendable {
         structureFrameCount.withLock { $0 = 0 }
         crosswalkConfirmer.withLock { $0 = CrosswalkConfirmer() }
         streetSignals.withLock { $0 = StreetSignalAnnouncer() }
+        appliedFilter.withLock { $0 = nil }
+        speechBudget.withLock { $0 = SpeechBudget() }
+        // Otherwise the rate is averaged over the time the camera was off, and reads ~1 fps.
+        frameTimer.withLock { $0 = FrameTimer() }
     }
 
     /// Starts steering the user towards `query` ("the chair", "exit"), replacing any
@@ -344,14 +360,10 @@ final class ScenePerception: Sendable {
             observed.append(Detection(label: "crosswalk", confidence: 1, boundingBox: crosswalkBox, origin: .model, isHazard: false))
         }
         let recognizedText = textReader.currentText(at: frame.timestamp)
-        var announcements = announcer.withLock {
-            $0.announcements(
-                for: detections.map { ObstacleAlertInput(detection: $0, isInPath: inPath.contains($0.id)) },
-                hazards: hazards,
-                path: path,
-                blockedAhead: blockedAhead,
-                at: frame.timestamp
-            )
+        let filter = alertSettings.filter
+        let filterChanged = appliedFilter.withLock { applied in
+            defer { applied = filter }
+            return applied != filter
         }
         // T34 — what is moving toward the user. World velocities come from the tracks'
         // world positions; the user's own travel is taken out so walking toward a parked car
@@ -360,25 +372,44 @@ final class ScenePerception: Sendable {
             history.record(position: corridor.origin, at: frame.timestamp)
             return history.motion?.velocity ?? .zero
         }
+        let isUserMoving = simd_length(SIMD2(userVelocity.x, userVelocity.z)) >= walkingSpeed
+        var announcements = announcer.withLock {
+            // Band indices mean different distances under a new filter, so start over.
+            if filterChanged { $0 = ObstacleAnnouncer() }
+            $0.alertFilter = filter
+            return $0.announcements(
+                for: detections.map { ObstacleAlertInput(detection: $0, isInPath: inPath.contains($0.id)) },
+                hazards: hazards,
+                path: path,
+                blockedAhead: blockedAhead,
+                at: frame.timestamp,
+                isUserMoving: isUserMoving
+            )
+        }
         let motions = motion.withLock { $0.update(detections, at: frame.timestamp) }
         let threats = approachThreats(
             detections: detections, motions: motions,
             userVelocity: userVelocity, corridor: heading
         )
         diagnostics.approaching = threats
-        announcements += approach.withLock { $0.announcements(for: threats, at: frame.timestamp, now: .now) }
+        announcements += approach.withLock {
+            $0.alertFilter = filter
+            return $0.announcements(for: threats, at: frame.timestamp, now: .now)
+        }
 
         // T35 — people grouped into crowds. Ambient, and never instead of T16: anyone
         // actually in the path is still announced as an obstacle.
         let crowds = detectCrowds(among: detections.filter { $0.label.lowercased() == "person" })
         diagnostics.crowds = crowds.crowds
-        announcements += crowdAnnouncer.withLock { $0.announcements(for: crowds.crowds, at: frame.timestamp, now: .now) }
+        // Crowds and camera hints are only nice to know: below anything but the lowest bar.
+        let crowdEvents = crowdAnnouncer.withLock { $0.announcements(for: crowds.crowds, at: frame.timestamp, now: .now) }
+        if filter.allows(.low) { announcements += crowdEvents }
 
         // T32 — camera aiming and image quality. Normal priority, so it never talks over a
         // path warning, and only once a problem has lasted a moment: the phone dips and
         // blurs for an instant with every step.
         let cameraFeedback = cameraQualityEvaluator.evaluate(cameraQualityInput)
-        if shouldAnnounceCameraQuality(cameraFeedback, at: frame.timestamp), let cameraFeedback {
+        if shouldAnnounceCameraQuality(cameraFeedback, at: frame.timestamp), let cameraFeedback, filter.allows(.low) {
             announcements.append(
                 AnnouncementEvent(
                     category: .system,
@@ -395,7 +426,9 @@ final class ScenePerception: Sendable {
         if !announcements.isEmpty {
             lastPathAnnouncement.withLock { $0 = frame.timestamp }
         }
-        announcements += streetSignals.withLock { $0.announcements(for: observed, at: frame.timestamp) }
+        announcements += streetSignals.withLock {
+            $0.announcements(for: observed.filter { filter.allows(DangerLevel(of: $0)) }, at: frame.timestamp)
+        }
 
         // "Take me to…": sightings go in, one instruction at a time comes out.
         if let pending = pendingNavigationQuery.withLock({ query in
@@ -422,7 +455,10 @@ final class ScenePerception: Sendable {
             timer.record(start: start, end: end)
             return timer.metrics
         }
+        diagnostics.inPath = inPath
         diagnosticsState.withLock { $0 = diagnostics }
+        // Every announcer has had its say; now the one shared limit on how much is spoken.
+        announcements = speechBudget.withLock { $0.admit(announcements, at: frame.timestamp) }
 
         let observation = SceneObservation(
             timestamp: .now,

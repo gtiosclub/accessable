@@ -2,35 +2,84 @@ import ARKit
 import SceneKit
 import SwiftUI
 
-/// Owner: Computer Vision (1.1). The live camera screen: ARKit preview with detection
-/// boxes drawn over it, and a readout of what the geometry detectors found.
+/// Owner: Computer Vision (1.1). The live camera screen.
+///
+/// What users see is kept to what matters: the camera, one outline around the nearest thing
+/// in the path that they asked to hear about, a colour-coded status strip that says the same
+/// thing the voice does, and the controls along the bottom. In debug builds a wrench in the
+/// toolbar adds the developer tools: every detection box, the pipeline readout, and the
+/// field-test recorder.
 ///
 /// Requires a real device — ARKit world tracking does not run in the Simulator — and a
 /// LiDAR device for the floor, obstacle and kerb readouts.
 struct LiveSceneView: View {
+    @Environment(AppViewModel.self) private var app
     @State private var viewModel: LiveSceneViewModel
     @State private var asksDestination = false
     @State private var destination = ""
+    /// Developer tools are compiled into debug builds only, and off until switched on.
+    @AppStorage("liveSceneShowsDeveloperTools") private var showsDeveloperTools = false
 
     init(services: AppServices) {
         _viewModel = State(initialValue: LiveSceneViewModel(services: services))
     }
 
+    private var isDeveloperMode: Bool {
+        #if DEBUG
+        showsDeveloperTools
+        #else
+        false
+        #endif
+    }
+
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack {
             if let error = viewModel.errorMessage {
                 unavailable(error)
             } else {
                 preview
-                VStack(spacing: 0) {
-                    fieldTestControls
+                VStack(spacing: 10) {
+                    if let event = viewModel.visibleAnnouncement {
+                        AnnouncementBanner(event: event)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                    if isDeveloperMode {
+                        fieldTestControls
+                    }
                     Spacer()
-                    readout
+                    if isDeveloperMode {
+                        readout
+                    }
+                    if let navigation = viewModel.navigation {
+                        Text(navigation.description)
+                            .font(.headline)
+                            .foregroundStyle(navigation.phase == .notFound ? Color.red : Color.primary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                            .background(.regularMaterial, in: Capsule())
+                    }
+                    statusStrip
+                    controlBar
                 }
+                .padding(.horizontal)
+                .padding(.bottom, 8)
+                .animation(.easeInOut(duration: 0.25), value: viewModel.visibleAnnouncement?.id)
             }
         }
         .navigationTitle("Live detection")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            #if DEBUG
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showsDeveloperTools.toggle()
+                } label: {
+                    Image(systemName: showsDeveloperTools ? "wrench.and.screwdriver.fill" : "wrench.and.screwdriver")
+                }
+                .accessibilityLabel(showsDeveloperTools ? "Hide developer tools" : "Show developer tools")
+            }
+            #endif
+        }
         .task { await viewModel.start() }
         .onDisappear { viewModel.stop() }
         .alert("Where do you want to go?", isPresented: $asksDestination) {
@@ -42,36 +91,7 @@ struct LiveSceneView: View {
         }
     }
 
-    /// "Take me to…" / "Stop" and the current step.
-    private var navigationControls: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                if viewModel.isNavigating {
-                    Button {
-                        viewModel.stopNavigating()
-                    } label: {
-                        Label("Stop guiding", systemImage: "xmark.circle.fill")
-                    }
-                    .tint(.red)
-                } else {
-                    Button {
-                        asksDestination = true
-                    } label: {
-                        Label("Take me to…", systemImage: "location.north.circle")
-                    }
-                    .accessibilityHint("Type what to find. Turn around slowly, then follow the spoken directions.")
-                }
-                Spacer()
-            }
-            .buttonStyle(.borderedProminent)
-
-            if let navigation = viewModel.navigation {
-                Text(navigation.description)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(navigation.phase == .notFound ? Color.red : Color.primary)
-            }
-        }
-    }
+    // MARK: - For users
 
     private var preview: some View {
         GeometryReader { geometry in
@@ -80,32 +100,180 @@ struct LiveSceneView: View {
                     ARCameraPreview(session: analyzer.sessionManager.session)
                 }
 
-                ForEach(viewModel.observation.detections) { detection in
-                    DetectionBox(
-                        detection: detection,
-                        rect: aspectFillRect(
-                            normalizedBox: detection.boundingBox,
-                            imageAspectRatio: viewModel.imageAspectRatio,
-                            viewSize: geometry.size
+                if isDeveloperMode {
+                    ForEach(viewModel.observation.detections) { detection in
+                        DetectionBox(
+                            detection: detection,
+                            rect: rect(for: detection, in: geometry.size)
                         )
+                    }
+                }
+
+                // The geometry's unnamed obstacles are clusters of depth points whose boxes
+                // cover half the screen; the status strip speaks for them instead.
+                if let focus = viewModel.focus, focus.label != Detection.obstacleLabel,
+                   let caption = viewModel.focusCaption {
+                    FocusOutline(
+                        caption: caption,
+                        color: statusColor,
+                        rect: rect(for: focus, in: geometry.size)
                     )
+                    .transition(.opacity)
                 }
 
                 Image(systemName: "viewfinder")
-                    .font(.system(size: 48, weight: .medium))
-                    .foregroundStyle(.white)
+                    .font(.system(size: 36, weight: .light))
+                    .foregroundStyle(.white.opacity(0.8))
                     .shadow(radius: 2)
-                    .position(
-                        x: geometry.size.width / 2,
-                        y: geometry.size.height / 2
-                    )
+                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
             }
-            // The boxes are a sighted-user debugging aid; VoiceOver gets the sentence in
-            // the readout below instead of 20 unlabelled rectangles.
+            .animation(.easeOut(duration: 0.2), value: viewModel.focus.map { $0.trackID ?? $0.id })
+            // The outline is for sighted users; VoiceOver gets the status strip instead.
             .accessibilityHidden(true)
         }
         .ignoresSafeArea()
     }
+
+    private func rect(for detection: Detection, in size: CGSize) -> CGRect {
+        aspectFillRect(
+            normalizedBox: detection.boundingBox,
+            imageAspectRatio: viewModel.imageAspectRatio,
+            viewSize: size
+        )
+    }
+
+    /// Clear / caution / stop, in the colour and words of the current warning.
+    private var statusStrip: some View {
+        let status = viewModel.status
+        return HStack(spacing: 14) {
+            Image(systemName: statusSymbol(status.level))
+                .font(.title.weight(.semibold))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(status.title)
+                    .font(.title2.weight(.bold))
+                if let detail = status.detail {
+                    Text(detail)
+                        .font(.headline)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(status.level == .starting ? Color.primary : Color.white)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity)
+        .background(statusBackground(status.level), in: RoundedRectangle(cornerRadius: 20))
+        .animation(.easeInOut(duration: 0.2), value: status)
+        .accessibilityElement(children: .combine)
+        .accessibilityValue(viewModel.spokenSummary)
+        .accessibilityAddTraits(.updatesFrequently)
+    }
+
+    private var statusColor: Color {
+        switch viewModel.status.level {
+        case .stop: .red
+        case .caution: .orange
+        case .clear, .starting: .green
+        }
+    }
+
+    private func statusSymbol(_ level: LiveSceneViewModel.PathStatus.Level) -> String {
+        switch level {
+        case .starting: "camera"
+        case .clear: "checkmark.circle.fill"
+        case .caution: "exclamationmark.triangle.fill"
+        case .stop: "hand.raised.fill"
+        }
+    }
+
+    private func statusBackground(_ level: LiveSceneViewModel.PathStatus.Level) -> AnyShapeStyle {
+        switch level {
+        case .starting: AnyShapeStyle(.regularMaterial)
+        case .clear: AnyShapeStyle(Color.green.opacity(0.85))
+        case .caution: AnyShapeStyle(Color.orange.opacity(0.9))
+        case .stop: AnyShapeStyle(Color.red.opacity(0.9))
+        }
+    }
+
+    /// "Take me to…", "Identify" and the alert settings.
+    private var controlBar: some View {
+        HStack(spacing: 10) {
+            if viewModel.isNavigating {
+                controlButton("Stop guiding", systemImage: "xmark.circle.fill", tint: .red) {
+                    viewModel.stopNavigating()
+                }
+            } else {
+                controlButton("Take me to…", systemImage: "location.north.circle.fill") {
+                    asksDestination = true
+                }
+                .accessibilityHint("Type what to find. Turn around slowly, then follow the spoken directions.")
+            }
+
+            controlButton("Identify", systemImage: "viewfinder") {
+                viewModel.identifyPointedAt()
+            }
+            .accessibilityHint("Identifies text or an object near the center of the camera.")
+
+            alertMenu
+        }
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22))
+    }
+
+    private func controlButton(
+        _ title: String, systemImage: String, tint: Color = .accentColor, action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.title2)
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .frame(maxWidth: .infinity, minHeight: 52)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(tint)
+    }
+
+    /// The danger bar and warning distance (saved in the profile, so trips use them too).
+    private var alertMenu: some View {
+        @Bindable var app = app
+        return Menu {
+            Picker("Warn me about", selection: $app.profile.alertFilter.minimumDanger) {
+                ForEach(DangerLevel.allCases, id: \.self) { level in
+                    Text(level.displayName).tag(level)
+                }
+            }
+            .pickerStyle(.menu)
+            Picker("Warn me within", selection: $app.profile.alertFilter.maximumDistance) {
+                ForEach(AlertFilter.distanceChoices, id: \.self) { distance in
+                    Text(String(format: "%g metres", distance)).tag(distance)
+                }
+            }
+            .pickerStyle(.menu)
+        } label: {
+            VStack(spacing: 4) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.title2)
+                Text("Alerts")
+                    .font(.caption.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity, minHeight: 52)
+        }
+        .buttonStyle(.bordered)
+        .accessibilityLabel("Alerts")
+        .accessibilityValue(
+            "\(app.profile.alertFilter.minimumDanger.displayName), within "
+                + String(format: "%g metres", app.profile.alertFilter.maximumDistance)
+        )
+        .accessibilityHint("Choose how dangerous and how close something must be before you are warned.")
+    }
+
+    // MARK: - Developer tools
 
     /// Record / mark controls for running the device validation checklist.
     private var fieldTestControls: some View {
@@ -139,25 +307,9 @@ struct LiveSceneView: View {
             if viewModel.isRecording {
                 elevationTestControls
             }
-            navigationControls
-
-            Button {
-                viewModel.identifyPointedAt()
-            } label: {
-                Label("Identify", systemImage: "viewfinder")
-            }
-            .buttonStyle(.borderedProminent)
-            .accessibilityHint(
-                "Identifies text or an object near the center of the camera."
-            )
-
-            if let event = viewModel.lastAnnouncement {
-                AnnouncementBanner(event: event)
-            }
         }
         .padding(10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .padding(.horizontal)
     }
 
     /// Ground truth is deliberately entered rather than inferred from the scenario label:
@@ -236,11 +388,8 @@ struct LiveSceneView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding()
+        .padding(10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .padding()
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(viewModel.spokenSummary)
     }
 
     private func unavailable(_ message: String) -> some View {
@@ -295,6 +444,32 @@ private struct DetectionBox: View {
             return "\(detection.label) \(Int(detection.confidence * 100))%"
         }
         return String(format: "%@ %.1fm", detection.label, distance)
+    }
+}
+
+/// The one outline users see: a soft rounded box in the status colour, with what it is and
+/// how far. It glides to new positions rather than jumping (see `preview`).
+private struct FocusOutline: View {
+    let caption: String
+    let color: Color
+    let rect: CGRect
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(color, lineWidth: 4)
+                .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+                .frame(width: rect.width, height: rect.height)
+
+            Text(caption)
+                .font(.subheadline.weight(.bold))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(color, in: Capsule())
+                .foregroundStyle(.white)
+                .offset(x: 8, y: -16)
+        }
+        .offset(x: rect.minX, y: rect.minY)
     }
 }
 

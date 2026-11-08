@@ -211,14 +211,15 @@ struct ObstacleAnnouncerTests {
         let left = PathAssessment(clearDirection: .left, sidestep: -0.7)
         let right = PathAssessment(clearDirection: .right, sidestep: 0.7)
         let events = run(
-            Array(repeating: chair(at: 1.9), count: 6),
-            path: [left, left, right, right, right, right],
+            Array(repeating: chair(at: 1.9), count: 10),
+            path: [left, left] + Array(repeating: right, count: 8),
             step: 1,
             announcer: &announcer
         )
-        #expect(events.map(\.count) == [0, 1, 0, 0, 0, 1])
+        // Spoken at 1 s; the change can't be news until 8 s have passed.
+        #expect(events.map(\.count) == [0, 1, 0, 0, 0, 0, 0, 0, 0, 1])
         #expect(events[1].first?.text == "Chair ahead. Go left.")
-        #expect(events[5].first?.text == "Chair ahead. Go right.")
+        #expect(events[9].first?.text == "Chair ahead. Go right.")
     }
 
     @Test("a direction that flips for one frame never reaches the user")
@@ -285,7 +286,7 @@ struct ObstacleAnnouncerTests {
         let event = try #require(announcer.announcements(for: [chair(at: 1.5)], hazards: [], at: 0.1, now: now).first)
 
         #expect(event.expiresAt == now.addingTimeInterval(1.5))
-        #expect(event.dedupKey == "path-chair-0-none")
+        #expect(event.dedupKey == "path-chair-0")
         #expect(event.bearing == .ahead)
         #expect(event.category == .hazard && event.source == .obstacleDetection)
     }

@@ -41,6 +41,10 @@ struct BlockedAhead: Sendable, Equatable {
 /// Kerbs, steps and drop-offs follow the same band rules, one state per hazard type, and a
 /// repeat is held back for `hazardRepeatInterval` because kerb detection flickers.
 ///
+/// With an `alertFilter`, the user's distance replaces the outermost band and anything below
+/// their danger bar is left out, except inside the "Stop" band, which is never filtered.
+/// Drop-offs are never filtered either, and keep at least the default warning distance.
+///
 /// Output goes to the shared `AnnouncementSink`; the announcement engine (3.3) decides how
 /// and whether to speak it, given the user's profile.
 struct ObstacleAnnouncer: Sendable {
@@ -64,9 +68,14 @@ struct ObstacleAnnouncer: Sendable {
     /// A new direction must hold for this long before it counts as a change of advice.
     var adviceStableFor: TimeInterval = 1.0
     /// A change of advice ("Go left" → "Go right") is spoken at most this often.
-    var adviceChangeInterval: TimeInterval = 4.0
-    /// While still in the nearest band, the warning is repeated this often.
+    var adviceChangeInterval: TimeInterval = 8.0
+    /// While still in the nearest band, and still walking, the warning is repeated this often.
     var repeatInterval: TimeInterval = 8.0
+    /// A warning short of "Stop" about the same kind of thing as one spoken this recently is
+    /// sent haptic-only: in a room full of chairs, the second chair is a buzz, not a sentence.
+    var quietRepeatWindow: TimeInterval = 20
+    /// What the user asked to hear about. nil hears everything at `thresholds`.
+    var alertFilter: AlertFilter?
     /// A detection this close to the map's blocked distance is what is blocking the path,
     /// and lends its name.
     var subjectTolerance: Float = 0.8
@@ -94,7 +103,9 @@ struct ObstacleAnnouncer: Sendable {
         var lastSpokenBand: Int?
         var lastSpoken: TimeInterval = -.infinity
 
-        mutating func observe(distance: Float?, at time: TimeInterval, rules: ObstacleAnnouncer, confirmationFrames: Int) {
+        mutating func observe(
+            distance: Float?, at time: TimeInterval, bands: [Float], rules: ObstacleAnnouncer, confirmationFrames: Int
+        ) {
             guard let distance else {
                 // An absent frame breaks a run of consecutive sightings.
                 candidate = nil
@@ -104,9 +115,9 @@ struct ObstacleAnnouncer: Sendable {
             }
             lastPresent = time
 
-            var observed = rules.thresholds.lastIndex(where: { distance <= $0 })
-            if let current = band, (observed ?? -1) < current,
-               distance <= rules.thresholds[current] + rules.hysteresis {
+            var observed = bands.lastIndex(where: { distance <= $0 })
+            if let current = band, current < bands.count, (observed ?? -1) < current,
+               distance <= bands[current] + rules.hysteresis {
                 observed = current
             }
             if observed == band {
@@ -153,8 +164,20 @@ struct ObstacleAnnouncer: Sendable {
     private var hazards: [ElevationHazardType: BandState] = [:]
     private var lastAnnouncement: TimeInterval = -.infinity
     private var lastPriority: AnnouncementPriority?
+    /// The kind of thing the last spoken path warning was about, and when.
+    private var lastWarnedLabel: String?
+    private var lastWarnedAt: TimeInterval = -.infinity
 
     init() {}
+
+    /// `thresholds` with the user's distance as the outermost band. The stop distance stays.
+    private var bands: [Float] {
+        guard let alertFilter, let stop = thresholds.last else { return thresholds }
+        let farthest = alertFilter.maximumDistance
+        guard farthest > stop else { return [stop] }
+        let inner = thresholds.dropFirst().filter { $0 < farthest }
+        return [farthest] + (inner.isEmpty ? [stop] : inner)
+    }
 
     /// Updates the state with one frame and returns what should be announced, most urgent first.
     ///
@@ -164,6 +187,8 @@ struct ObstacleAnnouncer: Sendable {
     ///   - path: Where the open space is, when the geometry could tell.
     ///   - blockedAhead: The map's view of the corridor. When given, it decides the band.
     ///   - time: The frame's capture time in seconds (`ARFrame.timestamp`).
+    ///   - isUserMoving: False while the user stands still; a "Stop" they already heard is
+    ///     not repeated to someone who has stopped.
     ///   - now: Wall-clock time, used for the events' `createdAt` and `expiresAt`.
     mutating func announcements(
         for objects: [ObstacleAlertInput],
@@ -171,10 +196,13 @@ struct ObstacleAnnouncer: Sendable {
         path assessment: PathAssessment? = nil,
         blockedAhead: BlockedAhead? = nil,
         at time: TimeInterval,
+        isUserMoving: Bool = true,
         now: Date = .now
     ) -> [AnnouncementEvent] {
         var events: [AnnouncementEvent] = []
-        if let event = pathAnnouncement(for: objects, path: assessment, blockedAhead: blockedAhead, at: time, now: now) {
+        if let event = pathAnnouncement(
+            for: objects, path: assessment, blockedAhead: blockedAhead, at: time, isUserMoving: isUserMoving, now: now
+        ) {
             events.append(event)
         }
         events += hazardAnnouncements(for: hazards, at: time, now: now)
@@ -188,20 +216,35 @@ struct ObstacleAnnouncer: Sendable {
         path assessment: PathAssessment?,
         blockedAhead: BlockedAhead?,
         at time: TimeInterval,
+        isUserMoving: Bool,
         now: Date
     ) -> AnnouncementEvent? {
+        let bands = self.bands
+        let stopDistance = Double(bands.last ?? 0)
         // Banding uses the nearest distance consistent with each detection, so an estimate
         // warns at the near end of its uncertainty. On a measured distance this is the
         // distance itself, so LiDAR devices band exactly as they did before.
-        let inPath = objects
+        let candidates = objects
             .filter { $0.isInPath && $0.detection.cautiousDistance != nil }
             .sorted { $0.detection.cautiousDistance! < $1.detection.cautiousDistance! }
+        // Below the user's danger bar is left out, unless it is close enough for "Stop".
+        let isAudible = { (input: ObstacleAlertInput) -> Bool in
+            guard let alertFilter else { return true }
+            return alertFilter.allows(DangerLevel(of: input.detection)) || input.detection.cautiousDistance! <= stopDistance
+        }
+        let inPath = candidates.filter(isAudible)
 
         // The map decides whether the path is blocked; detections say what by.
-        let distance: Float? = if let blockedAhead {
+        var distance: Float? = if let blockedAhead {
             blockedAhead.distance
         } else {
             inPath.first.flatMap { $0.detection.cautiousDistance.map(Float.init) }
+        }
+        // The map can't name what it found. If everything at that distance is below the bar,
+        // the blockage is something the user chose not to hear about.
+        if let blocked = distance, blockedAhead != nil {
+            let there = candidates.filter { abs(Float($0.detection.cautiousDistance!) - blocked) <= subjectTolerance }
+            if !there.isEmpty, !there.contains(where: isAudible) { distance = nil }
         }
         if let distance {
             if let match = inPath.first(where: { abs(Float($0.detection.cautiousDistance!) - distance) <= subjectTolerance }) {
@@ -213,7 +256,7 @@ struct ObstacleAnnouncer: Sendable {
                 )
             }
         }
-        path.observe(distance: distance, at: time, rules: self, confirmationFrames: confirmationFrames)
+        path.observe(distance: distance, at: time, bands: bands, rules: self, confirmationFrames: confirmationFrames)
         let direction = debouncedDirection(assessment?.clearDirection, at: time)
 
         guard let band = path.band else {
@@ -237,7 +280,8 @@ struct ObstacleAnnouncer: Sendable {
             )
         }
 
-        let adviceBand = max(thresholds.count - 2, 0)
+        let stopBand = bands.count - 1
+        let adviceBand = max(bands.count - 2, 0)
         let shouldSpeak: Bool
         if let announced = path.announcedBand {
             if band > announced {
@@ -245,7 +289,7 @@ struct ObstacleAnnouncer: Sendable {
             } else if band == announced {
                 let adviceChanged = band >= adviceBand && direction != nil && direction != path.announcedDirection
                     && time - path.lastSpoken >= adviceChangeInterval
-                let reminderDue = band == thresholds.count - 1 && time - path.lastSpoken >= repeatInterval
+                let reminderDue = band == stopBand && isUserMoving && time - path.lastSpoken >= repeatInterval
                 shouldSpeak = adviceChanged || reminderDue
             } else {
                 // Receding: nothing to say, but coming back in is news again.
@@ -260,9 +304,16 @@ struct ObstacleAnnouncer: Sendable {
         }
         guard shouldSpeak, let subject else { return nil }
 
-        let (priority, haptic) = urgency(ofBand: band)
+        let (priority, haptic) = urgency(ofBand: band, of: bands.count)
         guard admit(priority, at: time) else { return nil }
-        path.spoke(band: band, direction: direction, isStop: band == thresholds.count - 1, at: time)
+        // Only a fresh warning can go quiet; a nearer band or new advice within one is news.
+        let hapticOnly = path.announcedBand == nil && band < stopBand
+            && subject.label == lastWarnedLabel && time - lastWarnedAt < quietRepeatWindow
+        path.spoke(band: band, direction: direction, isStop: band == stopBand, at: time)
+        if !hapticOnly {
+            lastWarnedLabel = subject.label
+            lastWarnedAt = time
+        }
         // Phrase the debounced direction, with the current assessment's detail when they agree.
         let spokenPath: PathAssessment? = if let direction {
             assessment?.clearDirection == direction ? assessment : PathAssessment(clearDirection: direction, sidestep: nil)
@@ -279,7 +330,9 @@ struct ObstacleAnnouncer: Sendable {
             source: .obstacleDetection,
             createdAt: now,
             expiresAt: now.addingTimeInterval(announcementLifetime),
-            dedupKey: "path-\(subject.label)-\(band)-\(direction?.rawValue ?? "none")"
+            // Not keyed by direction: "go left" then "go right" is the same warning to the engine.
+            dedupKey: "path-\(subject.label)-\(band)",
+            hapticOnly: hapticOnly
         )
     }
 
@@ -293,7 +346,8 @@ struct ObstacleAnnouncer: Sendable {
         // The ground profile is sampled inside the corridor, so a hazard is always in the
         // path. Only the nearest of each type matters.
         var nearest: [ElevationHazardType: ElevationHazard] = [:]
-        for hazard in hazards where announcedHazardTypes.contains(hazard.type) {
+        for hazard in hazards where announcedHazardTypes.contains(hazard.type)
+            && (hazard.type == .dropOff || alertFilter?.allows(DangerLevel(of: hazard.type)) ?? true) {
             if hazard.distance < (nearest[hazard.type]?.distance ?? .infinity) {
                 nearest[hazard.type] = hazard
             }
@@ -308,7 +362,11 @@ struct ObstacleAnnouncer: Sendable {
             var state = self.hazards[type] ?? BandState()
             defer { self.hazards[type] = state }
             let hazard = nearest[type]
-            state.observe(distance: hazard?.distance, at: time, rules: self, confirmationFrames: hazardConfirmationFrames)
+            // A drop-off keeps at least the default warning distance, whatever the user chose.
+            let hazardBands = type == .dropOff && (bands.first ?? 0) < (thresholds.first ?? 0) ? thresholds : bands
+            state.observe(
+                distance: hazard?.distance, at: time, bands: hazardBands, rules: self, confirmationFrames: hazardConfirmationFrames
+            )
 
             guard let band = state.band else {
                 state.clearEpisode()
@@ -325,7 +383,7 @@ struct ObstacleAnnouncer: Sendable {
             let rearmed = state.lastSpokenBand.map { band > $0 || time - state.lastSpoken >= hazardRepeatInterval } ?? true
             guard rearmed else { continue }
 
-            let (priority, haptic) = urgency(of: hazard.type, band: band)
+            let (priority, haptic) = urgency(of: hazard.type, band: band, of: hazardBands.count)
             guard admit(priority, at: time) else { continue }
             state.spoke(band: band, direction: nil, isStop: priority == .critical, at: time)
             events.append(AnnouncementEvent(
@@ -378,8 +436,8 @@ struct ObstacleAnnouncer: Sendable {
         return true
     }
 
-    private func urgency(ofBand band: Int) -> (priority: AnnouncementPriority, haptic: HapticID) {
-        switch thresholds.count - 1 - band {
+    private func urgency(ofBand band: Int, of count: Int) -> (priority: AnnouncementPriority, haptic: HapticID) {
+        switch count - 1 - band {
         case 0: (.critical, .stop)
         case 1: (.high, .obstacleNearer)
         default: (.normal, .obstacleNear)
@@ -388,8 +446,10 @@ struct ObstacleAnnouncer: Sendable {
 
     /// A drop-off is a fall risk at any distance and gets "Stop" up close; a kerb or step
     /// is something to be ready for, so it tops out at high priority.
-    private func urgency(of type: ElevationHazardType, band: Int) -> (priority: AnnouncementPriority, haptic: HapticID) {
-        let (priority, haptic) = urgency(ofBand: band)
+    private func urgency(
+        of type: ElevationHazardType, band: Int, of count: Int
+    ) -> (priority: AnnouncementPriority, haptic: HapticID) {
+        let (priority, haptic) = urgency(ofBand: band, of: count)
         switch type {
         case .dropOff:
             return priority < .high ? (.high, .obstacleNearer) : (priority, haptic)

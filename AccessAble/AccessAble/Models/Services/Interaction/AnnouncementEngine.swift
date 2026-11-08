@@ -75,13 +75,14 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
             current = event
             last = event
             delivered.send(event)
-            if let haptic = event.haptic, profile.channels.contains(.haptics) {
+            let buzzes = event.haptic != nil && profile.channels.contains(.haptics)
+            if let haptic = event.haptic, buzzes {
                 await haptics.play(haptic, intensity: profile.hapticIntensity * distanceScale(for: event))
             } else if event.haptic == nil, event.category == .hazard {
                 // "Path clear": a warning buzz still looping would say the opposite.
                 await haptics.stop()
             }
-            if profile.channels.contains(.speech) {
+            if profile.channels.contains(.speech), !(event.hapticOnly && buzzes) {
                 await speech.speak(event.text, rate: profile.speechRate, interrupting: event.priority == .critical)
             }
             current = nil
