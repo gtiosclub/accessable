@@ -114,7 +114,8 @@ struct PlaceSearchView: View {
                 TextField(
                     isOrigin ? "From" : "To",
                     text: text,
-                    prompt: isOrigin ? nil : Text("Search places").foregroundStyle(.white.opacity(0.7))
+                    // Without a prompt the field shows its label, "From", behind the My Location tag.
+                    prompt: Text(prompt(for: field)).foregroundStyle(.white.opacity(0.7))
                 )
                 .font(.title3)
                 .foregroundStyle(.white)
@@ -159,6 +160,14 @@ struct PlaceSearchView: View {
             .accessibilityLabel(isListening ? "Stop dictating" : "Dictate \(isOrigin ? "starting point" : "destination")")
         }
         .frame(minHeight: 56)
+    }
+
+    /// Empty while the From tag covers the field; a hint once the user is typing there.
+    private func prompt(for field: PlaceSearchViewModel.Field) -> String {
+        switch field {
+        case .destination: "Search places"
+        case .origin: focusedField == .origin ? "Choose a starting point" : ""
+        }
     }
 
     private var originName: String {
