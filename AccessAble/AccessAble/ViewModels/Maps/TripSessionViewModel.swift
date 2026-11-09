@@ -49,6 +49,9 @@ final class TripSessionViewModel {
     @ObservationIgnored private var blockDetector = RouteBlockDetector()
     @ObservationIgnored private var hasSetDestination = false
     @ObservationIgnored private var conversation = AskAIConversation()
+    /// The last obstacle warning and the last thing said on this trip, for "repeat".
+    @ObservationIgnored private var lastWarning: String?
+    @ObservationIgnored private var lastSaid: String?
     @ObservationIgnored private var silenceTask: Task<Void, Never>?
     @ObservationIgnored private var voiceTask: Task<Void, Never>?
 
@@ -146,6 +149,8 @@ final class TripSessionViewModel {
     private func showAnnouncements(from engine: any AnnouncementEngineProtocol) async {
         for await event in engine.deliveredEvents() {
             guard !event.text.isEmpty else { continue }
+            if event.category == .hazard { lastWarning = event.text }
+            lastSaid = event.text
             add(TripAnnouncement(text: event.text, kind: event.category == .hazard ? .warning : .info))
         }
     }
@@ -195,7 +200,7 @@ final class TripSessionViewModel {
         let text: String
         switch command {
         case .repeatWarning:
-            await services.announcements.repeatLast()
+            await repeatWarning()
             return
         case .describeSurroundings:
             text = await services.sceneDescriber.describeCurrentScene()
@@ -286,6 +291,12 @@ final class TripSessionViewModel {
             onCallHelp?()
             return
         }
+        // Handled here, not by the command parser: the on-device model can take "repeat
+        // warning" for a question, and the engine's own repeat replays whatever was said last.
+        if let wantsWarning = Self.asksToRepeat(text) {
+            await (wantsWarning ? repeatWarning() : repeatLastSaid())
+            return
+        }
         isAnswering = true
         defer { isAnswering = false }
         switch await services.commands.interpret(text) {
@@ -294,7 +305,7 @@ final class TripSessionViewModel {
         case .whereAmI:
             await perform(.describeLocation, with: services)
         case .repeatLast:
-            await services.announcements.repeatLast()
+            await repeatLastSaid()
         case .pauseTrip:
             pause()
             await say("Trip paused.", category: .system)
@@ -310,6 +321,24 @@ final class TripSessionViewModel {
         case .unknown:
             await ask(text, with: services)
         }
+    }
+
+    /// nil unless asking for a repeat; true when it is the warning that's wanted.
+    static func asksToRepeat(_ text: String) -> Bool? {
+        let text = text.lowercased()
+        guard ["repeat", "say that again", "say again", "what did you say"].contains(where: text.contains) else {
+            return nil
+        }
+        return text.contains("warn") || text.contains("obstacle") || text.contains("alert")
+    }
+
+    /// Says the last obstacle warning again, or that there hasn't been one.
+    private func repeatWarning() async {
+        await say(lastWarning ?? "No warnings yet on this trip.", category: lastWarning == nil ? .system : .hazard)
+    }
+
+    private func repeatLastSaid() async {
+        await say(lastSaid ?? "Nothing to repeat yet.", category: .system)
     }
 
     /// "Call help", "call for help", "call a volunteer". The command parser has no such

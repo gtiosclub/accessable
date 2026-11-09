@@ -74,6 +74,15 @@ struct TripSessionViewModelTests {
     }
 
     @Test
+    func repeatAsksForTheWarningOrTheLastThingSaid() {
+        #expect(TripSessionViewModel.asksToRepeat("Repeat warning") == true)
+        #expect(TripSessionViewModel.asksToRepeat("can you repeat the obstacle") == true)
+        #expect(TripSessionViewModel.asksToRepeat("Repeat") == false)
+        #expect(TripSessionViewModel.asksToRepeat("say that again") == false)
+        #expect(TripSessionViewModel.asksToRepeat("Is there a warning sign?") == nil)
+    }
+
+    @Test
     func frontEndMicOnlyFlipsTheButton() async {
         let session = TripSessionViewModel(plan: plan)
         #expect(session.isMicOff)
