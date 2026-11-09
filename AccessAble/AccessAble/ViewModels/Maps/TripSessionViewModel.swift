@@ -27,11 +27,30 @@ final class TripSessionViewModel {
     /// Real directions; nil when front end only.
     let directions: TripViewModel?
 
+    /// What the microphone heard so far, shown while listening; nil when not listening.
+    private(set) var heard: String?
+    /// True from the end of speech until the reply has been said.
+    private(set) var isAnswering = false
+    /// True while Ask AI re-checks fresh frames for something not in view yet.
+    private(set) var isLookingAgain = false
+    let dictation = SpeechDictation()
+    /// Opens Call Help; set by the screen, which owns navigation.
+    @ObservationIgnored var onCallHelp: (() -> Void)?
+
+    /// Listening stops after this long without new words.
+    static let silenceTimeout: Duration = .milliseconds(1500)
+    /// While something asked about isn't in view, Ask AI looks again this often, for this long.
+    static let lookAgainEvery: Duration = .seconds(2)
+    static let keepLookingFor: Duration = .seconds(20)
+
     @ObservationIgnored private let services: AppServices?
     @ObservationIgnored private let warningLifetime: Duration
     @ObservationIgnored private let infoLifetime: Duration
     @ObservationIgnored private var blockDetector = RouteBlockDetector()
     @ObservationIgnored private var hasSetDestination = false
+    @ObservationIgnored private var conversation = AskAIConversation()
+    @ObservationIgnored private var silenceTask: Task<Void, Never>?
+    @ObservationIgnored private var voiceTask: Task<Void, Never>?
 
     /// - Parameters:
     ///   - services: The app's services, for a real trip; nil for front end only.
@@ -112,6 +131,7 @@ final class TripSessionViewModel {
             group.addTask { await self.showAnnouncements(from: services.announcements) }
             group.addTask { await self.watchForBlockedPath(services.scene) }
         }
+        stopListening()
         if holdsCamera { await services.scene.stop() }
     }
 
@@ -196,6 +216,147 @@ final class TripSessionViewModel {
         await services.announcements.submit(AnnouncementEvent(
             category: category, priority: .high, text: text, source: .userInteraction
         ))
+    }
+
+    // MARK: - Microphone
+
+    var isListening: Bool { dictation.isRecording }
+
+    /// Whether the mic button shows as off: on a real trip, off unless listening.
+    var isMicOff: Bool { services == nil ? isMicMuted : !isListening }
+
+    /// Starts listening; tapping again while listening sends what was heard. Listening also
+    /// stops by itself after a pause. Front end only, it just flips the button.
+    func toggleMicrophone() async {
+        guard services != nil else {
+            isMicMuted.toggle()
+            return
+        }
+        if dictation.isRecording {
+            dictation.stop()
+            return
+        }
+        voiceTask?.cancel()
+        heard = ""
+        dictation.onTranscript = { [weak self] text, isFinal in self?.didHear(text, isFinal: isFinal) }
+        dictation.onError = { [weak self] message in
+            guard let self else { return }
+            heard = nil
+            Task { await self.say(message, category: .system) }
+        }
+        await dictation.start()
+        if dictation.isRecording { armSilenceTimer() } else { heard = nil }
+    }
+
+    private func didHear(_ text: String, isFinal: Bool) {
+        heard = text
+        guard isFinal else {
+            armSilenceTimer()
+            return
+        }
+        silenceTask?.cancel()
+        heard = nil
+        voiceTask = Task { await self.respond(to: text) }
+    }
+
+    private func armSilenceTimer() {
+        silenceTask?.cancel()
+        silenceTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.silenceTimeout)
+            guard !Task.isCancelled else { return }
+            self?.dictation.stop()
+        }
+    }
+
+    private func stopListening() {
+        silenceTask?.cancel()
+        voiceTask?.cancel()
+        dictation.cancel()
+        heard = nil
+        isAnswering = false
+        isLookingAgain = false
+    }
+
+    /// A trip command is carried out; anything else is a question for Ask AI about what the
+    /// camera sees, with the conversation so far, so follow-ups make sense.
+    private func respond(to text: String) async {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let services, !text.isEmpty else { return }
+        if Self.asksForHelp(text) {
+            onCallHelp?()
+            return
+        }
+        isAnswering = true
+        defer { isAnswering = false }
+        switch await services.commands.interpret(text) {
+        case .describeSurroundings:
+            await perform(.describeSurroundings, with: services)
+        case .whereAmI:
+            await perform(.describeLocation, with: services)
+        case .repeatLast:
+            await services.announcements.repeatLast()
+        case .pauseTrip:
+            pause()
+            await say("Trip paused.", category: .system)
+        case .resumeTrip:
+            resume()
+            await say("Trip resumed.", category: .system)
+        case .endTrip:
+            // Ending is one tap away, but not by voice: a misheard word mustn't drop the route.
+            pause()
+            await say("Trip paused. To end it, choose Exit Trip.", category: .system)
+        case .ask(let question):
+            await ask(question, with: services)
+        case .unknown:
+            await ask(text, with: services)
+        }
+    }
+
+    /// "Call help", "call for help", "call a volunteer". The command parser has no such
+    /// command; Call Help is a screen, so the screen opens it.
+    static func asksForHelp(_ text: String) -> Bool {
+        let text = text.lowercased()
+        return ["call help", "call for help", "call a volunteer", "call volunteer", "get help"].contains { text.contains($0) }
+    }
+
+    /// Asks about the camera view. When the answer is that it isn't in view, says to turn
+    /// slowly and keeps looking with fresh frames for a while, like Describe mode.
+    private func ask(_ question: String, with services: AppServices) async {
+        guard let analyzer = services.scene as? ARSceneAnalyzer else {
+            // No camera pipeline (Simulator): the plain question service.
+            let reply = (try? await services.sceneDescriber.ask(question, locationContext: nil))
+                ?? "Sorry, I couldn't look at the camera. Please try again."
+            await say(reply, category: .ambient)
+            return
+        }
+        let history = conversation.turns
+        var reply: String
+        do {
+            reply = try await analyzer.ask(question, conversation: history)
+        } catch {
+            guard !Task.isCancelled else { return }
+            await say(error.localizedDescription, category: .system)
+            return
+        }
+        if AskAIConversation.meansNotInView(reply) {
+            await say("I can't see that yet. Turn slowly and I'll tell you when I find it.", category: .ambient)
+            isLookingAgain = true
+            defer { isLookingAgain = false }
+            let deadline = ContinuousClock.now + Self.keepLookingFor
+            var found: String?
+            while found == nil, ContinuousClock.now < deadline {
+                try? await Task.sleep(for: Self.lookAgainEvery)
+                guard !Task.isCancelled else { return }
+                if let again = try? await analyzer.ask(question, conversation: history),
+                   !AskAIConversation.meansNotInView(again) {
+                    found = again
+                }
+            }
+            reply = found ?? "I couldn't find it. Try moving closer, or ask again."
+        }
+        guard !Task.isCancelled else { return }
+        conversation.record(question: question, answer: reply)
+        await say(reply, category: .ambient)
     }
 
     // MARK: - Pause, blocked route, exit

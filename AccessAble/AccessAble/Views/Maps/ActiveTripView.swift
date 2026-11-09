@@ -42,10 +42,15 @@ struct ActiveTripView: View {
 
                 AnnouncementStack(announcements: session.announcements)
                     .padding(.horizontal, 24)
+                if let state = voiceState {
+                    voiceCaption(state)
+                        .padding(.horizontal, 24)
+                        .transition(.opacity)
+                }
                 TripControlPanel(
-                    isMicMuted: session.isMicMuted,
+                    isMicMuted: session.isMicOff,
                     onCallHelp: { router.push(.callHelp) },
-                    onMicrophone: { session.isMicMuted.toggle() },
+                    onMicrophone: { Task { await session.toggleMicrophone() } },
                     onPauseTrip: { session.pause() }
                 )
             }
@@ -88,8 +93,12 @@ struct ActiveTripView: View {
         .accessibilityAction(named: session.showsMap ? "Show camera view" : "Show map view") {
             session.showsMap.toggle()
         }
+        .animation(.easeInOut(duration: 0.2), value: voiceState)
         .toolbar(.hidden, for: .navigationBar)
-        .task { await session.run() }
+        .task {
+            session.onCallHelp = { router.push(.callHelp) }
+            await session.run()
+        }
         .onChange(of: session.latestAnnouncement) { _, announcement in
             // On a real trip the announcement engine has already spoken it, through VoiceOver
             // when that is on; posting it again would read it twice.
@@ -110,6 +119,48 @@ struct ActiveTripView: View {
                 }
             )
         }
+    }
+
+    private enum VoiceState: Equatable {
+        case listening(String)
+        case answering
+        case lookingAgain
+    }
+
+    private var voiceState: VoiceState? {
+        if let heard = session.heard { return .listening(heard) }
+        if session.isLookingAgain { return .lookingAgain }
+        if session.isAnswering { return .answering }
+        return nil
+    }
+
+    /// What the mic is doing: the words as they are heard, then thinking.
+    private func voiceCaption(_ state: VoiceState) -> some View {
+        HStack(spacing: 10) {
+            switch state {
+            case .listening(let heard):
+                Image(systemName: "waveform")
+                    .foregroundStyle(Theme.red)
+                    .symbolEffect(.variableColor.iterative)
+                Text(heard.isEmpty ? "Listening…" : heard)
+                    .lineLimit(2)
+            case .answering:
+                ProgressView().tint(.white)
+                Text("Thinking…")
+            case .lookingAgain:
+                ProgressView().tint(.white)
+                Text("Looking… turn slowly")
+            }
+            Spacer(minLength: 0)
+        }
+        .font(.callout.weight(.medium))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.white.opacity(0.4)))
+        // VoiceOver users hear the reply when it comes; the live words would talk over them.
+        .accessibilityHidden(true)
     }
 
     /// The live camera, or the map with the real route once there is one. Leaving the camera

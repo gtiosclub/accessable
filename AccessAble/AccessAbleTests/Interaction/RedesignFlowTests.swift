@@ -49,16 +49,37 @@ struct TripSessionViewModelTests {
 
     @Test
     func barsFadeAwayAfterTheirLifetime() async throws {
+        // Lifetimes far apart, so a busy test machine can't blur them.
         let session = TripSessionViewModel(
-            plan: plan, warningLifetime: .milliseconds(50), infoLifetime: .milliseconds(400)
+            plan: plan, warningLifetime: .milliseconds(50), infoLifetime: .seconds(30)
         )
         session.add(TripAnnouncement(text: "Pillar ahead", kind: .warning))
         session.add(TripAnnouncement(text: "Turn left", kind: .info))
-        try await Task.sleep(for: .milliseconds(200))
+        try await Task.sleep(for: .seconds(1))
         // The warning has gone; the direction lasts longer.
         #expect(session.announcements.map(\.text) == ["Turn left"])
-        try await Task.sleep(for: .milliseconds(500))
-        #expect(session.announcements.isEmpty)
+
+        let directions = TripSessionViewModel(plan: plan, infoLifetime: .milliseconds(50))
+        directions.add(TripAnnouncement(text: "Turn left", kind: .info))
+        try await Task.sleep(for: .seconds(1))
+        #expect(directions.announcements.isEmpty)
+    }
+
+    @Test
+    func helpPhrasesOpenCallHelp() {
+        #expect(TripSessionViewModel.asksForHelp("Call help"))
+        #expect(TripSessionViewModel.asksForHelp("please call for help now"))
+        #expect(TripSessionViewModel.asksForHelp("Call a volunteer"))
+        #expect(!TripSessionViewModel.asksForHelp("Is the door on my left?"))
+    }
+
+    @Test
+    func frontEndMicOnlyFlipsTheButton() async {
+        let session = TripSessionViewModel(plan: plan)
+        #expect(session.isMicOff)
+        await session.toggleMicrophone()
+        #expect(!session.isMicOff)
+        #expect(!session.isListening)
     }
 
     @Test
