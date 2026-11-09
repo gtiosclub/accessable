@@ -59,6 +59,9 @@ struct TripPlan: Hashable, Sendable {
     var route: SampleRoute?
     /// Recording a new route while walking it.
     var isRecording: Bool
+    /// The starting point picked in search; nil for My Location. A live trip still starts
+    /// where the user is, and says so.
+    var origin: SamplePlace? = nil
 }
 
 struct Volunteer: Identifiable, Hashable, Sendable {

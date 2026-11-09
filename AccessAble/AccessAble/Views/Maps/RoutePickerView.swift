@@ -5,10 +5,12 @@ struct RoutePickerView: View {
     @Environment(AppRouter.self) private var router
     let place: SamplePlace
     let routes: [SampleRoute]
+    let origin: SamplePlace?
     @State private var index = 0
 
-    init(place: SamplePlace, mode: RoutePlanMode) {
+    init(place: SamplePlace, mode: RoutePlanMode, origin: SamplePlace? = nil) {
         self.place = place
+        self.origin = origin
         self.routes = SampleContent.routes(to: place, mode: mode)
     }
 
@@ -28,7 +30,7 @@ struct RoutePickerView: View {
                         .padding(.top, 4)
                     VStack(spacing: 14) {
                         Button("Pick Route") {
-                            router.push(.trip(TripPlan(place: place, route: route, isRecording: false)))
+                            router.push(.trip(TripPlan(place: place, route: route, isRecording: false, origin: origin)))
                         }
                         .buttonStyle(.pill(.primary))
                         .accessibilityHint("Starts walking this route")

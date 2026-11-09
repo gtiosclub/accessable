@@ -4,6 +4,8 @@ import SwiftUI
 struct PlaceDetailView: View {
     @Environment(AppRouter.self) private var router
     let place: SamplePlace
+    /// Picked in search; nil for My Location.
+    var origin: SamplePlace?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -15,22 +17,25 @@ struct PlaceDetailView: View {
                         .accessibilityAddTraits(.isHeader)
                     Text(place.address)
                         .font(.subheadline.weight(.semibold))
+                    Label("From: \(origin?.name ?? "My Location")", systemImage: origin == nil ? "location.fill" : "circle.inset.filled")
+                        .font(.subheadline)
+                        .accessibilityLabel("From \(origin?.name ?? "my location")")
                     if place.recordedRouteCount > 0 {
                         RouteStepsList(steps: SampleContent.walkSteps)
                             .padding(.top, 4)
                     }
                     VStack(spacing: 14) {
                         Button("Start & Record New Route") {
-                            router.push(.trip(TripPlan(place: place, route: nil, isRecording: true)))
+                            router.push(.trip(TripPlan(place: place, route: nil, isRecording: true, origin: origin)))
                         }
                         .buttonStyle(.pill(.destructive))
                         .accessibilityHint("Starts walking and saves the route you take")
 
                         if place.recordedRouteCount > 0 {
-                            Button("Start Recorded Route") { router.push(.routes(place, .recorded)) }
+                            Button("Start Recorded Route") { router.push(.routes(place, .recorded, origin: origin)) }
                                 .buttonStyle(.pill(.primary))
                         }
-                        Button("Start New Route") { router.push(.routes(place, .new)) }
+                        Button("Start New Route") { router.push(.routes(place, .new, origin: origin)) }
                             .buttonStyle(.pill(.primary))
                         Button("Back") { router.pop() }
                             .buttonStyle(.pill(.outline))

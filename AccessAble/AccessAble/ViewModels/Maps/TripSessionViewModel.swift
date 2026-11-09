@@ -101,6 +101,9 @@ final class TripSessionViewModel {
                 coordinate: GeoCoordinate(latitude: plan.place.latitude, longitude: plan.place.longitude),
                 address: plan.place.address
             ))
+            if let origin = plan.origin {
+                await say("Directions start from where you are now, not from \(origin.name).", category: .system)
+            }
         }
         let holdsCamera = (try? await services.scene.start()) != nil
         await withDiscardingTaskGroup { group in

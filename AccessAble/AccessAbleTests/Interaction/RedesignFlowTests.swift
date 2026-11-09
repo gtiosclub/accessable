@@ -168,3 +168,68 @@ struct SampleContentSearchTests {
         #expect(SampleContent.routes(to: place, mode: .new).count == 3)
     }
 }
+
+@MainActor
+struct PlaceSearchViewModelTests {
+    private func names(_ name: String, _ query: String) -> [String] {
+        PlaceSearchViewModel.matchedRanges(in: name, for: query).map { String(name[$0]) }
+    }
+
+    @Test
+    func highlightsTheMatchedText() {
+        #expect(names("CULC Room 152", "room") == ["Room"])
+        #expect(names("Clough Undergraduate Learning Commons", "culc") == ["C", "U", "L", "C"])
+        #expect(names("Clough Undergraduate Learning Commons", "xyz").isEmpty)
+        #expect(names("Anything", "  ").isEmpty)
+    }
+
+    @Test
+    func resultsSettleAfterAPauseInTyping() async throws {
+        let search = PlaceSearchViewModel()
+        search.query = "CULC"
+        #expect(search.isSearching)
+        #expect(search.results.isEmpty)
+        try await Task.sleep(for: PlaceSearchViewModel.debounce * 3)
+        #expect(!search.isSearching)
+        #expect(search.results.map(\.name).contains("CULC Room 152"))
+        #expect(search.resultsSummary == "Showing \(search.results.count) of \(SampleContent.places.count) places")
+    }
+
+    @Test
+    func categoriesCountWhatWasTyped() {
+        let search = PlaceSearchViewModel()
+        let parks = SampleContent.places.filter { $0.category == .parks }.count
+        #expect(search.count(of: .parks) == parks)
+        search.category = .parks
+        #expect(search.isFiltering)
+        #expect(search.results.allSatisfy { $0.category == .parks })
+        search.clearFilters()
+        #expect(!search.isFiltering)
+        #expect(search.resultsSummary == "No places match")
+    }
+
+    @Test
+    func fromIsMyLocationUntilAPlaceIsPicked() {
+        let search = PlaceSearchViewModel()
+        #expect(search.origin == .myLocation)
+        #expect(!search.canSwap)
+        #expect(search.originResults.allSatisfy { $0.isSaved })
+
+        let library = SampleContent.places[0]
+        search.chooseOrigin(.place(library))
+        #expect(search.origin.place == library)
+        #expect(search.canSwap)
+
+        search.swap()
+        #expect(search.origin == .myLocation)
+        #expect(search.query == library.name)
+        #expect(search.settledQuery == library.name)
+    }
+
+    @Test
+    func distancesReadAsAWalk() {
+        #expect(PlaceSearchViewModel.distanceText(metres: 352) == "350 m · about 5 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 3) == "10 m · about 1 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 1840) == "1.8 km · about 26 min walk")
+    }
+}

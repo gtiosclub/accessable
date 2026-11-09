@@ -4,8 +4,9 @@ import Observation
 /// Screens reachable from the landing page.
 enum AppRoute: Hashable {
     case search
-    case place(SamplePlace)
-    case routes(SamplePlace, RoutePlanMode)
+    /// `origin` is the starting point picked in search; nil for My Location.
+    case place(SamplePlace, origin: SamplePlace? = nil)
+    case routes(SamplePlace, RoutePlanMode, origin: SamplePlace? = nil)
     case trip(TripPlan)
     case settings
     case callHelp

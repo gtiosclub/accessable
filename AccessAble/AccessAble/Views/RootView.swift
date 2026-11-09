@@ -43,11 +43,11 @@ struct MainFlowView: View {
     private func destination(for route: AppRoute) -> some View {
         switch route {
         case .search:
-            PlaceSearchView()
-        case .place(let place):
-            PlaceDetailView(place: place)
-        case .routes(let place, let mode):
-            RoutePickerView(place: place, mode: mode)
+            PlaceSearchView(services: app.services)
+        case .place(let place, let origin):
+            PlaceDetailView(place: place, origin: origin)
+        case .routes(let place, let mode, let origin):
+            RoutePickerView(place: place, mode: mode, origin: origin)
         case .trip(let plan):
             ActiveTripView(plan: plan, services: app.services)
         case .settings:
