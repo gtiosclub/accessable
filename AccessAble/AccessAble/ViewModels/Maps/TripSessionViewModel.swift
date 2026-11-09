@@ -38,7 +38,8 @@ final class TripSessionViewModel {
     @ObservationIgnored var onCallHelp: (() -> Void)?
 
     /// Listening stops after this long without new words.
-    static let silenceTimeout: Duration = .milliseconds(1500)
+    /// Long enough to pause for thought mid-sentence; tapping the mic sends straight away.
+    static let silenceTimeout: Duration = .milliseconds(2500)
     /// While something asked about isn't in view, Ask AI looks again this often, for this long.
     static let lookAgainEvery: Duration = .seconds(2)
     static let keepLookingFor: Duration = .seconds(20)
@@ -206,7 +207,7 @@ final class TripSessionViewModel {
             text = await services.sceneDescriber.describeCurrentScene()
         case .describeLocation:
             text = await services.locationContext.currentLocationDescription()
-                ?? "Describing your location isn't available yet."
+                ?? "I couldn't find where you are. Check that Location is on for AccessAble, or try again outside."
         case .pauseTrip, .callHelp:
             return
         }

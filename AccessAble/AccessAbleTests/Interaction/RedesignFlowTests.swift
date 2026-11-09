@@ -219,7 +219,11 @@ struct PlaceSearchViewModelTests {
         search.query = "CULC"
         #expect(search.isSearching)
         #expect(search.results.isEmpty)
-        try await Task.sleep(for: PlaceSearchViewModel.debounce * 3)
+        // Settles after the debounce; a busy test machine can take longer, so wait up to 3 s.
+        let deadline = ContinuousClock.now + .seconds(3)
+        while search.isSearching, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
         #expect(!search.isSearching)
         #expect(search.results.map(\.name).contains("CULC Room 152"))
         #expect(search.resultsSummary == "Showing \(search.results.count) of \(SampleContent.places.count) places")

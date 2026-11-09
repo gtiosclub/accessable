@@ -47,7 +47,7 @@ struct AppServices: Sendable {
             routing: ValhallaRoutingService(),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
-            locationContext: trip,                          // TODO(Maps 2.1)
+            locationContext: LocationDescriber(location: location),
             commands: FoundationModelCommandInterpreter(),
             askAISettings: askAISettings,
             alertSettings: alertSettings
@@ -87,6 +87,8 @@ struct AppServices: Sendable {
         services.routing = PlaceholderRoutingService()
         // A real trip would start GPS tracking and background location from a preview or test.
         services.trip = PlaceholderTripProvider()
+        // Nor wait on GPS and Apple Maps for "where am I".
+        services.locationContext = PlaceholderTripProvider()
         return services
     }
 }

@@ -119,7 +119,7 @@ final class LiveSceneViewModel {
     @ObservationIgnored private var askTask: Task<Void, Never>?
 
     /// Dictation stops after this long without new words, so a question needs no second tap.
-    private static let silenceTimeout: Duration = .milliseconds(1_500)
+    private static let silenceTimeout: Duration = .milliseconds(2_500)
     /// After "not in view", how long to keep looking while the user turns, and how often.
     private static let keepLookingFor: Duration = .seconds(20)
     private static let lookAgainEvery: Duration = .seconds(2)
