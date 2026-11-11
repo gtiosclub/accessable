@@ -52,6 +52,12 @@ protocol SceneObservationProviding: Sendable {
     func stop() async
 }
 
+/// Landmarks for Maps to match to the route (LAND-1): CV detects, Maps matches. Silent while the camera is off.
+/// Each landmark is sent once it is confirmed (for signs, once `SignAnnouncer`'s reads agree), not every frame.
+protocol LandmarkObserving: Sendable {
+    func landmarkObservations() -> AsyncStream<LandmarkObservation>
+}
+
 /// "Describe my surroundings" / "Ask AI" / sign reading (1.3).
 protocol SceneDescribing: Sendable {
     /// Tier A: instant, offline, template-based.
