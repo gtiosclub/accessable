@@ -119,6 +119,27 @@ struct PlaceDetailViewModelTests {
     }
 
     @Test
+    func aHandedOnRouteIsShownWithoutAskingAgain() async {
+        // Offline, so asking again would show an error instead of the route.
+        let services = {
+            var services = AppServices.preview
+            services.location = OneFixLocationProvider()
+            services.routing = FlakyRouting(isOnline: false)
+            services.trip = PlaceholderTripProvider()
+            return services
+        }()
+        let planned = PlannedRoute(destination: clough, route: plannedRoute, requestedAt: .now)
+        let details = PlaceDetailViewModel(destination: clough, services: services, planned: planned)
+
+        await details.start()
+        await details.planner.routeTask?.value
+
+        #expect(details.route == plannedRoute)
+        #expect(details.errorMessage == nil)
+        #expect(details.plannedRoute == planned)
+    }
+
+    @Test
     func summaryReadsAsAWalk() {
         #expect(PlaceDetailViewModel.summary(metres: 352, seconds: 290) == "350 m · about 5 min walk")
         #expect(PlaceDetailViewModel.summary(metres: 1840, seconds: 1500) == "1.8 km · about 25 min walk")
