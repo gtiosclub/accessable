@@ -15,6 +15,8 @@ actor TripManager: TripStateProviding {
     private let location: any LocationProvider
     private let routing: any RoutingService
     private let announcements: any AnnouncementEngineProtocol
+    private let landmarks: any LandmarkObserving
+    private let campusBuildings: [CampusBuilding]
     private let setBackgroundTracking: @Sendable (Bool) async -> Void
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
@@ -30,12 +32,14 @@ actor TripManager: TripStateProviding {
     private var route: NavigationRoute?
     private var tracker: RouteProgressTracker?
     private var progress: RouteProgressTracker.Progress?
+    private var landmarkMatcher: LandmarkMatcher?
 
     private var trackingTask: Task<Void, Never>?
     private var deliveryTask: Task<Void, Never>?
     private var startTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
     private var rerouteTask: Task<Void, Never>?
+    private var landmarkTask: Task<Void, Never>?
     private var cueChecks: [Task<Void, Never>] = []
 
     /// Turn cues submitted and waiting for their delivery check, and those of them the engine has delivered.
@@ -61,11 +65,17 @@ actor TripManager: TripStateProviding {
     // guidance from fixes rougher than this is unreliable
     private static let weakSignalAccuracy: Double = 30
     private static let weakSignalWait: TimeInterval = 10
+    // a sign matters while it is in view, a few steps' walk
+    private static let landmarkLifetime: TimeInterval = 6
+    // metres; nearer than this the building is on both sides of the path, or the path goes through it
+    private static let landmarkSideMinimum: Double = 3
 
     init(
         location: any LocationProvider,
         routing: any RoutingService,
         announcements: any AnnouncementEngineProtocol,
+        landmarks: any LandmarkObserving = PlaceholderLandmarkProvider(),
+        campusBuildings: [CampusBuilding] = CampusLandmarks.buildings,
         setBackgroundTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
@@ -73,6 +83,8 @@ actor TripManager: TripStateProviding {
         self.location = location
         self.routing = routing
         self.announcements = announcements
+        self.landmarks = landmarks
+        self.campusBuildings = campusBuildings
         self.setBackgroundTracking = setBackgroundTracking
         self.now = now
         self.sleep = sleep
@@ -100,6 +112,9 @@ actor TripManager: TripStateProviding {
         let tracker = RouteProgressTracker(route: route, startedAt: now())
         self.tracker = tracker
         progress = tracker.state
+        landmarkMatcher = LandmarkMatcher(
+            landmarks: RouteLandmarks.along(route, destination: destination, buildings: campusBuildings)
+        )
         pendingCueIDs = []
         deliveredIDs = []
         missedTurnStep = nil
@@ -114,6 +129,10 @@ actor TripManager: TripStateProviding {
         // subscribed before any await, so a fix or delivery can't slip past while this trip is set up
         let samples = location.locationSamples()
         let delivered = announcements.deliveredEvents()
+        let sightings = landmarks.landmarkObservations()
+        landmarkTask = Task {
+            for await sighting in sightings { await self.handle(sighting, generation: generation) }
+        }
         deliveryTask = Task {
             for await event in delivered { self.markDelivered(event.id, generation: generation) }
         }
@@ -165,6 +184,7 @@ actor TripManager: TripStateProviding {
         phase = .planning
         tracker = nil
         progress = nil
+        landmarkMatcher = nil
         route = nil
         destination = nil
         routes.send(nil)
@@ -176,12 +196,13 @@ actor TripManager: TripStateProviding {
     }
 
     private func cancelTasks() {
-        for task in [trackingTask, deliveryTask, startTask, watchdogTask, rerouteTask] {
+        for task in [trackingTask, deliveryTask, startTask, watchdogTask, rerouteTask, landmarkTask] {
             task?.cancel()
         }
         for task in cueChecks {
             task.cancel()
         }
+        landmarkTask = nil
         trackingTask = nil
         deliveryTask = nil
         startTask = nil
@@ -302,6 +323,49 @@ actor TripManager: TripStateProviding {
         rerouteCount < Self.maximumReroutes || rerouteTask != nil
     }
 
+    // MARK: Landmarks
+
+    /// Speaks a sign that matches a building on the route. The arrival check stays open after arriving, since the
+    /// destination's sign is often only in view from its door.
+    private func handle(_ sighting: LandmarkObservation, generation: Int) async {
+        guard self.generation == generation, phase == .active || phase == .arrived,
+              let route, let progress, var matcher = landmarkMatcher
+        else { return }
+        let event = matcher.match(sighting, progress: route.totalDistance - progress.distanceRemaining,
+                                  remaining: progress.distanceRemaining)
+        landmarkMatcher = matcher
+        guard let event, phase == .active || Self.isDestination(event) else { return }
+        let time = now()
+        await submit(AnnouncementEvent(
+            category: .landmark, priority: .normal, text: Self.landmarkText(event), source: .navigation,
+            createdAt: time, expiresAt: time.addingTimeInterval(Self.landmarkLifetime),
+            dedupKey: "\(tripID)-landmark-\(Self.landmarkName(event))"
+        ))
+    }
+
+    /// When CV already read the sign aloud, only what it adds is said, so the name isn't heard twice.
+    static func landmarkText(_ event: LandmarkMatcher.Event) -> String {
+        switch event {
+        case let .passing(landmark, name, wasAnnounced):
+            if wasAnnounced { return "You're on track." }
+            // a building the route runs right along has no useful side
+            guard abs(landmark.sideOffset) >= landmarkSideMinimum else { return "Passing \(name)." }
+            return "Passing \(name) on your \(landmark.sideOffset < 0 ? "left" : "right")."
+        case let .destination(_, name, wasAnnounced):
+            return wasAnnounced ? "That's your destination." : "This is \(name), your destination."
+        }
+    }
+
+    private static func isDestination(_ event: LandmarkMatcher.Event) -> Bool {
+        if case .destination = event { true } else { false }
+    }
+
+    private static func landmarkName(_ event: LandmarkMatcher.Event) -> String {
+        switch event {
+        case let .passing(landmark, _, _), let .destination(landmark, _, _): landmark.name
+        }
+    }
+
     // MARK: Rerouting
 
     private var needsReroute: Bool {
@@ -348,6 +412,9 @@ actor TripManager: TripStateProviding {
             self.tracker = tracker
             progress = tracker.state
             missedTurnStep = nil
+            landmarkMatcher?.replaceLandmarks(
+                RouteLandmarks.along(newRoute, destination: destination, buildings: campusBuildings)
+            )
             routes.send(newRoute)
             publish(at: now())
             guard phase == .active, let first = newRoute.steps.first else { return }
