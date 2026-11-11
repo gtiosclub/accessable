@@ -33,6 +33,7 @@ actor TripManager: TripStateProviding {
     private var tracker: RouteProgressTracker?
     private var progress: RouteProgressTracker.Progress?
     private var landmarkMatcher: LandmarkMatcher?
+    private var entranceGuide = EntranceGuide()
 
     private var trackingTask: Task<Void, Never>?
     private var deliveryTask: Task<Void, Never>?
@@ -115,6 +116,7 @@ actor TripManager: TripStateProviding {
         landmarkMatcher = LandmarkMatcher(
             landmarks: RouteLandmarks.along(route, destination: destination, buildings: campusBuildings)
         )
+        entranceGuide = EntranceGuide()
         pendingCueIDs = []
         deliveredIDs = []
         missedTurnStep = nil
@@ -325,8 +327,8 @@ actor TripManager: TripStateProviding {
 
     // MARK: Landmarks
 
-    /// Speaks a sign that matches a building on the route. The arrival check stays open after arriving, since the
-    /// destination's sign is often only in view from its door.
+    /// Speaks a sign that matches a building on the route, or near the end a door to head for. Both stay open after
+    /// arriving, since the destination's sign and doors are often only in view from outside it.
     private func handle(_ sighting: LandmarkObservation, generation: Int) async {
         guard self.generation == generation, phase == .active || phase == .arrived,
               let route, let progress, var matcher = landmarkMatcher
@@ -334,12 +336,23 @@ actor TripManager: TripStateProviding {
         let event = matcher.match(sighting, progress: route.totalDistance - progress.distanceRemaining,
                                   remaining: progress.distanceRemaining)
         landmarkMatcher = matcher
-        guard let event, phase == .active || Self.isDestination(event) else { return }
         let time = now()
+        let text: String
+        let key: String
+        if let event {
+            guard phase == .active || Self.isDestination(event) else { return }
+            text = Self.landmarkText(event)
+            key = "landmark-\(Self.landmarkName(event))"
+        } else if let guidance = entranceGuide.guidance(for: sighting, remaining: progress.distanceRemaining,
+                                                        hasArrived: phase == .arrived, at: time) {
+            text = guidance
+            key = "entrance-\(sighting.key)"
+        } else {
+            return
+        }
         await submit(AnnouncementEvent(
-            category: .landmark, priority: .normal, text: Self.landmarkText(event), source: .navigation,
-            createdAt: time, expiresAt: time.addingTimeInterval(Self.landmarkLifetime),
-            dedupKey: "\(tripID)-landmark-\(Self.landmarkName(event))"
+            category: .landmark, priority: .normal, text: text, source: .navigation,
+            createdAt: time, expiresAt: time.addingTimeInterval(Self.landmarkLifetime), dedupKey: "\(tripID)-\(key)"
         ))
     }
 
