@@ -54,29 +54,36 @@ struct LandingView: View {
     }
 }
 
-/// Satellite map of campus with the sample places marked.
+/// Satellite map of campus with the sample places marked, the route when there is one, and
+/// the user where they really are. It follows the user until they pan the map themselves.
 struct CampusMap: View {
     var routeLine: [CLLocationCoordinate2D]?
 
+    /// Shown until a location arrives, and in previews.
+    private static let campus = MapCameraPosition.region(MKCoordinateRegion(
+        center: CLLocationCoordinate2D(latitude: SampleContent.campusLatitude, longitude: SampleContent.campusLongitude),
+        latitudinalMeters: 1200,
+        longitudinalMeters: 1200
+    ))
+
+    @State private var position = MapCameraPosition.userLocation(fallback: campus)
+
     var body: some View {
-        Map(initialPosition: .region(MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: SampleContent.campusLatitude, longitude: SampleContent.campusLongitude),
-            latitudinalMeters: 1200,
-            longitudinalMeters: 1200
-        ))) {
+        Map(position: $position) {
             ForEach(SampleContent.places) { place in
                 Marker(place.name, coordinate: place.coordinate)
             }
-            if let routeLine, let current = routeLine.first {
+            if let routeLine {
                 MapPolyline(coordinates: routeLine)
                     .stroke(.white, lineWidth: 6)
-                Annotation("You", coordinate: current) {
-                    Image(systemName: "location.north.fill")
-                        .font(.title)
-                        .foregroundStyle(Color(red: 0.2, green: 0.2, blue: 0.75))
-                        .padding(18)
-                        .background(.white.opacity(0.7), in: Circle())
-                }
+            }
+            // The real location, so it moves with each fix (and with a simulated GPX walk).
+            UserAnnotation {
+                Image(systemName: "location.north.fill")
+                    .font(.title)
+                    .foregroundStyle(Color(red: 0.2, green: 0.2, blue: 0.75))
+                    .padding(18)
+                    .background(.white.opacity(0.7), in: Circle())
             }
         }
         .mapStyle(.imagery(elevation: .flat))
