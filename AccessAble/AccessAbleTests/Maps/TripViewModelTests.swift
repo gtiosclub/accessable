@@ -198,9 +198,11 @@ private final class TripScreen {
     private let clock = ManualDate()
     private var running: Task<Void, Never>?
 
+    /// - Parameter trip: Pass another screen's to open this one on a trip already running.
     init(fixes: [GeoCoordinate] = [origin], accuracy: Double = 5,
-         authorization: LocationAuthorization = .authorized(preciseAccuracy: true)) {
-        trip = ControlledTripProvider()
+         authorization: LocationAuthorization = .authorized(preciseAccuracy: true),
+         trip: ControlledTripProvider = ControlledTripProvider()) {
+        self.trip = trip
         routing = CountingRouting(route: plannedRoute)
         var services = AppServices.preview
         services.trip = trip
@@ -224,6 +226,11 @@ private final class TripScreen {
         viewModel.use(planned)
         running = Task { await viewModel.start() }
         await until { self.viewModel.locationAuthorization != .notDetermined && self.viewModel.lastLocation != nil }
+    }
+
+    /// Starts the view model without planning, as when the screen is opened again mid-trip.
+    func open() {
+        running = Task { await viewModel.start() }
     }
 
     /// Starts the view model and plans a route to the library.
@@ -385,6 +392,26 @@ struct TripStartTests {
         screen.trip.send(rerouted)
         await screen.until { screen.viewModel.route == rerouted }
         screen.stop()
+    }
+
+    @Test
+    func reopeningTheScreenMidTripShowsTheCurrentRoute() async throws {
+        let screen = TripScreen()
+        await screen.plan()
+        await screen.show(state(.active, maneuver: turn, distance: 42))
+        let rerouted = try NavigationRoute(coordinates: [turn.coordinate, library.coordinate], steps: [
+            RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Walk east.", spokenInstruction: "Walk east."),
+            RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
+        ], estimatedDuration: 60)
+        screen.trip.send(rerouted)
+        screen.stop()
+
+        // a new screen on the same trip, with no route handed to it, shows the rerouted line
+        let reopened = TripScreen(trip: screen.trip)
+        reopened.open()
+        await reopened.until { reopened.viewModel.route == rerouted && reopened.viewModel.tripState.phase == .active }
+        #expect(await reopened.routing.requestCount == 0)
+        reopened.stop()
     }
 
     @Test(arguments: [
