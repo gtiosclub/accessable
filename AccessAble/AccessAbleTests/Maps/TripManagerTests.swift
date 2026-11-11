@@ -136,6 +136,74 @@ private final class ManualLocationProvider: LocationProvider, Sendable {
     }
 }
 
+/// Landmarks the test sends, in order, on the latest subscriber's stream. Counts how often the subscriber asks for
+/// the next one: it asks only once it has handled the last, so the count tells the test when handling is done.
+private final class ManualLandmarkProvider: LandmarkObserving, Sendable {
+    private struct Feed {
+        var buffer: [LandmarkObservation] = []
+        var waiter: CheckedContinuation<LandmarkObservation?, Never>?
+        var requests = 0
+        var sent = 0
+    }
+
+    private let feeds = Mutex<[Feed]>([])
+
+    func landmarkObservations() -> AsyncStream<LandmarkObservation> {
+        let index = feeds.withLock { feeds in
+            feeds.append(Feed())
+            return feeds.count - 1
+        }
+        return AsyncStream(unfolding: { [self] in await next(on: index) })
+    }
+
+    func yield(_ observation: LandmarkObservation) {
+        let waiter = feeds.withLock { feeds -> CheckedContinuation<LandmarkObservation?, Never>? in
+            guard let last = feeds.indices.last else { return nil }
+            feeds[last].sent += 1
+            guard let waiter = feeds[last].waiter else {
+                feeds[last].buffer.append(observation)
+                return nil
+            }
+            feeds[last].waiter = nil
+            return waiter
+        }
+        waiter?.resume(returning: observation)
+    }
+
+    /// Waits until the latest subscriber has handled everything sent to it.
+    func waitUntilHandled() async {
+        await waitUntil {
+            feeds.withLock { feeds in feeds.last.map { $0.waiter != nil && $0.requests > $0.sent } ?? false }
+        }
+    }
+
+    private func next(on index: Int) async -> LandmarkObservation? {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<LandmarkObservation?, Never>) in
+                enum Next { case value(LandmarkObservation), end, wait }
+                let next = feeds.withLock { feeds -> Next in
+                    feeds[index].requests += 1
+                    if Task.isCancelled { return .end }
+                    if !feeds[index].buffer.isEmpty { return .value(feeds[index].buffer.removeFirst()) }
+                    feeds[index].waiter = continuation
+                    return .wait
+                }
+                switch next {
+                case .value(let observation): continuation.resume(returning: observation)
+                case .end: continuation.resume(returning: nil)
+                case .wait: break
+                }
+            }
+        } onCancel: {
+            let waiter = feeds.withLock { feeds in
+                defer { feeds[index].waiter = nil }
+                return feeds[index].waiter
+            }
+            waiter?.resume(returning: nil)
+        }
+    }
+}
+
 /// Records submissions in order. Delivers each one at once unless `autoDelivers` is off, and can hold one
 /// submission until released.
 private actor RecordingEngine: AnnouncementEngineProtocol {
@@ -316,16 +384,20 @@ private struct Harness {
     let engine = RecordingEngine()
     let router: ScriptedRouter
     let background = BackgroundRecorder()
+    let landmarks = ManualLandmarkProvider()
     let states = StateRecorder()
     let manager: TripManager
     let route: NavigationRoute
 
-    init(route: NavigationRoute? = nil, reroutes: [Result<NavigationRoute, RoutingError>] = []) throws {
+    /// No campus buildings by default, so only the landmark tests have any to match.
+    init(route: NavigationRoute? = nil, reroutes: [Result<NavigationRoute, RoutingError>] = [],
+         buildings: [CampusBuilding] = []) throws {
         let route = try route ?? cornerRoute()
         self.route = route
         router = ScriptedRouter(reroutes)
         manager = TripManager(
             location: location, routing: router, announcements: engine,
+            landmarks: landmarks, campusBuildings: buildings,
             setBackgroundTracking: { [background] in background.record($0) },
             now: { [clock] in clock.now() },
             sleep: { [clock] in try await clock.sleep($0) }
@@ -858,5 +930,132 @@ struct TripManagerTests {
         let texts = await harness.engine.texts
         let resumed = try #require(texts.firstIndex(of: "Trip resumed."))
         #expect(!texts[resumed...].contains("You're off the route. Finding a new route."))
+    }
+}
+
+// MARK: Landmarks
+
+/// A square building `size` metres across, centred `lateral` metres right of the corner route at `along`.
+private func building(_ name: String, aliases: [String] = [], along: Double, lateral: Double, size: Double = 6,
+                      entrances: [CampusEntrance] = []) throws -> CampusBuilding {
+    let route = try cornerRoute()
+    let half = size / 2
+    let corners = [(-half, -half), (-half, half), (half, half), (half, -half)].map { along_, lateral_ in
+        TripWalk.point(on: route, along: along + along_, lateral: lateral + lateral_)
+    }
+    return CampusBuilding(name: name, aliases: aliases, outlines: [corners], entrances: entrances)
+}
+
+private func sign(_ text: String, announced: Bool = false) -> LandmarkObservation {
+    LandmarkObservation(kind: .signText, text: text, key: text.lowercased(), confidence: 0.9, wasAnnounced: announced)
+}
+
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerLandmarkTests {
+    @Test
+    func signBesideTheRouteIsSpokenWithItsSide() async throws {
+        let skiles = try building("William Vernon Skiles Building", aliases: ["Skiles"], along: 50, lateral: 15)
+        let harness = try Harness(buildings: [skiles])
+        await harness.start()
+        await harness.walk(from: 0, to: 30)
+        let before = await harness.engine.submitted.count
+
+        harness.landmarks.yield(sign("SKILES"))
+        let event = try #require(await harness.engine.waitForCount(before + 1).last)
+
+        #expect(event.text == "Passing Skiles on your right.")
+        #expect(event.category == .landmark)
+        #expect(event.priority == .normal)
+        #expect(event.source == .navigation)
+        #expect(event.expiresAt == event.createdAt.addingTimeInterval(6))
+        // once per trip, not per route version, so a reroute doesn't bring it back
+        let startKey = try #require(await harness.engine.submitted.first?.dedupKey)
+        #expect(event.dedupKey == String(startKey.dropLast("-v0-start".count)) + "-landmark-William Vernon Skiles Building")
+    }
+
+    @Test
+    func signCVAlreadyReadOnlyConfirmsTheRoute() async throws {
+        let howey = try building("Howey Building", along: 40, lateral: -20)
+        let harness = try Harness(buildings: [howey])
+        await harness.start()
+        await harness.walk(from: 0, to: 30)
+        let before = await harness.engine.submitted.count
+
+        harness.landmarks.yield(sign("HOWEY", announced: true))
+
+        #expect(await harness.engine.waitForCount(before + 1).last?.text == "You're on track.")
+    }
+
+    @Test
+    func eachBuildingIsSpokenOnceAndOthersAreIgnored() async throws {
+        let skiles = try building("Skiles", along: 50, lateral: 15)
+        let howey = try building("Howey", along: 60, lateral: -15)
+        let harness = try Harness(buildings: [skiles, howey])
+        await harness.start()
+        await harness.walk(from: 0, to: 30)
+        let before = await harness.engine.submitted.count
+
+        // handled in order, so the last one being spoken means the others were handled first
+        for text in ["SKILES", "SKILES", "KLAUS", "HOWEY"] { harness.landmarks.yield(sign(text)) }
+        let texts = await harness.engine.waitForCount(before + 2).dropFirst(before).map(\.text)
+
+        #expect(texts == ["Passing Skiles on your right.", "Passing Howey on your left."])
+    }
+
+    @Test
+    func pausedTripSaysNothingAndKeepsTheSignForLater() async throws {
+        let skiles = try building("Skiles", along: 50, lateral: 15)
+        let harness = try Harness(buildings: [skiles])
+        await harness.start()
+        await harness.walk(from: 0, to: 30)
+        await harness.manager.pauseTrip()
+        harness.landmarks.yield(sign("SKILES"))
+        await harness.landmarks.waitUntilHandled()
+        #expect(await harness.engine.texts.last == "Trip paused.")
+        await harness.manager.resumeTrip()
+        let before = await harness.engine.submitted.count
+
+        harness.landmarks.yield(sign("SKILES"))
+        let texts = await harness.engine.waitForCount(before + 1).map(\.text)
+
+        #expect(texts.filter { $0.hasPrefix("Passing") } == ["Passing Skiles on your right."])
+        #expect(texts.last == "Passing Skiles on your right.")
+    }
+
+    @Test
+    func destinationSignConfirmsArrivalEvenAfterArriving() async throws {
+        // the corner route ends 160 m along; the building is around the end of the route
+        let price = try building("Price Gilbert Memorial Library", aliases: ["Library"], along: 160, lateral: 0,
+                                 size: 20)
+        let harness = try Harness(buildings: [price])
+        await harness.start()
+        await harness.walk(from: 0, to: 160)
+        #expect(await harness.states.waitFor { $0.phase == .arrived }.phase == .arrived)
+        let before = await harness.engine.submitted.count
+
+        harness.landmarks.yield(sign("PRICE GILBERT LIBRARY"))
+
+        #expect(await harness.engine.waitForCount(before + 1).last?.text
+            == "This is Price Gilbert Memorial Library, your destination.")
+    }
+
+    @Test
+    func endedTripIgnoresSigns() async throws {
+        let skiles = try building("Skiles", along: 50, lateral: 15)
+        let harness = try Harness(buildings: [skiles])
+        await harness.start()
+        await harness.walk(from: 0, to: 30)
+        await harness.manager.endTrip()
+        let ended = await harness.engine.submitted.count
+
+        // the ended trip's stream has no reader any more, so this is never spoken
+        harness.landmarks.yield(sign("SKILES"))
+        // a new trip matches afresh, on its own stream
+        await harness.start()
+        await harness.walk(from: 0, to: 30)
+        harness.landmarks.yield(sign("SKILES"))
+        let texts = await harness.engine.waitForCount(ended + 2).dropFirst(ended).map(\.text)
+
+        #expect(texts.filter { $0.hasPrefix("Passing") } == ["Passing Skiles on your right."])
     }
 }
