@@ -102,6 +102,8 @@ protocol TripStateProviding: Sendable {
     func pauseTrip() async
     func resumeTrip() async
     func endTrip() async
+    /// A new route from where the user is now, for a running trip, when they ask for one.
+    func reroute() async
 }
 
 /// Short spoken description of where the user is, e.g. "on Ferst Drive facing north".
