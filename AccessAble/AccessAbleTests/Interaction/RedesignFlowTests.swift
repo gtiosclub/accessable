@@ -327,9 +327,11 @@ struct PlaceSearchViewModelTests {
 
     @Test
     func distancesReadAsAWalk() {
-        #expect(PlaceSearchViewModel.distanceText(metres: 352) == "350 m · about 5 min walk")
-        #expect(PlaceSearchViewModel.distanceText(metres: 3) == "10 m · about 1 min walk")
-        #expect(PlaceSearchViewModel.distanceText(metres: 1840) == "1.8 km · about 26 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 352, distances: .metric) == "350 m · about 5 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 3, distances: .metric) == "10 m · about 1 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 1840, distances: .metric) == "1.8 km · about 26 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 3, distances: .imperial) == "25 ft · about 1 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 1840, distances: .imperial) == "1.1 mi · about 26 min walk")
     }
 }
 

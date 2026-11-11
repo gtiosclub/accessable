@@ -16,6 +16,7 @@ actor TripManager: TripStateProviding {
     private let routing: any RoutingService
     private let announcements: any AnnouncementEngineProtocol
     private let setBackgroundTracking: @Sendable (Bool) async -> Void
+    private let distances: DistanceSettings
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
 
@@ -69,6 +70,7 @@ actor TripManager: TripStateProviding {
         routing: any RoutingService,
         announcements: any AnnouncementEngineProtocol,
         setBackgroundTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
+        distances: DistanceSettings = DistanceSettings(units: .metres),
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
@@ -76,6 +78,7 @@ actor TripManager: TripStateProviding {
         self.routing = routing
         self.announcements = announcements
         self.setBackgroundTracking = setBackgroundTracking
+        self.distances = distances
         self.now = now
         self.sleep = sleep
         states.send(TripState(phase: .planning, updatedAt: now()))
@@ -393,7 +396,7 @@ actor TripManager: TripStateProviding {
         do { try await sleep(Self.startDelay) } catch { return }
         guard self.generation == generation, phase == .active, let route, let destination,
               let first = route.steps.first else { return }
-        let text = "Starting directions to \(destination.name), \(Self.metres(route.totalDistance)). "
+        let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
             + first.spokenInstruction
         await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
     }
@@ -441,19 +444,19 @@ actor TripManager: TripStateProviding {
         guard let route else { return nil }
         switch event {
         case let .prepare(step, distance):
-            let text = "In \(Self.metres(distance)), \(Self.midSentence(route.steps[step].spokenInstruction))"
+            let text = "In \(spoken(distance)), \(Self.midSentence(route.steps[step].spokenInstruction))"
             return maneuver(text, .normal, expiresIn: 8, key: "step-\(step)-prepare")
         case let .now(step):
             return maneuver(route.steps[step].spokenInstruction, .high, haptic: route.steps[step].kind.haptic,
                             expiresIn: Self.nowCueLifetime(progress.distanceToNextStep), key: "step-\(step)-now")
         case let .passedTurnConfirmation(step):
-            return maneuver("Continue for \(Self.metres(progress.distanceToNextStep)).", .normal, expiresIn: 6,
+            return maneuver("Continue for \(spoken(progress.distanceToNextStep)).", .normal, expiresIn: 6,
                             key: "step-\(step)-confirmation")
         case let .missedTurn(step, distanceBack):
             // a reroute starts from the next precise fix when allowed; otherwise the way back is the guidance
             let text = rerouteTask != nil || canRequestReroute
                 ? "You may have passed the turn. Finding a new route."
-                : "You may have passed the turn. Turn around and walk back \(Self.metres(distanceBack)), then "
+                : "You may have passed the turn. Turn around and walk back \(spoken(distanceBack)), then "
                     + Self.midSentence(route.steps[step].spokenInstruction)
             return maneuver(text, .high, haptic: .attention, expiresIn: 12, key: "step-\(step)-missed")
         case .wrongWay:
@@ -495,7 +498,7 @@ actor TripManager: TripStateProviding {
             tracker.markPrepared(step: index)
             self.tracker = tracker
         }
-        let text = "In \(Self.metres(distance)), \(Self.midSentence(route.steps[index].spokenInstruction))"
+        let text = "In \(spoken(distance)), \(Self.midSentence(route.steps[index].spokenInstruction))"
         return maneuver(text, .normal, expiresIn: 8, key: nil)
     }
 
@@ -530,9 +533,10 @@ actor TripManager: TripStateProviding {
         min(max((distance + 5) / 1.3, 4), 15)
     }
 
-    /// Rounded to 10 m, like the map's route summary: finer is noise.
-    private static func metres(_ distance: Double) -> String {
-        "about \(max(10, Int((distance / 10).rounded()) * 10)) metres"
+    /// "about 80 metres" or "about 250 feet", in the user's units; read each time, so a change in Settings
+    /// applies from the next cue.
+    private func spoken(_ distance: Double) -> String {
+        distances.formatter.spoken(distance)
     }
 
     private static func midSentence(_ text: String) -> String {

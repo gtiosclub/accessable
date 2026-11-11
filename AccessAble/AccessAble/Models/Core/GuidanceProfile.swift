@@ -46,6 +46,8 @@ struct GuidanceProfile: Codable, Hashable, Sendable {
     /// What the camera warns about: the danger bar and warning distance, set on the Live
     /// detection screen.
     var alertFilter: AlertFilter = .default
+    /// Feet or metres for walking distances, spoken and shown. Automatic follows the phone's region.
+    var distanceUnits: DistanceUnits = .automatic
 
     /// Whether this profile wants to hear an event at all. Critical events and replies to
     /// something the user just asked for always pass.
@@ -105,7 +107,8 @@ extension GuidanceProfile {
 // failing to decode and resetting the user's settings.
 extension GuidanceProfile {
     private enum CodingKeys: String, CodingKey {
-        case visionLevel, channels, verbosity, speechRate, hapticIntensity, enabledCategories, aiPriorities, alertFilter
+        case visionLevel, channels, verbosity, speechRate, hapticIntensity, enabledCategories, aiPriorities, alertFilter,
+             distanceUnits
     }
 
     init(from decoder: any Decoder) throws {
@@ -118,7 +121,8 @@ extension GuidanceProfile {
             hapticIntensity: try container.decode(Float.self, forKey: .hapticIntensity),
             enabledCategories: try container.decode(Set<AnnouncementCategory>.self, forKey: .enabledCategories),
             aiPriorities: try container.decodeIfPresent(AIPriorities.self, forKey: .aiPriorities) ?? .default,
-            alertFilter: try container.decodeIfPresent(AlertFilter.self, forKey: .alertFilter) ?? .default
+            alertFilter: try container.decodeIfPresent(AlertFilter.self, forKey: .alertFilter) ?? .default,
+            distanceUnits: try container.decodeIfPresent(DistanceUnits.self, forKey: .distanceUnits) ?? .automatic
         )
     }
 }

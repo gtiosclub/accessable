@@ -145,6 +145,9 @@ struct SettingsView: View {
             Text("Important only").tag(Verbosity.passive)
             Text("Everything").tag(Verbosity.active)
         }
+        SettingsPickerRow("Distance Units", selection: $viewModel.profile.distanceUnits) {
+            ForEach(DistanceUnits.allCases, id: \.self) { Text($0.displayName) }
+        }
         SettingsSliderRow("Speech Rate", value: $viewModel.profile.speechRate, in: 0.3...0.7)
         SettingsSliderRow("Haptic Strength", value: $viewModel.profile.hapticIntensity, in: 0...1)
         SettingsPickerRow(
