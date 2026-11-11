@@ -54,10 +54,14 @@ struct LandingView: View {
     }
 }
 
-/// Satellite map of campus with the sample places marked, the route when there is one, and
-/// the user where they really are. It follows the user until they pan the map themselves.
+/// Satellite map of campus with the real route, the destination, and the user where they
+/// really are. It follows the user until they pan the map themselves. VoiceOver reads it as
+/// one element with `accessibilityLabel`; the spoken directions carry the details.
 struct CampusMap: View {
     var routeLine: [CLLocationCoordinate2D]?
+    var destination: Destination?
+    var accessibilityLabel = "Map"
+    @Environment(\.colorSchemeContrast) private var contrast
 
     /// Shown until a location arrives, and in previews.
     private static let campus = MapCameraPosition.region(MKCoordinateRegion(
@@ -70,12 +74,15 @@ struct CampusMap: View {
 
     var body: some View {
         Map(position: $position) {
-            ForEach(SampleContent.places) { place in
-                Marker(place.name, coordinate: place.coordinate)
-            }
             if let routeLine {
+                // a dark casing keeps the white line visible over roofs, roads and grass alike
                 MapPolyline(coordinates: routeLine)
-                    .stroke(.white, lineWidth: 6)
+                    .stroke(.black, style: routeStroke(width: routeWidth + 4))
+                MapPolyline(coordinates: routeLine)
+                    .stroke(.white, style: routeStroke(width: routeWidth))
+            }
+            if let destination {
+                Marker(destination.name, systemImage: "flag.checkered", coordinate: destination.coordinate.clCoordinate)
             }
             // The real location, so it moves with each fix (and with a simulated GPX walk).
             UserAnnotation {
@@ -88,6 +95,15 @@ struct CampusMap: View {
         }
         .mapStyle(.imagery(elevation: .flat))
         .ignoresSafeArea()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    /// Points; thicker when Increase Contrast is on.
+    private var routeWidth: CGFloat { contrast == .increased ? 10 : 7 }
+
+    private func routeStroke(width: CGFloat) -> StrokeStyle {
+        StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)
     }
 }
 
