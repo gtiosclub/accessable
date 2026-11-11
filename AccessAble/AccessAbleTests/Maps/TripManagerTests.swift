@@ -1040,6 +1040,29 @@ struct TripManagerLandmarkTests {
     }
 
     @Test
+    func doorNearTheEndIsGuidedTo() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 120)
+        let door = LandmarkObservation(kind: .entrance, key: "door-7", bearing: RelativeBearing(degrees: -30),
+                                       distance: 4, distanceAccuracy: .measured, confidence: 0.8)
+
+        // 40 m left is too early; the same door at 26 m left is spoken
+        harness.landmarks.yield(door)
+        await harness.landmarks.waitUntilHandled()
+        #expect(!(await harness.engine.texts.contains { $0.hasPrefix("Entrance") }))
+        // the first walk's last fix was at 119 m; on at walking pace to 135.6 m, 24.4 m from the end
+        await harness.walk(from: 120.4, to: 136)
+        let before = await harness.engine.submitted.count
+        harness.landmarks.yield(door)
+        let event = try #require(await harness.engine.waitForCount(before + 1).last)
+
+        #expect(event.text == "Entrance slightly left, 4 metres.")
+        #expect(event.category == .landmark)
+        #expect(event.dedupKey?.hasSuffix("-entrance-door-7") == true)
+    }
+
+    @Test
     func endedTripIgnoresSigns() async throws {
         let skiles = try building("Skiles", along: 50, lateral: 15)
         let harness = try Harness(buildings: [skiles])
