@@ -12,11 +12,13 @@ final class PlaceDetailViewModel {
     let destination: Destination
     /// Finds the route. Kept so its retry and error rules aren't copied here.
     let planner: TripViewModel
+    @ObservationIgnored private let distanceSettings: DistanceSettings
 
     /// `planned` is a route an earlier screen found; without it one is asked for.
     init(destination: Destination, services: AppServices, planned: PlannedRoute? = nil) {
         self.destination = destination
         planner = TripViewModel(services: services)
+        distanceSettings = services.distanceSettings
         if let planned { planner.use(planned) }
     }
 
@@ -35,9 +37,11 @@ final class PlaceDetailViewModel {
     /// Waiting for a location fix or for the routing service.
     var isLoading: Bool { route == nil && errorMessage == nil && !needsLocationAccess }
 
-    /// "650 m · about 9 min walk".
+    /// "650 m · about 9 min walk" or "2,125 ft…", in the user's units.
     var summary: String? {
-        route.map { Self.summary(metres: $0.totalDistance, seconds: $0.estimatedDuration) }
+        route.map {
+            Self.summary(metres: $0.totalDistance, seconds: $0.estimatedDuration, distances: distanceSettings.formatter)
+        }
     }
 
     /// What each step says, in order, as spoken during the trip.
@@ -54,10 +58,8 @@ final class PlaceDetailViewModel {
         planner.retryRoute()
     }
 
-    static func summary(metres: Double, seconds: Double) -> String {
-        let distance = metres < 1000
-            ? "\(max(10, Int((metres / 10).rounded()) * 10)) m"
-            : (metres / 1000).formatted(.number.precision(.fractionLength(1))) + " km"
+    static func summary(metres: Double, seconds: Double, distances: DistanceFormatter) -> String {
+        let distance = distances.written(metres)
         let minutes = max(1, Int((seconds / 60).rounded()))
         return "\(distance) · about \(minutes) min walk"
     }

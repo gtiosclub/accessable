@@ -133,13 +133,11 @@ final class PlaceSearchViewModel {
     /// Straight-line distance and an estimated walk, or nil without a location.
     func distanceText(to place: SamplePlace) -> String? {
         guard let metres = distance(to: place) else { return nil }
-        return Self.distanceText(metres: metres)
+        return Self.distanceText(metres: metres, distances: services?.distanceSettings.formatter ?? .metric)
     }
 
-    static func distanceText(metres: Double) -> String {
-        let distance = metres < 1000
-            ? "\(max(10, Int((metres / 10).rounded()) * 10)) m"
-            : (metres / 1000).formatted(.number.precision(.fractionLength(1))) + " km"
+    static func distanceText(metres: Double, distances: DistanceFormatter) -> String {
+        let distance = distances.written(metres)
         // Straight line at a walking pace; the route is longer, so this says "about".
         let minutes = max(1, Int((metres / 1.2 / 60).rounded()))
         return "\(distance) · about \(minutes) min walk"

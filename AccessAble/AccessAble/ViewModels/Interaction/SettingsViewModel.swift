@@ -75,8 +75,10 @@ final class SettingsViewModel {
     func applyPreset(_ level: VisionLevel) {
         // A preset sets how guidance is delivered, not what the user wants to hear about.
         let priorities = profile.aiPriorities
+        let units = profile.distanceUnits
         profile = .preset(for: level)
         profile.aiPriorities = priorities
+        profile.distanceUnits = units
     }
 
     /// Drag-to-reorder for the Ask AI ranking (T23).

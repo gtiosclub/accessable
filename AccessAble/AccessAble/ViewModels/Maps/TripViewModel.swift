@@ -93,7 +93,7 @@ final class TripViewModel {
         // no distance while off route: the instruction says what is happening instead
         guard let distance = tripState.distanceToNextManeuver else { return maneuver.instruction }
         let instruction = maneuver.instruction.prefix(1).lowercased() + maneuver.instruction.dropFirst()
-        return "In about \(Self.roundedMetres(distance)) metres, \(instruction)"
+        return "In \(distances.spoken(distance)), \(instruction)"
     }
 
     var canStartTrip: Bool {
@@ -103,7 +103,7 @@ final class TripViewModel {
 
     /// Posted once when a route arrives, since VoiceOver doesn't read the map changing.
     var routeReadyAnnouncement: String? {
-        route.map { "Route ready, about \(Self.roundedMetres($0.totalDistance)) metres." }
+        route.map { "Route ready, \(distances.spoken($0.totalDistance))." }
     }
 
     /// Turn-by-turn guidance can't place the user at each turn without Precise Location, so reduced accuracy
@@ -132,10 +132,9 @@ final class TripViewModel {
             case .notDetermined, .authorized: return "Map showing \(name). Finding a walking route."
             }
         }
-        let metres = Self.roundedMetres(route.totalDistance)
         let minutes = max(1, Int((route.estimatedDuration / 60).rounded()))
         let duration = minutes == 1 ? "1 minute" : "\(minutes) minutes"
-        return "Map showing a walking route to \(name), about \(metres) metres, about \(duration)."
+        return "Map showing a walking route to \(name), \(distances.spoken(route.totalDistance)), about \(duration)."
     }
 
     /// Reduced accuracy still shows, as an approximate area instead of a dot.
@@ -206,10 +205,8 @@ final class TripViewModel {
         return abs(route.projection(of: latestPreciseFix.coordinate).sideOffset) > Self.maximumStartOffset
     }
 
-    // SpokenPhrasing's half-metre precision is noise at these distances
-    private static func roundedMetres(_ distance: Double) -> Int {
-        max(10, Int((distance / 10).rounded()) * 10)
-    }
+    /// The user's units; read through the observable settings, so the screen redraws when they change.
+    private var distances: DistanceFormatter { services.distanceSettings.formatter }
 
     private func receive(_ state: TripState) {
         let previous = tripState.phase

@@ -82,7 +82,7 @@ struct PlaceDetailViewModelTests {
         #expect(details.route == plannedRoute)
         #expect(details.steps == ["Walk east on Ferst Drive.", "You have arrived at Clough."])
         #expect(details.summary == PlaceDetailViewModel.summary(
-            metres: plannedRoute.totalDistance, seconds: plannedRoute.estimatedDuration
+            metres: plannedRoute.totalDistance, seconds: plannedRoute.estimatedDuration, distances: .metric
         ))
     }
 
@@ -141,8 +141,28 @@ struct PlaceDetailViewModelTests {
 
     @Test
     func summaryReadsAsAWalk() {
-        #expect(PlaceDetailViewModel.summary(metres: 352, seconds: 290) == "350 m · about 5 min walk")
-        #expect(PlaceDetailViewModel.summary(metres: 1840, seconds: 1500) == "1.8 km · about 25 min walk")
-        #expect(PlaceDetailViewModel.summary(metres: 3, seconds: 4) == "10 m · about 1 min walk")
+        #expect(PlaceDetailViewModel.summary(metres: 352, seconds: 290, distances: .metric) == "350 m · about 5 min walk")
+        #expect(PlaceDetailViewModel.summary(metres: 1840, seconds: 1500, distances: .metric) == "1.8 km · about 25 min walk")
+        #expect(PlaceDetailViewModel.summary(metres: 3, seconds: 4, distances: .metric) == "10 m · about 1 min walk")
+        #expect(PlaceDetailViewModel.summary(metres: 100, seconds: 80, distances: .imperial) == "325 ft · about 1 min walk")
+        #expect(PlaceDetailViewModel.summary(metres: 352, seconds: 290, distances: .imperial) == "0.2 mi · about 5 min walk")
+    }
+
+    @Test
+    func switchingUnitsChangesTheSummary() async {
+        let distances = DistanceSettings(units: .metres)
+        var services = AppServices.preview
+        services.location = OneFixLocationProvider()
+        services.routing = FlakyRouting(isOnline: true)
+        services.trip = PlaceholderTripProvider()
+        services.distanceSettings = distances
+        let details = PlaceDetailViewModel(destination: clough, services: services)
+        await details.start()
+        await details.planner.routeTask?.value
+        let metres = plannedRoute.totalDistance, seconds = plannedRoute.estimatedDuration
+        #expect(details.summary == PlaceDetailViewModel.summary(metres: metres, seconds: seconds, distances: .metric))
+
+        distances.units = .feet
+        #expect(details.summary == PlaceDetailViewModel.summary(metres: metres, seconds: seconds, distances: .imperial))
     }
 }
