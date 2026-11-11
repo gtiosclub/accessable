@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// Owner: Maps (2.x). "Search Destination": a From / To card like a maps app (From is My
-/// Location unless another place is picked), category chips with counts, live results with
-/// the matched letters lit and distances from the user, then saved and recent places.
-/// Searches `SampleContent` until the destination search service is wired in.
+/// Location unless another place is picked), category chips, live campus results from MapKit
+/// with the matched letters lit, then saved and recent places. Picking a result looks it up
+/// and opens it as a real `Destination`. From, saved and recent places are still samples.
 struct PlaceSearchView: View {
     @Environment(AppRouter.self) private var router
     @State private var search: PlaceSearchViewModel
@@ -51,7 +51,7 @@ struct PlaceSearchView: View {
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 32)
-            .animation(.easeOut(duration: 0.2), value: search.results)
+            .animation(.easeOut(duration: 0.2), value: search.suggestions)
             .animation(.easeOut(duration: 0.2), value: focusedField)
         }
         .scrollDismissesKeyboard(.interactively)
@@ -62,9 +62,11 @@ struct PlaceSearchView: View {
         .sensoryFeedback(.selection, trigger: search.origin)
         .task { await search.start() }
         .onDisappear { search.stop() }
-        .onChange(of: search.settledQuery) {
-            guard search.isFiltering else { return }
-            AccessibilityNotification.Announcement(search.resultsSummary).post()
+        // Result count, "no results" and errors, spoken as in the old search screen.
+        .announcesSearch(search.destinationSearch)
+        .onChange(of: search.selectedDestination) { _, destination in
+            guard let destination else { return }
+            router.push(.destination(destination, origin: search.origin.place))
         }
     }
 
@@ -121,6 +123,8 @@ struct PlaceSearchView: View {
                 .foregroundStyle(.white)
                 .focused($focusedField, equals: field)
                 .submitLabel(isOrigin ? .next : .search)
+                // autocorrect rewrites place names like "Ferst" into real words
+                .autocorrectionDisabled()
                 .onSubmit {
                     search.search()
                     if isOrigin { focusedField = .destination }
@@ -294,20 +298,12 @@ struct PlaceSearchView: View {
 
     private func chip(_ item: PlaceCategory) -> some View {
         let isSelected = search.category == item
-        let count = search.count(of: item)
         return Button {
             search.category = isSelected ? nil : item
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: item.systemImage)
                 Text(item.displayName)
-                Text("\(count)")
-                    .font(.caption.weight(.bold))
-                    .monospacedDigit()
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background((isSelected ? Theme.cyan : Color.black).opacity(0.2), in: Capsule())
-                    .contentTransition(.numericText())
             }
             .font(.callout)
             .foregroundStyle(isSelected ? Theme.cyan : .black)
@@ -317,16 +313,14 @@ struct PlaceSearchView: View {
             .overlay(Capsule().strokeBorder(Theme.cyan, lineWidth: 2))
             .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
             .contentShape(Capsule())
-            .opacity(count == 0 && !isSelected ? Theme.dimmedOpacity : 1)
-            .animation(.easeOut(duration: 0.2), value: count)
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(item.displayName), \(count) \(count == 1 ? "place" : "places")")
+        .accessibilityLabel(item.displayName)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
-        .accessibilityHint(isSelected ? "Shows every kind of place" : "Shows only \(item.displayName.lowercased())")
+        .accessibilityHint(isSelected ? "Shows every kind of place" : "Searches for \(item.displayName.lowercased()) near campus")
     }
 
-    /// "Showing 3 of 24 places" and a removable tag for each active filter.
+    /// "3 results for Clough" and a removable tag for each active filter.
     private var filterSummary: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -337,11 +331,8 @@ struct PlaceSearchView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
                     .contentTransition(.numericText())
-                if search.location != nil, !search.results.isEmpty {
-                    Text("· nearest first")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.7))
-                }
+                    // Read out by announcesSearch; reading the line as well would say it twice.
+                    .accessibilityHidden(true)
             }
             FlowLayout(spacing: 8) {
                 let trimmed = search.settledQuery.trimmingCharacters(in: .whitespaces)
@@ -382,21 +373,48 @@ struct PlaceSearchView: View {
 
     private var resultsList: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if search.results.isEmpty {
+            if let problem = search.problem {
+                problemView(problem)
+            }
+            if search.showsNoResults {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(search.settledQuery.isEmpty ? "No places match." : "No places match “\(search.settledQuery)”.")
+                    Text("No places match “\(search.searchText)”.")
                         .foregroundStyle(.white)
                     Button("Clear filters") { search.clearFilters() }
                         .buttonStyle(.pill(.outline, size: .compact))
                 }
             }
-            ForEach(search.results) { place in
-                PlaceRow(place: place, highlight: search.settledQuery, distance: search.distanceText(to: place)) {
-                    router.push(.place(place, origin: search.origin.place))
+            ForEach(search.suggestions) { suggestion in
+                SuggestionRow(
+                    suggestion: suggestion,
+                    highlight: search.settledQuery,
+                    isResolving: search.isResolving(suggestion)
+                ) {
+                    search.select(suggestion)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
+    }
+
+    /// No connection, or a picked result that couldn't be looked up.
+    @ViewBuilder
+    private func problemView(_ problem: SearchProblem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(
+                problem.message,
+                systemImage: problem == .suggestionsUnavailable ? "wifi.exclamationmark" : "exclamationmark.triangle"
+            )
+            .foregroundStyle(.white)
+            if case .lookupFailed(let suggestion) = problem {
+                Button("Try again") { search.select(suggestion) }
+                    .buttonStyle(.pill(.outline, size: .compact))
+                    .accessibilityHint("Looks up \(suggestion.title) again")
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.red.opacity(0.25), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     // MARK: - Saved and recent
@@ -460,6 +478,65 @@ extension PlaceCategory {
         case .parks: "tree"
         case .publicTransit: "tram"
         }
+    }
+}
+
+/// A live search result: what MapKit suggested, before it is looked up.
+private struct SuggestionRow: View {
+    let suggestion: SearchSuggestion
+    var highlight = ""
+    var isResolving = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 16) {
+                ZStack {
+                    PlaceThumbnail()
+                    Image(systemName: "mappin.and.ellipse")
+                        .font(.title2)
+                        .foregroundStyle(Theme.navy)
+                        .accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(highlightedTitle)
+                        .font(.title3)
+                        .multilineTextAlignment(.leading)
+                    if !suggestion.subtitle.isEmpty {
+                        Text(suggestion.subtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.8))
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+                .foregroundStyle(.white)
+                Spacer(minLength: 0)
+                if isResolving {
+                    ProgressView()
+                        .tint(.white)
+                        .accessibilityHidden(true)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isResolving)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel([suggestion.title, suggestion.subtitle].filter { !$0.isEmpty }.joined(separator: ", "))
+        .accessibilityValue(isResolving ? "Loading details" : "")
+        .accessibilityHint("Opens this place")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// The title with the letters that matched the search lit in cyan.
+    private var highlightedTitle: AttributedString {
+        var title = AttributedString(suggestion.title)
+        for range in PlaceSearchViewModel.matchedRanges(in: suggestion.title, for: highlight) {
+            guard let attributed = Range(range, in: title) else { continue }
+            title[attributed].foregroundColor = Theme.cyan
+            title[attributed].inlinePresentationIntent = .stronglyEmphasized
+        }
+        return title
     }
 }
 

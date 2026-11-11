@@ -7,6 +7,16 @@ private let log = Logger(subsystem: "AccessAble", category: "Search")
 enum SearchProblem: Equatable {
     case suggestionsUnavailable
     case lookupFailed(SearchSuggestion)
+
+    /// Shown on screen and spoken to VoiceOver.
+    var message: String {
+        switch self {
+        case .suggestionsUnavailable:
+            "Couldn't load suggestions. Check your connection and keep typing."
+        case .lookupFailed(let suggestion):
+            "Couldn't get details for \(suggestion.title)."
+        }
+    }
 }
 
 @MainActor
@@ -20,12 +30,16 @@ final class DestinationSearchViewModel {
     private(set) var isResolving = false
     private(set) var problem: SearchProblem?
 
-    @ObservationIgnored private let services: AppServices
+    @ObservationIgnored private let search: any DestinationSearching
     @ObservationIgnored private var selectionTask: Task<Void, Never>?
     @ObservationIgnored private var lastSearchedQuery = ""
 
-    init(services: AppServices) {
-        self.services = services
+    convenience init(services: AppServices) {
+        self.init(search: services.destinationSearch)
+    }
+
+    init(search: any DestinationSearching) {
+        self.search = search
     }
 
     var trimmedQuery: String {
@@ -46,7 +60,7 @@ final class DestinationSearchViewModel {
     }
 
     func start() async {
-        for await result in services.destinationSearch.suggestions() {
+        for await result in search.suggestions() {
             isSearching = false
             switch result {
             case .success(let suggestions):
@@ -70,7 +84,7 @@ final class DestinationSearchViewModel {
         // an offline failure would just be re-set (and re-announced) on every keystroke; start() clears it on success
         if case .lookupFailed = problem { problem = nil }
         isSearching = !trimmedQuery.isEmpty
-        services.destinationSearch.update(query: query)
+        search.update(query: query)
     }
 
     // cancels any in-flight lookup so a stale result can't overwrite a newer pick
@@ -82,7 +96,7 @@ final class DestinationSearchViewModel {
         problem = nil
         selectionTask = Task {
             do {
-                let destination = try await services.destinationSearch.resolve(suggestion)
+                let destination = try await search.resolve(suggestion)
                 guard !Task.isCancelled else { return }
                 selectedDestination = destination
             } catch {

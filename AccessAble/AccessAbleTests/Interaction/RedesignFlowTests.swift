@@ -213,33 +213,97 @@ struct PlaceSearchViewModelTests {
         #expect(names("Anything", "  ").isEmpty)
     }
 
-    @Test
-    func resultsSettleAfterAPauseInTyping() async throws {
-        let search = PlaceSearchViewModel()
-        search.query = "CULC"
-        #expect(search.isSearching)
-        #expect(search.results.isEmpty)
-        // Settles after the debounce; a busy test machine can take longer, so wait up to 3 s.
+    /// Polls until `condition` holds; a busy test machine can take a while, so up to 3 s.
+    private func waitUntil(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(3)
-        while search.isSearching, ContinuousClock.now < deadline {
+        while !condition(), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
-        #expect(!search.isSearching)
-        #expect(search.results.map(\.name).contains("CULC Room 152"))
-        #expect(search.resultsSummary == "Showing \(search.results.count) of \(SampleContent.places.count) places")
     }
 
     @Test
-    func categoriesCountWhatWasTyped() {
+    func resultsSettleAfterAPauseInTyping() async throws {
         let search = PlaceSearchViewModel()
-        let parks = SampleContent.places.filter { $0.category == .parks }.count
-        #expect(search.count(of: .parks) == parks)
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+
+        search.query = "library"
+        #expect(search.isSearching)
+        #expect(search.suggestions.isEmpty)
+        try await waitUntil { !search.isSearching }
+        #expect(search.suggestions.map(\.title) == ["Georgia Tech Library"])
+        #expect(search.destinationSearch.resultsAnnouncement == "1 result for library")
+        #expect(search.resultsSummary == "1 result for library")
+    }
+
+    @Test
+    func saysWhenNothingMatches() async throws {
+        let search = PlaceSearchViewModel()
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+
+        search.query = "zzzz"
+        try await waitUntil { !search.isSearching }
+        #expect(search.showsNoResults)
+        #expect(search.destinationSearch.resultsAnnouncement == "No results for zzzz")
+    }
+
+    @Test
+    func saysWhenSuggestionsCantLoad() async throws {
+        let search = PlaceSearchViewModel(search: FailingDestinationSearch())
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+
+        search.query = "Clough"
+        try await waitUntil { !search.isSearching }
+        #expect(search.problem == .suggestionsUnavailable)
+        #expect(!search.showsNoResults)
+        #expect(search.destinationSearch.resultsAnnouncement == nil)
+        #expect(search.resultsSummary == "No results")
+    }
+
+    @Test
+    func pickingAResultResolvesARealDestination() async throws {
+        let search = PlaceSearchViewModel()
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+
+        search.query = "student"
+        try await waitUntil { !search.suggestions.isEmpty }
+        let suggestion = try #require(search.suggestions.first)
+        search.select(suggestion)
+        try await waitUntil { search.selectedDestination != nil }
+        #expect(search.selectedDestination?.name == "John Lewis Student Center")
+        #expect(search.selectedDestination?.address == "351 Ferst Dr NW, Atlanta, GA")
+    }
+
+    @Test
+    func categoriesSearchForThatKindOfPlace() {
+        let search = PlaceSearchViewModel()
         search.category = .parks
         #expect(search.isFiltering)
-        #expect(search.results.allSatisfy { $0.category == .parks })
+        #expect(search.searchText == "parks")
+        #expect(search.destinationSearch.query == "parks")
+        search.query = "Clough"
+        search.search()
+        #expect(search.searchText == "Clough parks")
         search.clearFilters()
         #expect(!search.isFiltering)
-        #expect(search.resultsSummary == "No places match")
+        #expect(search.destinationSearch.query.isEmpty)
+    }
+
+    @Test
+    func searchedPlacesCarryTheirDestinationToTheTrip() {
+        let destination = Destination(
+            name: "Clough Undergraduate Learning Commons",
+            coordinate: GeoCoordinate(latitude: 33.7746, longitude: -84.3964)
+        )
+        let place = SamplePlace(destination: destination)
+        #expect(place.name == destination.name)
+        #expect(place.latitude == 33.7746)
+        #expect(place.longitude == -84.3964)
+        #expect(place.address.isEmpty)
+        #expect(place.recordedRouteCount == 0)
     }
 
     @Test
@@ -265,5 +329,23 @@ struct PlaceSearchViewModelTests {
         #expect(PlaceSearchViewModel.distanceText(metres: 352) == "350 m · about 5 min walk")
         #expect(PlaceSearchViewModel.distanceText(metres: 3) == "10 m · about 1 min walk")
         #expect(PlaceSearchViewModel.distanceText(metres: 1840) == "1.8 km · about 26 min walk")
+    }
+}
+
+/// Suggestions that never load, as when the phone is offline.
+@MainActor
+private struct FailingDestinationSearch: DestinationSearching {
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
+
+    func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
+        results.stream()
+    }
+
+    func update(query: String) {
+        results.send(.failure(.suggestionsUnavailable))
+    }
+
+    func resolve(_ suggestion: SearchSuggestion) async throws -> Destination {
+        throw DestinationSearchError.noMatch
     }
 }
