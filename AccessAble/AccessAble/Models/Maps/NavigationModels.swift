@@ -109,6 +109,14 @@ enum DestinationSearchError: Error, Equatable, Sendable {
     case suggestionsUnavailable
 }
 
+/// A route found before the trip, handed on so the trip walks that exact route.
+struct PlannedRoute: Hashable, Sendable {
+    var destination: Destination
+    var route: NavigationRoute
+    /// When it was requested, so the trip can tell if it is too old to start on.
+    var requestedAt: Date
+}
+
 struct RouteOptions: Equatable, Sendable {
     /// Metres per second, greater than 0. Valhalla takes km/h, so its client converts.
     var walkingSpeed: Double = 1.2
@@ -122,7 +130,7 @@ enum RoutingError: Error, Equatable, Sendable {
     case invalidResponse
 }
 
-struct RouteStep: Codable, Equatable, Sendable {
+struct RouteStep: Codable, Hashable, Sendable {
     var kind: ManeuverKind
     /// Index into `NavigationRoute.coordinates` where this maneuver begins.
     var coordinateIndex: Int
@@ -147,7 +155,7 @@ extension RouteStep {
 }
 
 /// Always valid: created and decoded only through the validating init, which derives the distances.
-struct NavigationRoute: Codable, Equatable, Sendable {
+struct NavigationRoute: Codable, Hashable, Sendable {
     let coordinates: [GeoCoordinate]
     let steps: [RouteStep]
     /// Seconds.

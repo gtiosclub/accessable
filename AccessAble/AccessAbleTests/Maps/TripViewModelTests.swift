@@ -173,6 +173,12 @@ private let plannedRoute = try! NavigationRoute(coordinates: [origin, library.co
     RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
 ], estimatedDuration: 90)
 
+/// A different route from the one `CountingRouting` answers with, so a test can tell which was started.
+private let pickedRoute = try! NavigationRoute(coordinates: [origin, library.coordinate], steps: [
+    RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Head north.", spokenInstruction: "Head north."),
+    RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
+], estimatedDuration: 95)
+
 private final class ManualDate: Sendable {
     private let date = Mutex(Date(timeIntervalSince1970: 1_700_000_000))
 
@@ -208,6 +214,15 @@ private final class TripScreen {
 
     func advance(by seconds: TimeInterval) {
         clock.advance(by: seconds)
+    }
+
+    var now: Date { clock.now }
+
+    /// Starts the view model on a route an earlier screen found, as the route picker hands on.
+    func plan(using planned: PlannedRoute) async {
+        viewModel.use(planned)
+        running = Task { await viewModel.start() }
+        await until { self.viewModel.locationAuthorization != .notDetermined && self.viewModel.lastLocation != nil }
     }
 
     /// Starts the view model and plans a route to the library.
@@ -270,6 +285,32 @@ struct TripStartTests {
         let screen = TripScreen()
         await screen.plan()
         screen.advance(by: 60)
+        await screen.viewModel.startTrip()
+        #expect(await screen.routing.requestCount == 1)
+        #expect(screen.trip.startedRoutes == [plannedRoute])
+        screen.stop()
+    }
+
+    @Test
+    func handedOnRouteStartsWithoutAskingAgain() async {
+        let screen = TripScreen()
+        await screen.plan(using: PlannedRoute(destination: library, route: pickedRoute, requestedAt: screen.now))
+        #expect(screen.viewModel.plannedRoute?.route == pickedRoute)
+
+        await screen.viewModel.startTrip()
+        #expect(await screen.routing.requestCount == 0)
+        // the exact route that was picked, not a new one
+        #expect(screen.trip.startedRoutes == [pickedRoute])
+        screen.stop()
+    }
+
+    @Test
+    func handedOnRouteOlderThanTwoMinutesIsPlannedAgainFirst() async {
+        let screen = TripScreen()
+        let planned = PlannedRoute(destination: library, route: pickedRoute, requestedAt: screen.now)
+        screen.advance(by: 121)
+        await screen.plan(using: planned)
+
         await screen.viewModel.startTrip()
         #expect(await screen.routing.requestCount == 1)
         #expect(screen.trip.startedRoutes == [plannedRoute])

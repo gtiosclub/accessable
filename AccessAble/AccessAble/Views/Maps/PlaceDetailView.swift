@@ -10,9 +10,6 @@ struct PlaceDetailView: View {
     var origin: SamplePlace?
     @State private var details: PlaceDetailViewModel
 
-    /// Steps shown before "+ N more steps".
-    private static let previewStepCount = 3
-
     /// A sample saved or recent place. Its coordinate is real, so its route is too.
     init(place: SamplePlace, origin: SamplePlace? = nil, services: AppServices) {
         let destination = Destination(
@@ -47,11 +44,14 @@ struct PlaceDetailView: View {
                     Label("From: \(origin?.name ?? "My Location")", systemImage: origin == nil ? "location.fill" : "circle.inset.filled")
                         .font(.subheadline)
                         .accessibilityLabel("From \(origin?.name ?? "my location")")
-                    routeDetails
+                    RoutePreview(details: details, origin: origin)
                         .padding(.top, 4)
                     VStack(spacing: 14) {
                         Button("Start & Record New Route") {
-                            router.push(.trip(TripPlan(place: place, route: nil, isRecording: true, origin: origin)))
+                            router.push(.trip(TripPlan(
+                                place: place, route: nil, isRecording: true, origin: origin,
+                                plannedRoute: details.plannedRoute
+                            )))
                         }
                         .buttonStyle(.pill(.destructive))
                         .accessibilityHint("Starts walking and saves the route you take")
@@ -60,7 +60,9 @@ struct PlaceDetailView: View {
                             Button("Start Recorded Route") { router.push(.routes(place, .recorded, origin: origin)) }
                                 .buttonStyle(.pill(.primary))
                         }
-                        Button("Start New Route") { router.push(.routes(place, .new, origin: origin)) }
+                        Button("Start New Route") {
+                            router.push(.routes(place, .new, origin: origin, planned: details.plannedRoute))
+                        }
                             .buttonStyle(.pill(.primary))
                         Button("Back") { router.pop() }
                             .buttonStyle(.pill(.outline))
@@ -78,10 +80,20 @@ struct PlaceDetailView: View {
         .announcesRoute(details.planner)
         .task { await details.start() }
     }
+}
 
-    /// The walking route, or why it isn't here yet.
-    @ViewBuilder
-    private var routeDetails: some View {
+/// The walking route to a place: distance, time and the first few steps, or why it isn't
+/// here yet (finding it, failed with Try again, location off). On place details and the
+/// route picker.
+struct RoutePreview: View {
+    let details: PlaceDetailViewModel
+    /// Picked in search; nil for My Location.
+    var origin: SamplePlace?
+
+    /// Steps shown before "+ N more steps".
+    private static let stepCount = 3
+
+    var body: some View {
         if let summary = details.summary {
             VStack(alignment: .leading, spacing: 8) {
                 Label(summary, systemImage: "figure.walk")
@@ -94,7 +106,7 @@ struct PlaceDetailView: View {
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     // A preview only, so the card fits under the title; the trip reads every step.
-                    ForEach(Array(details.steps.prefix(Self.previewStepCount).enumerated()), id: \.offset) { index, step in
+                    ForEach(Array(details.steps.prefix(Self.stepCount).enumerated()), id: \.offset) { index, step in
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
                             Text("\(index + 1).")
                                 .monospacedDigit()
@@ -105,7 +117,7 @@ struct PlaceDetailView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("Step \(index + 1), \(step)")
                     }
-                    let remaining = details.steps.count - Self.previewStepCount
+                    let remaining = details.steps.count - Self.stepCount
                     if remaining > 0 {
                         Text(remaining == 1 ? "+ 1 more step" : "+ \(remaining) more steps")
                             .foregroundStyle(.white.opacity(0.7))
