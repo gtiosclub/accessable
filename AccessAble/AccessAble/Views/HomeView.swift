@@ -29,25 +29,27 @@ struct HomeView: View {
                 }
                 .disabled(viewModel.isDescribing)
 
+                // One camera screen, opened in the mode the button names (Walk, Find, Read,
+                // Describe are switched at its top).
                 NavigationLink {
-                    SceneView(services: app.services)
+                    LiveSceneView(services: app.services, mode: .walk)
                 } label: {
                     Label("Camera guidance", systemImage: "camera.viewfinder")
                         .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
                         .padding(.horizontal)
                 }
                 .buttonStyle(.bordered)
-                .accessibilityHint("Announces obstacles as you walk")
+                .accessibilityHint("Announces obstacles as you walk. Also finds places, reads signs and describes what is around you.")
 
                 NavigationLink {
-                    LiveSceneView(services: app.services)
+                    LiveSceneView(services: app.services, mode: .read)
                 } label: {
-                    Label("Live detection", systemImage: "viewfinder.rectangular")
+                    Label("Read signs & text", systemImage: "text.viewfinder")
                         .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
                         .padding(.horizontal)
                 }
                 .buttonStyle(.bordered)
-                .accessibilityHint("Shows what the camera detects right now. Needs a LiDAR device.")
+                .accessibilityHint("Announces signs and text as the camera finds them")
 
                 NavigationLink {
                     TripView(services: app.services)

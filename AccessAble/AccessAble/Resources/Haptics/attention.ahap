@@ -1,0 +1,11 @@
+{
+  "Version": 1.0,
+  "Metadata": { "Project": "AccessAble", "Description": "Attention: one sharp tap." },
+  "Pattern": [
+    { "Event": { "Time": 0.0, "EventType": "HapticTransient",
+      "EventParameters": [
+        { "ParameterID": "HapticIntensity", "ParameterValue": 1.0 },
+        { "ParameterID": "HapticSharpness", "ParameterValue": 1.0 }
+      ] } }
+  ]
+}

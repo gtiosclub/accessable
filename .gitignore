@@ -67,3 +67,7 @@ fastlane/test_output
 # Claude Code
 .claude/
 CLAUDE.md
+.vibe-wise/
+
+# Large models fetched by Scripts/download-models.sh
+AccessAble/AccessAble/Resources/DETRResnet50SemanticSegmentationF16.mlpackage/

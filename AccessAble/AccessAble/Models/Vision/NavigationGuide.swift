@@ -76,6 +76,9 @@ struct NavigationGuide: Sendable {
     var tuning: NavigationTuning
 
     private let terms: Set<String>
+    /// The room number asked for ("Room 0266" → "0266"), matched against sign readings rather
+    /// than words: "room" alone would match "Restroom", and OCR drops leading zeros.
+    private let roomNumber: String?
     private let startTime: TimeInterval
     private var sightings: [SIMD3<Float>] = []
     private var scannedDegrees: Float = 0
@@ -92,6 +95,7 @@ struct NavigationGuide: Sendable {
         self.query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         self.tuning = tuning
         terms = Self.terms(for: self.query)
+        roomNumber = SignInterpreter.roomNumber(in: SignInterpreter.tokens(self.query.uppercased()))?.number
         startTime = time
     }
 
@@ -215,11 +219,17 @@ struct NavigationGuide: Sendable {
     ]
 
     func matches(_ label: String) -> Bool {
+        // A room is found by its sign, never by an object that happens to share a word.
+        guard roomNumber == nil else { return false }
         let label = label.lowercased()
         return terms.contains(label) || terms.contains { $0.count >= 3 && (label.contains($0) || $0.contains(label)) }
     }
 
     func matchesText(_ string: String) -> Bool {
+        if let roomNumber {
+            let found = SignInterpreter.roomNumber(in: SignInterpreter.tokens(string.uppercased()))
+            return found.map { SignInterpreter.sameRoom($0.number, roomNumber) } ?? false
+        }
         let text = string.lowercased()
         return terms.contains { $0.count >= 3 && text.contains($0) }
     }

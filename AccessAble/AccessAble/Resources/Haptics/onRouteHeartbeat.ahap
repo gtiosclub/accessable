@@ -1,0 +1,16 @@
+{
+  "Version": 1.0,
+  "Metadata": { "Project": "AccessAble", "Description": "On route: a gentle double tap." },
+  "Pattern": [
+    { "Event": { "Time": 0.0, "EventType": "HapticTransient",
+      "EventParameters": [
+        { "ParameterID": "HapticIntensity", "ParameterValue": 0.4 },
+        { "ParameterID": "HapticSharpness", "ParameterValue": 0.3 }
+      ] } },
+    { "Event": { "Time": 0.15, "EventType": "HapticTransient",
+      "EventParameters": [
+        { "ParameterID": "HapticIntensity", "ParameterValue": 0.4 },
+        { "ParameterID": "HapticSharpness", "ParameterValue": 0.3 }
+      ] } }
+  ]
+}

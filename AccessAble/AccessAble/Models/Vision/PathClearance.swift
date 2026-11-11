@@ -7,6 +7,16 @@ import simd
 // steady as the map: a wall seen two seconds ago still counts, and a flicker in one frame
 // changes nothing. The question asked of the map is simple and the same for every option
 // considered: how far can the user walk straight along this line before hitting something?
+//
+// FLAG (T28 found already done): T28 ("directional obstacle avoidance guidance... avoid
+// recommending paths without sufficient confidence") asks for exactly what `planPath`
+// already does, integrated with `ObstacleAnnouncer` below. A sidestep is only ever offered
+// into a lane with `knownFreeFraction >= minimumKnownFree` — see
+// `PathClearanceTests.noSidestepIntoUnknown()` — and `ObstacleAnnouncer.pathAnnouncement`
+// turns the result into short directions ("One step left" / "Bear right, 2 o'clock" /
+// "Stop. Turn right."), followed by "Straight ahead now" once the user is clear. No
+// new code was added for T28; it should be marked done against T11/T16 rather than
+// reimplemented.
 
 /// A side to turn towards when nothing ahead is passable.
 enum TurnSide: String, Codable, Sendable {

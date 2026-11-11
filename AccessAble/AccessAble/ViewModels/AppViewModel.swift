@@ -10,8 +10,16 @@ final class AppViewModel {
         didSet {
             save(profile, forKey: Keys.profile)
             let profile = profile
+            services.askAISettings.priorities = profile.aiPriorities
+            services.alertSettings.filter = profile.alertFilter
+            services.alertSettings.soundCues = profile.channels.contains(.spatialAudio)
             Task { await services.announcements.updateProfile(profile) }
         }
+    }
+
+    /// Settings-page choices that are not part of the GuidanceProfile.
+    var preferences: SettingsPreferences {
+        didSet { save(preferences, forKey: Keys.preferences) }
     }
 
     var hasCompletedOnboarding: Bool {
@@ -22,10 +30,12 @@ final class AppViewModel {
     let services: AppServices
 
     @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored private var tripCameraTask: Task<Void, Never>?
 
     private enum Keys {
         static let profile = "guidanceProfile"
         static let onboarded = "hasCompletedOnboarding"
+        static let preferences = "settingsPreferences"
     }
 
     init(defaults: UserDefaults = .standard, services: AppServices? = nil) {
@@ -34,11 +44,18 @@ final class AppViewModel {
         self.performance = performance
         self.services = services ?? .live(performance: performance)
         self.profile = Self.load(GuidanceProfile.self, forKey: Keys.profile, from: defaults) ?? .default
+        self.preferences = Self.load(SettingsPreferences.self, forKey: Keys.preferences, from: defaults) ?? .default
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarded)
 
         let profile = self.profile
+        self.services.askAISettings.priorities = profile.aiPriorities
+        self.services.alertSettings.filter = profile.alertFilter
+        self.services.alertSettings.soundCues = profile.channels.contains(.spatialAudio)
         let announcements = self.services.announcements
         Task { await announcements.updateProfile(profile) }
+
+        let tripCamera = TripCameraCoordinator(trip: self.services.trip, scene: self.services.scene)
+        tripCameraTask = Task { await tripCamera.run() }
     }
 
     func completeOnboarding(with profile: GuidanceProfile) {

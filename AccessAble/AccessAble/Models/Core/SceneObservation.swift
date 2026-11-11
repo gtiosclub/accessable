@@ -20,8 +20,11 @@ struct Detection: Identifiable, Equatable, Sendable {
     var confidence: Float
     /// Normalized (0...1), upright orientation, origin at top-left.
     var boundingBox: CGRect
-    /// Metres from the camera, if known (LiDAR / depth). nil on non-LiDAR devices.
+    /// Metres from the camera, if known. Measured from depth on LiDAR devices, estimated
+    /// from scene geometry elsewhere (T33); `distanceAccuracy` says which.
     var distance: Double?
+    /// How far `distance` can be trusted. nil when there is no distance.
+    var distanceAccuracy: DistanceAccuracy?
     var bearing: RelativeBearing?
     var origin: Origin
     /// True for things the user could walk into or fall off.
@@ -37,6 +40,7 @@ struct Detection: Identifiable, Equatable, Sendable {
         confidence: Float,
         boundingBox: CGRect,
         distance: Double? = nil,
+        distanceAccuracy: DistanceAccuracy? = nil,
         bearing: RelativeBearing? = nil,
         origin: Origin,
         isHazard: Bool,
@@ -48,11 +52,25 @@ struct Detection: Identifiable, Equatable, Sendable {
         self.confidence = confidence
         self.boundingBox = boundingBox
         self.distance = distance
+        self.distanceAccuracy = distanceAccuracy
         self.bearing = bearing
         self.origin = origin
         self.isHazard = isHazard
         self.worldPosition = worldPosition
     }
+}
+
+/// How much a `Detection.distance` can be trusted.
+///
+/// LiDAR depth is a measurement. A distance worked out from where an object meets the floor,
+/// or from how large something of known size appears, is an estimate that can be out by tens
+/// of percent. Anything acting on a distance — announcement bands, spoken phrasing — has to
+/// be able to tell the two apart, or a guess is reported in the same voice as a measurement.
+enum DistanceAccuracy: Hashable, Codable, Sendable {
+    /// Measured by the depth sensor.
+    case measured
+    /// Inferred from geometry. `plusMinus` is the one-standard-deviation uncertainty in metres.
+    case estimated(plusMinus: Double)
 }
 
 /// What the user is walking on, at camera level.
@@ -120,9 +138,4 @@ struct SceneObservation: Equatable, Sendable {
     }
 
     static let empty = SceneObservation()
-
-    /// placeholder function for later
-    func isObstacleDetected(within range: Double = 2.0) -> Bool {
-        detections.contains { $0.isHazard && ($0.distance ?? 0) <= range }
-    }
 }

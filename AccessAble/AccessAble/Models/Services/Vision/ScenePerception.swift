@@ -35,6 +35,12 @@ final class ScenePerception: Sendable {
         let wasReadingText: Bool
     }
 
+    /// How long one part of `analyze` took, for finding what makes a frame slow.
+    struct StageTiming: Sendable, Equatable {
+        let name: String
+        let milliseconds: Double
+    }
+
     /// What the live debug screen shows besides the observation itself.
     struct Diagnostics: Sendable {
         var floor: Plane3D?
@@ -52,11 +58,32 @@ final class ScenePerception: Sendable {
         var uprightAspectRatio: Float = 3.0 / 4.0
         /// Analysis rate and latency over the last few seconds (T20).
         var performance: PerformanceMetrics?
+        /// Moving things predicted to reach the walking path (T34), soonest first. Shown on
+        /// the Live detection screen, where an approach can be checked against what is
+        /// actually happening in front of the tester.
+        var approaching: [ApproachThreat] = []
+        /// Groups of people (T35), nearest first.
+        var crowds: [CrowdRegion] = []
+        /// What the voice is currently warning about, so the screen shows the same thing.
+        var warning: PathWarning?
+        /// Where this frame's time went, in order.
+        var stages: [StageTiming] = []
+        /// The steering beep to play, nil when silent or sound cues are off.
+        var steering: SteeringCue?
+        /// What the ground ahead is, and how much of it, from segmentation.
+        var surfaceAhead: (kind: SurfaceKind, share: Float)?
+        /// Step downs and drop-offs segmentation showed to be flat floor, this frame.
+        var hazardsDismissedBySurface = 0
     }
 
     private let peopleDetector: PeopleDetector
-    private let objectDetector: ObjectDetector?
+    private let objectDetector: (any ObjectDetecting)?
     private let textReader: TextReader
+    /// Ground segmentation; nil when the model isn't bundled.
+    private let surfaceReader: SurfaceReader?
+    private let surfaceAnnouncer = Mutex(SurfaceAnnouncer())
+    private let cameraQualityEvaluator = CameraQualityEvaluator()
+    private let cameraQualityState = Mutex(CameraQualityState())
     private let corridorWidth: Float
     private let corridorDistance: Float
     private let log = Logger(subsystem: "AccessAble", category: "ScenePerception")
@@ -65,25 +92,52 @@ final class ScenePerception: Sendable {
     private let floorMemory = Mutex(FloorMemory())
     private let tracker = Mutex(ObjectTracker())
     private let announcer = Mutex(ObstacleAnnouncer())
+    private let motion = Mutex(MotionTracker())
+    private let approach = Mutex(ApproachAnnouncer())
+    private let crowdAnnouncer = Mutex(CrowdAnnouncer())
+    /// The user's own travel, so an object's world velocity can be turned into a velocity
+    /// relative to them (T34).
+    private let cameraMotion = Mutex(MotionHistory())
     private let frameTimer = Mutex(FrameTimer())
     private let occupancy = Mutex(LocalOccupancyMap())
     private let navigation = Mutex<NavigationGuide?>(nil)
     /// When the announcer last spoke about the path, so navigation cues keep out of its way.
     private let lastPathAnnouncement = Mutex<TimeInterval>(-.infinity)
+    /// Doors and windows from the classified mesh (T36), refreshed every few frames.
+    private let structures = Mutex<[StructuralFeature]>([])
+    private let structureFrameCount = Mutex(0)
+    private let crosswalkConfirmer = Mutex(CrosswalkConfirmer())
+    private let streetSignals = Mutex(StreetSignalAnnouncer())
+    /// Signs read aloud in Read and Find (T17 / T29).
+    private let signs = Mutex(SignAnnouncer())
     /// Set when a request arrives, consumed by the next frame, which knows the frame time.
     private let pendingNavigationQuery = Mutex<String??>(nil)
     private let clearanceTuning = PathClearanceTuning.default
+    /// The user's danger bar and warning distance, read every frame.
+    private let alertSettings: AlertSettings
+    /// The filter the announcers were last set up with; a change starts them afresh.
+    private let appliedFilter = Mutex<AlertFilter?>(nil)
+    /// The single limit on camera speech across every announcer.
+    private let speechBudget = Mutex(SpeechBudget())
+    /// Slower than this, in metres per second, counts as standing still.
+    private let walkingSpeed: Float = 0.3
+    /// What the Live screen is doing; decides which stages run and what is spoken.
+    private let liveMode = Mutex(LiveMode.walk)
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
-        objectDetector: ObjectDetector? = ObjectDetector(),
+        objectDetector: (any ObjectDetecting)? = DFineObjectDetector(),
         textReader: TextReader = TextReader(),
+        surfaceReader: SurfaceReader? = SurfaceReader(),
         corridorWidth: Float = WalkingCorridor.default.width,
-        corridorDistance: Float = WalkingCorridor.default.maxDistance
+        corridorDistance: Float = WalkingCorridor.default.maxDistance,
+        alertSettings: AlertSettings = AlertSettings()
     ) {
+        self.alertSettings = alertSettings
         self.peopleDetector = peopleDetector
         self.objectDetector = objectDetector
         self.textReader = textReader
+        self.surfaceReader = surfaceReader
         self.corridorWidth = corridorWidth
         self.corridorDistance = corridorDistance
     }
@@ -96,10 +150,32 @@ final class ScenePerception: Sendable {
         floorMemory.withLock { $0.reset() }
         tracker.withLock { $0 = ObjectTracker() }
         announcer.withLock { $0 = ObstacleAnnouncer() }
+        motion.withLock { $0.reset() }
+        approach.withLock { $0 = ApproachAnnouncer() }
+        crowdAnnouncer.withLock { $0 = CrowdAnnouncer() }
+        cameraMotion.withLock { $0 = MotionHistory() }
         navigation.withLock { $0 = nil }
         pendingNavigationQuery.withLock { $0 = nil }
         occupancy.withLock { $0.reset() }
         lastPathAnnouncement.withLock { $0 = -.infinity }
+        cameraQualityState.withLock { $0 = CameraQualityState() }
+        structures.withLock { $0 = [] }
+        structureFrameCount.withLock { $0 = 0 }
+        crosswalkConfirmer.withLock { $0 = CrosswalkConfirmer() }
+        streetSignals.withLock { $0 = StreetSignalAnnouncer() }
+        signs.withLock { $0 = SignAnnouncer() }
+        surfaceAnnouncer.withLock { $0 = SurfaceAnnouncer() }
+        appliedFilter.withLock { $0 = nil }
+        speechBudget.withLock { $0 = SpeechBudget() }
+        // Otherwise the rate is averaged over the time the camera was off, and reads ~1 fps.
+        frameTimer.withLock { $0 = FrameTimer() }
+    }
+
+    var mode: LiveMode { liveMode.withLock { $0 } }
+
+    /// Switches what runs and what is spoken, from the next analyzed frame.
+    func setMode(_ mode: LiveMode) {
+        liveMode.withLock { $0 = mode }
     }
 
     /// Starts steering the user towards `query` ("the chair", "exit"), replacing any
@@ -119,6 +195,16 @@ final class ScenePerception: Sendable {
 
         let depthMap = frame.sceneDepth.flatMap { DepthMap(depth: $0.depthMap, confidence: $0.confidenceMap) }
         let cameraTransform = frame.camera.transform
+
+        var isMovingTooFast = false
+        if case .limited(.excessiveMotion) = frame.camera.trackingState { isMovingTooFast = true }
+        let cameraQualityInput = CameraQualityInput(
+            forwardY: -cameraTransform.columns.2.y,
+            ambientIntensity: frame.lightEstimate.map { Float($0.ambientIntensity) },
+            sharpnessScore: imageSharpnessScore(frame.capturedImage),
+            isMovingTooFast: isMovingTooFast
+        )
+
         // Text is read later, on its own queue; give it this frame's depth so each sign
         // gets a world position that matches the frame it was read from.
         let textLocator: TextReader.Locator? = depthMap.map { depthMap in
@@ -130,9 +216,29 @@ final class ScenePerception: Sendable {
                 )
             }
         }
-        textReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp, locate: textLocator)
+        let mode = liveMode.withLock { $0 }
+        // OCR only where text is wanted: Find and Read, or any "take me to…" (room numbers).
+        if mode.readsText || navigation.withLock({ $0 != nil }) {
+            textReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp, locate: textLocator)
+        }
         let wasReadingText = textReader.isReading
+        var lapStart = start
+        func lap(_ name: String) {
+            let now = CACurrentMediaTime()
+            diagnostics.stages.append(StageTiming(name: name, milliseconds: (now - lapStart) * 1000))
+            lapStart = now
+        }
+        lap("Setup")
         var recognized = recognizeObjects(in: frame.capturedImage, orientation: imageOrientation)
+        lap("Objects")
+        // T37: crosswalk stripes. Skipped when the phone points up and there's no ground in view.
+        let lookingUp = -frame.camera.transform.columns.2.y > 0.3
+        let stripes = lookingUp || !mode.watchesStreet ? nil : uprightLumaGrid(
+            from: frame.capturedImage, orientation: imageOrientation,
+            width: 96, height: max(Int(96 * upright.height / upright.width), 1)
+        ).flatMap { detectCrosswalk(in: $0) }
+        let crosswalkBox = crosswalkConfirmer.withLock { $0.update(stripes) }
+        lap("Crosswalk")
         var obstacles: [Detection] = []
         var hazards: [ElevationHazard] = []
         var path: PathAssessment?
@@ -144,6 +250,22 @@ final class ScenePerception: Sendable {
         // World space is gravity-aligned, so flattening onto world up gives a level
         // heading for bearings and the path test even before a floor has been found.
         let heading = corridor.flattened(ontoFloorNormal: [0, 1, 0]) ?? corridor
+
+        // T36: walking the whole mesh is slow, so regroup it every 10th analyzed frame and
+        // just re-measure the known doors and windows on the others.
+        let refreshStructures = structureFrameCount.withLock { count in
+            count += 1
+            return count % 10 == 1
+        }
+        if refreshStructures {
+            let features = structuralFeatures(from: classifiedFaceSamples(in: frame))
+            structures.withLock { $0 = features }
+        }
+        let structureDetections = structuralDetections(
+            structures.withLock { $0 }, heading: heading, camera: frame.camera,
+            orientation: interfaceOrientation, viewportSize: upright
+        )
+        lap("Mesh")
 
         if let depthMap {
             let camera = frame.camera
@@ -212,25 +334,186 @@ final class ScenePerception: Sendable {
             // Obstacles are cut out of the profile so a chair leg is not a step.
             if floor.isMeasured {
                 let profile = groundProfile(points: cloud, floor: floor.plane, corridor: corridor, excluding: found)
+                // Do not use `corridor.maxDistance` as `expectedMaxDistance`: it is where the
+                // app wants to inspect, not evidence that LiDAR should have returned depth.
+                // Until field recordings establish a reliable coverage model, a trailing
+                // depth loss stays unclassified rather than becoming an urgent false drop-off.
                 hazards = detectElevationHazards(samples: profile)
+            }
+        } else {
+            // T33 — no depth sensor. ARKit still tracks with true metric scale, so the sparse
+            // feature cloud fits a floor (T10) and each detection's floor contact gives a
+            // metric position. Known object sizes cross-check it. What needs a dense cloud —
+            // geometric obstacles (T11), the occupancy map, the path plan and kerbs (T12) —
+            // has nothing to run on and stays absent, so warnings here are about recognized
+            // objects only.
+            let camera = frame.camera
+            let intrinsics = capturedIntrinsics(for: camera)
+            let features = frame.rawFeaturePoints?.points ?? []
+            // Feature points are sparse and cluster on texture, so a fit often fails. The
+            // remembered floor, and failing that a level plane at the assumed camera height,
+            // is what makes an estimate possible at all — at a wider uncertainty, which
+            // `GroundContactTuning` charges for.
+            let floor = floorMemory.withLock {
+                $0.update(fit: detectFloorPlane(points: features), cameraPosition: corridor.origin, at: frame.timestamp)
+            }
+            diagnostics.floor = floor.plane
+            diagnostics.cameraHeight = floor.cameraHeight
+            diagnostics.isFloorMeasured = floor.isMeasured
+
+            recognized = recognized.map { detection in
+                let contact = groundContactDistance(
+                    box: detection.boundingBox, orientation: imageOrientation, floor: floor,
+                    corridor: heading, intrinsics: intrinsics, cameraTransform: camera.transform
+                )
+                let sizeRange = ObjectSizePriors.prior(for: detection.label).flatMap {
+                    distanceRange(
+                        box: detection.boundingBox, orientation: imageOrientation,
+                        prior: $0, intrinsics: intrinsics
+                    )
+                }
+                guard let estimate = combinedDistance(groundContact: contact, sizeRange: sizeRange) else {
+                    return detection
+                }
+                // With a floor contact the position is known outright; from size alone the
+                // object is placed along the ray through its box, which still gives a usable
+                // bearing and in-path test.
+                let centre = imageOrientation.sensorPoint(
+                    fromUpright: CGPoint(x: detection.boundingBox.midX, y: detection.boundingBox.midY)
+                )
+                let position = contact?.position ?? worldPoint(
+                    sensorPoint: centre, atDistance: Float(estimate.meters),
+                    intrinsics: intrinsics, cameraTransform: camera.transform
+                )
+                var located = detection
+                located.distance = estimate.meters
+                located.distanceAccuracy = estimate.accuracy
+                located.worldPosition = position
+                guard let position else { return located }
+                located.bearing = heading.bearing(to: position)
+                if heading.contains(position), detection.isHazard || detection.label == "person" {
+                    inPath.insert(detection.id)
+                }
+                return located
             }
         }
 
+        // Segmentation (walking only): the ground's material, read beside the pipeline.
+        var surface: SurfaceMap?
+        if mode.watchesStreet, let surfaceReader {
+            surfaceReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp)
+            surface = surfaceReader.current(at: frame.timestamp)
+        }
+        // A "drop" with the same flat floor on both sides is a hole in depth, not an edge.
+        if let surface, let height = diagnostics.cameraHeight, !hazards.isEmpty {
+            let checked = checkingSurface(hazards) { ahead in
+                let ground = heading.origin + heading.forward * ahead - SIMD3<Float>(0, height, 0)
+                let point = frame.camera.projectPoint(ground, orientation: interfaceOrientation, viewportSize: upright)
+                return surface.kind(at: CGPoint(x: point.x / upright.width, y: point.y / upright.height))
+            }
+            diagnostics.hazardsDismissedBySurface = zip(hazards, checked).count { $0.type != $1.type }
+            hazards = checked
+        }
+        diagnostics.surfaceAhead = surface?.dominant(in: SurfaceMap.groundAhead)
+        lap("Depth")
         let detections = tracker.withLock {
             $0.update(fuse(obstacles: obstacles, recognized: recognized), at: frame.timestamp)
         }
+        var observed = detections
+        if let crosswalkBox {
+            observed.append(Detection(label: "crosswalk", confidence: 1, boundingBox: crosswalkBox, origin: .model, isHazard: false))
+        }
         let recognizedText = textReader.currentText(at: frame.timestamp)
+        let filter = alertSettings.filter
+        let filterChanged = appliedFilter.withLock { applied in
+            defer { applied = filter }
+            return applied != filter
+        }
+        // T34 — what is moving toward the user. World velocities come from the tracks'
+        // world positions; the user's own travel is taken out so walking toward a parked car
+        // is not an approach, and a cyclist crossing ahead is one even while barely nearing.
+        let userVelocity = cameraMotion.withLock { history -> SIMD3<Float> in
+            history.record(position: corridor.origin, at: frame.timestamp)
+            return history.motion?.velocity ?? .zero
+        }
+        let isUserMoving = simd_length(SIMD2(userVelocity.x, userVelocity.z)) >= walkingSpeed
         var announcements = announcer.withLock {
-            $0.announcements(
+            // Band indices mean different distances under a new filter, so start over.
+            if filterChanged { $0 = ObstacleAnnouncer() }
+            $0.alertFilter = filter
+            let events = $0.announcements(
                 for: detections.map { ObstacleAlertInput(detection: $0, isInPath: inPath.contains($0.id)) },
                 hazards: hazards,
                 path: path,
                 blockedAhead: blockedAhead,
-                at: frame.timestamp
+                at: frame.timestamp,
+                isUserMoving: isUserMoving
+            )
+            diagnostics.warning = $0.currentWarning
+            // Not while reading or describing: the user isn't walking a route, and Describe
+            // listens through the microphone.
+            if alertSettings.soundCues, mode == .walk || mode == .find {
+                diagnostics.steering = SteeringCue(warning: $0.currentWarning, warningDistance: filter.maximumDistance)
+            }
+            return events
+        }
+        let motions = motion.withLock { $0.update(detections, at: frame.timestamp) }
+        let threats = approachThreats(
+            detections: detections, motions: motions,
+            userVelocity: userVelocity, corridor: heading
+        )
+        diagnostics.approaching = threats
+        if mode.watchesStreet {
+            announcements += approach.withLock {
+                $0.alertFilter = filter
+                return $0.announcements(for: threats, at: frame.timestamp, now: .now)
+            }
+        }
+
+        // T35 — people grouped into crowds. Ambient, and never instead of T16: anyone
+        // actually in the path is still announced as an obstacle.
+        let crowds = detectCrowds(among: detections.filter { $0.label.lowercased() == "person" })
+        diagnostics.crowds = crowds.crowds
+        // Crowds and camera hints are only nice to know: below anything but the lowest bar.
+        let crowdEvents = crowdAnnouncer.withLock { $0.announcements(for: crowds.crowds, at: frame.timestamp, now: .now) }
+        if filter.allows(.low), mode.watchesStreet { announcements += crowdEvents }
+
+        // T32 — camera aiming and image quality. Normal priority, so it never talks over a
+        // path warning, and only once a problem has lasted a moment: the phone dips and
+        // blurs for an instant with every step.
+        let cameraFeedback = cameraQualityEvaluator.evaluate(cameraQualityInput)
+        if shouldAnnounceCameraQuality(cameraFeedback, at: frame.timestamp), let cameraFeedback,
+           filter.allows(.low), mode.givesCameraHints {
+            announcements.append(
+                AnnouncementEvent(
+                    category: .system,
+                    priority: .normal,
+                    text: cameraFeedback.spokenText,
+                    source: .system,
+                    expiresAt: Date().addingTimeInterval(5),
+                    dedupKey: "camera-quality-\(cameraFeedback.rawValue)"
+                )
             )
         }
+
+        // An approach warning holds navigation cues back in the same way a path warning does.
         if !announcements.isEmpty {
             lastPathAnnouncement.withLock { $0 = frame.timestamp }
+        }
+        if mode.watchesStreet {
+            announcements += surfaceAnnouncer.withLock { $0.announcements(for: surface, at: frame.timestamp) }
+                .filter { _ in diagnostics.surfaceAhead.map { filter.allows(DangerLevel(of: $0.kind)) } ?? false }
+        }
+        if mode.announcesSigns {
+            announcements += signs.withLock {
+                $0.readsAllText = mode == .read
+                return $0.announcements(for: recognizedText, heading: heading, at: frame.timestamp)
+            }
+        }
+        if mode.watchesStreet {
+            announcements += streetSignals.withLock {
+                $0.announcements(for: observed.filter { filter.allows(DangerLevel(of: $0)) }, at: frame.timestamp)
+            }
         }
 
         // "Take me to…": sightings go in, one instruction at a time comes out.
@@ -244,22 +527,30 @@ final class ScenePerception: Sendable {
         let pathSpokeRecently = frame.timestamp - lastPathAnnouncement.withLock { $0 } < 2.5
         diagnostics.navigation = navigation.withLock { guide -> NavigationStatus? in
             guard guide != nil else { return nil }
-            let result = guide!.update(detections: detections, text: recognizedText, heading: heading, at: frame.timestamp)
+            // Mesh doors (T36) count too: "take me to the door" is the commonest request.
+            let result = guide!.update(
+                detections: detections + structureDetections, text: recognizedText, heading: heading, at: frame.timestamp
+            )
             if let event = result.announcement, !pathSpokeRecently || event.priority >= .high {
                 announcements.append(event)
             }
             return result.status
         }
+        lap("Warnings")
         let end = CACurrentMediaTime()
         diagnostics.performance = frameTimer.withLock { timer in
             timer.record(start: start, end: end)
             return timer.metrics
         }
         diagnosticsState.withLock { $0 = diagnostics }
+        // Every announcer has had its say; now the one shared limit on how much is spoken.
+        // Outside Walk only "Stop" gets through from the obstacle announcers.
+        announcements = announcements.filter(mode.admits)
+        announcements = speechBudget.withLock { $0.admit(announcements, at: frame.timestamp) }
 
         let observation = SceneObservation(
             timestamp: .now,
-            detections: detections,
+            detections: observed + structureDetections,
             ground: groundSurface(for: hazards),
             recognizedText: recognizedText,
             elevationHazards: hazards,
@@ -295,6 +586,27 @@ private extension ScenePerception {
         return detections
     }
 
+    /// True when `feedback` has held for `CameraQualityState.persistence` and the same
+    /// problem was not spoken within `repeatInterval`. Nil (all good) resets the wait.
+    func shouldAnnounceCameraQuality(_ feedback: CameraQualityFeedback?, at timestamp: TimeInterval) -> Bool {
+        cameraQualityState.withLock { state in
+            guard let feedback else {
+                state.current = nil
+                return false
+            }
+            if state.current?.feedback != feedback {
+                state.current = (feedback, timestamp)
+            }
+            guard let since = state.current?.since,
+                  timestamp - since >= CameraQualityState.persistence,
+                  state.lastSpoken?.feedback != feedback
+                    || timestamp - (state.lastSpoken?.at ?? -.infinity) >= CameraQualityState.repeatInterval
+            else { return false }
+            state.lastSpoken = (feedback, timestamp)
+            return true
+        }
+    }
+
     /// The corridor straight ahead of the camera. The detectors re-orthogonalize these
     /// axes onto the floor plane themselves, so passing the raw camera axes is fine.
     func corridor(for camera: ARCamera) -> WalkingCorridor {
@@ -310,6 +622,19 @@ private extension ScenePerception {
             right: right,
             width: corridorWidth,
             maxDistance: corridorDistance
+        )
+    }
+
+    /// Intrinsics for the captured image itself, unscaled. T33 works against the camera
+    /// image because without a depth sensor there is no depth map to scale them to.
+    func capturedIntrinsics(for camera: ARCamera) -> CameraIntrinsics {
+        CameraIntrinsics(
+            focalX: camera.intrinsics[0][0],
+            focalY: camera.intrinsics[1][1],
+            principalX: camera.intrinsics[2][0],
+            principalY: camera.intrinsics[2][1],
+            imageWidth: Int(camera.imageResolution.width),
+            imageHeight: Int(camera.imageResolution.height)
         )
     }
 
@@ -422,4 +747,15 @@ private extension ScenePerception {
         default: CGSize(width: resolution.height, height: resolution.width)
         }
     }
+}
+
+/// When camera-quality feedback (T32) started and was last spoken.
+private struct CameraQualityState: Sendable {
+    /// A problem must last this long, in seconds, before it is spoken.
+    static let persistence: TimeInterval = 1
+    /// The same problem is repeated at most this often, in seconds.
+    static let repeatInterval: TimeInterval = 10
+
+    var current: (feedback: CameraQualityFeedback, since: TimeInterval)?
+    var lastSpoken: (feedback: CameraQualityFeedback, at: TimeInterval)?
 }

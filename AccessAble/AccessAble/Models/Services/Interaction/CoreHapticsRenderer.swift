@@ -6,11 +6,15 @@ private let log = Logger(subsystem: "AccessAble", category: "Haptics")
  
 /// Owner: Haptics (3.2). Plays the AHAP files named by `HapticID`, one at a time.
 /// `intensity` (the user's Haptic intensity setting, 0...1) scales the whole pattern.
+/// Patterns with a `loopPeriod` repeat for at most `maxLoopDuration`, so a warning can't keep
+/// buzzing after whatever caused it has gone; nothing reports that a hazard has passed.
 actor CoreHapticsRenderer: HapticRendering {
     private var engine: CHHapticEngine?
     private var player: CHHapticAdvancedPatternPlayer?
     private var patterns: [HapticID: CHHapticPattern] = [:]
     private let supportsHaptics = CHHapticEngine.capabilitiesForHardware().supportsHaptics
+    private var loopTimeout: Task<Void, Never>?
+    private static let maxLoopDuration: Duration = .seconds(3)
  
     func play(_ id: HapticID, intensity: Float) async {
         guard supportsHaptics, intensity > 0, let pattern = pattern(for: id) else { return }
@@ -29,12 +33,22 @@ actor CoreHapticsRenderer: HapticRendering {
             )
             try player.start(atTime: CHHapticTimeImmediate)
             self.player = player
+            loopTimeout?.cancel()
+            loopTimeout = nil
+            if id.loopPeriod != nil {
+                loopTimeout = Task { [weak self] in
+                    guard (try? await Task.sleep(for: Self.maxLoopDuration)) != nil else { return }
+                    await self?.stop()
+                }
+            }
         } catch {
             log.error("haptic \(id.rawValue) failed: \(error.localizedDescription)")
         }
     }
  
     func stop() async {
+        loopTimeout?.cancel()
+        loopTimeout = nil
         try? player?.stop(atTime: CHHapticTimeImmediate)
         player = nil
     }
@@ -57,7 +71,11 @@ actor CoreHapticsRenderer: HapticRendering {
     }
  
     private func runningEngine() throws -> CHHapticEngine {
-        if let engine { return engine }
+        if let engine {
+            // A stopped engine (call, app suspended) has to be restarted before it can play.
+            try engine.start()
+            return engine
+        }
         let engine = try CHHapticEngine()
         engine.playsHapticsOnly = true
         engine.isAutoShutdownEnabled = true

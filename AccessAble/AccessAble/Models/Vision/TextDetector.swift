@@ -7,12 +7,13 @@ import Vision
 /// Reads text such as room numbers, signs and labels with Apple's Vision framework.
 /// Owner: Computer Vision (1.3 / task T17).
 ///
-/// Uses the fast recognizer: it is accurate enough for short, high-contrast signage and
-/// cheap enough to run on live frames. Boxes come back upright and top-left-origin, like
-/// `Detection.boundingBox`.
+/// Uses the accurate recognizer with language correction (T43): the fast one misread too
+/// many room numbers and labels. It is slower, which is affordable because live reading
+/// runs at most once a second on its own queue, off the safety path. Boxes come back
+/// upright and top-left-origin, like `Detection.boundingBox`.
 struct TextDetector: Sendable {
-    /// Readings below this are dropped. Fast recognition produces plenty of low-confidence
-    /// fragments from textures and edges, and they should never be read aloud.
+    /// Readings below this are dropped: low-confidence fragments come from textures and
+    /// edges, and they should never be read aloud.
     var minimumConfidence: Float = 0.5
 
     init(minimumConfidence: Float = 0.5) {
@@ -32,7 +33,8 @@ struct TextDetector: Sendable {
 
     private func run(_ handler: VNImageRequestHandler) throws -> [RecognizedText] {
         let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .fast
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = true
         try handler.perform([request])
 
         return (request.results ?? []).compactMap { observation in

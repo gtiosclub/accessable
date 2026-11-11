@@ -51,6 +51,15 @@ struct ElevationHazardDetectorTests {
         #expect(abs(hazard.heightChange - 0.15) < 0.02)
     }
 
+    @Test("a low 6 cm curb remains detectable above the documented 5 cm noise floor")
+    func lowCurb() throws {
+        let samples = groundProfile(from: 0.2, to: 2.0) { $0 < 1.0 ? 0 : 0.06 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .stepUp)
+        #expect(abs(hazard.heightChange - 0.06) < 0.02)
+    }
+
     @Test("a 1:12 ramp is not a hazard")
     func rampIsNotAStep() {
         // Rises 25 cm over 3 m — more total height than the drop-off above, but spread
@@ -116,6 +125,69 @@ struct ElevationHazardDetectorTests {
         #expect(abs(hazard.distance - 1.0) < 0.1)
     }
 
+    @Test("a real edge hides the ground just past it: lower ground across the hole is a drop-off")
+    func occludedDropOff() throws {
+        // Camera 1.3 m up, edge at 2 m, 60 cm drop: the ray grazing the edge lands at about
+        // 2.9 m, so the sensor returns nothing between the two.
+        let samples = groundProfile(from: 0.5, to: 2.0) { _ in 0 }
+            + groundProfile(from: 2.9, to: 4.0) { _ in -0.6 }
+
+        let hazards = detectElevationHazards(samples: samples)
+
+        #expect(hazards.count == 1)
+        let hazard = try #require(hazards.first)
+        #expect(hazard.type == .dropOff)
+        #expect(abs(hazard.heightChange + 0.6) < 0.02)
+        // The near side: the last place the ground was confirmed.
+        #expect(abs(hazard.distance - 2.0) < 0.1)
+    }
+
+    @Test("a smaller fall across a hole is a step down")
+    func occludedStepDown() throws {
+        let samples = groundProfile(from: 0.5, to: 2.0) { _ in 0 }
+            + groundProfile(from: 2.5, to: 4.0) { _ in -0.15 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .stepDown)
+    }
+
+    @Test("a few centimetres across a hole is still only a hole")
+    func noisyGapStaysUnknown() throws {
+        let samples = groundProfile(from: 0.5, to: 1.5) { _ in 0 }
+            + groundProfile(from: 2.5, to: 4.0) { _ in -0.04 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .unknown)
+        #expect(hazard.heightChange == 0)
+    }
+
+    @Test("a fall across a hole beyond 3 m is only a hole: far LiDAR returns are too noisy to call")
+    func farGapStaysUnknown() throws {
+        let samples = groundProfile(from: 0.5, to: 3.4) { _ in 0 }
+            + groundProfile(from: 4.0, to: 4.8) { _ in -0.4 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .unknown)
+    }
+
+    @Test("one stray patch of lower ground past a hole is not believed")
+    func thinGapStaysUnknown() throws {
+        let samples = groundProfile(from: 0.5, to: 1.5) { _ in 0 }
+            + groundProfile(from: 2.0, to: 2.1) { _ in -0.4 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .unknown)
+    }
+
+    @Test("higher ground across a hole is not guessed at")
+    func riseAcrossGapStaysUnknown() throws {
+        let samples = groundProfile(from: 0.5, to: 1.5) { _ in 0 }
+            + groundProfile(from: 2.5, to: 4.0) { _ in 0.2 }
+
+        let hazard = try #require(detectElevationHazards(samples: samples).first)
+        #expect(hazard.type == .unknown)
+    }
+
     @Test("coverage that simply stops is a drop-off")
     func trailingCliff() throws {
         // The real signature of a kerb edge: nothing past it reflects anything back.
@@ -165,5 +237,27 @@ struct ElevationHazardDetectorTests {
 
         #expect(fromShuffled == fromOrdered)
         #expect(try #require(fromOrdered.first).type == .stepDown)
+    }
+
+    @Test("detected drop-offs take the urgent announcement path over ordinary steps")
+    func detectedDropOffUrgency() throws {
+        let dropProfile = groundProfile(from: 0.2, to: 2.0) { $0 < 0.9 ? 0 : -0.40 }
+        let stepProfile = groundProfile(from: 0.2, to: 2.0) { $0 < 0.9 ? 0 : -0.12 }
+        let drop = try #require(detectElevationHazards(samples: dropProfile).first)
+        let step = try #require(detectElevationHazards(samples: stepProfile).first)
+        #expect(drop.type == .dropOff)
+        #expect(step.type == .stepDown)
+
+        var dropAnnouncer = ObstacleAnnouncer()
+        var stepAnnouncer = ObstacleAnnouncer()
+        let dropEvents = (0 ..< 3).flatMap {
+            dropAnnouncer.announcements(for: [], hazards: [drop], at: Double($0) * 0.1)
+        }
+        let stepEvents = (0 ..< 3).flatMap {
+            stepAnnouncer.announcements(for: [], hazards: [step], at: Double($0) * 0.1)
+        }
+
+        #expect(try #require(dropEvents.first).priority == .critical)
+        #expect(try #require(stepEvents.first).priority == .high)
     }
 }

@@ -11,7 +11,11 @@ import UIKit
 /// Frames go through a `LatestOnlyProcessor` (T3), so when analysis is slower than the
 /// camera, stale frames are dropped rather than queued. `PerformanceMode` thins the input
 /// further by only offering every Nth camera frame.
-final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, Sendable {
+///
+/// Every feature shares this one camera. `start()` and `stop()` nest: tracking starts with
+/// the first `start()`, later ones join it without resetting the world, and the session
+/// only pauses when every `start()` has had its `stop()`.
+final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, GuidanceStatusProviding, Sendable {
     let sessionManager: ARSessionManager
     let perception: ScenePerception
     /// Idle unless a field test is being recorded from the Live detection screen.
@@ -19,6 +23,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     private let performance: any PerformanceModeProviding
     private let askAI: AskAI
+    /// Plays the steering beep; nil where there is no audio (tests).
+    private let steering: SteeringTones?
     private let broadcaster = Broadcaster<SceneObservation>(replaysLatest: true)
     private let processor: LatestOnlyProcessor<CapturedFrame>
     /// Announcements go through a stream drained by one task, so they reach the sink in
@@ -33,21 +39,32 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         var modeTask: Task<Void, Never>?
         /// The still the latest Ask AI question was answered from.
         var lastAskedImage: Data?
+        /// Whether a "take me to…" request is active, which needs the mesh in any mode.
+        var isNavigating = false
     }
 
     private let state = Mutex(State())
+    /// How many callers of `start()` have not yet called `stop()`.
+    @MainActor private var clientCount = 0
+
+    /// An observation older than this means the camera isn't running.
+    private static let observationFreshness: TimeInterval = 1
+    /// How long "Describe my surroundings" waits for a first frame when the camera was off.
+    private static let wakeTimeout: Duration = .seconds(4)
 
     init(
         sessionManager: ARSessionManager,
         perception: ScenePerception = ScenePerception(),
         performance: any PerformanceModeProviding,
         announcements: any AnnouncementSink,
-        askAI: AskAI = AskAI()
+        askAI: AskAI = AskAI(),
+        steering: SteeringTones? = nil
     ) {
         self.sessionManager = sessionManager
         self.perception = perception
         self.performance = performance
         self.askAI = askAI
+        self.steering = steering
 
         let (pending, announcementQueue) = AsyncStream.makeStream(
             of: AnnouncementEvent.self, bufferingPolicy: .bufferingNewest(16)
@@ -61,12 +78,15 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         }
 
         processor = LatestOnlyProcessor(label: "AccessAble.ARSceneAnalyzer.analysis") {
-            [perception, broadcaster, announcementQueue, recorder, sessionManager] captured in
+            [perception, broadcaster, announcementQueue, recorder, sessionManager, steering] captured in
             let analysis = perception.analyze(captured.frame, interfaceOrientation: captured.interfaceOrientation)
             broadcaster.send(analysis.observation)
-            for event in analysis.announcements {
-                announcementQueue.yield(event)
+            if let steering {
+                let cue = perception.diagnostics.steering
+                Task { @MainActor in steering.update(cue) }
             }
+            // Register emitted event IDs before delivery starts. A delivered warning can arrive
+            // after its field-test scenario closes, and the recorder must retain its origin.
             recorder.record(FieldTestRecorder.FrameRecord(
                 analysis: analysis,
                 diagnostics: perception.diagnostics,
@@ -74,6 +94,23 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
                 now: ProcessInfo.processInfo.systemUptime,
                 tracking: sessionManager.trackingStateDescription,
                 cameraFPS: sessionManager.healthReport.averageFPS
+            ))
+            for event in analysis.announcements {
+                announcementQueue.yield(event)
+            }
+        }
+
+        // ARKit can't run in the background, so a locked phone means no obstacle warnings.
+        // Someone relying on them has to be told, even though a trip's turns carry on.
+        sessionManager.setInterruptionHandler { [announcementQueue] isInterrupted in
+            announcementQueue.yield(AnnouncementEvent(
+                category: .system,
+                priority: .high,
+                text: isInterrupted
+                    ? "Camera paused. Obstacle warnings are off."
+                    : "Camera back on. Obstacle warnings are on.",
+                source: .system,
+                expiresAt: .now.addingTimeInterval(10)
             ))
         }
     }
@@ -85,7 +122,24 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     }
 
     func start() async throws {
-        try await MainActor.run { try sessionManager.start() }
+        try await acquireCamera()
+    }
+
+    func stop() async {
+        await releaseCamera()
+    }
+
+    @MainActor
+    private func acquireCamera() throws {
+        guard clientCount == 0 else {
+            clientCount += 1
+            return
+        }
+        // A new session starts with no "take me to…" request; the mode decides the mesh.
+        state.withLock { $0.isNavigating = false }
+        sessionManager.setMeshReconstruction(perception.mode.usesMesh)
+        try sessionManager.start()
+        clientCount = 1
         // Tracking restarts from scratch, so nothing remembered about the old world holds.
         perception.reset()
 
@@ -109,7 +163,11 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         previous.1?.cancel()
     }
 
-    func stop() async {
+    @MainActor
+    private func releaseCamera() {
+        guard clientCount > 0 else { return }
+        clientCount -= 1
+        guard clientCount == 0 else { return }
         let (subscription, modeTask) = state.withLock { state in
             defer {
                 state.subscription = nil
@@ -120,7 +178,29 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         if let subscription { sessionManager.removeFrameHandler(subscription) }
         modeTask?.cancel()
         processor.cancelPending()
-        await MainActor.run { sessionManager.stop() }
+        sessionManager.stop()
+        steering?.update(nil)
+    }
+
+    // MARK: - GuidanceStatusProviding
+
+    var guidanceStatus: GuidanceStatus { sessionManager.guidanceStatus }
+
+    func guidanceStatuses() -> AsyncStream<GuidanceStatus> { sessionManager.guidanceStatuses() }
+
+    /// A session that could not relocalize comes back as a different world, so tracking is
+    /// re-run from scratch and the remembered floor and occupancy map, anchored in
+    /// coordinates that no longer mean anything, are cleared. It doesn't go through
+    /// `start()`: that would add a camera hold nobody releases.
+    func restartGuidance() async throws {
+        try await restartTracking()
+    }
+
+    @MainActor
+    private func restartTracking() throws {
+        guard clientCount > 0 else { return }
+        try sessionManager.start()
+        perception.reset()
     }
 
     /// Tells the analyzer how the device is held, so Vision gets the right image
@@ -131,20 +211,78 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     // MARK: - SceneDescribing
 
-    /// Tier A: built from the latest observation, instantly and offline (T18).
+    /// Tier A: built from the latest observation, offline (T18). Instant while the camera is
+    /// running; otherwise the camera is woken for one analyzed frame, so the answer works
+    /// from Home and never describes a room the user has left.
     func describeCurrentScene() async -> String {
-        SceneDescriptionBuilder().describe(broadcaster.latest ?? .empty)
+        SceneDescriptionBuilder().describe(await currentObservation())
+    }
+
+    private func currentObservation() async -> SceneObservation {
+        if let latest = broadcaster.latest,
+           Date.now.timeIntervalSince(latest.timestamp) < Self.observationFreshness {
+            return latest
+        }
+        let requested = Date.now
+        // Subscribed first, so the frame can't slip past. It may replay an old observation.
+        let observations = broadcaster.stream()
+        do {
+            try await start()
+        } catch {
+            return .empty
+        }
+        let observation = await withTaskGroup(of: SceneObservation?.self) { group in
+            group.addTask {
+                for await observation in observations where observation.timestamp >= requested {
+                    return observation
+                }
+                return nil
+            }
+            group.addTask {
+                try? await Task.sleep(for: Self.wakeTimeout)
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+        await stop()
+        return observation ?? .empty
     }
 
     /// Tier B, "Ask AI" (T19): the next camera frame as a still, plus what the pipeline
     /// last saw (the objects, distances and directions "Describe my surroundings" uses),
     /// answered on the device. Runs beside the obstacle pipeline, never in it.
-    /// `locationContext` is not used yet.
+    /// `locationContext` is not used yet. Asked with no camera running (by voice from Home,
+    /// T38), the camera is woken for the question, as Describe does.
     func ask(_ question: String, locationContext: String?) async throws -> String {
+        try await ask(question, conversation: [])
+    }
+
+    /// Ask AI with the conversation so far, for follow-ups (the camera screen's Describe mode).
+    func ask(_ question: String, conversation: [AskAITurn]) async throws -> String {
         state.withLock { $0.lastAskedImage = nil }
-        let imageData = try await captureStillImage()
+        let imageData: Data
+        let observation: SceneObservation?
+        if let latest = broadcaster.latest, Date.now.timeIntervalSince(latest.timestamp) < Self.observationFreshness {
+            imageData = try await captureStillImage()
+            observation = latest
+        } else {
+            try await start()
+            do {
+                let woken = await currentObservation()
+                imageData = try await captureStillImage()
+                observation = woken
+            } catch {
+                await stop()
+                throw error
+            }
+            await stop()
+        }
         state.withLock { $0.lastAskedImage = imageData }
-        return try await askAI.answer(question, imageData: imageData, observation: broadcaster.latest ?? .empty).answer
+        return try await askAI.answer(
+            question, imageData: imageData, observation: observation ?? .empty, conversation: conversation
+        ).answer
     }
 
     /// The next frame from the shared session as an upright JPEG. Frames only flow while
@@ -181,6 +319,20 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     func navigate(to query: String?) {
         perception.navigate(to: query)
+        state.withLock { $0.isNavigating = query != nil }
+        updateMesh()
+    }
+
+    /// Switches what the pipeline runs and speaks (Walk, Find, Read, Describe).
+    func setMode(_ mode: LiveMode) {
+        perception.setMode(mode)
+        updateMesh()
+    }
+
+    /// Doors come from the mesh, which is only built in Find or during a "take me to…".
+    private func updateMesh() {
+        let wanted = perception.mode.usesMesh || state.withLock { $0.isNavigating }
+        Task { @MainActor [sessionManager] in sessionManager.setMeshReconstruction(wanted) }
     }
 
     var navigationStatus: NavigationStatus? { perception.navigationStatus }
@@ -219,6 +371,16 @@ private struct CapturedImage: @unchecked Sendable {
 protocol AskedImageProviding: Sendable {
     /// The JPEG of the latest question's still; nil before any question, or if capture failed.
     var lastAskedImage: Data? { get }
+}
+
+/// Lets a screen hear when camera guidance stops or comes back, so it can say so and keep
+/// the display awake while guidance runs (T27). Separate from `SceneObservationProviding`
+/// so that contract stays as it is; services without a camera don't conform.
+protocol GuidanceStatusProviding: Sendable {
+    var guidanceStatus: GuidanceStatus { get }
+    func guidanceStatuses() -> AsyncStream<GuidanceStatus>
+    /// Restarts guidance from scratch, discarding everything remembered about the old world.
+    func restartGuidance() async throws
 }
 
 /// "Take me to the chair": scan the room by turning on the spot, then be steered to it.
