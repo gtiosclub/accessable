@@ -585,6 +585,49 @@ struct TripManagerTests {
     }
 
     @Test
+    func askedForRerouteWhileOnTheRouteFollowsTheNewRoute() async throws {
+        // Route Blocked Ahead's "find another way": still on the route, so no off-route reroute would come
+        let walked = TripWalk.distances(from: 0, to: 20).last ?? 0
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked)
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.requests == [origin])
+
+        await harness.router.respond()
+        let rerouted = await harness.states.waitFor { $0.nextManeuver?.instruction == "Arrive" }
+        #expect(abs((rerouted.distanceRemaining ?? 0) - 80) < 0.5)
+        await waitUntil { await harness.engine.texts.contains("New route. Head east.") }
+        let texts = await harness.engine.texts
+        #expect(texts.contains("Finding a new route from here."))
+        #expect(!texts.contains("Trip ended."))
+    }
+
+    @Test
+    func askedForRerouteWithoutAPreciseFixSaysSoAndAsksNothing() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.fix(harness.point(5), accuracy: 50)
+
+        await harness.manager.reroute()
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await harness.engine.texts.contains(
+            "Couldn't find where you are precisely enough for a new route. Try again in a moment."
+        ))
+    }
+
+    @Test
+    func askedForRerouteWithNoTripDoesNothing() async throws {
+        let harness = try Harness()
+        await harness.manager.reroute()
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await harness.engine.texts.isEmpty)
+    }
+
+    @Test
     func reroutesWaitThirtySecondsAndStopAfterFive() async throws {
         let harness = try Harness(reroutes: Array(repeating: .failure(.serverUnavailable), count: 6))
         await harness.start()

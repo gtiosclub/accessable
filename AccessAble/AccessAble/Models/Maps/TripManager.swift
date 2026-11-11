@@ -44,6 +44,8 @@ actor TripManager: TripStateProviding {
     private var missedTurnStep: Int?
     private var rerouteCount = 0
     private var lastRerouteRequest: Date?
+    /// Where an asked-for reroute starts: the latest fix precise enough to start a route from.
+    private var lastPreciseFix: GeoCoordinate?
     private var tripStartedAt = Date.distantPast
     private var lastGoodFixAt: Date?
     private var isSignalWeak = false
@@ -105,6 +107,7 @@ actor TripManager: TripStateProviding {
         missedTurnStep = nil
         rerouteCount = 0
         lastRerouteRequest = nil
+        lastPreciseFix = nil
         tripStartedAt = now()
         lastGoodFixAt = nil
         isSignalWeak = false
@@ -204,6 +207,7 @@ actor TripManager: TripStateProviding {
                 if phase == .active { pending.append((signalAnnouncement("GPS signal is back.", .normal, 6), nil)) }
             }
         }
+        if sample.horizontalAccuracy <= Self.rerouteAccuracy { lastPreciseFix = sample.coordinate }
         // decided from the fixes before this one, so a reroute starts from the fix after the cue
         let rerouteOrigin = wantsReroute && sample.horizontalAccuracy <= Self.rerouteAccuracy
             ? sample.coordinate : nil
@@ -318,7 +322,27 @@ actor TripManager: TripStateProviding {
         return lastRerouteRequest.map { now().timeIntervalSince($0) >= Self.rerouteInterval } ?? true
     }
 
-    private func requestReroute(from origin: GeoCoordinate, generation: Int) {
+    /// A new route from where the user is now, asked for by the user (Route Blocked Ahead's
+    /// "find another way") rather than because they left the route. The routing service doesn't
+    /// know about the obstacle, so the new route is the best one from here, not one around it.
+    func reroute() async {
+        guard phase == .active || phase == .paused else { return }
+        guard let origin = lastPreciseFix else {
+            await submit(maneuver("Couldn't find where you are precisely enough for a new route. Try again in a moment.",
+                                  .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
+            return
+        }
+        let generation = generation
+        await submit(maneuver("Finding a new route from here.", .high, expiresIn: 10, key: "reroute-requested"))
+        // the trip may have ended while that was submitted
+        guard self.generation == generation, phase == .active || phase == .paused else { return }
+        // one already in flight is the user going off route, so its answer is the new route
+        guard rerouteTask == nil else { return }
+        requestReroute(from: origin, generation: generation, requested: true)
+    }
+
+    /// - Parameter requested: Asked for by the user, so it lands even while still on the route.
+    private func requestReroute(from origin: GeoCoordinate, generation: Int, requested: Bool = false) {
         guard let destination else { return }
         rerouteCount += 1
         lastRerouteRequest = now()
@@ -331,15 +355,16 @@ actor TripManager: TripStateProviding {
             } catch {
                 result = .failure(error)
             }
-            await self.finishReroute(result, generation: generation, version: version)
+            await self.finishReroute(result, generation: generation, version: version, requested: requested)
         }
     }
 
-    private func finishReroute(_ result: Result<NavigationRoute, any Error>, generation: Int, version: Int) async {
+    private func finishReroute(_ result: Result<NavigationRoute, any Error>, generation: Int, version: Int,
+                               requested: Bool) async {
         guard self.generation == generation, routeVersion == version else { return }
         rerouteTask = nil
         // back on the route, or arrived, since the request went out
-        guard phase == .active || phase == .paused, !arrivedWhilePaused, needsReroute else { return }
+        guard phase == .active || phase == .paused, !arrivedWhilePaused, needsReroute || requested else { return }
         switch result {
         case .success(let newRoute):
             routeVersion += 1

@@ -414,21 +414,14 @@ final class TripSessionViewModel {
         isRouteBlocked = true
     }
 
-    /// Asks for a new route from where the user is now. The route service doesn't know about
-    /// the obstacle, so the new route is the best one from here, not one that avoids it.
+    /// Asks `TripManager` for a new route from where the user is now ("find another way" on
+    /// Route Blocked Ahead). It says what happens, so the bars show only real cues. The route
+    /// service doesn't know about the obstacle, so the new route is the best one from here,
+    /// not one that avoids it.
     func reroute() {
         answerBlockedRoute()
-        guard let directions, let services else {
-            add(TripAnnouncement(text: "New route: turn right in 20 ft, then walk straight", kind: .info))
-            return
-        }
-        Task {
-            await say("Finding a new route from here.", category: .system)
-            // Ending the trip drops the route; the next location fix plans a new one, and
-            // `startWhenRouteIsReady` starts it.
-            await services.trip.endTrip()
-            directions.retryRoute()
-        }
+        guard let services else { return }
+        Task { await services.trip.reroute() }
     }
 
     /// Ends the trip for good (Exit Trip).
