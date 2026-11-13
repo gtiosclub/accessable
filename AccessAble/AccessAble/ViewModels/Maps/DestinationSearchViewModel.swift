@@ -108,4 +108,12 @@ final class DestinationSearchViewModel {
             isResolving = false
         }
     }
+
+    /// Drops a lookup still in flight, so it can't open a place after the user has left.
+    func cancelSelection() {
+        guard isResolving else { return }
+        selectionTask?.cancel()
+        selectedSuggestionID = nil
+        isResolving = false
+    }
 }
