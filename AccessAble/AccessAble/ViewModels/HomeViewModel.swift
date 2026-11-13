@@ -46,7 +46,10 @@ final class HomeViewModel {
         )
         let text = await services.sceneDescriber.describeCurrentScene()
         await services.announcements.submit(
-            AnnouncementEvent(category: .ambient, priority: .high, text: text, source: .userInteraction)
+            AnnouncementEvent(
+                category: .ambient, priority: .high, text: text,
+                source: .userInteraction, topic: .detailedDescription
+            )
         )
     }
 

@@ -1,57 +1,13 @@
 import Foundation
 
-/// How many times an unprompted announcement repeats before it waits for the user to ask again.
-enum AutoRepeat: String, Codable, CaseIterable, Sendable {
-    case onlyWhenAsked
-    case once
-    case twice
-    case threeTimes
-
-    var displayName: String {
-        switch self {
-        case .onlyWhenAsked: "Only when I ask"
-        case .once: "Once"
-        case .twice: "Twice"
-        case .threeTimes: "Three times"
-        }
-    }
-}
-
-/// A kind of information the user can prioritize, hear unprompted, or get only when they ask.
-enum InfoTopic: String, Codable, CaseIterable, Sendable {
-    case directions
-    case trafficAndCrowds
-    case openingsAndObstacles
-    case signsAndText
-    case partiallyVisibleObjects
-    case structureBasics
-    case detailedDescription
-
-    var displayName: String {
-        switch self {
-        case .directions: "Directions"
-        case .trafficAndCrowds: "Traffic flow and crowd density"
-        case .openingsAndObstacles: "Opening areas and obstacles"
-        case .signsAndText: "Locations and styles of recognized signs/texts in view"
-        case .partiallyVisibleObjects: "Objects that are partly in view and which way to move to capture them."
-        case .structureBasics: "Basic information (size, distance, color) of structures and buildings."
-        case .detailedDescription: "Detailed description of view (includes aesthetic appearances)"
-        }
-    }
-}
-
 /// Settings-page preferences that are not part of `GuidanceProfile`.
-/// Saved by `AppViewModel`; the announcement pipeline does not read them yet.
+///
+/// What the announcement pipeline reads lives in `GuidanceProfile`, which the engine is
+/// already given through `updateProfile`: the topic lists and the repeat limit moved there
+/// for T50. What is left here is read by the UI.
 struct SettingsPreferences: Codable, Hashable, Sendable {
     var phoneAimingHelp: Bool
     var usesMetricUnits: Bool
-    var autoRepeat: AutoRepeat
-    /// Information that goes first when several things could be announced.
-    var prioritizedTopics: Set<InfoTopic>
-    /// Information announced without the user asking.
-    var unpromptedTopics: Set<InfoTopic>
-    /// Information given when the user asks.
-    var promptedTopics: Set<InfoTopic>
     var usesSystemScreenReader: Bool
     var quickSettingsEnabled: Bool
 
@@ -60,10 +16,6 @@ struct SettingsPreferences: Codable, Hashable, Sendable {
         SettingsPreferences(
             phoneAimingHelp: true,
             usesMetricUnits: Locale.current.measurementSystem == .metric,
-            autoRepeat: .onlyWhenAsked,
-            prioritizedTopics: [.detailedDescription, .trafficAndCrowds],
-            unpromptedTopics: [.directions, .trafficAndCrowds, .openingsAndObstacles],
-            promptedTopics: [.trafficAndCrowds, .signsAndText, .partiallyVisibleObjects, .structureBasics],
             usesSystemScreenReader: true,
             quickSettingsEnabled: true
         )

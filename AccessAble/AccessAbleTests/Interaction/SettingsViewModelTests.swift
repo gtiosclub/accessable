@@ -25,7 +25,7 @@ struct SettingsViewModelTests {
 
         viewModel.toggle(.directions, in: .prompted)
         #expect(viewModel.isSelected(.directions, in: .prompted))
-        #expect(app.preferences.promptedTopics.contains(.directions))
+        #expect(app.profile.promptedTopics.contains(.directions))
 
         viewModel.toggle(.directions, in: .prompted)
         #expect(!viewModel.isSelected(.directions, in: .prompted))
@@ -44,11 +44,11 @@ struct SettingsViewModelTests {
     @Test
     func preferencesSurviveRelaunch() {
         let (app, defaults) = makeApp()
-        app.preferences.autoRepeat = .twice
+        app.profile.autoRepeat = .twice
         app.preferences.phoneAimingHelp = false
 
         let relaunched = AppViewModel(defaults: defaults, services: .preview)
-        #expect(relaunched.preferences.autoRepeat == .twice)
+        #expect(relaunched.profile.autoRepeat == .twice)
         #expect(relaunched.preferences.phoneAimingHelp == false)
     }
 
@@ -58,7 +58,7 @@ struct SettingsViewModelTests {
         let viewModel = SettingsViewModel(app: app)
         viewModel.applyPreset(.lowVision)
         viewModel.setChannel(.haptics, enabled: true)
-        viewModel.preferences.autoRepeat = .threeTimes
+        viewModel.autoRepeat = .threeTimes
         viewModel.toggle(.directions, in: .prioritized)
         viewModel.performanceSetting = .battery
 
