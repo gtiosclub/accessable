@@ -490,6 +490,7 @@ final class ScenePerception: Sendable {
                     priority: .normal,
                     text: cameraFeedback.spokenText,
                     source: .system,
+                    topic: .partiallyVisibleObjects,
                     expiresAt: Date().addingTimeInterval(5),
                     dedupKey: "camera-quality-\(cameraFeedback.rawValue)"
                 )

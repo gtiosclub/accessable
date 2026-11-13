@@ -178,6 +178,7 @@ struct StreetSignalAnnouncer: Sendable {
                 distance: nearest.distance,
                 bearing: nearest.bearing,
                 source: .sceneDescription,
+                topic: .trafficAndCrowds,
                 createdAt: now,
                 expiresAt: now.addingTimeInterval(announcementLifetime),
                 dedupKey: "street-\(label)"

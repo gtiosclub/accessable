@@ -22,6 +22,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     let recorder = FieldTestRecorder()
 
     private let performance: any PerformanceModeProviding
+    /// What the user wants an answer to include (T50).
+    private let descriptionSettings: DescriptionSettings
     private let askAI: AskAI
     /// Plays the steering beep; nil where there is no audio (tests).
     private let steering: SteeringTones?
@@ -58,13 +60,15 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         performance: any PerformanceModeProviding,
         announcements: any AnnouncementSink,
         askAI: AskAI = AskAI(),
-        steering: SteeringTones? = nil
+        steering: SteeringTones? = nil,
+        descriptionSettings: DescriptionSettings = DescriptionSettings()
     ) {
         self.sessionManager = sessionManager
         self.perception = perception
         self.performance = performance
         self.askAI = askAI
         self.steering = steering
+        self.descriptionSettings = descriptionSettings
 
         let (pending, announcementQueue) = AsyncStream.makeStream(
             of: AnnouncementEvent.self, bufferingPolicy: .bufferingNewest(16)
@@ -215,7 +219,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     /// running; otherwise the camera is woken for one analyzed frame, so the answer works
     /// from Home and never describes a room the user has left.
     func describeCurrentScene() async -> String {
-        SceneDescriptionBuilder().describe(await currentObservation())
+        SceneDescriptionBuilder(profile: descriptionSettings.profile)
+            .describe(await currentObservation())
     }
 
     private func currentObservation() async -> SceneObservation {

@@ -107,6 +107,8 @@ final class LiveSceneViewModel {
     private(set) var navigationMessage: String?
 
     @ObservationIgnored private let announcements: any AnnouncementEngineProtocol
+    /// What the user wants an answer to include (T50).
+    @ObservationIgnored private let descriptionSettings: DescriptionSettings
     /// Holds the screen awake and speaks up when guidance stops or returns (T27).
     @ObservationIgnored private let guidance: GuidanceStatusMonitor
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
@@ -160,6 +162,7 @@ final class LiveSceneViewModel {
         self.mode = mode
         analyzer = services.scene as? ARSceneAnalyzer
         announcements = services.announcements
+        descriptionSettings = services.descriptionSettings
         guidance = GuidanceStatusMonitor(announcements: services.announcements)
     }
 
@@ -693,7 +696,7 @@ final class LiveSceneViewModel {
 
     /// What VoiceOver reads for the readout; the overlay boxes themselves are purely visual.
     var spokenSummary: String {
-        SceneDescriptionBuilder().describe(observation)
+        SceneDescriptionBuilder(profile: descriptionSettings.profile).describe(observation)
     }
 
     /// "Drop-off at 2.0 m, -0.18 m". A heightChange of 0 means the magnitude was never

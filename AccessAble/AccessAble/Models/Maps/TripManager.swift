@@ -479,7 +479,8 @@ actor TripManager: TripStateProviding {
                           expiresIn lifetime: TimeInterval, key: String?) -> AnnouncementEvent {
         let time = now()
         return AnnouncementEvent(category: .maneuver, priority: priority, text: text, haptic: haptic,
-                                 source: .navigation, createdAt: time, expiresAt: time.addingTimeInterval(lifetime),
+                                 source: .navigation, topic: .directions, createdAt: time,
+                                 expiresAt: time.addingTimeInterval(lifetime),
                                  dedupKey: key.map { "\(tripID)-v\(routeVersion)-\($0)" })
     }
 
@@ -493,7 +494,8 @@ actor TripManager: TripStateProviding {
     /// Voice commands speak the same text, so the engine's text dedup merges the two while button users still hear
     /// it.
     private func confirmation(_ text: String) -> AnnouncementEvent {
-        AnnouncementEvent(category: .maneuver, priority: .high, text: text, source: .navigation, createdAt: now())
+        AnnouncementEvent(category: .maneuver, priority: .high, text: text, source: .navigation,
+                          topic: .directions, createdAt: now())
     }
 
     private func submit(_ event: AnnouncementEvent) async {
