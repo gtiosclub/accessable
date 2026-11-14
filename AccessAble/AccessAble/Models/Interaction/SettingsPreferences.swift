@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// How many times an unprompted announcement repeats before it waits for the user to ask again.
 enum AutoRepeat: String, Codable, CaseIterable, Sendable {
@@ -14,6 +15,31 @@ enum AutoRepeat: String, Codable, CaseIterable, Sendable {
         case .twice: "Twice"
         case .threeTimes: "Three times"
         }
+    }
+
+    /// How many extra times navigation repeats its latest instruction (T49).
+    var repeatCount: Int {
+        switch self {
+        case .onlyWhenAsked: 0
+        case .once: 1
+        case .twice: 2
+        case .threeTimes: 3
+        }
+    }
+}
+
+/// The auto-repeat choice, read by TripManager each time it schedules a repeat. AppViewModel keeps it
+/// in step with the preferences, so a change in Settings applies to the next instruction.
+final class RepeatSettings: Sendable {
+    private let state: Mutex<AutoRepeat>
+
+    init(autoRepeat: AutoRepeat = .onlyWhenAsked) {
+        state = Mutex(autoRepeat)
+    }
+
+    var autoRepeat: AutoRepeat {
+        get { state.withLock { $0 } }
+        set { state.withLock { $0 = newValue } }
     }
 }
 
@@ -41,7 +67,7 @@ enum InfoTopic: String, Codable, CaseIterable, Sendable {
 }
 
 /// Settings-page preferences that are not part of `GuidanceProfile`.
-/// Saved by `AppViewModel`; the announcement pipeline does not read them yet.
+/// Saved by `AppViewModel`. Only `autoRepeat` is used so far (by navigation, T49).
 struct SettingsPreferences: Codable, Hashable, Sendable {
     var phoneAimingHelp: Bool
     var usesMetricUnits: Bool
