@@ -1,0 +1,11 @@
+{
+  "name": "accessable-firebase",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "emulators": "firebase emulators:start --project demo-accessable"
+  },
+  "devDependencies": {
+    "firebase-tools": "^15.36.0"
+  }
+}

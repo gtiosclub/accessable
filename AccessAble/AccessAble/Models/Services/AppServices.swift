@@ -1,4 +1,5 @@
 import Foundation
+import FirebaseCore
 
 /// Dependency container passed to view models. View models depend on protocols, never concrete services,
 /// so each subteam can swap in its implementation without touching anyone else's code.
@@ -14,6 +15,7 @@ struct AppServices: Sendable {
     var trip: any TripStateProviding
     var locationContext: any LocationContextProviding
     var commands: any CommandInterpreting
+    var auth: any AuthService
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
     var askAISettings = AskAISettings()
@@ -49,6 +51,7 @@ struct AppServices: Sendable {
             trip: trip,
             locationContext: LocationDescriber(location: location),
             commands: FoundationModelCommandInterpreter(),
+            auth: FirebaseApp.app() != nil ? FirebaseAuthService(): PlaceholderAuthService(),
             askAISettings: askAISettings,
             alertSettings: alertSettings
         )

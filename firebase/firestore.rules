@@ -1,0 +1,81 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isValidCoordinate(c) {
+      return c is map
+        && c.keys().hasAll(['latitude', 'longitude'])
+        && c.keys().hasOnly(['latitude', 'longitude'])
+        && c.latitude is number && c.latitude >= -90 && c.latitude <= 90
+        && c.longitude is number && c.longitude >= -180 && c.longitude <= 180;
+    }
+
+    function isValidPointAt(area, i) {
+      return i >= area.size() || isValidCoordinate(area[i]);
+    }
+
+
+    function isValidArea(area) {
+      return area is list && area.size() >= 3 && area.size() <= 10
+        && isValidPointAt(area, 0) && isValidPointAt(area, 1) && isValidPointAt(area, 2)
+        && isValidPointAt(area, 3) && isValidPointAt(area, 4) && isValidPointAt(area, 5)
+        && isValidPointAt(area, 6) && isValidPointAt(area, 7) && isValidPointAt(area, 8)
+        && isValidPointAt(area, 9);
+    }
+
+
+    function isValidReport(data) {
+      return data.keys().hasAll(['id', 'kind', 'coordinate', 'createdAt', 'expiresAt', 'confirmations', 'reporterID'])
+        && data.keys().hasOnly(['id', 'kind', 'coordinate', 'area', 'createdAt', 'expiresAt', 'confirmations', 'reporterID'])
+        && data.kind in ['construction', 'blockedPath', 'closedEntrance', 'elevatorOut', 'other']
+        && isValidCoordinate(data.coordinate)
+        && (!('area' in data) || data.area == null || isValidArea(data.area))
+        && data.expiresAt is timestamp
+        && data.expiresAt <= data.createdAt + duration.value(30, 'd');
+    }
+
+    function rateLimitPath() {
+      return /databases/$(database)/documents/rateLimits/$(request.auth.uid);
+    }
+
+    match /reports/{reportId} {
+      allow get: if signedIn();
+      allow list: if signedIn() && request.query.limit <= 200;
+
+      allow create: if signedIn()
+        && isValidReport(request.resource.data)
+        && request.resource.data.id == reportId
+        && request.resource.data.reporterID == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.confirmations == 0
+        && getAfter(rateLimitPath()).data.lastReportAt == request.time;
+
+
+      allow update: if signedIn()
+        && resource.data.reporterID == request.auth.uid
+        && isValidReport(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['kind', 'coordinate', 'area', 'expiresAt']);
+
+      allow delete: if signedIn() && resource.data.reporterID == request.auth.uid;
+    }
+
+    match /rateLimits/{userId} {
+      function isOwnStamp() {
+        return request.auth.uid == userId
+          && request.resource.data.keys().hasOnly(['lastReportAt'])
+          && request.resource.data.lastReportAt == request.time;
+      }
+
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && isOwnStamp();
+      allow update: if signedIn() && isOwnStamp()
+        && request.time >= resource.data.lastReportAt + duration.value(60, 's');
+    }
+  }
+}
