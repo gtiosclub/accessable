@@ -187,3 +187,35 @@ struct PreviewTripProvider: TripStateProviding {
     func resumeTrip() async {}
     func endTrip() async {}
 }
+
+actor PlaceholderAuthService: AuthService {
+    static let sampleUser = AuthUser(id: "preview-user")
+    private nonisolated let users = Broadcaster<AuthUser?>(replaysLatest: true)
+    private var user: AuthUser?
+    
+    init(signedIn: Bool = true) {
+        let user = signedIn ? Self.sampleUser : nil
+        self.user = user
+        users.send(user)
+    }
+    
+    nonisolated func userChanges() -> AsyncStream<AuthUser?> { users.stream() }
+    func currentUser() async -> AuthUser? { user }
+    
+    func signIn(email: String, password: String) async throws -> AuthUser { setUser(Self.sampleUser)}
+    
+    func createAccount(email: String, password: String) async throws -> AuthUser {
+        setUser(Self.sampleUser)
+    }
+    
+    func signOut() async throws {
+        user = nil
+        users.send(nil)
+    }
+    
+    private func setUser(_ newUser: AuthUser) -> AuthUser {
+        user = newUser
+        users.send(newUser)
+        return newUser
+    }
+}

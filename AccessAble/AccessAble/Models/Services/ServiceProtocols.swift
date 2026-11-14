@@ -109,3 +109,11 @@ protocol TripStateProviding: Sendable {
 protocol LocationContextProviding: Sendable {
     func currentLocationDescription() async -> String?
 }
+
+protocol AuthService: Sendable {
+    func userChanges() -> AsyncStream<AuthUser?>
+    func currentUser() async -> AuthUser?
+    func signIn(email: String, password: String) async throws -> AuthUser
+    func createAccount(email: String, password: String) async throws -> AuthUser
+    func signOut() async throws
+}
