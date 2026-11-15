@@ -18,17 +18,23 @@ actor LocationDescriber: LocationContextProviding {
     static let nearbyRadius: Double = 150
 
     private let location: any LocationProvider
+    private let distances: DistanceSettings
     private var cached: (text: String, at: Date)?
 
-    init(location: any LocationProvider, fixTimeout: Duration = .seconds(8)) {
+    init(
+        location: any LocationProvider,
+        distances: DistanceSettings = DistanceSettings(units: .metres),
+        fixTimeout: Duration = .seconds(8)
+    ) {
         self.location = location
+        self.distances = distances
         self.fixTimeout = fixTimeout
     }
 
     func currentLocationDescription() async -> String? {
         if let cached, Date.now.timeIntervalSince(cached.at) < Self.freshness { return cached.text }
         guard let fix = await firstFix() else { return nil }
-        guard let text = await Self.describe(fix) else { return nil }
+        guard let text = await Self.describe(fix, distances: distances.formatter) else { return nil }
         cached = (text, .now)
         return text
     }
@@ -54,7 +60,7 @@ actor LocationDescriber: LocationContextProviding {
 
     /// "You're at 351 Ferst Dr NW. The nearest place is Clough Commons, about 40 metres away."
     /// Off any actor: MapKit's requests and results aren't Sendable, a String is.
-    @concurrent private static func describe(_ fix: LocationSample) async -> String? {
+    @concurrent private static func describe(_ fix: LocationSample, distances: DistanceFormatter) async -> String? {
         let here = CLLocation(latitude: fix.coordinate.latitude, longitude: fix.coordinate.longitude)
         var sentences: [String] = []
 
@@ -75,19 +81,14 @@ actor LocationDescriber: LocationContextProviding {
             if let nearest {
                 sentences.append(nearest.metres < 15
                     ? "You're at \(nearest.name)."
-                    : "The nearest place is \(nearest.name), about \(Self.metres(nearest.metres)) metres away.")
+                    : "The nearest place is \(nearest.name), \(distances.spoken(nearest.metres)) away.")
             }
         }
 
         guard !sentences.isEmpty else { return nil }
         if fix.horizontalAccuracy > 30 {
-            sentences.append("Your position is only accurate to about \(metres(fix.horizontalAccuracy)) metres.")
+            sentences.append("Your position is only accurate to \(distances.spoken(fix.horizontalAccuracy)).")
         }
         return sentences.joined(separator: " ")
-    }
-
-    /// To the nearest 10, which is all GPS can tell.
-    private static func metres(_ distance: Double) -> Int {
-        max(10, Int((distance / 10).rounded()) * 10)
     }
 }

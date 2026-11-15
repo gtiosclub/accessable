@@ -144,7 +144,8 @@ struct PlaceholderDestinationSearch: DestinationSearching {
         SearchSuggestion(title: "Campus Recreation Center", subtitle: "750 Ferst Dr NW, Atlanta, GA"),
     ]
 
-    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
+    /// Replays the latest results, so a listener that subscribes after a query still gets them.
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>(replaysLatest: true)
 
     func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
         results.stream()
@@ -176,6 +177,7 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
+    func reroute() async {}
 
     func currentLocationDescription() async -> String? { nil }
 }
@@ -199,4 +201,5 @@ struct PreviewTripProvider: TripStateProviding {
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
+    func reroute() async {}
 }

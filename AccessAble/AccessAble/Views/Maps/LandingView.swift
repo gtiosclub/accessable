@@ -54,33 +54,56 @@ struct LandingView: View {
     }
 }
 
-/// Satellite map of campus with the sample places marked.
+/// Satellite map of campus with the real route, the destination, and the user where they
+/// really are. It follows the user until they pan the map themselves. VoiceOver reads it as
+/// one element with `accessibilityLabel`; the spoken directions carry the details.
 struct CampusMap: View {
     var routeLine: [CLLocationCoordinate2D]?
+    var destination: Destination?
+    var accessibilityLabel = "Map"
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    /// Shown until a location arrives, and in previews.
+    private static let campus = MapCameraPosition.region(MKCoordinateRegion(
+        center: CLLocationCoordinate2D(latitude: SampleContent.campusLatitude, longitude: SampleContent.campusLongitude),
+        latitudinalMeters: 1200,
+        longitudinalMeters: 1200
+    ))
+
+    @State private var position = MapCameraPosition.userLocation(fallback: campus)
 
     var body: some View {
-        Map(initialPosition: .region(MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: SampleContent.campusLatitude, longitude: SampleContent.campusLongitude),
-            latitudinalMeters: 1200,
-            longitudinalMeters: 1200
-        ))) {
-            ForEach(SampleContent.places) { place in
-                Marker(place.name, coordinate: place.coordinate)
-            }
-            if let routeLine, let current = routeLine.first {
+        Map(position: $position) {
+            if let routeLine {
+                // a dark casing keeps the white line visible over roofs, roads and grass alike
                 MapPolyline(coordinates: routeLine)
-                    .stroke(.white, lineWidth: 6)
-                Annotation("You", coordinate: current) {
-                    Image(systemName: "location.north.fill")
-                        .font(.title)
-                        .foregroundStyle(Color(red: 0.2, green: 0.2, blue: 0.75))
-                        .padding(18)
-                        .background(.white.opacity(0.7), in: Circle())
-                }
+                    .stroke(.black, style: routeStroke(width: routeWidth + 4))
+                MapPolyline(coordinates: routeLine)
+                    .stroke(.white, style: routeStroke(width: routeWidth))
+            }
+            if let destination {
+                Marker(destination.name, systemImage: "flag.checkered", coordinate: destination.coordinate.clCoordinate)
+            }
+            // The real location, so it moves with each fix (and with a simulated GPX walk).
+            UserAnnotation {
+                Image(systemName: "location.north.fill")
+                    .font(.title)
+                    .foregroundStyle(Color(red: 0.2, green: 0.2, blue: 0.75))
+                    .padding(18)
+                    .background(.white.opacity(0.7), in: Circle())
             }
         }
         .mapStyle(.imagery(elevation: .flat))
         .ignoresSafeArea()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    /// Points; thicker when Increase Contrast is on.
+    private var routeWidth: CGFloat { contrast == .increased ? 10 : 7 }
+
+    private func routeStroke(width: CGFloat) -> StrokeStyle {
+        StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)
     }
 }
 
