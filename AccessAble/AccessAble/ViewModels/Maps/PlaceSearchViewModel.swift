@@ -29,10 +29,10 @@ final class PlaceSearchViewModel {
     enum Field: Hashable { case origin, destination }
 
     var query = "" {
-        didSet { if query != oldValue { scheduleSearch() } }
+        didSet { if query != oldValue { scheduleSearch(changesResults: true) } }
     }
     var originQuery = "" {
-        didSet { if originQuery != oldValue { scheduleSearch() } }
+        didSet { if originQuery != oldValue { scheduleSearch(changesResults: false) } }
     }
     var category: PlaceCategory? {
         didSet { if category != oldValue { search() } }
@@ -42,7 +42,7 @@ final class PlaceSearchViewModel {
     /// What the results reflect: the text as of the last pause in typing.
     private(set) var settledQuery = ""
     private(set) var settledOriginQuery = ""
-    /// Typing hasn't paused yet.
+    /// Typing in the To field hasn't paused yet. Typing in From doesn't change the results.
     private(set) var isSettling = false
 
     /// The real search behind the To field.
@@ -196,9 +196,9 @@ final class PlaceSearchViewModel {
 
     // MARK: - Typing
 
-    private func scheduleSearch() {
+    private func scheduleSearch(changesResults: Bool) {
         searchTask?.cancel()
-        isSettling = true
+        if changesResults { isSettling = true }
         searchTask = Task { [weak self] in
             try? await Task.sleep(for: Self.debounce)
             guard !Task.isCancelled else { return }
@@ -338,6 +338,8 @@ final class PlaceSearchViewModel {
 
     func stop() {
         searchTask?.cancel()
+        isSettling = false
+        destinationSearch.cancelSelection()
         dictation.cancel()
         dictatingField = nil
     }

@@ -6,7 +6,8 @@ final class SpeechOutput: NSObject {
     private let synthesizer = AVSpeechSynthesizer()
     private var waiting: [ObjectIdentifier: CheckedContinuation<Void, Never>] = [:]
     private var voiceOverWaiter: (text: String, continuation: CheckedContinuation<Void, Never>)?
-    private var announcementObserver: NSObjectProtocol?
+    /// Set once in init and read in deinit, which can run on any thread.
+    private nonisolated(unsafe) var announcementObserver: NSObjectProtocol?
     /// The best voice installed for the user's language: Premium or Enhanced when they have
     /// downloaded one (Settings → Accessibility → Spoken Content → Voices), far clearer than
     /// the compact default. Listing voices takes a moment, so it is looked up off the main
@@ -29,7 +30,9 @@ final class SpeechOutput: NSObject {
         }
     }
  
-    isolated deinit {
+    // Not `isolated`: the engine's own drain task can hold the last reference, so this can run on a
+    // background thread, and an isolated deinit on an NSObject subclass traps there instead of hopping.
+    deinit {
         if let announcementObserver { NotificationCenter.default.removeObserver(announcementObserver) }
     }
  
