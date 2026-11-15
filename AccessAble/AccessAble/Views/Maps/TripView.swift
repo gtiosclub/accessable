@@ -140,17 +140,25 @@ struct TripView: View {
             }
         }
         #endif
-        // VoiceOver doesn't read changes outside the focused element, so say the failure out loud
-        .onChange(of: viewModel.routeFailureCount) {
-            guard let message = viewModel.routeErrorMessage else { return }
-            AccessibilityNotification.Announcement(message).post()
-        }
-        // likewise when a route arrives, so the user knows Start is there
-        .onChange(of: viewModel.route) { previous, route in
-            guard previous == nil, route != nil, let message = viewModel.routeReadyAnnouncement else { return }
-            AccessibilityNotification.Announcement(message).post()
-        }
+        .announcesRoute(viewModel)
         .task { await viewModel.start() }
+    }
+}
+
+extension View {
+    /// Says when a route arrives or fails.
+    func announcesRoute(_ trip: TripViewModel) -> some View {
+        self
+            // VoiceOver doesn't read changes outside the focused element, so say the failure out loud
+            .onChange(of: trip.routeFailureCount) {
+                guard let message = trip.routeErrorMessage else { return }
+                AccessibilityNotification.Announcement(message).post()
+            }
+            // likewise when a route arrives, so the user knows Start is there
+            .onChange(of: trip.route) { previous, route in
+                guard previous == nil, route != nil, let message = trip.routeReadyAnnouncement else { return }
+                AccessibilityNotification.Announcement(message).post()
+            }
     }
 }
 

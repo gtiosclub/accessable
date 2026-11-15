@@ -45,9 +45,9 @@ struct MainFlowView: View {
         case .search:
             PlaceSearchView(services: app.services)
         case .place(let place, let origin):
-            PlaceDetailView(place: place, origin: origin)
+            PlaceDetailView(place: place, origin: origin, services: app.services)
         case .destination(let destination, let origin):
-            PlaceDetailView(destination: destination, origin: origin)
+            PlaceDetailView(destination: destination, origin: origin, services: app.services)
         case .routes(let place, let mode, let origin):
             RoutePickerView(place: place, mode: mode, origin: origin)
         case .trip(let plan):
