@@ -18,6 +18,7 @@ actor TripManager: TripStateProviding {
     private let landmarks: any LandmarkObserving
     private let campusBuildings: [CampusBuilding]
     private let setBackgroundTracking: @Sendable (Bool) async -> Void
+    private let distances: DistanceSettings
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
 
@@ -48,6 +49,8 @@ actor TripManager: TripStateProviding {
     private var missedTurnStep: Int?
     private var rerouteCount = 0
     private var lastRerouteRequest: Date?
+    /// Where an asked-for reroute starts: the latest fix precise enough to start a route from.
+    private var lastPreciseFix: GeoCoordinate?
     private var tripStartedAt = Date.distantPast
     private var lastGoodFixAt: Date?
     private var isSignalWeak = false
@@ -77,6 +80,7 @@ actor TripManager: TripStateProviding {
         landmarks: any LandmarkObserving = PlaceholderLandmarkProvider(),
         campusBuildings: [CampusBuilding] = CampusLandmarks.buildings,
         setBackgroundTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
+        distances: DistanceSettings = DistanceSettings(units: .metres),
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
@@ -86,6 +90,7 @@ actor TripManager: TripStateProviding {
         self.landmarks = landmarks
         self.campusBuildings = campusBuildings
         self.setBackgroundTracking = setBackgroundTracking
+        self.distances = distances
         self.now = now
         self.sleep = sleep
         states.send(TripState(phase: .planning, updatedAt: now()))
@@ -120,6 +125,7 @@ actor TripManager: TripStateProviding {
         missedTurnStep = nil
         rerouteCount = 0
         lastRerouteRequest = nil
+        lastPreciseFix = nil
         tripStartedAt = now()
         lastGoodFixAt = nil
         isSignalWeak = false
@@ -225,6 +231,7 @@ actor TripManager: TripStateProviding {
                 if phase == .active { pending.append((signalAnnouncement("GPS signal is back.", .normal, 6), nil)) }
             }
         }
+        if sample.horizontalAccuracy <= Self.rerouteAccuracy { lastPreciseFix = sample.coordinate }
         // decided from the fixes before this one, so a reroute starts from the fix after the cue
         let rerouteOrigin = wantsReroute && sample.horizontalAccuracy <= Self.rerouteAccuracy
             ? sample.coordinate : nil
@@ -382,7 +389,28 @@ actor TripManager: TripStateProviding {
         return lastRerouteRequest.map { now().timeIntervalSince($0) >= Self.rerouteInterval } ?? true
     }
 
-    private func requestReroute(from origin: GeoCoordinate, generation: Int) {
+    /// A new route from where the user is now, asked for by the user (Route Blocked Ahead's
+    /// "find another way") rather than because they left the route. The routing service doesn't
+    /// know about the obstacle, so the new route is the best one from here, not one around it.
+    func reroute() async {
+        guard phase == .active || phase == .paused else { return }
+        // with a weak signal the last precise fix is old, and the user has walked on from it
+        guard let origin = lastPreciseFix, !isSignalWeak else {
+            await submit(maneuver("Couldn't find where you are precisely enough for a new route. Try again in a moment.",
+                                  .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
+            return
+        }
+        let generation = generation
+        await submit(maneuver("Finding a new route from here.", .high, expiresIn: 10, key: "reroute-requested"))
+        // the trip may have ended while that was submitted
+        guard self.generation == generation, phase == .active || phase == .paused else { return }
+        // one already in flight is the user going off route, so its answer is the new route
+        guard rerouteTask == nil else { return }
+        requestReroute(from: origin, generation: generation, requested: true)
+    }
+
+    /// - Parameter requested: Asked for by the user, so it lands even while still on the route.
+    private func requestReroute(from origin: GeoCoordinate, generation: Int, requested: Bool = false) {
         guard let destination else { return }
         rerouteCount += 1
         lastRerouteRequest = now()
@@ -395,15 +423,16 @@ actor TripManager: TripStateProviding {
             } catch {
                 result = .failure(error)
             }
-            await self.finishReroute(result, generation: generation, version: version)
+            await self.finishReroute(result, generation: generation, version: version, requested: requested)
         }
     }
 
-    private func finishReroute(_ result: Result<NavigationRoute, any Error>, generation: Int, version: Int) async {
+    private func finishReroute(_ result: Result<NavigationRoute, any Error>, generation: Int, version: Int,
+                               requested: Bool) async {
         guard self.generation == generation, routeVersion == version else { return }
         rerouteTask = nil
         // back on the route, or arrived, since the request went out
-        guard phase == .active || phase == .paused, !arrivedWhilePaused, needsReroute else { return }
+        guard phase == .active || phase == .paused, !arrivedWhilePaused, needsReroute || requested else { return }
         switch result {
         case .success(let newRoute):
             routeVersion += 1
@@ -422,9 +451,14 @@ actor TripManager: TripStateProviding {
         case .failure(let error):
             guard !(error is CancellationError), phase == .active else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
-            let text = rerouteCount < Self.maximumReroutes
-                ? "Couldn't get a new route. Walk back the way you came."
-                : "Off route. End the trip and choose your destination again."
+            let text = if requested, !needsReroute {
+                // still on the route, so there is nothing to walk back to
+                "Couldn't get a new route. Keep following the current one."
+            } else if rerouteCount < Self.maximumReroutes {
+                "Couldn't get a new route. Walk back the way you came."
+            } else {
+                "Off route. End the trip and choose your destination again."
+            }
             await submit(maneuver(text, .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
         }
     }
@@ -435,7 +469,7 @@ actor TripManager: TripStateProviding {
         do { try await sleep(Self.startDelay) } catch { return }
         guard self.generation == generation, phase == .active, let route, let destination,
               let first = route.steps.first else { return }
-        let text = "Starting directions to \(destination.name), \(Self.metres(route.totalDistance)). "
+        let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
             + first.spokenInstruction
         await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
     }
@@ -483,19 +517,19 @@ actor TripManager: TripStateProviding {
         guard let route else { return nil }
         switch event {
         case let .prepare(step, distance):
-            let text = "In \(Self.metres(distance)), \(Self.midSentence(route.steps[step].spokenInstruction))"
+            let text = "In \(spoken(distance)), \(Self.midSentence(route.steps[step].spokenInstruction))"
             return maneuver(text, .normal, expiresIn: 8, key: "step-\(step)-prepare")
         case let .now(step):
             return maneuver(route.steps[step].spokenInstruction, .high, haptic: route.steps[step].kind.haptic,
                             expiresIn: Self.nowCueLifetime(progress.distanceToNextStep), key: "step-\(step)-now")
         case let .passedTurnConfirmation(step):
-            return maneuver("Continue for \(Self.metres(progress.distanceToNextStep)).", .normal, expiresIn: 6,
+            return maneuver("Continue for \(spoken(progress.distanceToNextStep)).", .normal, expiresIn: 6,
                             key: "step-\(step)-confirmation")
         case let .missedTurn(step, distanceBack):
             // a reroute starts from the next precise fix when allowed; otherwise the way back is the guidance
             let text = rerouteTask != nil || canRequestReroute
                 ? "You may have passed the turn. Finding a new route."
-                : "You may have passed the turn. Turn around and walk back \(Self.metres(distanceBack)), then "
+                : "You may have passed the turn. Turn around and walk back \(spoken(distanceBack)), then "
                     + Self.midSentence(route.steps[step].spokenInstruction)
             return maneuver(text, .high, haptic: .attention, expiresIn: 12, key: "step-\(step)-missed")
         case .wrongWay:
@@ -537,7 +571,7 @@ actor TripManager: TripStateProviding {
             tracker.markPrepared(step: index)
             self.tracker = tracker
         }
-        let text = "In \(Self.metres(distance)), \(Self.midSentence(route.steps[index].spokenInstruction))"
+        let text = "In \(spoken(distance)), \(Self.midSentence(route.steps[index].spokenInstruction))"
         return maneuver(text, .normal, expiresIn: 8, key: nil)
     }
 
@@ -572,9 +606,10 @@ actor TripManager: TripStateProviding {
         min(max((distance + 5) / 1.3, 4), 15)
     }
 
-    /// Rounded to 10 m, like the map's route summary: finer is noise.
-    private static func metres(_ distance: Double) -> String {
-        "about \(max(10, Int((distance / 10).rounded()) * 10)) metres"
+    /// "about 80 metres" or "about 250 feet", in the user's units; read each time, so a change in Settings
+    /// applies from the next cue.
+    private func spoken(_ distance: Double) -> String {
+        distances.formatter.spoken(distance)
     }
 
     private static func midSentence(_ text: String) -> String {

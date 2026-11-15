@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let log = Logger(subsystem: "AccessAble", category: "Landmarks")
 
 /// A named campus building from OpenStreetMap, with the other names people use for it and its mapped entrances.
 struct CampusBuilding: Equatable, Sendable {
@@ -38,12 +41,19 @@ struct CampusEntrance: Equatable, Sendable {
 }
 
 enum CampusLandmarks {
-    /// Built by Scripts/CampusLandmarks/ExportCampusLandmarks.swift. Empty if the file is missing or unreadable.
+    /// Built by Scripts/CampusLandmarks/ExportCampusLandmarks.swift. Empty if the file is missing or unreadable;
+    /// trips then run without landmarks, and the failure is logged.
     static let buildings: [CampusBuilding] = {
-        guard let url = Bundle.main.url(forResource: "campus-landmarks", withExtension: "json"),
-              let data = try? Data(contentsOf: url)
-        else { return [] }
-        return (try? decode(data)) ?? []
+        guard let url = Bundle.main.url(forResource: "campus-landmarks", withExtension: "json") else {
+            log.error("campus-landmarks.json is missing from the app bundle")
+            return []
+        }
+        do {
+            return try decode(Data(contentsOf: url))
+        } catch {
+            log.error("Could not read campus-landmarks.json: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
     }()
 
     static func decode(_ data: Data) throws -> [CampusBuilding] {
