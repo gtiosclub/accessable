@@ -293,7 +293,7 @@ final class PlaceSearchViewModel {
         return item.address?.shortAddress ?? item.name
     }
 
-    /// "Ferst Dr NW · ±8 m", "Finding you…", or why it can't.
+    /// "Ferst Dr NW · ±10 m" (or "±25 ft"), "Finding you…", or why it can't.
     var locationDetail: String {
         switch authorization {
         case .denied, .restricted: return "Location is off. Turn it on in Settings."
@@ -301,7 +301,8 @@ final class PlaceSearchViewModel {
         case .authorized: break
         }
         guard let location else { return "Finding you…" }
-        let accuracy = "±\(Int(location.horizontalAccuracy.rounded())) m"
+        let distances = services?.distanceSettings.formatter ?? .metric
+        let accuracy = "±\(distances.written(location.horizontalAccuracy))"
         return [locationName, accuracy].compactMap(\.self).joined(separator: " · ")
     }
 
