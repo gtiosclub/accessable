@@ -90,7 +90,7 @@ extension LocationAuthorization {
     }
 }
 
-struct Destination: Codable, Equatable, Sendable {
+struct Destination: Codable, Hashable, Sendable {
     var name: String
     var coordinate: GeoCoordinate
     var address: String? = nil

@@ -6,6 +6,8 @@ enum AppRoute: Hashable {
     case search
     /// `origin` is the starting point picked in search; nil for My Location.
     case place(SamplePlace, origin: SamplePlace? = nil)
+    /// A real place picked from search results.
+    case destination(Destination, origin: SamplePlace? = nil)
     case routes(SamplePlace, RoutePlanMode, origin: SamplePlace? = nil)
     case trip(TripPlan)
     case settings

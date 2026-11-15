@@ -3,20 +3,43 @@ import SwiftUI
 /// Owner: Maps (2.x). A chosen place: address, recorded route, and how to start.
 struct PlaceDetailView: View {
     @Environment(AppRouter.self) private var router
+    /// What the route and trip screens take. For a place from search, made from `destination`.
     let place: SamplePlace
+    /// The real place picked from search results; nil for a sample saved or recent place.
+    let destination: Destination?
     /// Picked in search; nil for My Location.
     var origin: SamplePlace?
+
+    init(place: SamplePlace, origin: SamplePlace? = nil) {
+        self.place = place
+        self.destination = nil
+        self.origin = origin
+    }
+
+    init(destination: Destination, origin: SamplePlace? = nil) {
+        self.place = SamplePlace(destination: destination)
+        self.destination = destination
+        self.origin = origin
+    }
+
+    private var name: String { destination?.name ?? place.name }
+    private var address: String? {
+        guard let destination else { return place.address }
+        return destination.address
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             CameraBackdrop()
             ScrollView {
                 BottomCard {
-                    Text(place.name)
+                    Text(name)
                         .font(.title2.bold())
                         .accessibilityAddTraits(.isHeader)
-                    Text(place.address)
-                        .font(.subheadline.weight(.semibold))
+                    if let address, !address.isEmpty {
+                        Text(address)
+                            .font(.subheadline.weight(.semibold))
+                    }
                     Label("From: \(origin?.name ?? "My Location")", systemImage: origin == nil ? "location.fill" : "circle.inset.filled")
                         .font(.subheadline)
                         .accessibilityLabel("From \(origin?.name ?? "my location")")
@@ -80,6 +103,18 @@ struct RouteStepsList: View {
 #Preview {
     NavigationStack {
         PlaceDetailView(place: SampleContent.places[0])
+    }
+    .environment(AppRouter())
+    .preferredColorScheme(.dark)
+}
+
+#Preview("From search") {
+    NavigationStack {
+        PlaceDetailView(destination: Destination(
+            name: "Clough Undergraduate Learning Commons",
+            coordinate: GeoCoordinate(latitude: 33.7746, longitude: -84.3964),
+            address: "266 4th St NW, Atlanta, GA"
+        ))
     }
     .environment(AppRouter())
     .preferredColorScheme(.dark)

@@ -122,7 +122,8 @@ final class TripSessionViewModel {
             directions.setDestination(Destination(
                 name: plan.place.name,
                 coordinate: GeoCoordinate(latitude: plan.place.latitude, longitude: plan.place.longitude),
-                address: plan.place.address
+                // A place from search may have no address.
+                address: plan.place.address.isEmpty ? nil : plan.place.address
             ))
             if let origin = plan.origin {
                 await say("Directions start from where you are now, not from \(origin.name).", category: .system)
