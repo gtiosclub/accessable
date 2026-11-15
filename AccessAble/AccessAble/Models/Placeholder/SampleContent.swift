@@ -18,6 +18,16 @@ enum PlaceCategory: String, CaseIterable, Hashable, Sendable {
         case .publicTransit: "Public Transit"
         }
     }
+
+    /// Added to the search so a chip finds that kind of place near campus.
+    var searchTerm: String {
+        switch self {
+        case .restaurants: "restaurants"
+        case .labeledPlaces: "buildings"
+        case .parks: "parks"
+        case .publicTransit: "transit"
+        }
+    }
 }
 
 struct SamplePlace: Identifiable, Hashable, Sendable {
@@ -34,6 +44,27 @@ struct SamplePlace: Identifiable, Hashable, Sendable {
     var longitude: Double
 
     var coordinate: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: latitude, longitude: longitude) }
+}
+
+extension SamplePlace {
+    /// A real place from search, for the route and trip screens that still take a
+    /// `SamplePlace`. Keeps the name, coordinate and address; it has no ratings or recorded
+    /// routes.
+    init(destination: Destination) {
+        self.init(
+            id: "destination:\(destination.coordinate.latitude),\(destination.coordinate.longitude)",
+            name: destination.name,
+            address: destination.address ?? "",
+            category: .labeledPlaces,
+            rating: 0,
+            reviewCount: 0,
+            recordedRouteCount: 0,
+            isSaved: false,
+            isRecent: false,
+            latitude: destination.coordinate.latitude,
+            longitude: destination.coordinate.longitude
+        )
+    }
 }
 
 struct SampleRouteStep: Hashable, Sendable {
@@ -62,6 +93,8 @@ struct TripPlan: Hashable, Sendable {
     /// The starting point picked in search; nil for My Location. A live trip still starts
     /// where the user is, and says so.
     var origin: SamplePlace? = nil
+    /// The real route picked before the trip; nil asks for one when the trip starts.
+    var plannedRoute: PlannedRoute? = nil
 }
 
 struct Volunteer: Identifiable, Hashable, Sendable {

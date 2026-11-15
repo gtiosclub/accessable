@@ -1,0 +1,66 @@
+import Foundation
+import Observation
+
+/// Owner: Maps (2.x). State for a place's details and the route picker: the place's name and
+/// address, and the real walking route to it from where the user is: distance, time and steps.
+///
+/// The route comes from `TripViewModel`, which already picks a good enough GPS fix to start
+/// from, asks the routing service, and reports failures. This only formats what it found.
+@MainActor
+@Observable
+final class PlaceDetailViewModel {
+    let destination: Destination
+    /// Finds the route. Kept so its retry and error rules aren't copied here.
+    let planner: TripViewModel
+    @ObservationIgnored private let distanceSettings: DistanceSettings
+
+    /// `planned` is a route an earlier screen found; without it one is asked for.
+    init(destination: Destination, services: AppServices, planned: PlannedRoute? = nil) {
+        self.destination = destination
+        planner = TripViewModel(services: services)
+        distanceSettings = services.distanceSettings
+        if let planned { planner.use(planned) }
+    }
+
+    /// The route found, to hand on so the next screen walks this exact route.
+    var plannedRoute: PlannedRoute? { planner.plannedRoute }
+
+    var route: NavigationRoute? { planner.route }
+    var errorMessage: String? { planner.routeErrorMessage }
+    var needsLocationAccess: Bool {
+        switch planner.locationAuthorization {
+        case .denied, .restricted: true
+        case .notDetermined, .authorized: false
+        }
+    }
+
+    /// Waiting for a location fix or for the routing service.
+    var isLoading: Bool { route == nil && errorMessage == nil && !needsLocationAccess }
+
+    /// "650 m · about 9 min walk" or "2,125 ft…", in the user's units.
+    var summary: String? {
+        route.map {
+            Self.summary(metres: $0.totalDistance, seconds: $0.estimatedDuration, distances: distanceSettings.formatter)
+        }
+    }
+
+    /// What each step says, in order, as spoken during the trip.
+    var steps: [String] { route?.steps.map(\.spokenInstruction) ?? [] }
+
+    /// Asks for the route, then follows location until cancelled. A route found earlier is
+    /// kept when the screen comes back.
+    func start() async {
+        if planner.destination == nil { planner.setDestination(destination) }
+        await planner.start()
+    }
+
+    func retry() {
+        planner.retryRoute()
+    }
+
+    static func summary(metres: Double, seconds: Double, distances: DistanceFormatter) -> String {
+        let distance = distances.written(metres)
+        let minutes = max(1, Int((seconds / 60).rounded()))
+        return "\(distance) · about \(minutes) min walk"
+    }
+}
