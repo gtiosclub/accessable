@@ -390,15 +390,20 @@ private struct Harness {
     let route: NavigationRoute
 
     /// No campus buildings by default, so only the landmark tests have any to match.
-    init(route: NavigationRoute? = nil, reroutes: [Result<NavigationRoute, RoutingError>] = [],
-         buildings: [CampusBuilding] = []) throws {
+    init(
+        route: NavigationRoute? = nil,
+        reroutes: [Result<NavigationRoute, RoutingError>] = [],
+        buildings: [CampusBuilding] = [],
+        distances: DistanceSettings = DistanceSettings(units: .metres)
+    ) throws {
         let route = try route ?? cornerRoute()
         self.route = route
         router = ScriptedRouter(reroutes)
         manager = TripManager(
             location: location, routing: router, announcements: engine,
-            landmarks: landmarks, campusBuildings: buildings,
+            landmarks: landmarks, campusBuildings: { buildings },
             setBackgroundTracking: { [background] in background.record($0) },
+            distances: distances,
             now: { [clock] in clock.now() },
             sleep: { [clock] in try await clock.sleep($0) }
         )
@@ -483,6 +488,24 @@ struct TripManagerTests {
         #expect(start.category == .maneuver)
         #expect(start.source == .navigation)
         #expect(start.expiresAt == start.createdAt.addingTimeInterval(15))
+    }
+
+    @Test
+    func switchingToFeetChangesTheNextCue() async throws {
+        let distances = DistanceSettings(units: .metres)
+        let harness = try Harness(distances: distances)
+        await harness.start()
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 160 metres. Walk north.")
+
+        // changed in Settings mid-trip: the next cue is in feet, 40 m rounded to 25 ft steps
+        distances.units = .feet
+        await harness.walk(from: 0, to: 160)
+        let texts = await harness.engine.waitForCount(5).map(\.text)
+        #expect(texts[1] == "In about 125 feet, turn right onto Ferst Drive.")
+        #expect(texts[3] == "In about 125 feet, your destination is on the left.")
     }
 
     @Test
@@ -657,6 +680,85 @@ struct TripManagerTests {
     }
 
     @Test
+    func askedForRerouteWhileOnTheRouteFollowsTheNewRoute() async throws {
+        // Route Blocked Ahead's "find another way": still on the route, so no off-route reroute would come
+        let walked = TripWalk.distances(from: 0, to: 20).last ?? 0
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked)
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.requests == [origin])
+
+        await harness.router.respond()
+        let rerouted = await harness.states.waitFor { $0.nextManeuver?.instruction == "Arrive" }
+        #expect(abs((rerouted.distanceRemaining ?? 0) - 80) < 0.5)
+        await waitUntil { await harness.engine.texts.contains("New route. Head east.") }
+        let texts = await harness.engine.texts
+        #expect(texts.contains("Finding a new route from here."))
+        #expect(!texts.contains("Trip ended."))
+    }
+
+    @Test
+    func askedForRerouteWithoutAPreciseFixSaysSoAndAsksNothing() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.fix(harness.point(5), accuracy: 50)
+
+        await harness.manager.reroute()
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await harness.engine.texts.contains(
+            "Couldn't find where you are precisely enough for a new route. Try again in a moment."
+        ))
+    }
+
+    @Test
+    func askedForRerouteWithAWeakSignalDoesntStartFromAnOldFix() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.fix(harness.point(0), then: 0)
+        // as in watchdogWarnsOfWeakSignalAndItsReturn: 10 s without a good fix is weak
+        harness.clock.advance(by: 5)
+        await harness.waitForSleepers(1)
+        await harness.fix(harness.point(1.4), accuracy: 40, then: 5)
+        await harness.waitForSleepers(1)
+        harness.clock.advance(by: 5)
+        await waitUntil { await harness.engine.texts.contains("GPS signal is weak. Directions may be delayed.") }
+
+        await harness.manager.reroute()
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await harness.engine.texts.contains(
+            "Couldn't find where you are precisely enough for a new route. Try again in a moment."
+        ))
+    }
+
+    @Test
+    func askedForRerouteThatFailsKeepsTheCurrentRoute() async throws {
+        let harness = try Harness(reroutes: [.failure(.serverUnavailable)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+        await waitUntil {
+            await harness.engine.texts.contains("Couldn't get a new route. Keep following the current one.")
+        }
+        // still on the route, so nothing sends the user back
+        #expect(!(await harness.engine.texts.contains("Couldn't get a new route. Walk back the way you came.")))
+    }
+
+    @Test
+    func askedForRerouteWithNoTripDoesNothing() async throws {
+        let harness = try Harness()
+        await harness.manager.reroute()
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await harness.engine.texts.isEmpty)
+    }
+
+    @Test
     func reroutesWaitThirtySecondsAndStopAfterFive() async throws {
         let harness = try Harness(reroutes: Array(repeating: .failure(.serverUnavailable), count: 6))
         await harness.start()
@@ -786,7 +888,8 @@ struct TripManagerTests {
         await harness.fix(harness.point(49, lateral: -40))
         await harness.router.waitForRequests(1)
         for _ in 0..<3 { await harness.fix(harness.point(49)) }
-        #expect(await harness.engine.texts.contains("Back on the route."))
+        // a fix's state is published before its cue is submitted, so wait for the cue
+        await waitUntil { await harness.engine.texts.contains("Back on the route.") }
 
         await harness.answerReroute()
         // the pause above is the only state change
@@ -880,6 +983,8 @@ struct TripManagerTests {
         await harness.walk(from: 50.4, to: 70.1)
         await harness.manager.resumeTrip()
         await harness.walk(from: 71.4, to: 93)
+        // a fix's state is published before its cue is submitted, so wait for the last cue
+        await waitUntil { await harness.engine.texts.contains("Turn right onto Ferst Drive.") }
 
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasSuffix("turn right onto Ferst Drive.") } == [

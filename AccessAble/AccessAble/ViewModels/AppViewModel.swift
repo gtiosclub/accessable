@@ -13,6 +13,7 @@ final class AppViewModel {
             services.askAISettings.priorities = profile.aiPriorities
             services.alertSettings.filter = profile.alertFilter
             services.alertSettings.soundCues = profile.channels.contains(.spatialAudio)
+            services.distanceSettings.units = profile.distanceUnits
             Task { await services.announcements.updateProfile(profile) }
         }
     }
@@ -51,6 +52,7 @@ final class AppViewModel {
         self.services.askAISettings.priorities = profile.aiPriorities
         self.services.alertSettings.filter = profile.alertFilter
         self.services.alertSettings.soundCues = profile.channels.contains(.spatialAudio)
+        self.services.distanceSettings.units = profile.distanceUnits
         let announcements = self.services.announcements
         Task { await announcements.updateProfile(profile) }
 
