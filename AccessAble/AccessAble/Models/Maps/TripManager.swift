@@ -327,7 +327,8 @@ actor TripManager: TripStateProviding {
     /// know about the obstacle, so the new route is the best one from here, not one around it.
     func reroute() async {
         guard phase == .active || phase == .paused else { return }
-        guard let origin = lastPreciseFix else {
+        // with a weak signal the last precise fix is old, and the user has walked on from it
+        guard let origin = lastPreciseFix, !isSignalWeak else {
             await submit(maneuver("Couldn't find where you are precisely enough for a new route. Try again in a moment.",
                                   .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
             return
@@ -380,9 +381,14 @@ actor TripManager: TripStateProviding {
         case .failure(let error):
             guard !(error is CancellationError), phase == .active else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
-            let text = rerouteCount < Self.maximumReroutes
-                ? "Couldn't get a new route. Walk back the way you came."
-                : "Off route. End the trip and choose your destination again."
+            let text = if requested, !needsReroute {
+                // still on the route, so there is nothing to walk back to
+                "Couldn't get a new route. Keep following the current one."
+            } else if rerouteCount < Self.maximumReroutes {
+                "Couldn't get a new route. Walk back the way you came."
+            } else {
+                "Off route. End the trip and choose your destination again."
+            }
             await submit(maneuver(text, .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
         }
     }

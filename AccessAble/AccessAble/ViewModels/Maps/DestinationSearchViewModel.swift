@@ -62,6 +62,13 @@ final class DestinationSearchViewModel {
     func start() async {
         for await result in search.suggestions() {
             isSearching = false
+            // The service replays its latest results to a new listener, and they can be for an
+            // earlier screen's search. Nothing typed means nothing to show.
+            guard !trimmedQuery.isEmpty else {
+                suggestions = []
+                if problem == .suggestionsUnavailable { problem = nil }
+                continue
+            }
             switch result {
             case .success(let suggestions):
                 self.suggestions = suggestions
@@ -107,5 +114,13 @@ final class DestinationSearchViewModel {
             }
             isResolving = false
         }
+    }
+
+    /// Drops a lookup still in flight, so it can't open a place after the user has left.
+    func cancelSelection() {
+        guard isResolving else { return }
+        selectionTask?.cancel()
+        selectedSuggestionID = nil
+        isResolving = false
     }
 }

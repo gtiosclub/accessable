@@ -5,7 +5,9 @@ private let log = Logger(subsystem: "AccessAble", category: "Search")
 
 @MainActor
 final class DestinationAutocompleter: NSObject, DestinationSearching {
-    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
+    /// Replays the latest results: a search screen stops listening while another screen covers
+    /// it, and results that arrive in that gap would otherwise be lost.
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>(replaysLatest: true)
     private let completer = MKLocalSearchCompleter()
     private var completions: [SearchSuggestion.ID: MKLocalSearchCompletion] = [:]
     private let region: MKCoordinateRegion
