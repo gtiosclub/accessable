@@ -53,7 +53,9 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.expiresAt > request.time
         && request.resource.data.confirmations == 0
-        && getAfter(rateLimitPath()).data.lastReportAt == request.time;
+        // The stamp names this report, so one stamp can't cover a batch of many reports.
+        && getAfter(rateLimitPath()).data.lastReportAt == request.time
+        && getAfter(rateLimitPath()).data.lastReportId == reportId;
 
 
       allow update: if signedIn()
@@ -68,8 +70,10 @@ service cloud.firestore {
     match /rateLimits/{userId} {
       function isOwnStamp() {
         return request.auth.uid == userId
-          && request.resource.data.keys().hasOnly(['lastReportAt'])
-          && request.resource.data.lastReportAt == request.time;
+          && request.resource.data.keys().hasAll(['lastReportAt', 'lastReportId'])
+          && request.resource.data.keys().hasOnly(['lastReportAt', 'lastReportId'])
+          && request.resource.data.lastReportAt == request.time
+          && request.resource.data.lastReportId is string;
       }
 
       allow read: if signedIn() && request.auth.uid == userId;

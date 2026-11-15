@@ -5,9 +5,9 @@ Users report temporary obstacles (construction, a blocked path, a closed entranc
 ## Firebase project
 
 - **Plan:** Spark (free). No credit card, Cloud Functions, Secret Manager, or Cloud Storage, so reports have no photos.
-- **Services in use:** Firestore (`started in production mode) and Authentication with email and password. Anonymous sign-in is off.
-- **App config:** `GoogleService-Info.plist` is kept out of git (see `.gitignore`). Ask the project owner for a copy and put it in `AccessAble/AccessAble/`, next to `AccessAbleApp.swift`.
-- **App setup:** the Xcode project depends on `FirebaseAuth` and `FirebaseFirestore` (not the root `Package.swift`), and `AccessAbleApp.init()` calls `FirebaseApp.configure()` before anything else.
+- **Services in use:** Firestore (started in production mode) and Authentication with email and password. Anonymous sign-in is off.
+- **App config:** `GoogleService-Info.plist` is kept out of git (see `.gitignore`). Ask the project owner for a copy and put it in `AccessAble/AccessAble/`, next to `AccessAbleApp.swift`. Without it the app still runs, on a placeholder sign-in that never reaches Firebase.
+- **App setup:** the Xcode project depends on `FirebaseAuth` and `FirebaseFirestore` (not the root `Package.swift`), and `AccessAbleApp.init()` calls `FirebaseApp.configure()` before anything else when the config file is present.
 - **Accounts:** features sign in through the shared `AuthService` in `ServiceProtocols.swift`. It exposes only the user's ID (`AuthUser.id`), never their email or name.
 
 ## Data model
@@ -27,14 +27,14 @@ Swift: `Report` in `Models/Maps/Report.swift`. Firestore: one document per repor
 
 ### Rate limits
 
-`rateLimits/{userID}` holds a single field, `lastReportAt` (timestamp), recording when that user last created a report. It holds nothing else.
+`rateLimits/{userID}` holds two fields: `lastReportAt` (timestamp), when that user last created a report, and `lastReportId` (string), that report's ID. It holds nothing else.
 
 ## Writing a report
 
 A new report must be written in **one batch** with the reporter's rate-limit stamp:
 
 1. Set `reports/{id}` with every field above, `reporterID` set to the signed-in user's ID, `confirmations` set to 0, and `createdAt` set to `FieldValue.serverTimestamp()`.
-2. In the same batch, set `rateLimits/{userID}` to `{ lastReportAt: FieldValue.serverTimestamp() }`.
+2. In the same batch, set `rateLimits/{userID}` to `{ lastReportAt: FieldValue.serverTimestamp(), lastReportId: id }`.
 
 The rules reject a report written any other way.
 
@@ -50,7 +50,7 @@ The rules are in `firebase/firestore.rules`.
 
 - **Signed-in writes only:** every write requires a signed-in user.
 - **Own reports only:** only the reporter can update or delete a report. `id`, `reporterID`, `createdAt`, and `confirmations` can never change. The reporter may change `kind`, `coordinate`, `area`, and `expiresAt` (for example, to end a report early).
-- **Rate limit:** at most one new report per user per minute. The `rateLimits` document can't be deleted, so the limit can't be reset.
+- **Rate limit:** at most one new report per user per minute. The stamp names the report it was written with, so one batch can't create several reports. The `rateLimits` document can't be deleted, so the limit can't be reset.
 - **No personal data:** a report may contain only the fields in the table above, each with the right type and range.
 
 ### Ownership
@@ -79,4 +79,12 @@ npm install
 npm run emulators
 ```
 
-The emulator runs locally, is free, and uses the `demo-accessable` project ID, so it never touches the real project. Rules tests will go in `firebase/tests/`.
+The emulator runs locally, is free, and uses the `demo-accessable` project ID, so it never touches the real project. It needs Java installed.
+
+## Rules tests
+
+The tests in `firebase/tests/` run every rule above against the emulator. Run them after any change to `firestore.rules`:
+
+```
+npm test
+```
