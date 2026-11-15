@@ -10,7 +10,7 @@ enum ReportKind: String, Codable, CaseIterable, Sendable {
 struct Report: Codable, Equatable, Identifiable, Sendable {
     var id: String
     var kind: ReportKind
-    var corrdinate: GeoCoordinate
+    var coordinate: GeoCoordinate
     var area: [GeoCoordinate]? = nil
     var createdAt: Date
     var expiresAt: Date

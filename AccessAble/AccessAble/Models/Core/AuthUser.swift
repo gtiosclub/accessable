@@ -9,7 +9,7 @@ enum AuthError: Error, Equatable, Sendable {
     case invalidCredentials
     case emailAlreadyInUse
     case weakPassword
-    case tooManyAttemps
+    case tooManyAttempts
     case network
     case unknown
 }

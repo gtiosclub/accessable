@@ -54,7 +54,7 @@ private extension AuthError {
         case .invalidCredential, .wrongPassword, .userNotFound: self = .invalidCredentials
         case .emailAlreadyInUse: self = .emailAlreadyInUse
         case .weakPassword: self = .weakPassword
-        case .tooManyRequests: self = .tooManyAttemps
+        case .tooManyRequests: self = .tooManyAttempts
         case .networkError: self = .network
         default: self = .unknown
         }
