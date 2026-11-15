@@ -131,12 +131,13 @@ struct TripSessionViewModelTests {
     }
 
     @Test
-    func rerouteClearsTheBlockAndAnnouncesTheNewRoute() {
+    func rerouteClearsTheBlockWithoutScriptedDirections() {
         let session = TripSessionViewModel(plan: plan, announcements: [])
         session.simulateBlockedRoute()
         session.reroute()
         #expect(!session.isRouteBlocked)
-        #expect(session.latestAnnouncement?.kind == .info)
+        // directions come only from TripManager; front end only has none
+        #expect(session.announcements.isEmpty)
     }
 }
 

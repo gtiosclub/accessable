@@ -164,6 +164,7 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
+    func reroute() async {}
 
     func currentLocationDescription() async -> String? { nil }
 }
@@ -187,4 +188,5 @@ struct PreviewTripProvider: TripStateProviding {
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
+    func reroute() async {}
 }
