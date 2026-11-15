@@ -168,9 +168,16 @@ struct ActiveTripView: View {
     @ViewBuilder
     private var background: some View {
         if session.showsMap {
-            CampusMap(routeLine: session.directions?.route?.coordinates.map {
-                CLLocationCoordinate2D(latitude: $0.latitude, longitude: $0.longitude)
-            } ?? (services == nil ? SampleContent.sampleRouteLine : nil))
+            CampusMap(
+                routeLine: session.directions?.route?.coordinates.map(\.clCoordinate)
+                    ?? (services == nil ? SampleContent.sampleRouteLine : nil),
+                destination: session.directions?.destination ?? Destination(
+                    name: session.plan.place.name,
+                    coordinate: GeoCoordinate(latitude: session.plan.place.latitude, longitude: session.plan.place.longitude)
+                ),
+                accessibilityLabel: session.directions?.mapAccessibilityLabel
+                    ?? "Map showing walking directions to \(session.destinationName)."
+            )
         } else if let services {
             LiveSceneView(services: services, mode: .walk, chrome: .cameraOnly)
         } else {

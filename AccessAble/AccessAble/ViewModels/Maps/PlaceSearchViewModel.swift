@@ -15,22 +15,24 @@ enum SearchOrigin: Hashable, Sendable {
     }
 }
 
-/// Owner: Maps (2.x). State for Search Destination: the From / To fields, live filtering,
-/// category counts, distances from the user's real location, and dictation into either field.
+/// Owner: Maps (2.x). State for Search Destination: the From / To fields, live results,
+/// category searches, distances from the user's real location, and dictation into either field.
 ///
-/// Searches `SampleContent` until the destination search service is wired in. Typing is
-/// debounced, so results settle once the user pauses rather than jumping on every letter,
-/// and `isSearching` says when they are about to change.
+/// The To field searches real places through `DestinationSearchViewModel` (MapKit
+/// autocomplete biased to campus), which owns the results, "no results", errors, the spoken
+/// count and resolving a pick into a `Destination`. Typing is debounced, so results settle
+/// once the user pauses rather than jumping on every letter, and `isSearching` says when they
+/// are about to change. The From field and saved places still search `SampleContent`.
 @MainActor
 @Observable
 final class PlaceSearchViewModel {
     enum Field: Hashable { case origin, destination }
 
     var query = "" {
-        didSet { if query != oldValue { scheduleSearch() } }
+        didSet { if query != oldValue { scheduleSearch(changesResults: true) } }
     }
     var originQuery = "" {
-        didSet { if originQuery != oldValue { scheduleSearch() } }
+        didSet { if originQuery != oldValue { scheduleSearch(changesResults: false) } }
     }
     var category: PlaceCategory? {
         didSet { if category != oldValue { search() } }
@@ -40,7 +42,11 @@ final class PlaceSearchViewModel {
     /// What the results reflect: the text as of the last pause in typing.
     private(set) var settledQuery = ""
     private(set) var settledOriginQuery = ""
-    private(set) var isSearching = false
+    /// Typing in the To field hasn't paused yet. Typing in From doesn't change the results.
+    private(set) var isSettling = false
+
+    /// The real search behind the To field.
+    let destinationSearch: DestinationSearchViewModel
 
     private(set) var location: LocationSample?
     private(set) var authorization: LocationAuthorization = .notDetermined
@@ -60,9 +66,18 @@ final class PlaceSearchViewModel {
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var namedAt: GeoCoordinate?
 
-    init(services: AppServices? = nil, places: [SamplePlace] = SampleContent.places) {
+    /// `search` overrides `services.destinationSearch`; without either it searches a few
+    /// sample places, for previews and tests.
+    init(
+        services: AppServices? = nil,
+        search: (any DestinationSearching)? = nil,
+        places: [SamplePlace] = SampleContent.places
+    ) {
         self.services = services
         self.places = places
+        destinationSearch = DestinationSearchViewModel(
+            search: search ?? services?.destinationSearch ?? PlaceholderDestinationSearch()
+        )
     }
 
     // MARK: - Results
@@ -71,10 +86,41 @@ final class PlaceSearchViewModel {
         !settledQuery.trimmingCharacters(in: .whitespaces).isEmpty || category != nil
     }
 
-    /// Places matching the settled query and category, nearest first when the user's
-    /// location is known.
-    var results: [SamplePlace] {
-        nearestFirst(Self.search(settledQuery, category: category, in: places))
+    /// Typing hasn't paused, or results for what was typed haven't arrived.
+    var isSearching: Bool { isSettling || destinationSearch.isSearching }
+
+    var suggestions: [SearchSuggestion] { destinationSearch.suggestions }
+    var problem: SearchProblem? { destinationSearch.problem }
+    var showsNoResults: Bool { isFiltering && !isSettling && destinationSearch.showsNoResults }
+
+    /// The picked result once it has been looked up. Opening it is up to the view.
+    var selectedDestination: Destination? { destinationSearch.selectedDestination }
+
+    func isResolving(_ suggestion: SearchSuggestion) -> Bool {
+        destinationSearch.isResolving && destinationSearch.selectedSuggestionID == suggestion.id
+    }
+
+    /// Looks up the picked result; `selectedDestination` is set when it is found.
+    func select(_ suggestion: SearchSuggestion) {
+        destinationSearch.select(suggestion)
+    }
+
+    /// What is sent to MapKit: the typed text, then the category ("Clough restaurants").
+    var searchText: String {
+        [settledQuery.trimmingCharacters(in: .whitespacesAndNewlines), category?.searchTerm]
+            .compactMap(\.self)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
+    /// "3 results for Clough", "Searching…", or "No results" when suggestions can't load.
+    var resultsSummary: String {
+        if isSearching { return "Searching…" }
+        if problem == .suggestionsUnavailable { return "No results" }
+        if let announcement = destinationSearch.resultsAnnouncement { return announcement }
+        // Once a result is picked the announcement goes quiet; the count still shows.
+        let count = suggestions.count
+        return count == 1 ? "1 result" : "\(count) results"
     }
 
     /// For the From field: matches for what was typed, or saved places when nothing was.
@@ -84,30 +130,14 @@ final class PlaceSearchViewModel {
         return nearestFirst(Self.search(trimmed, category: nil, in: places))
     }
 
-    var totalCount: Int { places.count }
-
-    /// How many places each category would show for what was typed.
-    func count(of category: PlaceCategory) -> Int {
-        Self.search(settledQuery, category: category, in: places).count
-    }
-
-    /// "Showing 3 of 24 places"; also what VoiceOver hears when results change.
-    var resultsSummary: String {
-        let count = results.count
-        guard count > 0 else { return "No places match" }
-        return "Showing \(count) of \(totalCount) \(totalCount == 1 ? "place" : "places")"
-    }
-
     /// Straight-line distance and an estimated walk, or nil without a location.
     func distanceText(to place: SamplePlace) -> String? {
         guard let metres = distance(to: place) else { return nil }
-        return Self.distanceText(metres: metres)
+        return Self.distanceText(metres: metres, distances: services?.distanceSettings.formatter ?? .metric)
     }
 
-    static func distanceText(metres: Double) -> String {
-        let distance = metres < 1000
-            ? "\(max(10, Int((metres / 10).rounded()) * 10)) m"
-            : (metres / 1000).formatted(.number.precision(.fractionLength(1))) + " km"
+    static func distanceText(metres: Double, distances: DistanceFormatter) -> String {
+        let distance = distances.written(metres)
         // Straight line at a walking pace; the route is longer, so this says "about".
         let minutes = max(1, Int((metres / 1.2 / 60).rounded()))
         return "\(distance) · about \(minutes) min walk"
@@ -166,9 +196,9 @@ final class PlaceSearchViewModel {
 
     // MARK: - Typing
 
-    private func scheduleSearch() {
+    private func scheduleSearch(changesResults: Bool) {
         searchTask?.cancel()
-        isSearching = true
+        if changesResults { isSettling = true }
         searchTask = Task { [weak self] in
             try? await Task.sleep(for: Self.debounce)
             guard !Task.isCancelled else { return }
@@ -181,7 +211,9 @@ final class PlaceSearchViewModel {
         searchTask?.cancel()
         settledQuery = query
         settledOriginQuery = originQuery
-        isSearching = false
+        isSettling = false
+        destinationSearch.query = searchText
+        destinationSearch.queryChanged()
     }
 
     func clearFilters() {
@@ -212,11 +244,17 @@ final class PlaceSearchViewModel {
 
     // MARK: - Location
 
-    /// Follows the user's location and names the street. Returns when cancelled.
+    /// Listens for search results, follows the user's location and names the street.
+    /// Returns when cancelled.
     func start() async {
-        guard let services else { return }
+        let destinationSearch = destinationSearch
+        guard let services else {
+            await destinationSearch.start()
+            return
+        }
         await services.location.requestAuthorization()
         await withDiscardingTaskGroup { group in
+            group.addTask { await destinationSearch.start() }
             group.addTask {
                 for await authorization in services.location.authorizationStates() {
                     await self.receive(authorization)
@@ -255,7 +293,7 @@ final class PlaceSearchViewModel {
         return item.address?.shortAddress ?? item.name
     }
 
-    /// "Ferst Dr NW · ±8 m", "Finding you…", or why it can't.
+    /// "Ferst Dr NW · ±10 m" (or "±25 ft"), "Finding you…", or why it can't.
     var locationDetail: String {
         switch authorization {
         case .denied, .restricted: return "Location is off. Turn it on in Settings."
@@ -263,7 +301,8 @@ final class PlaceSearchViewModel {
         case .authorized: break
         }
         guard let location else { return "Finding you…" }
-        let accuracy = "±\(Int(location.horizontalAccuracy.rounded())) m"
+        let distances = services?.distanceSettings.formatter ?? .metric
+        let accuracy = "±\(distances.written(location.horizontalAccuracy))"
         return [locationName, accuracy].compactMap(\.self).joined(separator: " · ")
     }
 
@@ -300,6 +339,8 @@ final class PlaceSearchViewModel {
 
     func stop() {
         searchTask?.cancel()
+        isSettling = false
+        destinationSearch.cancelSelection()
         dictation.cancel()
         dictatingField = nil
     }

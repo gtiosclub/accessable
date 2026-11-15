@@ -45,6 +45,19 @@ struct PlaceholderHaptics: HapticRendering {
     }
 }
 
+/// Sends the given landmarks, then finishes. Empty by default, which is what the app gets until CV's
+/// implementation lands. Replaced by CV (LAND-1).
+struct PlaceholderLandmarkProvider: LandmarkObserving {
+    var observations: [LandmarkObservation] = []
+
+    func landmarkObservations() -> AsyncStream<LandmarkObservation> {
+        AsyncStream { continuation in
+            observations.forEach { continuation.yield($0) }
+            continuation.finish()
+        }
+    }
+}
+
 /// Emits one hard-coded scene so UI work can proceed without a camera.
 struct PlaceholderSceneProvider: SceneObservationProviding, SceneDescribing {
     static let sample = SceneObservation(
@@ -131,7 +144,8 @@ struct PlaceholderDestinationSearch: DestinationSearching {
         SearchSuggestion(title: "Campus Recreation Center", subtitle: "750 Ferst Dr NW, Atlanta, GA"),
     ]
 
-    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
+    /// Replays the latest results, so a listener that subscribes after a query still gets them.
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>(replaysLatest: true)
 
     func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
         results.stream()
@@ -163,6 +177,7 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
+    func reroute() async {}
 
     func currentLocationDescription() async -> String? { nil }
 }
@@ -186,6 +201,7 @@ struct PreviewTripProvider: TripStateProviding {
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
+    func reroute() async {}
 }
 
 actor PlaceholderAuthService: AuthService {

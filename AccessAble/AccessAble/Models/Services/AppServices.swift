@@ -16,12 +16,17 @@ struct AppServices: Sendable {
     var locationContext: any LocationContextProviding
     var commands: any CommandInterpreting
     var auth: any AuthService
+    // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
+    var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
     var askAISettings = AskAISettings()
     /// What the camera warns about, read by the pipeline every frame. AppViewModel keeps it
     /// in step with the profile.
     var alertSettings = AlertSettings()
+    /// Feet or metres for the trip, search and "where am I". AppViewModel keeps it in step with
+    /// the profile.
+    var distanceSettings = DistanceSettings()
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
@@ -31,6 +36,7 @@ struct AppServices: Sendable {
         let announcements = AnnouncementEngine(speech: SpeechOutput(), haptics: haptics)
         let askAISettings = AskAISettings()
         let alertSettings = AlertSettings()
+        let distanceSettings = DistanceSettings()
         let scene = liveScene(
             performance: performance, announcements: announcements,
             askAISettings: askAISettings, alertSettings: alertSettings
@@ -49,15 +55,18 @@ struct AppServices: Sendable {
             routing: ValhallaRoutingService(),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
-            locationContext: LocationDescriber(location: location),
+            locationContext: LocationDescriber(location: location, distances: distanceSettings),
             commands: FoundationModelCommandInterpreter(),
             auth: FirebaseApp.app() != nil ? FirebaseAuthService(): PlaceholderAuthService(),
             askAISettings: askAISettings,
-            alertSettings: alertSettings
+            alertSettings: alertSettings,
+            distanceSettings: distanceSettings
         )
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
-            setBackgroundTracking: { await location.setBackgroundTracking($0) }
+            landmarks: services.landmarks,
+            setBackgroundTracking: { await location.setBackgroundTracking($0) },
+            distances: distanceSettings
         )
         return services
     }
@@ -92,6 +101,8 @@ struct AppServices: Sendable {
         services.trip = PlaceholderTripProvider()
         // Nor wait on GPS and Apple Maps for "where am I".
         services.locationContext = PlaceholderTripProvider()
+        // Wording that doesn't change with the simulator's region.
+        services.distanceSettings = DistanceSettings(units: .metres)
         return services
     }
 }
