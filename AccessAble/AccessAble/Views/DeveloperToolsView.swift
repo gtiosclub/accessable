@@ -43,6 +43,10 @@ struct DeveloperToolsView: View {
                      hint: "Shows the location permission and the latest GPS readings") {
                     LocationDebugView(services: app.services)
                 }
+                link("Geo tracking spike", systemImage: "scope",
+                     hint: "Logs ARKit geo-tracking next to GPS for the AR feasibility walk") {
+                    GeoTrackingSpikeView()
+                }
                 #endif
             }
 
