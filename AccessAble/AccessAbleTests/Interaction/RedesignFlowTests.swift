@@ -293,6 +293,32 @@ struct PlaceSearchViewModelTests {
     }
 
     @Test
+    func resultsThatArriveWhileTheScreenIsHiddenShowOnReturn() async throws {
+        let search = PlaceSearchViewModel()
+        search.query = "library"
+        search.search()
+        #expect(search.isSearching)
+
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+        try await waitUntil { !search.isSearching }
+        #expect(search.suggestions.map(\.title) == ["Georgia Tech Library"])
+    }
+
+    @Test
+    func aNewSearchScreenDoesntShowAnEarlierScreensResults() async throws {
+        let service = PlaceholderDestinationSearch()
+        service.update(query: "library")
+
+        let search = PlaceSearchViewModel(search: service)
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(search.suggestions.isEmpty)
+        #expect(!search.showsNoResults)
+    }
+
+    @Test
     func typingAStartingPointDoesntMarkTheResultsAsSearching() {
         let search = PlaceSearchViewModel()
         search.originQuery = "CULC"
