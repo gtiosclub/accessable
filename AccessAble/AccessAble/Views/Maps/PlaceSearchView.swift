@@ -331,8 +331,6 @@ struct PlaceSearchView: View {
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.white)
                     .contentTransition(.numericText())
-                    // Read out by announcesSearch; reading the line as well would say it twice.
-                    .accessibilityHidden(true)
             }
             FlowLayout(spacing: 8) {
                 let trimmed = search.settledQuery.trimmingCharacters(in: .whitespaces)
