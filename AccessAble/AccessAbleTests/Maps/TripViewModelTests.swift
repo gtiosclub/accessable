@@ -107,6 +107,7 @@ private final class ControlledTripProvider: TripStateProviding, Sendable {
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
+    func reroute() async {}
 }
 
 /// Yields fixed fixes with a fixed permission, then finishes.
@@ -173,6 +174,12 @@ private let plannedRoute = try! NavigationRoute(coordinates: [origin, library.co
     RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
 ], estimatedDuration: 90)
 
+/// A different route from the one `CountingRouting` answers with, so a test can tell which was started.
+private let pickedRoute = try! NavigationRoute(coordinates: [origin, library.coordinate], steps: [
+    RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Head north.", spokenInstruction: "Head north."),
+    RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
+], estimatedDuration: 95)
+
 private final class ManualDate: Sendable {
     private let date = Mutex(Date(timeIntervalSince1970: 1_700_000_000))
 
@@ -191,9 +198,11 @@ private final class TripScreen {
     private let clock = ManualDate()
     private var running: Task<Void, Never>?
 
+    /// - Parameter trip: Pass another screen's to open this one on a trip already running.
     init(fixes: [GeoCoordinate] = [origin], accuracy: Double = 5,
-         authorization: LocationAuthorization = .authorized(preciseAccuracy: true)) {
-        trip = ControlledTripProvider()
+         authorization: LocationAuthorization = .authorized(preciseAccuracy: true),
+         trip: ControlledTripProvider = ControlledTripProvider()) {
+        self.trip = trip
         routing = CountingRouting(route: plannedRoute)
         var services = AppServices.preview
         services.trip = trip
@@ -208,6 +217,20 @@ private final class TripScreen {
 
     func advance(by seconds: TimeInterval) {
         clock.advance(by: seconds)
+    }
+
+    var now: Date { clock.now }
+
+    /// Starts the view model on a route an earlier screen found, as the route picker hands on.
+    func plan(using planned: PlannedRoute) async {
+        viewModel.use(planned)
+        running = Task { await viewModel.start() }
+        await until { self.viewModel.locationAuthorization != .notDetermined && self.viewModel.lastLocation != nil }
+    }
+
+    /// Starts the view model without planning, as when the screen is opened again mid-trip.
+    func open() {
+        running = Task { await viewModel.start() }
     }
 
     /// Starts the view model and plans a route to the library.
@@ -270,6 +293,32 @@ struct TripStartTests {
         let screen = TripScreen()
         await screen.plan()
         screen.advance(by: 60)
+        await screen.viewModel.startTrip()
+        #expect(await screen.routing.requestCount == 1)
+        #expect(screen.trip.startedRoutes == [plannedRoute])
+        screen.stop()
+    }
+
+    @Test
+    func handedOnRouteStartsWithoutAskingAgain() async {
+        let screen = TripScreen()
+        await screen.plan(using: PlannedRoute(destination: library, route: pickedRoute, requestedAt: screen.now))
+        #expect(screen.viewModel.plannedRoute?.route == pickedRoute)
+
+        await screen.viewModel.startTrip()
+        #expect(await screen.routing.requestCount == 0)
+        // the exact route that was picked, not a new one
+        #expect(screen.trip.startedRoutes == [pickedRoute])
+        screen.stop()
+    }
+
+    @Test
+    func handedOnRouteOlderThanTwoMinutesIsPlannedAgainFirst() async {
+        let screen = TripScreen()
+        let planned = PlannedRoute(destination: library, route: pickedRoute, requestedAt: screen.now)
+        screen.advance(by: 121)
+        await screen.plan(using: planned)
+
         await screen.viewModel.startTrip()
         #expect(await screen.routing.requestCount == 1)
         #expect(screen.trip.startedRoutes == [plannedRoute])
@@ -343,6 +392,26 @@ struct TripStartTests {
         screen.trip.send(rerouted)
         await screen.until { screen.viewModel.route == rerouted }
         screen.stop()
+    }
+
+    @Test
+    func reopeningTheScreenMidTripShowsTheCurrentRoute() async throws {
+        let screen = TripScreen()
+        await screen.plan()
+        await screen.show(state(.active, maneuver: turn, distance: 42))
+        let rerouted = try NavigationRoute(coordinates: [turn.coordinate, library.coordinate], steps: [
+            RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Walk east.", spokenInstruction: "Walk east."),
+            RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
+        ], estimatedDuration: 60)
+        screen.trip.send(rerouted)
+        screen.stop()
+
+        // a new screen on the same trip, with no route handed to it, shows the rerouted line
+        let reopened = TripScreen(trip: screen.trip)
+        reopened.open()
+        await reopened.until { reopened.viewModel.route == rerouted && reopened.viewModel.tripState.phase == .active }
+        #expect(await reopened.routing.requestCount == 0)
+        reopened.stop()
     }
 
     @Test(arguments: [

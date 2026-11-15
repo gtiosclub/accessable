@@ -17,6 +17,7 @@ private struct ScriptedTrip: TripStateProviding {
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
+    func reroute() async {}
 }
 
 private actor RecordingScene: SceneObservationProviding {

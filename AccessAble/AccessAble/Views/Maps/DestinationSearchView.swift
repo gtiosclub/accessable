@@ -117,19 +117,7 @@ struct DestinationSearchView: View {
             guard let destination else { return }
             AccessibilityNotification.Announcement(selectedLabel(destination)).post()
         }
-        .onChange(of: viewModel.problem) { _, problem in
-            guard let problem else { return }
-            // high priority so VoiceOver doesn't cut it off while reading the row's "Loading details" value
-            var message = AttributedString(problemMessage(problem))
-            message.accessibilitySpeechAnnouncementPriority = .high
-            AccessibilityNotification.Announcement(message).post()
-        }
-        // debounced so the count doesn't talk over typing; cancellation means a newer value arrived
-        .task(id: viewModel.resultsAnnouncement) {
-            guard let announcement = viewModel.resultsAnnouncement else { return }
-            do { try await Task.sleep(for: .seconds(1)) } catch { return }
-            AccessibilityNotification.Announcement(announcement).post()
-        }
+        .announcesSearch(viewModel)
         .task { await viewModel.start() }
     }
 
@@ -137,23 +125,14 @@ struct DestinationSearchView: View {
     private func problemView(_ problem: SearchProblem) -> some View {
         switch problem {
         case .suggestionsUnavailable:
-            Label(problemMessage(problem), systemImage: "wifi.exclamationmark")
+            Label(problem.message, systemImage: "wifi.exclamationmark")
         case .lookupFailed(let suggestion):
             VStack(alignment: .leading, spacing: 8) {
-                Label(problemMessage(problem), systemImage: "exclamationmark.triangle")
+                Label(problem.message, systemImage: "exclamationmark.triangle")
                 Button("Try again") { viewModel.select(suggestion) }
                     .minimumTapTarget()
                     .accessibilityHint("Looks up \(suggestion.title) again")
             }
-        }
-    }
-
-    private func problemMessage(_ problem: SearchProblem) -> String {
-        switch problem {
-        case .suggestionsUnavailable:
-            "Couldn't load suggestions. Check your connection and keep typing."
-        case .lookupFailed(let suggestion):
-            "Couldn't get details for \(suggestion.title)."
         }
     }
 
@@ -167,6 +146,27 @@ struct DestinationSearchView: View {
     private func coordinateText(_ coordinate: GeoCoordinate) -> String {
         let format = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(5))
         return "\(coordinate.latitude.formatted(format)), \(coordinate.longitude.formatted(format))"
+    }
+}
+
+extension View {
+    /// Says the result count, "no results" and search errors out loud. VoiceOver doesn't read
+    /// changes outside the focused row on its own.
+    func announcesSearch(_ search: DestinationSearchViewModel) -> some View {
+        self
+            .onChange(of: search.problem) { _, problem in
+                guard let problem else { return }
+                // high priority so VoiceOver doesn't cut it off while reading the row's "Loading details" value
+                var message = AttributedString(problem.message)
+                message.accessibilitySpeechAnnouncementPriority = .high
+                AccessibilityNotification.Announcement(message).post()
+            }
+            // debounced so the count doesn't talk over typing; cancellation means a newer value arrived
+            .task(id: search.resultsAnnouncement) {
+                guard let announcement = search.resultsAnnouncement else { return }
+                do { try await Task.sleep(for: .seconds(1)) } catch { return }
+                AccessibilityNotification.Announcement(announcement).post()
+            }
     }
 }
 
