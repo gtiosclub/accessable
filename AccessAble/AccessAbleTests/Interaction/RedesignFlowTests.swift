@@ -293,6 +293,61 @@ struct PlaceSearchViewModelTests {
     }
 
     @Test
+    func resultsThatArriveWhileTheScreenIsHiddenShowOnReturn() async throws {
+        let search = PlaceSearchViewModel()
+        search.query = "library"
+        search.search()
+        #expect(search.isSearching)
+
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+        try await waitUntil { !search.isSearching }
+        #expect(search.suggestions.map(\.title) == ["Georgia Tech Library"])
+    }
+
+    @Test
+    func aNewSearchScreenDoesntShowAnEarlierScreensResults() async throws {
+        let service = PlaceholderDestinationSearch()
+        service.update(query: "library")
+
+        let search = PlaceSearchViewModel(search: service)
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(search.suggestions.isEmpty)
+        #expect(!search.showsNoResults)
+    }
+
+    @Test
+    func typingAStartingPointDoesntMarkTheResultsAsSearching() {
+        let search = PlaceSearchViewModel()
+        search.originQuery = "CULC"
+        #expect(!search.isSearching)
+    }
+
+    @Test
+    func leavingMidTypingDoesntLeaveTheResultsSearching() {
+        let search = PlaceSearchViewModel()
+        search.query = "Clough"
+        #expect(search.isSearching)
+        search.stop()
+        #expect(!search.isSearching)
+    }
+
+    @Test
+    func leavingDropsALookupStillInFlight() async throws {
+        let search = PlaceSearchViewModel(search: SlowLookupSearch())
+        let suggestion = SearchSuggestion(title: "Clough", subtitle: "")
+        search.select(suggestion)
+        #expect(search.isResolving(suggestion))
+        search.stop()
+        #expect(!search.isResolving(suggestion))
+        // Long enough for the lookup to have finished had it not been dropped.
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(search.selectedDestination == nil)
+    }
+
+    @Test
     func searchedPlacesCarryTheirDestinationToTheTrip() {
         let destination = Destination(
             name: "Clough Undergraduate Learning Commons",
@@ -332,10 +387,11 @@ struct PlaceSearchViewModelTests {
     }
 }
 
-/// Suggestions that never load, as when the phone is offline.
+/// Suggestions that never load, as when the phone is offline. Replays the failure, so a
+/// listener that subscribes after the query still gets it.
 @MainActor
 private struct FailingDestinationSearch: DestinationSearching {
-    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>(replaysLatest: true)
 
     func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
         results.stream()
@@ -347,5 +403,22 @@ private struct FailingDestinationSearch: DestinationSearching {
 
     func resolve(_ suggestion: SearchSuggestion) async throws -> Destination {
         throw DestinationSearchError.noMatch
+    }
+}
+
+/// Finds every place after a short wait, even when the lookup is cancelled.
+@MainActor
+private struct SlowLookupSearch: DestinationSearching {
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
+
+    func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
+        results.stream()
+    }
+
+    func update(query: String) {}
+
+    func resolve(_ suggestion: SearchSuggestion) async throws -> Destination {
+        try? await Task.sleep(for: .milliseconds(50))
+        return Destination(name: suggestion.title, coordinate: GeoCoordinate(latitude: 33.7746, longitude: -84.3964))
     }
 }
