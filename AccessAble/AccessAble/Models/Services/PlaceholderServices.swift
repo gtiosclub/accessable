@@ -45,6 +45,19 @@ struct PlaceholderHaptics: HapticRendering {
     }
 }
 
+/// Sends the given landmarks, then finishes. Empty by default, which is what the app gets until CV's
+/// implementation lands. Replaced by CV (LAND-1).
+struct PlaceholderLandmarkProvider: LandmarkObserving {
+    var observations: [LandmarkObservation] = []
+
+    func landmarkObservations() -> AsyncStream<LandmarkObservation> {
+        AsyncStream { continuation in
+            observations.forEach { continuation.yield($0) }
+            continuation.finish()
+        }
+    }
+}
+
 /// Emits one hard-coded scene so UI work can proceed without a camera.
 struct PlaceholderSceneProvider: SceneObservationProviding, SceneDescribing {
     static let sample = SceneObservation(

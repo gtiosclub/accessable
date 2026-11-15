@@ -14,6 +14,8 @@ struct AppServices: Sendable {
     var trip: any TripStateProviding
     var locationContext: any LocationContextProviding
     var commands: any CommandInterpreting
+    // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
+    var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
     var askAISettings = AskAISettings()
