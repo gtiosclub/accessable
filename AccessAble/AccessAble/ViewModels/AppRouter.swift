@@ -8,7 +8,8 @@ enum AppRoute: Hashable {
     case place(SamplePlace, origin: SamplePlace? = nil)
     /// A real place picked from search results.
     case destination(Destination, origin: SamplePlace? = nil)
-    case routes(SamplePlace, RoutePlanMode, origin: SamplePlace? = nil)
+    /// `planned` is the route the details screen already found, so it isn't asked for again.
+    case routes(SamplePlace, RoutePlanMode, origin: SamplePlace? = nil, planned: PlannedRoute? = nil)
     case trip(TripPlan)
     case settings
     case callHelp

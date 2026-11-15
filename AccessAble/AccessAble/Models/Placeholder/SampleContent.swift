@@ -93,6 +93,8 @@ struct TripPlan: Hashable, Sendable {
     /// The starting point picked in search; nil for My Location. A live trip still starts
     /// where the user is, and says so.
     var origin: SamplePlace? = nil
+    /// The real route picked before the trip; nil asks for one when the trip starts.
+    var plannedRoute: PlannedRoute? = nil
 }
 
 struct Volunteer: Identifiable, Hashable, Sendable {

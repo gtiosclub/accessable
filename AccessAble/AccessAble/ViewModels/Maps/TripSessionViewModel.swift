@@ -119,12 +119,17 @@ final class TripSessionViewModel {
         guard let services, let directions else { return }
         if !hasSetDestination {
             hasSetDestination = true
-            directions.setDestination(Destination(
-                name: plan.place.name,
-                coordinate: GeoCoordinate(latitude: plan.place.latitude, longitude: plan.place.longitude),
-                // A place from search may have no address.
-                address: plan.place.address.isEmpty ? nil : plan.place.address
-            ))
+            if let planned = plan.plannedRoute {
+                // The route picked on the previous screen; no second request.
+                directions.use(planned)
+            } else {
+                directions.setDestination(Destination(
+                    name: plan.place.name,
+                    coordinate: GeoCoordinate(latitude: plan.place.latitude, longitude: plan.place.longitude),
+                    // A place from search may have no address.
+                    address: plan.place.address.isEmpty ? nil : plan.place.address
+                ))
+            }
             if let origin = plan.origin {
                 await say("Directions start from where you are now, not from \(origin.name).", category: .system)
             }

@@ -22,7 +22,8 @@ final class TripViewModel {
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var routeRequestedAt: Date?
     @ObservationIgnored private var latestPreciseFix: LocationSample?
-    @ObservationIgnored private var lastLocation: GeoCoordinate?
+    // internal so tests can wait for the first fix
+    @ObservationIgnored private(set) var lastLocation: GeoCoordinate?
     @ObservationIgnored private var firstSampleTime: Date?
     @ObservationIgnored private var bestSample: LocationSample?
     // internal so tests can await the request
@@ -48,6 +49,23 @@ final class TripViewModel {
         route = nil
         routeError = nil
         requestRoute()
+    }
+
+    /// Takes a route found on an earlier screen instead of asking for one. Starting still
+    /// refreshes it if it is old or no longer starts where the user is.
+    func use(_ planned: PlannedRoute) {
+        routeTask?.cancel()
+        routeTask = nil
+        destination = planned.destination
+        route = planned.route
+        routeRequestedAt = planned.requestedAt
+        routeError = nil
+    }
+
+    /// The route found so far, to hand on to the next screen.
+    var plannedRoute: PlannedRoute? {
+        guard let destination, let route, let routeRequestedAt else { return nil }
+        return PlannedRoute(destination: destination, route: route, requestedAt: routeRequestedAt)
     }
 
     func retryRoute() {

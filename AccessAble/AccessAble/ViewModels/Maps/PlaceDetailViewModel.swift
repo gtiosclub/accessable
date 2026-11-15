@@ -1,8 +1,8 @@
 import Foundation
 import Observation
 
-/// Owner: Maps (2.x). State for a place's details: its name and address, and the real
-/// walking route to it from where the user is: distance, time and steps.
+/// Owner: Maps (2.x). State for a place's details and the route picker: the place's name and
+/// address, and the real walking route to it from where the user is: distance, time and steps.
 ///
 /// The route comes from `TripViewModel`, which already picks a good enough GPS fix to start
 /// from, asks the routing service, and reports failures. This only formats what it found.
@@ -13,10 +13,15 @@ final class PlaceDetailViewModel {
     /// Finds the route. Kept so its retry and error rules aren't copied here.
     let planner: TripViewModel
 
-    init(destination: Destination, services: AppServices) {
+    /// `planned` is a route an earlier screen found; without it one is asked for.
+    init(destination: Destination, services: AppServices, planned: PlannedRoute? = nil) {
         self.destination = destination
         planner = TripViewModel(services: services)
+        if let planned { planner.use(planned) }
     }
+
+    /// The route found, to hand on so the next screen walks this exact route.
+    var plannedRoute: PlannedRoute? { planner.plannedRoute }
 
     var route: NavigationRoute? { planner.route }
     var errorMessage: String? { planner.routeErrorMessage }
