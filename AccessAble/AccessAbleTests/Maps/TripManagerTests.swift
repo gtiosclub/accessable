@@ -320,13 +320,18 @@ private struct Harness {
     let manager: TripManager
     let route: NavigationRoute
 
-    init(route: NavigationRoute? = nil, reroutes: [Result<NavigationRoute, RoutingError>] = []) throws {
+    init(
+        route: NavigationRoute? = nil,
+        reroutes: [Result<NavigationRoute, RoutingError>] = [],
+        distances: DistanceSettings = DistanceSettings(units: .metres)
+    ) throws {
         let route = try route ?? cornerRoute()
         self.route = route
         router = ScriptedRouter(reroutes)
         manager = TripManager(
             location: location, routing: router, announcements: engine,
             setBackgroundTracking: { [background] in background.record($0) },
+            distances: distances,
             now: { [clock] in clock.now() },
             sleep: { [clock] in try await clock.sleep($0) }
         )
@@ -411,6 +416,24 @@ struct TripManagerTests {
         #expect(start.category == .maneuver)
         #expect(start.source == .navigation)
         #expect(start.expiresAt == start.createdAt.addingTimeInterval(15))
+    }
+
+    @Test
+    func switchingToFeetChangesTheNextCue() async throws {
+        let distances = DistanceSettings(units: .metres)
+        let harness = try Harness(distances: distances)
+        await harness.start()
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 160 metres. Walk north.")
+
+        // changed in Settings mid-trip: the next cue is in feet, 40 m rounded to 25 ft steps
+        distances.units = .feet
+        await harness.walk(from: 0, to: 160)
+        let texts = await harness.engine.waitForCount(5).map(\.text)
+        #expect(texts[1] == "In about 125 feet, turn right onto Ferst Drive.")
+        #expect(texts[3] == "In about 125 feet, your destination is on the left.")
     }
 
     @Test
