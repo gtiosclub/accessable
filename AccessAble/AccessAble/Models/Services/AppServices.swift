@@ -57,7 +57,7 @@ struct AppServices: Sendable {
             trip: trip,
             locationContext: LocationDescriber(location: location, distances: distanceSettings),
             commands: FoundationModelCommandInterpreter(),
-            auth: FirebaseApp.app() != nil ? FirebaseAuthService(): PlaceholderAuthService(),
+            auth: FirebaseApp.app() != nil ? FirebaseAuthService() : PlaceholderAuthService(signedIn: false),
             askAISettings: askAISettings,
             alertSettings: alertSettings,
             distanceSettings: distanceSettings
@@ -103,6 +103,8 @@ struct AppServices: Sendable {
         services.locationContext = PlaceholderTripProvider()
         // Wording that doesn't change with the simulator's region.
         services.distanceSettings = DistanceSettings(units: .metres)
+        // Nor sign in to the real Firebase project.
+        services.auth = PlaceholderAuthService()
         return services
     }
 }

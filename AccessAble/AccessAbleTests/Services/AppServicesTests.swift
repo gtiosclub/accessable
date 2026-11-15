@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import AccessAble
 
@@ -21,5 +22,18 @@ struct AppServicesTests {
     @Test
     func previewNeverStartsRealTrips() {
         #expect(AppServices.preview.trip is PlaceholderTripProvider)
+    }
+
+    @Test
+    func previewNeverSignsInToFirebase() {
+        #expect(AppServices.preview.auth is PlaceholderAuthService)
+    }
+
+    /// The test host has no `GoogleService-Info.plist` unless a developer added one, and must still launch.
+    @Test
+    func liveFallsBackToThePlaceholderSignInWithoutFirebaseConfig() {
+        let configured = Bundle.main.url(forResource: "GoogleService-Info", withExtension: "plist") != nil
+        let auth = AppServices.live(performance: PerformanceModeMonitor()).auth
+        #expect(configured ? auth is FirebaseAuthService : auth is PlaceholderAuthService)
     }
 }
