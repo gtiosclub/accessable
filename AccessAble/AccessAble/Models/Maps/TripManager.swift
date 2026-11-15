@@ -16,7 +16,8 @@ actor TripManager: TripStateProviding {
     private let routing: any RoutingService
     private let announcements: any AnnouncementEngineProtocol
     private let landmarks: any LandmarkObserving
-    private let campusBuildings: [CampusBuilding]
+    /// Read when a trip starts, not at launch: loading them parses a large bundled file.
+    private let campusBuildings: @Sendable () -> [CampusBuilding]
     private let setBackgroundTracking: @Sendable (Bool) async -> Void
     private let distances: DistanceSettings
     private let now: @Sendable () -> Date
@@ -78,7 +79,7 @@ actor TripManager: TripStateProviding {
         routing: any RoutingService,
         announcements: any AnnouncementEngineProtocol,
         landmarks: any LandmarkObserving = PlaceholderLandmarkProvider(),
-        campusBuildings: [CampusBuilding] = CampusLandmarks.buildings,
+        campusBuildings: @escaping @Sendable () -> [CampusBuilding] = { CampusLandmarks.buildings },
         setBackgroundTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
         distances: DistanceSettings = DistanceSettings(units: .metres),
         now: @escaping @Sendable () -> Date = { .now },
@@ -118,7 +119,7 @@ actor TripManager: TripStateProviding {
         self.tracker = tracker
         progress = tracker.state
         landmarkMatcher = LandmarkMatcher(
-            landmarks: RouteLandmarks.along(route, destination: destination, buildings: campusBuildings)
+            landmarks: RouteLandmarks.along(route, destination: destination, buildings: campusBuildings())
         )
         pendingCueIDs = []
         deliveredIDs = []
@@ -442,7 +443,7 @@ actor TripManager: TripStateProviding {
             progress = tracker.state
             missedTurnStep = nil
             landmarkMatcher?.replaceLandmarks(
-                RouteLandmarks.along(newRoute, destination: destination, buildings: campusBuildings)
+                RouteLandmarks.along(newRoute, destination: destination, buildings: campusBuildings())
             )
             routes.send(newRoute)
             publish(at: now())

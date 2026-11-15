@@ -401,7 +401,7 @@ private struct Harness {
         router = ScriptedRouter(reroutes)
         manager = TripManager(
             location: location, routing: router, announcements: engine,
-            landmarks: landmarks, campusBuildings: buildings,
+            landmarks: landmarks, campusBuildings: { buildings },
             setBackgroundTracking: { [background] in background.record($0) },
             distances: distances,
             now: { [clock] in clock.now() },
