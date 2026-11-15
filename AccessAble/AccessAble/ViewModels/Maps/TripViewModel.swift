@@ -146,24 +146,26 @@ final class TripViewModel {
     func start() async {
         await services.location.requestAuthorization()
 
+        // Each task holds only the service it reads. Holding all of `services` would let a task that finishes on a
+        // background thread free the last copy there, and the speech engine must be freed on the main actor.
         await withDiscardingTaskGroup { group in
-            group.addTask { [services] in
-                for await state in services.trip.tripStates() {
+            group.addTask { [trip = services.trip] in
+                for await state in trip.tripStates() {
                     await self.receive(state)
                 }
             }
-            group.addTask { [services] in
-                for await route in services.trip.tripRoutes() {
+            group.addTask { [trip = services.trip] in
+                for await route in trip.tripRoutes() {
                     await self.receive(route)
                 }
             }
-            group.addTask { [services] in
-                for await authorization in services.location.authorizationStates() {
+            group.addTask { [location = services.location] in
+                for await authorization in location.authorizationStates() {
                     await self.receive(authorization)
                 }
             }
-            group.addTask { [services] in
-                for await sample in services.location.locationSamples() {
+            group.addTask { [location = services.location] in
+                for await sample in location.locationSamples() {
                     await self.receive(sample)
                 }
             }

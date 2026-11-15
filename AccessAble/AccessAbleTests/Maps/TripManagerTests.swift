@@ -620,6 +620,42 @@ struct TripManagerTests {
     }
 
     @Test
+    func askedForRerouteWithAWeakSignalDoesntStartFromAnOldFix() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.fix(harness.point(0), then: 0)
+        // as in watchdogWarnsOfWeakSignalAndItsReturn: 10 s without a good fix is weak
+        harness.clock.advance(by: 5)
+        await harness.waitForSleepers(1)
+        await harness.fix(harness.point(1.4), accuracy: 40, then: 5)
+        await harness.waitForSleepers(1)
+        harness.clock.advance(by: 5)
+        await waitUntil { await harness.engine.texts.contains("GPS signal is weak. Directions may be delayed.") }
+
+        await harness.manager.reroute()
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await harness.engine.texts.contains(
+            "Couldn't find where you are precisely enough for a new route. Try again in a moment."
+        ))
+    }
+
+    @Test
+    func askedForRerouteThatFailsKeepsTheCurrentRoute() async throws {
+        let harness = try Harness(reroutes: [.failure(.serverUnavailable)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+        await waitUntil {
+            await harness.engine.texts.contains("Couldn't get a new route. Keep following the current one.")
+        }
+        // still on the route, so nothing sends the user back
+        #expect(!(await harness.engine.texts.contains("Couldn't get a new route. Walk back the way you came.")))
+    }
+
+    @Test
     func askedForRerouteWithNoTripDoesNothing() async throws {
         let harness = try Harness()
         await harness.manager.reroute()
@@ -757,7 +793,8 @@ struct TripManagerTests {
         await harness.fix(harness.point(49, lateral: -40))
         await harness.router.waitForRequests(1)
         for _ in 0..<3 { await harness.fix(harness.point(49)) }
-        #expect(await harness.engine.texts.contains("Back on the route."))
+        // a fix's state is published before its cue is submitted, so wait for the cue
+        await waitUntil { await harness.engine.texts.contains("Back on the route.") }
 
         await harness.answerReroute()
         // the pause above is the only state change
@@ -851,6 +888,8 @@ struct TripManagerTests {
         await harness.walk(from: 50.4, to: 70.1)
         await harness.manager.resumeTrip()
         await harness.walk(from: 71.4, to: 93)
+        // a fix's state is published before its cue is submitted, so wait for the last cue
+        await waitUntil { await harness.engine.texts.contains("Turn right onto Ferst Drive.") }
 
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasSuffix("turn right onto Ferst Drive.") } == [
