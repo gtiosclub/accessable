@@ -52,6 +52,7 @@ actor TripManager: TripStateProviding {
     private var missedTurnStep: Int?
     private var rerouteCount = 0
     private var lastRerouteRequest: Date?
+    private var hasRerouted = false
     /// Where an asked-for reroute starts: the latest fix precise enough to start a route from.
     private var lastPreciseFix: GeoCoordinate?
     /// Where the user is for saying which way the path or the destination lies: the latest fix, however rough.
@@ -63,6 +64,8 @@ actor TripManager: TripStateProviding {
 
     // the public routing server is shared and slow to recover; this spaces requests and bounds a bad walk
     private static let rerouteInterval: TimeInterval = 30
+    // a reroute that came back shows the server is answering, and a user still lost shouldn't wait as long again
+    private static let reroutedInterval: TimeInterval = 15
     private static let maximumReroutes = 5
     // a new route from a rough fix would start on the wrong side of the street
     private static let rerouteAccuracy: Double = 20
@@ -137,6 +140,7 @@ actor TripManager: TripStateProviding {
         missedTurnStep = nil
         rerouteCount = 0
         lastRerouteRequest = nil
+        hasRerouted = false
         lastPreciseFix = nil
         lastFix = nil
         headingEstimator = HeadingEstimator()
@@ -425,7 +429,8 @@ actor TripManager: TripStateProviding {
 
     private var canRequestReroute: Bool {
         guard rerouteTask == nil, rerouteCount < Self.maximumReroutes else { return false }
-        return lastRerouteRequest.map { now().timeIntervalSince($0) >= Self.rerouteInterval } ?? true
+        let interval = hasRerouted ? Self.reroutedInterval : Self.rerouteInterval
+        return lastRerouteRequest.map { now().timeIntervalSince($0) >= interval } ?? true
     }
 
     /// A new route from where the user is now, asked for by the user (Route Blocked Ahead's
@@ -475,6 +480,7 @@ actor TripManager: TripStateProviding {
         switch result {
         case .success(let newRoute):
             routeVersion += 1
+            hasRerouted = true
             route = newRoute
             let tracker = RouteProgressTracker(route: newRoute, startedAt: now())
             self.tracker = tracker

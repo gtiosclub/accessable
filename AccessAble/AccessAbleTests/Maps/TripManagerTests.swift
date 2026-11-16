@@ -805,6 +805,55 @@ struct TripManagerTests {
     }
 
     @Test
+    func afterASuccessfulRerouteTheNextWaitsFifteenSeconds() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 50)
+        await harness.goOffRoute(at: 49)
+        // the first request goes out on this fix, at the clock time 15 s before the second may
+        await harness.fix(harness0Origin)
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+        await harness.states.waitFor { $0.nextManeuver?.instruction == "Arrive" }
+
+        // walking north away from the new route, already 25 m off it: off route on the sixth fix, 6 s after the
+        // first request
+        for index in 1...6 {
+            let north = TripWalk.destination(from: harness0Origin, bearing: 0, distance: 25 + 1.4 * Double(index))
+            await harness.fix(north, course: 0)
+        }
+        let away = TripWalk.destination(from: harness0Origin, bearing: 0, distance: 40)
+        await harness.fix(away, then: 7)
+        // 14 s after the first request
+        await harness.fix(away)
+        #expect(await harness.router.requests.count == 1)
+        await harness.fix(away)
+        await harness.router.waitForRequests(2)
+    }
+
+    @Test
+    func afterAFailedRerouteTheNextStillWaitsThirtySeconds() async throws {
+        let harness = try Harness(reroutes: [.failure(.serverUnavailable), .failure(.serverUnavailable)])
+        await harness.start()
+        await harness.walk(from: 0, to: 50)
+        await harness.goOffRoute(at: 49)
+        let away = harness.point(49, lateral: -40)
+        await harness.fix(away)
+        await harness.router.waitForRequests(1)
+        await waitUntil {
+            await harness.engine.texts.contains("Couldn't get a new route. Walk back the way you came.")
+        }
+
+        // 1 s, 15 s and 29 s after the first request
+        await harness.fix(away, then: 14)
+        await harness.fix(away, then: 14)
+        await harness.fix(away)
+        #expect(await harness.router.requests.count == 1)
+        await harness.fix(away)
+        await harness.router.waitForRequests(2)
+    }
+
+    @Test
     func watchdogWarnsOfWeakSignalAndItsReturn() async throws {
         let harness = try Harness()
         await harness.start()
