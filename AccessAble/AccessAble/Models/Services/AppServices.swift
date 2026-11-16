@@ -1,4 +1,5 @@
 import Foundation
+import FirebaseCore
 
 /// Dependency container passed to view models. View models depend on protocols, never concrete services,
 /// so each subteam can swap in its implementation without touching anyone else's code.
@@ -14,6 +15,7 @@ struct AppServices: Sendable {
     var trip: any TripStateProviding
     var locationContext: any LocationContextProviding
     var commands: any CommandInterpreting
+    var auth: any AuthService
     // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
@@ -55,6 +57,7 @@ struct AppServices: Sendable {
             trip: trip,
             locationContext: LocationDescriber(location: location, distances: distanceSettings),
             commands: FoundationModelCommandInterpreter(),
+            auth: FirebaseApp.app() != nil ? FirebaseAuthService() : PlaceholderAuthService(signedIn: false),
             askAISettings: askAISettings,
             alertSettings: alertSettings,
             distanceSettings: distanceSettings
@@ -100,6 +103,8 @@ struct AppServices: Sendable {
         services.locationContext = PlaceholderTripProvider()
         // Wording that doesn't change with the simulator's region.
         services.distanceSettings = DistanceSettings(units: .metres)
+        // Nor sign in to the real Firebase project.
+        services.auth = PlaceholderAuthService()
         return services
     }
 }

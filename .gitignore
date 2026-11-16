@@ -71,3 +71,6 @@ CLAUDE.md
 
 # Large models fetched by Scripts/download-models.sh
 AccessAble/AccessAble/Resources/DETRResnet50SemanticSegmentationF16.mlpackage/
+
+# Firebase config: shared privately, never committed
+GoogleService-Info.plist
