@@ -1,4 +1,25 @@
 import CoreLocation
+import os
+
+private let log = Logger(subsystem: "AccessAble", category: "Location")
+
+/// How Core Location is set up, which differs while a trip is guiding.
+struct LocationTuning: Equatable {
+    var desiredAccuracy: CLLocationAccuracy
+    var activityType: CLActivityType
+    var allowsBackgroundUpdates: Bool
+    var pausesAutomatically: Bool
+
+    /// Browsing the map needs less than guidance does, and the best accuracy costs battery.
+    static let browsing = LocationTuning(desiredAccuracy: kCLLocationAccuracyBest, activityType: .fitness,
+                                         allowsBackgroundUpdates: false, pausesAutomatically: true)
+    /// Guidance needs every metre: the tracker ignores fixes rougher than 25 m. Updates keep coming with the
+    /// screen locked, and never pause: waiting at a crosswalk with the phone in a pocket could otherwise stop
+    /// them for the rest of the walk.
+    static let trip = LocationTuning(desiredAccuracy: kCLLocationAccuracyBestForNavigation,
+                                     activityType: .otherNavigation, allowsBackgroundUpdates: true,
+                                     pausesAutomatically: false)
+}
 
 @MainActor
 final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerDelegate {
@@ -10,11 +31,13 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
     
     private nonisolated let locationUpdates = Broadcaster<LocationSample>()
     private var locationSubscriberCount = 0
+    /// Metres, from the latest fix; logged when the tuning changes, to compare trip accuracy with browsing.
+    private var lastAccuracy: Double?
 
     override init() {
         super.init()
         manager.delegate = self
-        manager.activityType = .fitness
+        apply(.browsing)
         publishAuthorization()
     }
 
@@ -37,12 +60,20 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
         }
     }
 
-    /// Keeps fixes coming with the screen locked, for an active trip only: the Trip screen's and the debug view's own
-    /// subscriptions stay open in the background, so leaving this on would track the user whenever the app is open.
-    func setBackgroundTracking(_ on: Bool) {
-        manager.allowsBackgroundLocationUpdates = on
-        // waiting at a crosswalk with the phone in a pocket could otherwise stop updates for the rest of the walk
-        manager.pausesLocationUpdatesAutomatically = !on
+    /// Navigation-grade accuracy and fixes with the screen locked, for an active trip only: the Trip screen's and
+    /// the debug view's own subscriptions stay open in the background, so leaving this on would track the user,
+    /// and drain the battery, whenever the app is open.
+    func setTripTracking(_ on: Bool) {
+        let accuracy = lastAccuracy.map { "\($0.formatted(.number.precision(.fractionLength(0)))) m" } ?? "none yet"
+        log.info("Trip tracking \(on ? "on" : "off", privacy: .public); last fix accuracy \(accuracy, privacy: .public)")
+        apply(on ? .trip : .browsing)
+    }
+
+    private func apply(_ tuning: LocationTuning) {
+        manager.desiredAccuracy = tuning.desiredAccuracy
+        manager.activityType = tuning.activityType
+        manager.allowsBackgroundLocationUpdates = tuning.allowsBackgroundUpdates
+        manager.pausesLocationUpdatesAutomatically = tuning.pausesAutomatically
     }
 
     nonisolated func headingSamples() -> AsyncStream<HeadingSample> {
@@ -75,6 +106,10 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
             if let sample = LocationSample(location) {
                 locationUpdates.send(sample)
             }
+        }
+        // Core Location calls the delegate on the main thread, as above.
+        MainActor.assumeIsolated {
+            if let accuracy = locations.last?.horizontalAccuracy, accuracy >= 0 { lastAccuracy = accuracy }
         }
     }
 
