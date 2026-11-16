@@ -27,6 +27,9 @@ struct RouteProgressTracker {
         case passedTurnConfirmation(step: Int)
         /// The user walked straight on past the step's vertex, which is `distanceBack` metres behind them.
         case missedTurn(step: Int, distanceBack: Double)
+        /// The crossing at `index` in the tracker's `crossings` is at most `crossingDistance` metres ahead. After any
+        /// turn cue from the same fix.
+        case crossing(index: Int)
         /// Moving away from the route at the start without making progress along it.
         case wrongWay
         case offRoute
@@ -42,6 +45,8 @@ struct RouteProgressTracker {
     }
 
     let route: NavigationRoute
+    /// Metres along the route of each street crossing on it, ascending.
+    let crossings: [Double]
 
     private let startedAt: Date
     /// Per step, the direction of travel arriving at its vertex, when the turn there is sharp enough that walking
@@ -60,6 +65,7 @@ struct RouteProgressTracker {
     private var prepareDone: [Bool]
     private var nowDone: [Bool]
     private var missedTurnDone: [Bool]
+    private var crossingDone: [Bool]
     /// The highest step a cue check has looked at, so a short leg's cue fires only on the first fix that sees it.
     private var sightedStep = -1
     private var missedTurnRun: (since: Date, misses: Int)?
@@ -98,6 +104,8 @@ struct RouteProgressTracker {
     /// Metres before a step that its `.now` falls due: about 6 s of walking, time to hear the cue and turn. Steps this
     /// close together are cued together.
     static let nowDistance: Double = 8
+    // about 15 s of walking: near enough to be the next street, far enough to slow down and find the curb
+    private static let crossingDistance: Double = 20
     // shorter legs follow the previous maneuver too closely for a warning at the usual distance, so they get the
     // short-leg one instead
     private static let minimumPrepareLeg: Double = 25
@@ -141,8 +149,9 @@ struct RouteProgressTracker {
     private static let rawArrivalAccuracy: Double = 15
     private static let rawArrivalWindow: Double = 50
 
-    init(route: NavigationRoute, startedAt: Date) {
+    init(route: NavigationRoute, startedAt: Date, crossings: [Double] = []) {
         self.route = route
+        self.crossings = crossings
         self.startedAt = startedAt
         straightOnBearings = route.steps.map { Self.straightOnBearing(at: $0.coordinateIndex, on: route) }
         progressTime = startedAt
@@ -150,6 +159,7 @@ struct RouteProgressTracker {
         prepareDone = Array(repeating: false, count: route.steps.count)
         nowDone = prepareDone
         missedTurnDone = prepareDone
+        crossingDone = Array(repeating: false, count: crossings.count)
         // the start announcement speaks the first instruction, which covers a step this close; stairs still get
         // their own warning on the first fix
         if distance(toStep: nextStepIndex) <= Self.prepareDistance, route.steps[nextStepIndex].kind != .stairs {
@@ -181,8 +191,8 @@ struct RouteProgressTracker {
     /// 25 m.
     ///
     /// With `emitsCues` false, as while paused, progress and off-route state still update, but no `.prepare`, `.now`,
-    /// `.passedTurnConfirmation`, `.missedTurn` or `.wrongWay` is emitted or used up, so the right cue still fires
-    /// once cues resume. `.offRoute`, `.backOnRoute` and `.arrived` are always emitted.
+    /// `.passedTurnConfirmation`, `.missedTurn`, `.wrongWay` or `.crossing` is emitted or used up, so the right cue
+    /// still fires once cues resume. `.offRoute`, `.backOnRoute` and `.arrived` are always emitted.
     mutating func update(with sample: LocationSample, emitsCues: Bool = true) -> Update {
         guard !hasArrived, isAdmissible(sample) else { return Update(state: state, events: []) }
         guard sample.horizontalAccuracy <= Self.maximumUsableAccuracy else {
@@ -223,6 +233,7 @@ struct RouteProgressTracker {
         }
         if emitsCues, !isOffRoute {
             events += turnCues(passed: passed)
+            events += crossingCues()
         }
         return Update(state: state, events: events)
     }
@@ -434,6 +445,9 @@ struct RouteProgressTracker {
             nowDone[index] = false
             missedTurnDone[index] = false
         }
+        for index in crossings.indices where crossings[index] >= progress {
+            crossingDone[index] = false
+        }
         sightedStep = nextStepIndex - 1
         return true
     }
@@ -501,6 +515,19 @@ struct RouteProgressTracker {
         // when a cue for what comes next is already being given
         if events.isEmpty, let last = passed.last, passed.contains(where: { expectsNow($0) && !nowDone[$0] }) {
             events.append(.passedTurnConfirmation(step: last))
+        }
+        return events
+    }
+
+    /// Each crossing once, when it is within `crossingDistance` ahead. One already behind, as when first seen after a
+    /// jump or a pause, is passed over without a word.
+    private mutating func crossingCues() -> [GuidanceEvent] {
+        var events: [GuidanceEvent] = []
+        for index in crossings.indices where !crossingDone[index] {
+            let ahead = crossings[index] - progress
+            guard ahead <= Self.crossingDistance else { break }
+            crossingDone[index] = true
+            if ahead >= 0 { events.append(.crossing(index: index)) }
         }
         return events
     }

@@ -18,6 +18,8 @@ actor TripManager: TripStateProviding {
     private let landmarks: any LandmarkObserving
     /// Read when a trip starts, not at launch: loading them parses a large bundled file.
     private let campusBuildings: @Sendable () -> [CampusBuilding]
+    /// Read when a trip starts or reroutes, like `campusBuildings`.
+    private let campusCrossings: @Sendable () -> [CampusCrossing]
     private let setBackgroundTracking: @Sendable (Bool) async -> Void
     private let distances: DistanceSettings
     private let now: @Sendable () -> Date
@@ -33,6 +35,8 @@ actor TripManager: TripStateProviding {
     private var destination: Destination?
     private var route: NavigationRoute?
     private var tracker: RouteProgressTracker?
+    /// The current route's crossings, in the order the tracker's `.crossing` indices refer to.
+    private var routeCrossings: [RouteCrossing] = []
     private var progress: RouteProgressTracker.Progress?
     private var landmarkMatcher: LandmarkMatcher?
     private var entranceGuide = EntranceGuide()
@@ -93,6 +97,7 @@ actor TripManager: TripStateProviding {
         announcements: any AnnouncementEngineProtocol,
         landmarks: any LandmarkObserving = PlaceholderLandmarkProvider(),
         campusBuildings: @escaping @Sendable () -> [CampusBuilding] = { CampusLandmarks.buildings },
+        campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all },
         setBackgroundTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
         distances: DistanceSettings = DistanceSettings(units: .metres),
         now: @escaping @Sendable () -> Date = { .now },
@@ -103,6 +108,7 @@ actor TripManager: TripStateProviding {
         self.announcements = announcements
         self.landmarks = landmarks
         self.campusBuildings = campusBuildings
+        self.campusCrossings = campusCrossings
         self.setBackgroundTracking = setBackgroundTracking
         self.distances = distances
         self.now = now
@@ -128,7 +134,9 @@ actor TripManager: TripStateProviding {
         arrivedWhilePaused = false
         self.destination = destination
         self.route = route
-        let tracker = RouteProgressTracker(route: route, startedAt: now())
+        routeCrossings = RouteCrossings.along(route, crossings: campusCrossings())
+        let tracker = RouteProgressTracker(route: route, startedAt: now(),
+                                           crossings: routeCrossings.map(\.distanceAlongRoute))
         self.tracker = tracker
         progress = tracker.state
         landmarkMatcher = LandmarkMatcher(
@@ -213,6 +221,7 @@ actor TripManager: TripStateProviding {
         tracker = nil
         progress = nil
         landmarkMatcher = nil
+        routeCrossings = []
         route = nil
         destination = nil
         routes.send(nil)
@@ -482,7 +491,9 @@ actor TripManager: TripStateProviding {
             routeVersion += 1
             hasRerouted = true
             route = newRoute
-            let tracker = RouteProgressTracker(route: newRoute, startedAt: now())
+            routeCrossings = RouteCrossings.along(newRoute, crossings: campusCrossings())
+            let tracker = RouteProgressTracker(route: newRoute, startedAt: now(),
+                                               crossings: routeCrossings.map(\.distanceAlongRoute))
             self.tracker = tracker
             progress = tracker.state
             missedTurnStep = nil
@@ -582,6 +593,9 @@ actor TripManager: TripStateProviding {
                 "You may have passed the turn. Turn around and walk back \(spoken(distanceBack)), then \(instruction)"
             }
             return maneuver(text, .high, haptic: .attention, expiresIn: 12, key: "step-\(step)-missed")
+        case let .crossing(index):
+            return maneuver(crossingText(routeCrossings[index]), .high, haptic: .attention, expiresIn: 8,
+                            key: "crossing-\(index)")
         case .wrongWay:
             let text = pathSentence().map { "You're walking away from the route. \($0)" }
                 ?? "You seem to be walking away from the route. Turn around."
@@ -592,6 +606,16 @@ actor TripManager: TripStateProviding {
             return maneuver("Back on the route.", .normal, expiresIn: 6, key: "back-on-route")
         case .arrived:
             return arrivalAnnouncement()
+        }
+    }
+
+    /// Says only what the map knows: a signal without `traffic_signals:sound` may still be audible.
+    private func crossingText(_ crossing: RouteCrossing) -> String {
+        if crossing.audibleSignal { return "Crosswalk ahead, with audible signal." }
+        return switch crossing.control {
+        case .signals: "Crosswalk ahead, with a traffic signal."
+        case .marked, .unknown: "Crosswalk ahead."
+        case .unmarked: "Road crossing ahead, unmarked."
         }
     }
 

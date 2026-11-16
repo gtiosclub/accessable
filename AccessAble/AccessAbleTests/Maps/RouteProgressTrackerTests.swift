@@ -96,8 +96,8 @@ private struct Walk {
     private(set) var logged: [Logged] = []
     private(set) var states: [RouteProgressTracker.Progress] = []
 
-    init(_ route: NavigationRoute) {
-        tracker = RouteProgressTracker(route: route, startedAt: TripWalk.start)
+    init(_ route: NavigationRoute, crossings: [Double] = []) {
+        tracker = RouteProgressTracker(route: route, startedAt: TripWalk.start, crossings: crossings)
     }
 
     var fixCount: Int { states.count }
@@ -728,6 +728,90 @@ struct RouteProgressTrackerTests {
             (49 + 5 * Double.random(in: -1...1, using: &generator), 3 * Double.random(in: -1...1, using: &generator))
         })
         #expect(walk.states.allSatisfy { $0.distanceRemaining > 140 })
+    }
+
+    @Test
+    func eachCrossingIsAnnouncedOnceBeforeItIsReachedOnANoisyWalk() throws {
+        let route = try fixtureRoute()
+        let crossings = [60.0, 250, 403.7]
+        var walk = Walk(route, crossings: crossings)
+        walk.feed(noisyFixtureWalk(route), accuracy: 10)
+
+        for index in crossings.indices {
+            let announced = walk.logged.filter { $0.event == .crossing(index: index) }
+            #expect(announced.count == 1)
+            let fix = try #require(announced.first).fix
+            let walked = route.totalDistance - walk.states[fix].distanceRemaining
+            #expect((0...20).contains(crossings[index] - walked))
+        }
+    }
+
+    @Test
+    func noCrossingIsAnnouncedWhileOffRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route, crossings: [150])
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        // out 40 m to the left, then on beside the route past the crossing
+        walk.feed((1...29).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) })
+        walk.feed(TripWalk.distances(from: 100.8, to: 170).map { (along: $0, lateral: -40) })
+
+        #expect(walk.logged.map(\.event).contains(.offRoute))
+        #expect(!walk.logged.contains { if case .crossing = $0.event { true } else { false } })
+    }
+
+    @Test
+    func crossingDueWhilePausedIsAnnouncedOnceCuesResume() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route, crossings: [100])
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 70)))
+        walk.feed(onRoute(TripWalk.distances(from: 71.4, to: 84)), emitsCues: false)
+        #expect(walk.logged.isEmpty)
+        let resumed = walk.fixCount
+        walk.feed(onRoute(TripWalk.distances(from: 85.4, to: 95)))
+
+        #expect(walk.logged == [Logged(resumed, .crossing(index: 0))])
+    }
+
+    @Test
+    func crossingAlreadyBehindTheFirstFixIsNotAnnounced() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route, crossings: [5, 30])
+        // a rough first fix is let 20 m along at once
+        walk.feed([(along: 15, lateral: 0)], accuracy: 20)
+        walk.feed(onRoute(TripWalk.distances(from: 16.4, to: 60)))
+
+        #expect(walk.logged == [Logged(0, .crossing(index: 1))])
+    }
+
+    @Test
+    func rejoiningBehindACrossingAnnouncesItAgain() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route, crossings: [280])
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 296)))
+        // out 40 m to the left, back 50.4 m beside the route, and in again at 245 m
+        walk.feed((1...29).map { (along: 295.4, lateral: -min(1.4 * Double($0), 40)) })
+        walk.feed((1...36).map { (along: 295.4 - 1.4 * Double($0), lateral: -40) })
+        walk.feed((1...29).map { (along: 245.0, lateral: -40 + min(1.4 * Double($0), 40)) })
+        walk.feed(onRoute(TripWalk.distances(from: 246.4, to: 300)))
+
+        let events = walk.logged.map(\.event).filter { event in
+            switch event {
+            case .crossing, .offRoute, .backOnRoute: true
+            default: false
+            }
+        }
+        #expect(events == [.crossing(index: 0), .offRoute, .backOnRoute, .crossing(index: 0)])
+    }
+
+    @Test
+    func turnCueOnTheSameFixComesBeforeTheCrossing() throws {
+        let route = try cornerRoute()
+        // the turn at 300 m is prepared 40 m before, where the crossing at 280 m is 20 m ahead
+        var walk = Walk(route, crossings: [280])
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 270)))
+
+        let fix = TripWalk.distances(from: 0, to: 270).firstIndex { $0 >= 260 } ?? -1
+        #expect(walk.logged == [Logged(fix, .prepare(step: 1, distance: 39.6)), Logged(fix, .crossing(index: 0))])
     }
 
     /// North 100 m to the first step, then `legs` (west unless given), each starting a step, then an arrival.
