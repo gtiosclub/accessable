@@ -97,8 +97,10 @@ private final class ManualLocationProvider: LocationProvider, Sendable {
         return stream
     }
 
+    let headings = ManualFeed<HeadingSample>()
+
     func headingSamples() -> AsyncStream<HeadingSample> {
-        AsyncStream { $0.finish() }
+        headings.stream()
     }
 
     func authorizationStates() -> AsyncStream<LocationAuthorization> {
@@ -136,19 +138,21 @@ private final class ManualLocationProvider: LocationProvider, Sendable {
     }
 }
 
-/// Landmarks the test sends, in order, on the latest subscriber's stream. Counts how often the subscriber asks for
+/// Values the test sends, in order, on the latest subscriber's stream. Counts how often the subscriber asks for
 /// the next one: it asks only once it has handled the last, so the count tells the test when handling is done.
-private final class ManualLandmarkProvider: LandmarkObserving, Sendable {
+private final class ManualFeed<Element: Sendable>: Sendable {
     private struct Feed {
-        var buffer: [LandmarkObservation] = []
-        var waiter: CheckedContinuation<LandmarkObservation?, Never>?
+        var buffer: [Element] = []
+        var waiter: CheckedContinuation<Element?, Never>?
         var requests = 0
         var sent = 0
     }
 
+    private enum Next { case value(Element), end, wait }
+
     private let feeds = Mutex<[Feed]>([])
 
-    func landmarkObservations() -> AsyncStream<LandmarkObservation> {
+    func stream() -> AsyncStream<Element> {
         let index = feeds.withLock { feeds in
             feeds.append(Feed())
             return feeds.count - 1
@@ -156,18 +160,18 @@ private final class ManualLandmarkProvider: LandmarkObserving, Sendable {
         return AsyncStream(unfolding: { [self] in await next(on: index) })
     }
 
-    func yield(_ observation: LandmarkObservation) {
-        let waiter = feeds.withLock { feeds -> CheckedContinuation<LandmarkObservation?, Never>? in
+    func yield(_ element: Element) {
+        let waiter = feeds.withLock { feeds -> CheckedContinuation<Element?, Never>? in
             guard let last = feeds.indices.last else { return nil }
             feeds[last].sent += 1
             guard let waiter = feeds[last].waiter else {
-                feeds[last].buffer.append(observation)
+                feeds[last].buffer.append(element)
                 return nil
             }
             feeds[last].waiter = nil
             return waiter
         }
-        waiter?.resume(returning: observation)
+        waiter?.resume(returning: element)
     }
 
     /// Waits until the latest subscriber has handled everything sent to it.
@@ -177,10 +181,9 @@ private final class ManualLandmarkProvider: LandmarkObserving, Sendable {
         }
     }
 
-    private func next(on index: Int) async -> LandmarkObservation? {
+    private func next(on index: Int) async -> Element? {
         await withTaskCancellationHandler {
-            await withCheckedContinuation { (continuation: CheckedContinuation<LandmarkObservation?, Never>) in
-                enum Next { case value(LandmarkObservation), end, wait }
+            await withCheckedContinuation { (continuation: CheckedContinuation<Element?, Never>) in
                 let next = feeds.withLock { feeds -> Next in
                     feeds[index].requests += 1
                     if Task.isCancelled { return .end }
@@ -189,7 +192,7 @@ private final class ManualLandmarkProvider: LandmarkObserving, Sendable {
                     return .wait
                 }
                 switch next {
-                case .value(let observation): continuation.resume(returning: observation)
+                case .value(let element): continuation.resume(returning: element)
                 case .end: continuation.resume(returning: nil)
                 case .wait: break
                 }
@@ -201,6 +204,12 @@ private final class ManualLandmarkProvider: LandmarkObserving, Sendable {
             }
             waiter?.resume(returning: nil)
         }
+    }
+}
+
+extension ManualFeed: LandmarkObserving where Element == LandmarkObservation {
+    func landmarkObservations() -> AsyncStream<LandmarkObservation> {
+        stream()
     }
 }
 
@@ -384,7 +393,7 @@ private struct Harness {
     let engine = RecordingEngine()
     let router: ScriptedRouter
     let background = BackgroundRecorder()
-    let landmarks = ManualLandmarkProvider()
+    let landmarks = ManualFeed<LandmarkObservation>()
     let states = StateRecorder()
     let manager: TripManager
     let route: NavigationRoute
@@ -413,16 +422,19 @@ private struct Harness {
         }
     }
 
-    func start() async {
-        await manager.startTrip(route: route, destination: library)
+    func start(to destination: Destination = library) async {
+        await manager.startTrip(route: route, destination: destination)
     }
 
     /// Feeds one fix on the current trip's stream and waits until it is handled, then moves the clock on. A
-    /// quarter-second offset keeps fix times apart from the clock times other state changes use.
+    /// quarter-second offset keeps fix times apart from the clock times other state changes use. A `course` comes
+    /// with a walking speed, so the fix gives the heading.
     @discardableResult
-    func fix(_ coordinate: GeoCoordinate, accuracy: Double = 5, then seconds: TimeInterval = 1) async -> TripState {
+    func fix(_ coordinate: GeoCoordinate, accuracy: Double = 5, course: Double? = nil,
+             then seconds: TimeInterval = 1) async -> TripState {
         let time = clock.now().addingTimeInterval(0.25)
-        location.yield(LocationSample(coordinate: coordinate, horizontalAccuracy: accuracy, timestamp: time),
+        location.yield(LocationSample(coordinate: coordinate, horizontalAccuracy: accuracy, timestamp: time,
+                                      speed: course.map { _ in 1.4 }, course: course),
                        toStream: location.streamCount - 1)
         let state = await states.waitFor { $0.updatedAt == time || $0.phase == .arrived }
         clock.advance(by: seconds)
@@ -434,9 +446,10 @@ private struct Harness {
         await waitUntil { clock.sleeperCount >= count }
     }
 
-    func walk(from: Double, to: Double, lateral: Double = 0) async {
+    /// - Parameter course: The heading at each distance along, or none for fixes without one.
+    func walk(from: Double, to: Double, lateral: Double = 0, course: ((Double) -> Double)? = nil) async {
         for along in TripWalk.distances(from: from, to: to) {
-            await fix(TripWalk.point(on: route, along: along, lateral: lateral))
+            await fix(TripWalk.point(on: route, along: along, lateral: lateral), course: course?(along))
         }
     }
 
@@ -1185,5 +1198,147 @@ struct TripManagerLandmarkTests {
         let texts = await harness.engine.waitForCount(ended + 2).dropFirst(ended).map(\.text)
 
         #expect(texts.filter { $0.hasPrefix("Passing") } == ["Passing Skiles on your right."])
+    }
+}
+
+// MARK: Directions
+
+/// North 30 m, right onto Ferst Drive, then 60 m east: a first turn near enough to be said with the start.
+private func shortFirstLegRoute() throws -> NavigationRoute {
+    let start = GeoCoordinate(latitude: 33.775, longitude: -84.399)
+    let corner = TripWalk.destination(from: start, bearing: 0, distance: 30)
+    let end = TripWalk.destination(from: corner, bearing: 90, distance: 60)
+    return try NavigationRoute(coordinates: [start, corner, end], steps: [
+        RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Walk north.", spokenInstruction: "Walk north."),
+        RouteStep(kind: .turnRight, coordinateIndex: 1, instruction: "Turn right onto Ferst Drive.",
+                  spokenInstruction: "Turn right onto Ferst Drive."),
+        RouteStep(kind: .arrive, coordinateIndex: 2, instruction: "Arrive", spokenInstruction: "You have arrived."),
+    ], estimatedDuration: 75)
+}
+
+/// The heading that puts something due north in the middle of `direction`.
+private func heading(withNorth direction: RelativeDirection) -> Double {
+    GeoMath.normalizedBearing(-45 * Double(RelativeDirection.allCases.firstIndex(of: direction)!))
+}
+
+/// The corner route's heading at each distance along it.
+private func cornerCourse(_ along: Double) -> Double {
+    along < 100 ? 0 : 90
+}
+
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerDirectionTests {
+    @Test(arguments: [
+        (RelativeDirection.ahead, "The path is ahead."),
+        (.slightlyRight, "The path is slightly right."),
+        (.right, "The path is on your right."),
+        (.behindRight, "The path is behind you on your right."),
+        (.behind, "Turn around, the path is behind you."),
+        (.behindLeft, "The path is behind you on your left."),
+        (.left, "The path is on your left."),
+        (.slightlyLeft, "The path is slightly left."),
+    ])
+    func startSaysWhereThePathIsAndTheNearFirstTurn(_ direction: RelativeDirection, _ path: String) async throws {
+        let harness = try Harness(route: try shortFirstLegRoute())
+        await harness.start()
+        await harness.waitForSleepers(2)
+        // the path runs north from here
+        await harness.fix(harness.point(0), course: heading(withNorth: direction))
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 90 metres. \(path) "
+            + "In about 30 metres, turn right onto Ferst Drive.")
+    }
+
+    @Test
+    func startWithAnUnknownHeadingSaysTheFirstInstruction() async throws {
+        let harness = try Harness(route: try shortFirstLegRoute())
+        await harness.start()
+        await harness.waitForSleepers(2)
+        await harness.fix(harness.point(0))
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 90 metres. Walk north.")
+    }
+
+    @Test
+    func startBeforeAnyFixUsesTheCompassFromTheRouteStart() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.waitForSleepers(2)
+        // standing still, facing south
+        harness.location.headings.yield(HeadingSample(trueHeading: 180, magneticHeading: 184, accuracy: 10,
+                                                      timestamp: harness.clock.now()))
+        await harness.location.headings.waitUntilHandled()
+        harness.clock.advance(by: 0.75)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        // the corner route's first turn is 100 m on, too far to say now
+        #expect(start.text == "Starting directions to Library, about 160 metres. Turn around, the path is behind you.")
+    }
+
+    @Test(arguments: [
+        (151.2, -20.0, "Arriving at Library. Library is on your left."),
+        (151.2, 20, "Arriving at Library. Library is on your right."),
+        (175, 0, "Arriving at Library. Library is ahead."),
+        (135, 0, "Arriving at Library. Library is behind you."),
+        // 1.8 m from the arriving fix, too near for a direction
+        (153, 0, "Arriving at Library. Your destination is on the left."),
+    ])
+    func arrivalSaysWhereTheDestinationIsForAKnownHeading(_ along: Double, _ lateral: Double,
+                                                          _ expected: String) async throws {
+        let harness = try Harness()
+        let destination = Destination(name: "Library", coordinate: harness.point(along, lateral: lateral))
+        await harness.start(to: destination)
+        // arrives at 151.2 m, walking east
+        await harness.walk(from: 0, to: 160, course: cornerCourse)
+        let texts = await harness.engine.texts
+        #expect(texts.filter { $0.hasPrefix("Arriving") } == [expected])
+    }
+
+    @Test
+    func arrivalWithAnUnknownHeadingSaysTheRoutesSide() async throws {
+        let harness = try Harness()
+        await harness.start(to: Destination(name: "Library", coordinate: harness.point(151.2, lateral: 20)))
+        await harness.walk(from: 0, to: 160)
+        let texts = await harness.engine.texts
+        #expect(texts.filter { $0.hasPrefix("Arriving") } == ["Arriving at Library. Your destination is on the left."])
+    }
+
+    @Test(arguments: [
+        (180.0, "You're walking away from the route. Turn around, the path is behind you."),
+        (nil, "You seem to be walking away from the route. Turn around."),
+    ])
+    func wrongWaySaysWhereThePathIs(_ course: Double?, _ expected: String) async throws {
+        let harness = try Harness()
+        await harness.start()
+        // the route starts north; walk 15.4 m south
+        for index in 0...11 {
+            await harness.fix(harness.point(-1.4 * Double(index)), course: course)
+        }
+        let texts = await harness.engine.texts
+        #expect(texts.filter { $0.contains("walking away") } == [expected])
+    }
+
+    @Test(arguments: [
+        (0.0, "You may have passed the turn. It is behind you, about 20 metres away. "
+            + "From there, turn right onto Ferst Drive."),
+        (nil, "You may have passed the turn. Turn around and walk back about 20 metres, "
+            + "then turn right onto Ferst Drive."),
+    ])
+    func missedTurnWithNoRerouteSaysWhereTheTurnIs(_ course: Double?, _ expected: String) async throws {
+        let harness = try Harness()
+        await harness.start()
+        let facing: ((Double) -> Double)? = course.map { course in { _ in course } }
+        await harness.walk(from: 0, to: 100, course: facing)
+        // a failed reroute just before the corner holds the next one back, so the missed turn guides the way back
+        await harness.manager.reroute()
+        await waitUntil {
+            await harness.engine.texts.contains("Couldn't get a new route. Keep following the current one.")
+        }
+        // straight on north past the corner, 1.4 m on from the last fix at 99.4 m
+        let corner = harness.route.coordinates[1]
+        for metres in TripWalk.distances(from: 1, to: 25) {
+            await harness.fix(TripWalk.destination(from: corner, bearing: 0, distance: metres), course: course)
+        }
+        let texts = await harness.engine.texts
+        #expect(texts.filter { $0.hasPrefix("You may have passed the turn") } == [expected])
     }
 }
