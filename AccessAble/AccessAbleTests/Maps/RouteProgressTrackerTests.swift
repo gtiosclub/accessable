@@ -52,6 +52,16 @@ private func straightOn(past route: NavigationRoute, count: Int, start: Date,
     }, start: start)
 }
 
+/// The fixes with a walking `speed` and `course`, as Core Location gives them while walking that way.
+private func walking(_ fixes: [LocationSample], course: Double?, speed: Double? = 1.4) -> [LocationSample] {
+    fixes.map { fix in
+        var fix = fix
+        fix.speed = speed
+        fix.course = course
+        return fix
+    }
+}
+
 /// An event and the index of the fix that produced it, with distances to 0.1 m so expectations can be written out.
 private struct Logged: Equatable {
     let fix: Int
@@ -245,6 +255,89 @@ struct RouteProgressTrackerTests {
         })
         #expect(!walk.logged.contains { $0.event == .offRoute })
         #expect(walk.states.allSatisfy { !$0.isOffRoute })
+    }
+
+    @Test
+    func walkingAwayFromTheRouteIsOffRouteWithinSixSeconds() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        walk.feed(walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime), course: 270))
+
+        // past 20 m first at 21 m (detour fix 15), so 5 s later at fix 20, long before the 30 m rule's fix 32
+        let firstPast = start + 14
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(firstPast + 5, .offRoute)])
+        #expect(walk.states[..<(firstPast + 5)].allSatisfy { !$0.isOffRoute })
+    }
+
+    @Test
+    func walkingAwayWithoutAWalkingDirectionWaitsForTheThirtyMetreRule() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        walk.feed(walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime), course: nil, speed: nil))
+
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 31, .offRoute)])
+    }
+
+    @Test(arguments: [nil, 0.0])
+    func standingStillWithDriftAndAStaleCourseStaysOnRoute(_ speed: Double?) throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        var generator = SeededGenerator(seed: 7)
+        // drifting out from 35 m to 38 m, the course pointing away: only the speed shows it isn't walking
+        let drift = (0..<30).map {
+            (along: 99.4 + 2 * Double.random(in: -1...1, using: &generator), lateral: -35 - 0.1 * Double($0))
+        }
+        walk.feed(walking(TripWalk.fixes(on: route, path: drift, start: walk.nextTime), course: 270, speed: speed))
+
+        #expect(!walk.logged.contains { $0.event == .offRoute })
+        #expect(walk.states.allSatisfy { !$0.isOffRoute })
+    }
+
+    @Test
+    func walkingAlongsideTheRouteStaysOnRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let alongside = TripWalk.distances(from: 100, to: 142).map { (along: $0, lateral: -25.0) }
+        walk.feed(walking(TripWalk.fixes(on: route, path: alongside, start: walk.nextTime), course: 0))
+
+        #expect(walk.states.allSatisfy { !$0.isOffRoute })
+    }
+
+    @Test
+    func walkingBackTowardTheRouteAtASteepAngleStaysOnRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        // from 40 m to the left, at 1.4 m/s on a course 70° off the route's, so 1.32 m nearer each second
+        let back = (0..<20).map { second -> (along: Double, lateral: Double) in
+            (99.4 + 0.48 * Double(second), -40 + 1.32 * Double(second))
+        }
+        walk.feed(walking(TripWalk.fixes(on: route, path: back, start: walk.nextTime), course: 70))
+
+        #expect(walk.states.allSatisfy { !$0.isOffRoute })
+    }
+
+    @Test
+    func walkingAwayWithRoughFixesWaitsForTheScaledLimit() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        walk.feed(walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime, accuracy: 20), course: 270))
+
+        // 20 m accuracy scales the limit to 30 m, so 25 m off (detour fix 18) isn't enough: past 30 m first at
+        // 30.8 m (detour fix 22), so 5 s later at fix 27
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 26, .offRoute)])
+        #expect(!walk.states[start + 25].isOffRoute)
     }
 
     @Test
