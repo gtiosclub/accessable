@@ -92,6 +92,9 @@ struct AppServices: Sendable {
     @MainActor
     static var preview: AppServices {
         var services = live(performance: PerformanceModeMonitor())
+        // Nor speak aloud: tests build many of these at once, and real speech from several of them has frozen
+        // the whole test run inside the system's speech framework.
+        services.announcements = PlaceholderAnnouncementEngine()
         // Previews and tests must not reach the network or spend the public server's fair-use budget.
         services.routing = PlaceholderRoutingService()
         // A real trip would start GPS tracking and background location from a preview or test.
