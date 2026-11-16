@@ -34,9 +34,14 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
     /// Metres, from the latest fix; logged when the tuning changes, to compare trip accuracy with browsing.
     private var lastAccuracy: Double?
 
+    private nonisolated let headingUpdates = Broadcaster<HeadingSample>()
+    private var headingSubscriberCount = 0
+
     override init() {
         super.init()
         manager.delegate = self
+        // a few degrees of change can't alter which way to go, and every update costs battery
+        manager.headingFilter = 5
         apply(.browsing)
         publishAuthorization()
     }
@@ -77,7 +82,21 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
     }
 
     nonisolated func headingSamples() -> AsyncStream<HeadingSample> {
-        AsyncStream { continuation in continuation.finish() }
+        let samples = headingUpdates.stream()
+        return AsyncStream(bufferingPolicy: .bufferingNewest(1)) {continuation in
+            let task = Task {
+                await self.headingSubscriberAdded()
+                for await sample in samples {
+                    continuation.yield(sample)
+                }
+                continuation.finish()
+            }
+            // the add and remove run in separate tasks, as for locations
+            continuation.onTermination = { _ in
+                task.cancel()
+                Task { await self.headingSubscriberRemoved()}
+            }
+        }
     }
 
     nonisolated func authorizationStates() -> AsyncStream<LocationAuthorization> {
@@ -113,6 +132,18 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
         }
     }
 
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateHeading newHeading: CLHeading) {
+        if let sample = HeadingSample(newHeading) {
+            headingUpdates.send(sample)
+        }
+    }
+
+    // the calibration screen is a visual figure-of-eight prompt a blind user can't follow; a poorly calibrated
+    // compass shows up as low accuracy and is reported as unknown instead
+    nonisolated func locationManagerShouldDisplayHeadingCalibration(_ manager: CLLocationManager) -> Bool {
+        false
+    }
+
     private func publishAuthorization() {
         let state = LocationAuthorization(status: manager.authorizationStatus, accuracy: manager.accuracyAuthorization)
         guard state != lastAuthorization else { return }
@@ -136,6 +167,24 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
             manager.startUpdatingLocation()
         } else {
             manager.stopUpdatingLocation()
+        }
+    }
+
+    private func headingSubscriberAdded() {
+        headingSubscriberCount += 1
+        updateHeadingTracking()
+    }
+
+    private func headingSubscriberRemoved() {
+        headingSubscriberCount -= 1
+        updateHeadingTracking()
+    }
+
+    private func updateHeadingTracking() {
+        if headingSubscriberCount > 0, CLLocationManager.headingAvailable() {
+            manager.startUpdatingHeading()
+        } else {
+            manager.stopUpdatingHeading()
         }
     }
 }
