@@ -92,8 +92,8 @@ struct RouteProgressTracker {
     // past the vertex by more than GPS noise, so a fix near the corner doesn't count as the turn made
     private static let passedMargin: Double = 5
     /// Metres before a step that its `.prepare` falls due: about 30 s of walking, time to get ready without forgetting.
-    /// A stairs step always gets its `.prepare` once it is next and this close, however short its leg, whatever step
-    /// came before, and even inside `nowDistance`, where it comes just before the `.now`.
+    /// A stairs step always gets its `.prepare` once it is this close, however short its leg, whatever steps come
+    /// before it, and even inside `nowDistance`, where it comes just before the `.now`.
     static let prepareDistance: Double = 40
     /// Metres before a step that its `.now` falls due: about 6 s of walking, time to hear the cue and turn. Steps this
     /// close together are cued together.
@@ -471,11 +471,19 @@ struct RouteProgressTracker {
         let isDue = leg(before: index) >= Self.minimumPrepareLeg
             ? remaining <= Self.prepareDistance
             : isFirstSight && remaining <= Self.shortLegPrepareDistance
-        // a missed flight of stairs is a fall, so their warning is never skipped
-        let isStairsDue = route.steps[index].kind == .stairs && (0...Self.prepareDistance).contains(remaining)
-        if !prepareDone[index], isStairsDue || (allowsPrepare(index) && remaining > Self.nowDistance && isDue) {
+        if !prepareDone[index], allowsPrepare(index), remaining > Self.nowDistance, isDue,
+           route.steps[index].kind != .stairs {
             prepareDone[index] = true
             events.append(.prepare(step: index, distance: remaining))
+        }
+        // a missed flight of stairs is a fall, so their warning is never skipped: not after a short leg, and not
+        // when a turn still comes first, where they would otherwise be cued together with it
+        for stairs in index..<route.steps.count - 1 where route.steps[stairs].kind == .stairs && !prepareDone[stairs] {
+            let ahead = distance(toStep: stairs)
+            guard ahead <= Self.prepareDistance else { break }
+            guard ahead >= 0 else { continue }
+            prepareDone[stairs] = true
+            events.append(.prepare(step: stairs, distance: ahead))
         }
         // the first step not yet cued: one cued with an earlier group may not be passed yet, and the step after it
         // can come up before it is
