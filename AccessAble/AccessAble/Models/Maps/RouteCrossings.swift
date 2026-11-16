@@ -10,8 +10,9 @@ struct RouteCrossing: Equatable, Sendable {
 
 enum RouteCrossings {
     // both the route and the crossings are OpenStreetMap geometry, so a crossing the route uses lies on it to within a
-    // metre or two, while one over the road the user walks beside sits 5-10 m away and must not be announced
-    private static let onRouteDistance: Double = 5
+    // metre or two, while one over the road the user walks beside starts at the curb a few metres away and must not
+    // be announced
+    private static let onRouteDistance: Double = 3
     // a crossing node and the centre of its crossing way often describe the same crossing a few metres apart
     private static let mergeDistance: Double = 10
 

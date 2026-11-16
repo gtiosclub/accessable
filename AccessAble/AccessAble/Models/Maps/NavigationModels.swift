@@ -153,12 +153,15 @@ extension RouteStep {
         announcesNextStep = try container.decodeIfPresent(Bool.self, forKey: .announcesNextStep) ?? false
     }
 
-    /// "stairs going up" or "stairs going down" when the instruction text says which way, otherwise "stairs".
+    /// "stairs going up" or "stairs going down" when the instruction text says which way, otherwise "stairs". Only
+    /// wording about the stairs themselves counts: a wrong direction is worse than none, and "down" can be a street.
     var stairsPhrase: String {
-        let words = Set((instruction + " " + spokenInstruction).lowercased()
-            .split(whereSeparator: { !$0.isLetter }).map(String.init))
-        if !words.isDisjoint(with: ["up", "upstairs"]) { return "stairs going up" }
-        if !words.isDisjoint(with: ["down", "downstairs"]) { return "stairs going down" }
+        let text = (instruction + " " + spokenInstruction).lowercased()
+            .split(whereSeparator: { !$0.isLetter }).joined(separator: " ")
+        let padded = " \(text) "
+        func says(_ phrases: [String]) -> Bool { phrases.contains { padded.contains(" \($0) ") } }
+        if says(["stairs up", "up the stairs", "upstairs"]) { return "stairs going up" }
+        if says(["stairs down", "down the stairs", "downstairs"]) { return "stairs going down" }
         return "stairs"
     }
 }

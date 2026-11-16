@@ -272,6 +272,21 @@ struct RouteProgressTrackerTests {
         #expect(walk.states[..<(firstPast + 5)].allSatisfy { !$0.isOffRoute })
     }
 
+    // a gap in fixes mustn't let two of them alone decide it
+    @Test
+    func walkingAwayNeedsThreeFixesHoweverFarApart() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        let fixes = walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime), course: 270)
+        // one fix every 5 s, the first of them 21 m off
+        walk.feed(stride(from: 14, to: fixes.count, by: 5).map { fixes[$0] })
+
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 2, .offRoute)])
+    }
+
     @Test
     func walkingAwayWithoutAWalkingDirectionWaitsForTheThirtyMetreRule() throws {
         let route = try cornerRoute()

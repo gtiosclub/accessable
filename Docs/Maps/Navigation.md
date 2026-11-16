@@ -48,7 +48,7 @@ reroute replaces the tracker, since every window and flag refers to one route's 
 | Stairs prepare | always, once the stairs are within 40 m, even with other steps before them |
 | Crosswalk callout | 20 m before the crossing |
 | Off route | over `max(30 m, 1.5 × accuracy)` from the route on 3 fixes spanning 10 s, having moved 8 m |
-| Off route, walking away | over `max(20 m, 1.5 × accuracy)` from the route for 5 s, with a walking direction more than 60° from the route's and no nearer the route than when the 5 s began |
+| Off route, walking away | over `max(20 m, 1.5 × accuracy)` from the route on 3 fixes spanning 5 s, with a walking direction more than 60° from the route's and no nearer the route than when the 5 s began |
 | Back on route | within 15 m on 2 fixes at least 2 s apart |
 | Missed turn | turns of 60° or more only; at least 15 m beyond the vertex along the straight-on line and 15 m from the route, on 2 fixes at least 2 s apart |
 | Wrong way | in the first 40 m: moved 10 m from a fix accurate to 10 m, 5 m further from the route, progress under 3 m, current fix accurate to 10 m |
@@ -74,6 +74,7 @@ The events are `prepare`, `now`, `passedTurnConfirmation`, `missedTurn`, `crossi
 - **`crossing`** fires once per crossing, when it is 20 m or less ahead. A crossing already behind the user when first seen is skipped. In the same update it comes after any turn cue.
 - **`offRoute`** has two rules, and either can fire.
   - The slow one needs no direction: far from the route for 10 s while moving.
+  - A `wrongWay` due on the same fix is dropped, since off route says the same and more.
   - The fast one needs a walking direction, so standing at a crosswalk while GPS drifts can never trigger it. Walking the opposite way along a parallel path 20 m or more from the route does count.
 - **`arrived`** is always alone and last.
 - **While paused** (`emitsCues: false`), progress and off-route state still update. Turn cues and crosswalk callouts aren't emitted or used up, so the right one fires on resume. `offRoute`, `backOnRoute` and `arrived` are still emitted.
@@ -90,7 +91,7 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 | --- | --- |
 | Moving at 0.7 m/s or more, with a course accurate to 45° (or of unknown accuracy), from a fix at most 3 s old | the walking direction |
 | Moving, but with no usable course | unknown, since a phone swinging in a pocket points anywhere |
-| Standing still, or speed unknown | the compass, if accurate to 25° and at most 3 s old |
+| Standing still, speed unknown, or no fix in the last 3 s | the compass, if accurate to 25° and at most 3 s old |
 | Anything else | unknown |
 
 - The compass runs only while something is subscribed to `headingSamples()`: a trip, until it arrives or ends, and the location debug screen.
@@ -100,7 +101,7 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 ## Crosswalks
 
 - `Resources/Maps/campus-crossings.json` holds the campus crossings from OpenStreetMap. `Scripts/CampusCrossings/ExportCampusCrossings.swift` builds it from `Data/AccessibilityExport/accessibility_export.json`, with no network.
-- A crossing is on a route when it is within 5 m of it. The route and the crossings are the same map data, so a crossing the route uses lies on it, while one over the road beside the path is 5 to 10 m away.
+- A crossing is on a route when it is within 3 m of it. The route and the crossings are the same map data, so a crossing the route uses lies on it, while one over the road beside the path starts at the curb a few metres away.
 - Crossings within 10 m of each other along the route are merged, keeping the most informative details.
 - They are worked out when a trip starts and after each reroute.
 
@@ -155,7 +156,7 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 
 | Event | Text | Priority | Expiry |
 | --- | --- | --- | --- |
-| start | "Starting directions to {name}, {d}. {path sentence}", then "In {d}, {instruction}" for a first step within 40 m. Heading unknown: "Starting directions to {name}, {d}. {first instruction}" | high | 15 s |
+| start | "Starting directions to {name}, {d}. {path sentence}", then "In {d}, {instruction}" for a first step within 40 m (not stairs, which the first fix warns of). Heading unknown: "Starting directions to {name}, {d}. {first instruction}" | high | 15 s |
 | prepare | "In {d}, {instruction}". For stairs: "In {d}, stairs going up.", "…stairs going down.", or "…stairs." when the instruction doesn't say which way | normal | 8 s |
 | now | "{instruction}", with the maneuver's haptic | high | dynamic |
 | passed turn | "Continue for {d}." | normal | 6 s |
@@ -177,7 +178,8 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 - **Not checked on a device yet:** navigation-grade accuracy, the compass, the faster off-route rule and the crosswalk callouts have only run in tests and the simulator, which has no compass.
 - **Crosswalk callouts only exist on campus,** inside the area the bundled export covers, and are as good as OpenStreetMap's tagging there. Only 5 crossings are tagged with an audible signal.
 - **A crossing within about 10 m of the destination** may not be announced, because arriving ends guidance first.
-- **Stairs direction is rarely known.** Valhalla usually says "Take the stairs" without up or down.
+- **Stairs direction is rarely known.** Valhalla usually says "Take the stairs" without up or down. Only "stairs up", "up the stairs", "upstairs" and their "down" forms count.
+- **A crossing right at a street corner** that the route passes without using could still be within 3 m and be announced. This needs checking on real campus routes.
 - **Valhalla's turn-type numbers and stairs wording** haven't been checked against a live route through a building.
 - **Wrong way is strict.**
   - It needs a fix accurate to 10 m at both ends of the movement.

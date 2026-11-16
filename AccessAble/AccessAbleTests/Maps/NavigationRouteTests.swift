@@ -106,6 +106,9 @@ struct NavigationRouteTests {
         ("Head downstairs to Level 1.", "stairs going down"),
         ("Take the stairs.", "stairs"),
         ("Take the stairs by the support column to the underpass.", "stairs"),
+        ("Take the stairs onto Down Street.", "stairs"),
+        ("Take the stairs. Then turn up the ramp.", "stairs"),
+        ("Go up the stairs.", "stairs going up"),
     ])
     func stairsPhraseSaysWhichWayWhenTheTextDoes(_ text: String, _ phrase: String) {
         let step = RouteStep(kind: .stairs, coordinateIndex: 1, instruction: text, spokenInstruction: text)

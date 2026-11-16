@@ -70,7 +70,7 @@ struct RouteProgressTracker {
     private var sightedStep = -1
     private var missedTurnRun: (since: Date, misses: Int)?
     private var offRouteRun: (first: LocationSample, count: Int)?
-    private var walkingAwayRun: (since: Date, offset: Double)?
+    private var walkingAwayRun: (since: Date, offset: Double, count: Int)?
     private var rejoinSince: Date?
     private var wrongWayOrigin: (coordinate: GeoCoordinate, progress: Double, offset: Double)?
     private var wrongWayDone = false
@@ -123,8 +123,10 @@ struct RouteProgressTracker {
     private static let walkingAwayDistance: Double = 20
     // more than a diagonal across a crossing, so cutting a corner or weaving round an obstacle doesn't count
     private static let walkingAwayAngle: Double = 60
-    // several fixes of walking that way, so one stray course or position doesn't trigger it
+    // several fixes of walking that way, so one stray course or position doesn't trigger it, however far apart
+    // the fixes arrive
     private static let walkingAwayDuration: TimeInterval = 5
+    private static let walkingAwayFixes = 3
     // close enough to be on the path again
     private static let rejoinDistance: Double = 15
     // two fixes this far apart confirm a rejoin or a missed turn, so one stray fix can't
@@ -221,6 +223,8 @@ struct RouteProgressTracker {
             }
             // either rule; once one fires the other's run is cleared, so a fix gives one event
             if leavesRoute(sample, at: projection) || walksAwayFromRoute(sample, at: projection) {
+                // off route says the same and more, and two warnings back to back would talk over the new route
+                events.removeAll { $0 == .wrongWay }
                 events.append(.offRoute)
             }
         }
@@ -406,11 +410,11 @@ struct RouteProgressTracker {
             walkingAwayRun = nil
             return false
         }
-        guard let run = walkingAwayRun else {
-            walkingAwayRun = (sample.timestamp, offset)
-            return false
-        }
-        guard sample.timestamp.timeIntervalSince(run.since) >= Self.walkingAwayDuration else { return false }
+        var run = walkingAwayRun ?? (since: sample.timestamp, offset: offset, count: 0)
+        run.count += 1
+        walkingAwayRun = run
+        guard run.count >= Self.walkingAwayFixes,
+              sample.timestamp.timeIntervalSince(run.since) >= Self.walkingAwayDuration else { return false }
         markOffRoute()
         return true
     }
