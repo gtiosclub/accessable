@@ -74,8 +74,17 @@ struct ValhallaManeuverDecoderTests {
         }
     }
     
-    @Test(arguments: [39, 40, 41, 42, 43])
-    func keepsPedestrianManeuvers(_ type: Int) throws {
+    @Test
+    func decodesLevelChangesAndBuildingEntrances() throws {
+        let data = try alteredFixture { maneuvers in
+            for (index, type) in zip(1..., [39, 40, 41, 42, 43]) { maneuvers[index]["type"] = type }
+        }
+        let legs = try ValhallaGeometryDecoder.decodeLegsWithManeuvers(from: data)
+        #expect(legs[0].steps[1...5].map(\.kind) == [.elevator, .stairs, .escalator, .enterBuilding, .exitBuilding])
+    }
+
+    @Test(arguments: [25, 26, 27])
+    func mapsMergesAndRoundaboutsToStraight(_ type: Int) throws {
         let data = try alteredFixture { $0[1]["type"] = type }
         let legs = try ValhallaGeometryDecoder.decodeLegsWithManeuvers(from: data)
         #expect(legs[0].steps[1].kind == .straight)

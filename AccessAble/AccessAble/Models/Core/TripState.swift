@@ -37,6 +37,11 @@ enum ManeuverKind: String, Codable, Sendable {
     case uTurn
     case cross
     case arrive
+    case stairs
+    case elevator
+    case escalator
+    case enterBuilding
+    case exitBuilding
 
     var haptic: HapticID? {
         switch self {
@@ -44,6 +49,7 @@ enum ManeuverKind: String, Codable, Sendable {
         case .turnRight, .slightRight: .turnRight
         case .arrive: .arrived
         case .uTurn, .cross: .attention
+        case .stairs, .elevator, .escalator, .enterBuilding, .exitBuilding: .attention
         case .depart, .straight: nil
         }
     }

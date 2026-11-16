@@ -92,6 +92,8 @@ struct RouteProgressTracker {
     // past the vertex by more than GPS noise, so a fix near the corner doesn't count as the turn made
     private static let passedMargin: Double = 5
     /// Metres before a step that its `.prepare` falls due: about 30 s of walking, time to get ready without forgetting.
+    /// A stairs step always gets its `.prepare` once it is next and this close, however short its leg, whatever step
+    /// came before, and even inside `nowDistance`, where it comes just before the `.now`.
     static let prepareDistance: Double = 40
     /// Metres before a step that its `.now` falls due: about 6 s of walking, time to hear the cue and turn. Steps this
     /// close together are cued together.
@@ -148,8 +150,9 @@ struct RouteProgressTracker {
         prepareDone = Array(repeating: false, count: route.steps.count)
         nowDone = prepareDone
         missedTurnDone = prepareDone
-        // the start announcement speaks the first instruction, which covers a step this close
-        if distance(toStep: nextStepIndex) <= Self.prepareDistance {
+        // the start announcement speaks the first instruction, which covers a step this close; stairs still get
+        // their own warning on the first fix
+        if distance(toStep: nextStepIndex) <= Self.prepareDistance, route.steps[nextStepIndex].kind != .stairs {
             prepareDone[nextStepIndex] = true
         }
     }
@@ -468,7 +471,9 @@ struct RouteProgressTracker {
         let isDue = leg(before: index) >= Self.minimumPrepareLeg
             ? remaining <= Self.prepareDistance
             : isFirstSight && remaining <= Self.shortLegPrepareDistance
-        if !prepareDone[index], allowsPrepare(index), remaining > Self.nowDistance, isDue {
+        // a missed flight of stairs is a fall, so their warning is never skipped
+        let isStairsDue = route.steps[index].kind == .stairs && (0...Self.prepareDistance).contains(remaining)
+        if !prepareDone[index], isStairsDue || (allowsPrepare(index) && remaining > Self.nowDistance && isDue) {
             prepareDone[index] = true
             events.append(.prepare(step: index, distance: remaining))
         }
