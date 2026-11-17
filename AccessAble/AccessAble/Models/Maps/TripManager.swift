@@ -591,15 +591,14 @@ actor TripManager: TripStateProviding {
             return maneuver("Continue for \(spoken(progress.distanceToNextStep)).", .normal, expiresIn: 6,
                             key: "step-\(step)-confirmation")
         case let .missedTurn(step, distanceBack):
-            // a reroute starts from the next precise fix when allowed; otherwise the way back is the guidance
-            let instruction = Self.midSentence(route.steps[step].spokenInstruction)
+            // a reroute starts from the next precise fix when allowed; otherwise the way back is the guidance. Not
+            // the turn itself: walking back reaches it from the other side, so its left and right are swapped.
             let text = if rerouteTask != nil || canRequestReroute {
                 "You may have passed the turn. Finding a new route."
             } else if let direction = direction(to: route.coordinates[route.steps[step].coordinateIndex]) {
-                "You may have passed the turn. It is \(direction.phrase), \(spoken(distanceBack)) away. "
-                    + "From there, \(instruction)"
+                "You may have passed the turn. It is \(direction.phrase), \(spoken(distanceBack)) away."
             } else {
-                "You may have passed the turn. Turn around and walk back \(spoken(distanceBack)), then \(instruction)"
+                "You may have passed the turn. Turn around and walk back \(spoken(distanceBack))."
             }
             return maneuver(text, .high, haptic: .attention, expiresIn: 12, key: "step-\(step)-missed")
         case let .crossing(index):

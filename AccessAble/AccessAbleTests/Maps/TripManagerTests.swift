@@ -1455,10 +1455,9 @@ struct TripManagerDirectionTests {
     }
 
     @Test(arguments: [
-        (0.0, "You may have passed the turn. It is behind you, about 20 metres away. "
-            + "From there, turn right onto Ferst Drive."),
-        (nil, "You may have passed the turn. Turn around and walk back about 20 metres, "
-            + "then turn right onto Ferst Drive."),
+        // not which way to turn there: walking back reaches the corner from the other side
+        (0.0, "You may have passed the turn. It is behind you, about 20 metres away."),
+        (nil, "You may have passed the turn. Turn around and walk back about 20 metres."),
     ])
     func missedTurnWithNoRerouteSaysWhereTheTurnIs(_ course: Double?, _ expected: String) async throws {
         let harness = try Harness()
