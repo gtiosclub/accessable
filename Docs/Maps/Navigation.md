@@ -91,7 +91,7 @@ The events are `prepare`, `now`, `passedTurnConfirmation`, `missedTurn`, `wrongW
 - **Weak signal.**
   - The watchdog checks every 5 s, after the first 5 s of a trip.
   - It warns when no fix accurate to 30 m and timestamped in the last 10 s has arrived. That's once per weak spell; a good fix ends the spell and is announced.
-- **Background location** is on only from start to end or arrival. The Trip screen's other location subscriptions stay open in the background, so leaving it on would track the user whenever the app is open.
+- **Trip tracking** (`CoreLocationProvider.setTripTracking`) is on only from start to end or arrival. It asks Core Location for navigation-grade accuracy (`kCLLocationAccuracyBestForNavigation`, activity type `.otherNavigation`) and for fixes with the screen locked. Outside a trip the app uses `kCLLocationAccuracyBest` with `.fitness`, which costs less battery. Each switch logs the latest fix's accuracy (category `Location`), to compare the two on a device. The Trip screen's other location subscriptions stay open in the background, so leaving it on would track the user whenever the app is open.
 - **Pausing and arrival.**
   - Resuming says "In about {d} metres, …" for the next step, and tells the tracker so the next fix doesn't say the same prepare again.
   - Within 8 m of the step, or with a missed turn pending, resuming says nothing more than "Trip resumed.". The user may already be past the turn, so the next fix's turn cue, confirmation or missed turn says the right thing.

@@ -65,7 +65,7 @@ struct AppServices: Sendable {
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
             landmarks: services.landmarks,
-            setBackgroundTracking: { await location.setBackgroundTracking($0) },
+            setBackgroundTracking: { await location.setTripTracking($0) },
             distances: distanceSettings
         )
         return services
