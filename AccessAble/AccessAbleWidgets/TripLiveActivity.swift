@@ -11,7 +11,8 @@ struct TripLiveActivity: Widget {
                 .activityBackgroundTint(.black)
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
-            DynamicIsland {
+            let sentence = context.state.accessibilityLabel(destinationName: context.attributes.destinationName)
+            return DynamicIsland {
                 // the bottom region's sentence says what the symbol and distance show
                 DynamicIslandExpandedRegion(.leading) {
                     TurnSymbol(state: context.state)
@@ -30,21 +31,23 @@ struct TripLiveActivity: Widget {
                         .font(.title3.bold())
                         .lineLimit(2)
                         .minimumScaleFactor(0.7)
-                        .accessibilityLabel(
-                            context.state.accessibilityLabel(destinationName: context.attributes.destinationName)
-                        )
+                        .accessibilityLabel(sentence)
                 }
             } compactLeading: {
+                // the pair reads as one element: the sentence here, the trailing text hidden
                 TurnSymbol(state: context.state)
+                    .accessibilityLabel(sentence)
             } compactTrailing: {
                 if let text = context.state.shortText {
                     Text(text)
                         .bold()
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
+                        .accessibilityHidden(true)
                 }
             } minimal: {
                 TurnSymbol(state: context.state)
+                    .accessibilityLabel(sentence)
             }
         }
     }
@@ -56,18 +59,23 @@ private struct TripLockScreenView: View {
     let destinationName: String
     /// Grows with the text, so the turn stays as easy to see as the words beside it.
     @ScaledMetric(relativeTo: .title) private var symbolSize = 48
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
-            TurnSymbol(state: state)
-                .font(.system(size: symbolSize, weight: .bold))
+            // at accessibility sizes the symbol gives way to the words, which say the same
+            if !dynamicTypeSize.isAccessibilitySize {
+                TurnSymbol(state: state)
+                    .font(.system(size: symbolSize, weight: .bold))
+            }
             VStack(alignment: .leading, spacing: 8) {
                 Text(state.headline(destinationName: destinationName))
                     .font(.title.bold())
                     .lineLimit(3)
                     .minimumScaleFactor(0.5)
                 if state.status == .active {
-                    // at the largest text sizes the arrival time gives way, rather than both being cut short
+                    // within the lock screen's height the distance is sized first and the instruction
+                    // shrinks to fit; the arrival time is the first thing dropped
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 16) {
                             distanceText
@@ -80,6 +88,7 @@ private struct TripLockScreenView: View {
                     .font(.title3.bold())
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
+                    .layoutPriority(1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
