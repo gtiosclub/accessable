@@ -95,6 +95,7 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 | Anything else | unknown |
 
 - The compass runs only while something is subscribed to `headingSamples()`: a trip, until it arrives or ends, and the location debug screen.
+- Core Location sends every compass reading (`kCLHeadingFilterNone`), not only changes, so a phone held still keeps a reading under 3 s old.
 - The system's calibration screen is turned off, because it is a visual prompt. A compass that needs calibrating reports poor accuracy and reads as unknown.
 - The debug screen shows the heading and where it came from.
 
@@ -102,16 +103,17 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 
 - `Resources/Maps/campus-crossings.json` holds the campus crossings from OpenStreetMap. `Scripts/CampusCrossings/ExportCampusCrossings.swift` builds it from `Data/AccessibilityExport/accessibility_export.json`, with no network.
 - A crossing is on a route when it is within 3 m of it. The route and the crossings are the same map data, so a crossing the route uses lies on it, while one over the road beside the path starts at the curb a few metres away.
-- Crossings within 10 m of each other along the route are merged, keeping the most informative details.
+- Crossings within 10 m of each other along the route are merged, keeping the most informative details: a signal over marked, marked over unmarked, and an unknown control only when nothing else is known.
 - They are worked out when a trip starts and after each reroute.
 
 ## Route summary
 
-`RouteSummary` is shown and announced on place details and the route picker when a route is found: "About 6 minutes, 450 feet. 3 turns, 1 flight of stairs, 2 crosswalks."
+`RouteSummary` is shown on place details and the route picker when a route is found: "About 6 minutes, 450 feet. 3 turns, 1 flight of stairs, 2 crosswalks." VoiceOver announces it then as "Route ready. {summary}", so the user knows Start is there.
 
 - Minutes are rounded, and at least 1.
-- Turns are left, right, slight and U-turns.
-- Stairs, elevators, escalators and crosswalks are listed only when there are some. With nothing to list it says "No turns."
+- Turns are left, right, slight and U-turns. With none it says "No turns", as in "About 6 minutes, 450 feet. No turns, 2 crosswalks."
+- Stairs, elevators, escalators and crosswalks are listed only when there are some.
+- Place details counts a route's crossings once, when the route arrives, and words the summary in the user's current units each time it is read.
 
 ## TripManager
 
@@ -152,23 +154,25 @@ Distances are spoken by `DistanceFormatter` in the user's units: feet rounded to
 
 Where two texts are given for one event, the first is used when the heading is known and the second when it isn't. `{direction}` is one of eight: "ahead", "slightly right", "on your right", "behind you on your right", "behind you", "behind you on your left", "on your left", "slightly left". It comes from the bearing to the target relative to the heading, in 45° sectors centred on straight ahead.
 
-The path sentence is "The path is {direction}.", or "Turn around, the path is behind you." It points at the route 15 m beyond the user's progress. Before the first fix, the user is taken to be at the route's start.
+A direction is said only from a fix accurate to 20 m that is not older than the one before it, and only to a target at least twice the fix's accuracy away. Otherwise the heading-unknown text is used. Before the first fix, the user is taken to be at the route's start.
+
+The path sentence is "The path is {direction}.", or "Turn around, the path is behind you." It points at the route `max(15 m, 2 × accuracy)` beyond the user's progress.
 
 | Event | Text | Priority | Expiry |
 | --- | --- | --- | --- |
-| start | "Starting directions to {name}, {d}. {path sentence}", then "In {d}, {instruction}" for a first step within 40 m (not stairs, which the first fix warns of). Heading unknown: "Starting directions to {name}, {d}. {first instruction}" | high | 15 s |
-| prepare | "In {d}, {instruction}". For stairs: "In {d}, stairs going up.", "…stairs going down.", or "…stairs." when the instruction doesn't say which way | normal | 8 s |
+| start | "Starting directions to {name}, {d}. {path sentence}", then "In {d}, {instruction}" for a first step within 40 m (not stairs, which the first fix warns of, nor the arrive step). Heading unknown: "Starting directions to {name}, {d}. {first instruction}" | high | 15 s |
+| prepare | "In {d}, {instruction}". For stairs: "In {d}, stairs going up.", "…stairs going down.", or "…stairs." when the instruction doesn't say which way | normal; high for stairs, so "Important only" still says them | 8 s; 15 s for stairs, to outlast a long start sentence |
 | now | "{instruction}", with the maneuver's haptic | high | dynamic |
 | passed turn | "Continue for {d}." | normal | 6 s |
-| crosswalk | "Crosswalk ahead, with audible signal." / "Crosswalk ahead, with a traffic signal." / "Crosswalk ahead." / "Road crossing ahead, unmarked.", with the attention haptic | high | 8 s |
-| missed turn | "You may have passed the turn. Finding a new route." while a reroute is in flight or allowed. Otherwise "…It is {direction}, {d} away. From there, {instruction}", or with the heading unknown "…Turn around and walk back {d}, then {instruction}" | high | 12 s |
+| crosswalk | "Crosswalk ahead, with audible signal." / "Crosswalk ahead, with a traffic signal." / "Crosswalk ahead." (marked) / "Road crossing ahead, unmarked." / "Road crossing ahead." (not tagged either way), with the attention haptic | high | 8 s |
+| missed turn | "You may have passed the turn. Finding a new route." while a reroute is in flight or allowed. Otherwise "…It is {direction}, {d} away.", or with the heading unknown "…Turn around and walk back {d}." The turn itself isn't said: walking back reaches it from the other side, which swaps its left and right | high | 12 s |
 | wrong way | "You're walking away from the route. {path sentence}". Heading unknown: "You seem to be walking away from the route. Turn around." | high | 10 s |
 | off route | "You're off the route. Finding a new route.", or "…Head back toward the path." once no reroutes are left or in flight | high | 10 s |
 | back on route | "Back on the route." | normal | 6 s |
 | new route | "New route. {first instruction}" | high | 15 s |
 | reroute asked for | "Finding a new route from here.", or "Couldn't find where you are precisely enough for a new route. Try again in a moment." | high | 10 s |
 | reroute failed | "Couldn't get a new route. Walk back the way you came."; after the fifth: "Off route. End the trip and choose your destination again."; asked for while still on the route: "Couldn't get a new route. Keep following the current one." | high | 10 s |
-| arrived | "Arriving at {name}. {name} is {direction}.", when the latest fix is at least 5 m from the destination. Otherwise, or with the heading unknown: "Arriving at {name}. {arrive instruction}" | high | 15 s |
+| arrived | "Arriving at {name}. {name} is {direction}.", when the latest fix is at least `max(5 m, 2 × accuracy)` from the destination. Otherwise, or with the heading unknown: "Arriving at {name}. {arrive instruction}" | high | 15 s |
 | weak / back | "GPS signal is weak. Directions may be delayed." / "GPS signal is back." (system category) | high / normal | 10 s / 6 s |
 | pause, resume, end | "Trip paused." / "Trip resumed." / "Trip ended.", with no dedup key, so the engine merges them with the voice command's | high | none |
 
@@ -177,7 +181,9 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 - **The compass says where the phone points, not where the user faces.** Standing still with the phone in a pocket or a bag, a compass reading that looks accurate can still give the wrong "ahead". Once the user is walking, the walking direction takes over.
 - **Not checked on a device yet:** navigation-grade accuracy, the compass, the faster off-route rule and the crosswalk callouts have only run in tests and the simulator, which has no compass.
 - **Crosswalk callouts only exist on campus,** inside the area the bundled export covers, and are as good as OpenStreetMap's tagging there. Only 5 crossings are tagged with an audible signal.
-- **A crossing within about 10 m of the destination** may not be announced, because arriving ends guidance first.
+- **A crossing near the destination can go unannounced.** A fix accurate to 15 m near the last vertex arrives once progress is within 50 m of the end, so progress can still be short of the callout point, 20 m before the crossing, of one up to about 30 m before the destination.
+- **Crossings are matched by distance only.** On a road without mapped sidewalks the route runs along the road itself, so crossing nodes on that road, for side streets or driveways, are within 3 m and can be announced.
+- **A crossing re-mapped in OpenStreetMap after the export** can move more than 3 m from the route and stop matching until the export is rebuilt.
 - **Stairs direction is rarely known.** Valhalla usually says "Take the stairs" without up or down. Only "stairs up", "up the stairs", "upstairs" and their "down" forms count.
 - **A crossing right at a street corner** that the route passes without using could still be within 3 m and be announced. This needs checking on real campus routes.
 - **Valhalla's turn-type numbers and stairs wording** haven't been checked against a live route through a building.
