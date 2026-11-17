@@ -106,11 +106,11 @@ struct TripActivityPlannerTests {
     }
 
     @Test
-    func pausedUpdatesTheStatus() {
+    func pausedUpdatesTheStatusWithoutADistance() {
         var planner = running()
         let update = planner.action(for: trip(.paused), route: nil, formatter: .imperial)
         #expect(update == .update(.init(status: .paused, instruction: "Turn left onto Ferst Drive",
-                                        distance: "150 ft", spokenDistance: "150 feet",
+                                        distance: nil, spokenDistance: nil,
                                         symbolName: "arrow.turn.up.left", arrival: nil),
                                   staleDate: nil))
         #expect(planner.action(for: trip(.paused), route: nil, formatter: .imperial) == nil)

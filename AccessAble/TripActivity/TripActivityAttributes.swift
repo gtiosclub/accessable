@@ -13,7 +13,7 @@ struct TripActivityAttributes: ActivityAttributes {
         var status: Status
         var instruction: String
         /// Written distance to the next turn, e.g. "150 ft", already in the user's units; nil when
-        /// off route or arrived. The app formats it so voice and screen share one formatter.
+        /// paused, off route or arrived. The app formats it so voice and screen share one formatter.
         var distance: String?
         /// `distance` in words, e.g. "150 feet", for VoiceOver, which can misread "mi" and "km".
         var spokenDistance: String?

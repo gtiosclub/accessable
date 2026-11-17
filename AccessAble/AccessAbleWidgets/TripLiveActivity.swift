@@ -156,9 +156,11 @@ private extension TripActivityAttributes.ContentState {
         }
     }
 
-    /// Under the headline in place of the distance: what to do once guidance has stopped.
+    /// Under the headline in place of the distance: what to do once guidance has stopped, or the turn waiting
+    /// while paused.
     func detail(isStale: Bool) -> String? {
-        isStale ? "Open AccessAble" : nil
+        if isStale { return "Open AccessAble" }
+        return status == .paused ? instruction : nil
     }
 
     /// Fits beside the camera in the compact Dynamic Island.
@@ -190,8 +192,8 @@ extension TripActivityAttributes.ContentState {
     static let paused = Self(
         status: .paused,
         instruction: "Turn left onto Ferst Drive",
-        distance: "150 ft",
-        spokenDistance: "150 feet",
+        distance: nil,
+        spokenDistance: nil,
         symbolName: "arrow.turn.up.left",
         arrival: nil
     )

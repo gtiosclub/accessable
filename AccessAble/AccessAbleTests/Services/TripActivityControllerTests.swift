@@ -119,7 +119,7 @@ struct TripActivityControllerTests {
             "end all",
             "start Clough Commons: Turn left onto Ferst Drive, 150 ft",
             "update active: Turn left onto Ferst Drive, 100 ft",
-            "update paused: Turn left onto Ferst Drive, 100 ft",
+            "update paused: Turn left onto Ferst Drive, -",
             "update active: Arrive, 75 ft",
             "end arrived",
             "end arrived now",

@@ -124,7 +124,8 @@ struct TripActivityPlanner {
         for state: TripState, maneuver: Maneuver, route: NavigationRoute?, formatter: DistanceFormatter
     ) -> Content {
         let status: Content.Status = state.phase == .paused ? .paused : state.isOffRoute ? .offRoute : .active
-        let distance = status == .offRoute ? nil : state.distanceToNextManeuver
+        // paused, the user isn't walking toward the turn, so it shows the turn waiting without a distance
+        let distance = status == .active ? state.distanceToNextManeuver : nil
         return Content(
             status: status,
             instruction: maneuver.instruction,
