@@ -46,22 +46,30 @@ private actor RecordingActivity: TripActivityClient {
     struct Refused: Error {}
 
     private(set) var calls: [String] = []
+    /// What each start and update was given, in order.
+    private(set) var staleDates: [Date?] = []
     private var failingStarts: Int
+    private let failure: any Error
     private var waiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
-    init(failingStarts: Int = 0) { self.failingStarts = failingStarts }
+    init(failingStarts: Int = 0, failure: any Error = Refused()) {
+        self.failingStarts = failingStarts
+        self.failure = failure
+    }
 
     func start(
         _ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState, staleDate: Date?
     ) async throws {
+        staleDates.append(staleDate)
         record("start \(attributes.destinationName): \(state.instruction), \(state.distance ?? "-")")
         guard failingStarts == 0 else {
             failingStarts -= 1
-            throw Refused()
+            throw failure
         }
     }
 
     func update(_ state: TripActivityAttributes.ContentState, staleDate: Date?) async {
+        staleDates.append(staleDate)
         record("update \(state.status): \(state.instruction), \(state.distance ?? "-")"
             + (state.arrival == nil ? "" : ", arrives"))
     }
@@ -86,11 +94,11 @@ private actor RecordingActivity: TripActivityClient {
 }
 
 private func trip(_ phase: TripPhase, _ instruction: String = "Turn left onto Ferst Drive",
-                  distance: Double? = 45.72) -> TripState {
+                  distance: Double? = 45.72, at time: Date = .now) -> TripState {
     TripState(phase: phase, destinationName: "Clough Commons",
               nextManeuver: Maneuver(kind: .turnLeft, instruction: instruction,
                                      coordinate: GeoCoordinate(latitude: 33.775, longitude: -84.399)),
-              distanceToNextManeuver: distance, distanceRemaining: 280)
+              distanceToNextManeuver: distance, distanceRemaining: 280, updatedAt: time)
 }
 
 struct TripActivityControllerTests {
@@ -164,6 +172,15 @@ struct TripActivityControllerTests {
     }
 
     @Test
+    func theStaleDateIsPassedThrough() async {
+        let time = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let activity = RecordingActivity()
+        _ = await calls(for: [trip(.active, at: time), trip(.active, distance: 30, at: time + 5)], activity: activity)
+        #expect(await activity.staleDates == [time + TripActivityPlanner.staleAfter,
+                                              time + 5 + TripActivityPlanner.staleAfter])
+    }
+
+    @Test
     func aRouteAfterItsStateAddsTheArrivalTime() async throws {
         let origin = GeoCoordinate(latitude: 33.775, longitude: -84.399)
         let route = try NavigationRoute(
@@ -201,7 +218,8 @@ struct TripActivityControllerTests {
     @Test
     func aFailedStartIsTriedAgainWhenTheAppComesToTheForeground() async {
         let provider = ControlledTrip()
-        let activity = RecordingActivity(failingStarts: 1)
+        // what the real client throws when asked in the background
+        let activity = RecordingActivity(failingStarts: 1, failure: TripActivityStartError.notInForeground)
         let (foregrounds, foreground) = AsyncStream<Void>.makeStream()
         let controller = TripActivityController(
             trip: provider, activity: activity, distances: DistanceSettings(units: .feet), foregrounds: foregrounds
