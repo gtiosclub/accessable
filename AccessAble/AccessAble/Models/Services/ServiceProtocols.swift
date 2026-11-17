@@ -128,17 +128,11 @@ protocol TripActivityClient: Sendable {
     func endAll() async
 }
 
-enum TripActivityStartError: LocalizedError {
+/// Caught by name and logged, never shown to the user.
+enum TripActivityStartError: Error {
     case activitiesDisabled
     /// A Live Activity can only be started while the app is on screen.
     case notInForeground
-
-    var errorDescription: String? {
-        switch self {
-        case .activitiesDisabled: "Live Activities are turned off for AccessAble."
-        case .notInForeground: "A Live Activity can only start while AccessAble is open."
-        }
-    }
 }
 
 /// Short spoken description of where the user is, e.g. "on Ferst Drive facing north".
