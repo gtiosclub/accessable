@@ -112,7 +112,7 @@ struct TripActivityPlannerTests {
         #expect(update == .update(.init(status: .paused, instruction: "Turn left onto Ferst Drive",
                                         distance: nil, spokenDistance: nil,
                                         symbolName: "arrow.turn.up.left", arrival: nil),
-                                  staleDate: nil))
+                                  staleDate: start + TripActivityPlanner.staleAfter))
         #expect(planner.action(for: trip(.paused), route: nil, formatter: .imperial) == nil)
     }
 
@@ -344,19 +344,29 @@ struct TripActivityPlannerTests {
     }
 
     @Test
-    func pausedIsNotRefreshedAndNeverStale() {
+    func pausedGoesStaleAndIsRefreshedEachMinute() {
+        // a force quit while paused shouldn't leave the paused turn on the lock screen for hours
         var planner = TripActivityPlanner()
         guard case .start(_, _, let staleDate) = planner.action(for: trip(.paused), route: nil, formatter: .imperial)
         else {
             Issue.record("Expected a start")
             return
         }
-        #expect(staleDate == nil)
-        #expect(planner.action(for: trip(.paused, at: start + 600), route: nil, formatter: .imperial) == nil)
+        #expect(staleDate == start + TripActivityPlanner.staleAfter)
+        #expect(planner.action(for: trip(.paused, distance: 20, at: start + 59), route: nil,
+                               formatter: .imperial) == nil)
+        guard case .update(let content, let refreshed) = planner.action(for: trip(.paused, at: start + 60),
+                                                                        route: nil, formatter: .imperial)
+        else {
+            Issue.record("Expected an update")
+            return
+        }
+        #expect(content.distance == nil)
+        #expect(refreshed == start + 60 + TripActivityPlanner.staleAfter)
     }
 
     @Test
-    func resumingSetsAStaleDateAgain() {
+    func resumingMovesTheStaleDate() {
         var planner = TripActivityPlanner()
         _ = planner.action(for: trip(.paused), route: nil, formatter: .imperial)
         guard case .update(_, let staleDate) = planner.action(for: trip(at: start + 30), route: nil,
