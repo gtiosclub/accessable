@@ -487,6 +487,23 @@ struct RouteProgressTrackerTests {
     }
 
     @Test
+    func offRouteOnTheSameFixReplacesTheWrongWay() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        // west from the start: rough fixes give no wrong way, until a precise one 28 m off, which also has been
+        // walking away for 5 s
+        let path = (0...20).map { (along: 0.0, lateral: -1.4 * Double($0)) }
+        let fixes = TripWalk.fixes(on: route, path: path, start: walk.nextTime, accuracy: 12)
+            .enumerated().map { index, fix in
+                var fix = fix
+                if index == 0 || index == 20 { fix.horizontalAccuracy = 5 }
+                return fix
+            }
+        walk.feed(walking(fixes, course: 270))
+        #expect(walk.logged == [Logged(20, .offRoute)])
+    }
+
+    @Test
     func pausedCuesFireOnResume() throws {
         let route = try fixtureRoute()
         var walk = Walk(route)
