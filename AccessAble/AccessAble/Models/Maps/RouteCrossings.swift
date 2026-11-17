@@ -20,8 +20,7 @@ enum RouteCrossings {
     ///
     /// A crossing past either end of the route projects onto that end, and its offset is then its distance from it,
     /// so one beyond the destination is kept only within `onRouteDistance` of it.
-    static func along(_ route: NavigationRoute,
-                      crossings: [CampusCrossing] = CampusCrossings.all) -> [RouteCrossing] {
+    static func along(_ route: NavigationRoute, crossings: [CampusCrossing]) -> [RouteCrossing] {
         let area = RouteLandmarks.Area(around: route.coordinates, margin: onRouteDistance)
         let onRoute = crossings
             .filter { area.contains($0.coordinate) }
@@ -47,13 +46,13 @@ enum RouteCrossings {
         return merged
     }
 
-    /// How much a control tells the user: a signal most, and "unmarked" only when nothing says otherwise.
+    /// How much a control tells the user: a signal most, and "unknown" least, since it says nothing.
     private static func rank(_ control: CampusCrossing.Control) -> Int {
         switch control {
         case .signals: 3
         case .marked: 2
-        case .unknown: 1
-        case .unmarked: 0
+        case .unmarked: 1
+        case .unknown: 0
         }
     }
 }

@@ -51,7 +51,8 @@ struct RouteCrossingsTests {
     }
 
     @Test(arguments: [
-        (CampusCrossing.Control.unmarked, CampusCrossing.Control.unknown, CampusCrossing.Control.unknown),
+        (CampusCrossing.Control.unmarked, CampusCrossing.Control.unknown, CampusCrossing.Control.unmarked),
+        (.unknown, .unmarked, .unmarked),
         (.unknown, .marked, .marked),
         (.signals, .unmarked, .signals),
     ])

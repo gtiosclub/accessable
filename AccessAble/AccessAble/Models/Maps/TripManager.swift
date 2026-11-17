@@ -622,8 +622,9 @@ actor TripManager: TripStateProviding {
         if crossing.audibleSignal { return "Crosswalk ahead, with audible signal." }
         return switch crossing.control {
         case .signals: "Crosswalk ahead, with a traffic signal."
-        case .marked, .unknown: "Crosswalk ahead."
+        case .marked: "Crosswalk ahead."
         case .unmarked: "Road crossing ahead, unmarked."
+        case .unknown: "Road crossing ahead."
         }
     }
 

@@ -1134,7 +1134,7 @@ struct TripManagerCrossingTests {
         (CampusCrossing.Control.signals, true, "Crosswalk ahead, with audible signal."),
         (.signals, false, "Crosswalk ahead, with a traffic signal."),
         (.marked, false, "Crosswalk ahead."),
-        (.unknown, false, "Crosswalk ahead."),
+        (.unknown, false, "Road crossing ahead."),
         (.unmarked, false, "Road crossing ahead, unmarked."),
     ])
     func crossingAheadIsSpokenForItsControl(_ control: CampusCrossing.Control, _ audibleSignal: Bool,
