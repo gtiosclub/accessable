@@ -579,8 +579,11 @@ actor TripManager: TripStateProviding {
         guard let route else { return nil }
         switch event {
         case let .prepare(step, distance):
-            return maneuver(prepareText(route.steps[step], in: distance), .normal, expiresIn: 8,
-                            key: "step-\(step)-prepare")
+            // stairs are a fall risk, so like a crossing they are said even with Important only, and wait out a
+            // long start sentence
+            let isStairs = route.steps[step].kind == .stairs
+            return maneuver(prepareText(route.steps[step], in: distance), isStairs ? .high : .normal,
+                            expiresIn: isStairs ? 15 : 8, key: "step-\(step)-prepare")
         case let .now(step):
             return maneuver(route.steps[step].spokenInstruction, .high, haptic: route.steps[step].kind.haptic,
                             expiresIn: Self.nowCueLifetime(progress.distanceToNextStep), key: "step-\(step)-now")

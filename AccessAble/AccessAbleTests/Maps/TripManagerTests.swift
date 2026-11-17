@@ -567,6 +567,9 @@ struct TripManagerTests {
 
         let events = await harness.engine.waitForCount(5)
         #expect(events[1].text == "In about 40 metres, \(phrase).")
+        // said even with Important only, and still in time behind a long start sentence
+        #expect(events[1].priority == .high)
+        #expect(events[1].expiresAt == events[1].createdAt.addingTimeInterval(15))
         #expect(events[2].text == instruction)
         #expect(events[2].haptic == .attention)
     }
