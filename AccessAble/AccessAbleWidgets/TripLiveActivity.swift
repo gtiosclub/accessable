@@ -65,15 +65,17 @@ private struct TripLockScreenView: View {
                 Text(state.headline(destinationName: destinationName))
                     .font(.title.bold())
                     .lineLimit(3)
-                    .minimumScaleFactor(0.6)
+                    .minimumScaleFactor(0.5)
                 if state.status == .active {
-                    HStack(spacing: 16) {
-                        if let distance = state.distance {
-                            Text(distance)
+                    // at the largest text sizes the arrival time gives way, rather than both being cut short
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 16) {
+                            distanceText
+                            if let arrival = state.arrival {
+                                Text("Arrive \(Text(arrival, style: .time))")
+                            }
                         }
-                        if let arrival = state.arrival {
-                            Text("Arrive \(Text(arrival, style: .time))")
-                        }
+                        distanceText
                     }
                     .font(.title3.bold())
                     .lineLimit(1)
@@ -86,6 +88,12 @@ private struct TripLockScreenView: View {
         .padding()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.accessibilityLabel(destinationName: destinationName))
+    }
+
+    @ViewBuilder private var distanceText: some View {
+        if let distance = state.distance {
+            Text(distance)
+        }
     }
 }
 
@@ -188,5 +196,22 @@ extension TripActivityAttributes.ContentState {
     TripActivityAttributes.ContentState.paused
     TripActivityAttributes.ContentState.offRoute
     TripActivityAttributes.ContentState.arrived
+}
+
+#Preview("Lock screen, largest text") {
+    let states: [TripActivityAttributes.ContentState] = [.active, .paused, .offRoute, .arrived]
+    ScrollView {
+        VStack(spacing: 8) {
+            ForEach(states, id: \.self) { state in
+                // the lock screen cuts a Live Activity off at 160 points
+                TripLockScreenView(state: state, destinationName: TripActivityAttributes.preview.destinationName)
+                    .frame(width: 360)
+                    .frame(maxHeight: 160, alignment: .top)
+                    .clipped()
+                    .background(.black, in: .rect(cornerRadius: 20))
+            }
+        }
+    }
+    .environment(\.dynamicTypeSize, .accessibility5)
 }
 #endif
