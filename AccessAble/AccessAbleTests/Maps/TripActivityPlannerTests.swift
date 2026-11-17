@@ -299,7 +299,8 @@ struct TripActivityPlannerTests {
     @Test
     func aRouteAfterItsStateAddsTheArrivalTime() throws {
         var planner = running()
-        guard case .update(let content, _) = planner.action(for: trip(), route: try route(), formatter: .imperial) else {
+        guard case .update(let content, _) = planner.action(for: trip(), route: try route(), formatter: .imperial)
+        else {
             Issue.record("Expected an update")
             return
         }

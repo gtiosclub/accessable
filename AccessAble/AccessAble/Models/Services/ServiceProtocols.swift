@@ -115,8 +115,8 @@ protocol TripStateProviding: Sendable {
 /// The trip's Live Activity on the lock screen and in the Dynamic Island; one at a time.
 protocol TripActivityClient: Sendable {
     /// Throws `TripActivityStartError.activitiesDisabled` when the user has turned Live Activities off,
-    /// `.notInForeground` when the app isn't on screen, or the system's error when it refuses one. After `staleDate`, unless an update comes first, the widget
-    /// says guidance isn't updating; nil never goes stale.
+    /// `.notInForeground` when the app isn't on screen, or the system's error when it refuses one.
+    /// After `staleDate`, unless an update comes first, the widget says guidance isn't updating; nil never goes stale.
     func start(
         _ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState, staleDate: Date?
     ) async throws

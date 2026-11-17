@@ -58,8 +58,8 @@ struct TripActivityPlanner {
         case .active, .paused:
             guard let maneuver = state.nextManeuver, let destinationName = state.destinationName else { return nil }
             let content = Self.content(for: state, maneuver: maneuver, route: route, formatter: formatter)
-            let next = Shown(destinationName: destinationName, content: content, maneuver: maneuver, distance: state.distanceToNextManeuver,
-                             updatedAt: state.updatedAt)
+            let next = Shown(destinationName: destinationName, content: content, maneuver: maneuver,
+                             distance: state.distanceToNextManeuver, updatedAt: state.updatedAt)
             let staleDate = state.updatedAt.addingTimeInterval(Self.staleAfter)
             guard let shown, shown.destinationName == destinationName else {
                 if let failedStart, next.destinationName == failedStart.destinationName,
