@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// Owner: Maps (2.x). State for a place's details and the route picker: the place's name and
-/// address, and the real walking route to it from where the user is: distance, time and steps.
+/// address, and the real walking route to it from where the user is: its summary and steps.
 ///
 /// The route comes from `TripViewModel`, which already picks a good enough GPS fix to start
 /// from, asks the routing service, and reports failures. This only formats what it found.
@@ -13,12 +13,20 @@ final class PlaceDetailViewModel {
     /// Finds the route. Kept so its retry and error rules aren't copied here.
     let planner: TripViewModel
     @ObservationIgnored private let distanceSettings: DistanceSettings
+    /// Read when the summary is, so tests can avoid parsing the bundled file.
+    @ObservationIgnored private let campusCrossings: @Sendable () -> [CampusCrossing]
 
     /// `planned` is a route an earlier screen found; without it one is asked for.
-    init(destination: Destination, services: AppServices, planned: PlannedRoute? = nil) {
+    init(
+        destination: Destination,
+        services: AppServices,
+        planned: PlannedRoute? = nil,
+        campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all }
+    ) {
         self.destination = destination
         planner = TripViewModel(services: services)
         distanceSettings = services.distanceSettings
+        self.campusCrossings = campusCrossings
         if let planned { planner.use(planned) }
     }
 
@@ -37,10 +45,12 @@ final class PlaceDetailViewModel {
     /// Waiting for a location fix or for the routing service.
     var isLoading: Bool { route == nil && errorMessage == nil && !needsLocationAccess }
 
-    /// "650 m · about 9 min walk" or "2,125 ft…", in the user's units.
+    /// "About 6 minutes, 450 feet. 3 turns, 2 crosswalks.", in the user's units. Shown, and
+    /// spoken when the route arrives.
     var summary: String? {
         route.map {
-            Self.summary(metres: $0.totalDistance, seconds: $0.estimatedDuration, distances: distanceSettings.formatter)
+            RouteSummary(route: $0, crossings: RouteCrossings.along($0, crossings: campusCrossings()))
+                .text(distances: distanceSettings.formatter)
         }
     }
 
@@ -56,11 +66,5 @@ final class PlaceDetailViewModel {
 
     func retry() {
         planner.retryRoute()
-    }
-
-    static func summary(metres: Double, seconds: Double, distances: DistanceFormatter) -> String {
-        let distance = distances.written(metres)
-        let minutes = max(1, Int((seconds / 60).rounded()))
-        return "\(distance) · about \(minutes) min walk"
     }
 }

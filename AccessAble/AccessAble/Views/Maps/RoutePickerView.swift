@@ -130,7 +130,7 @@ private struct RealRouteModifier: ViewModifier {
     func body(content: Content) -> some View {
         if isActive {
             content
-                .announcesRoute(details.planner)
+                .announcesRoute(details.planner) { details.summary }
                 .task { await details.start() }
         } else {
             content

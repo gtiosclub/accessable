@@ -46,9 +46,14 @@ struct DistanceFormatter: Hashable, Sendable {
 
     /// For speech: "about 150 feet", "about 0.3 miles", "about 80 metres", "about 1.2 kilometres".
     func spoken(_ metres: Double) -> String {
+        "about \(words(metres))"
+    }
+
+    /// `spoken` without "about", for a sentence that already says it: "150 feet", "1 mile", "80 metres".
+    func words(_ metres: Double) -> String {
         let amount = amount(metres)
         let unit = amount.value == 1 ? amount.unit.singular : amount.unit.plural
-        return "about \(amount.text) \(unit)"
+        return "\(amount.text) \(unit)"
     }
 
     /// For the screen: "150 ft", "0.3 mi", "80 m", "1.2 km".
