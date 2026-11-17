@@ -37,6 +37,11 @@
 			path = AccessAbleTests;
 			sourceTree = "<group>";
 		};
+		7A1C0001306C188100B311DF /* TripActivity */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = TripActivity;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -64,6 +69,7 @@
 			children = (
 				21101012306C188100B311DF /* AccessAble */,
 				4E5A1702306C188100B311DF /* AccessAbleTests */,
+				7A1C0001306C188100B311DF /* TripActivity */,
 				21101011306C188100B311DF /* Products */,
 			);
 			sourceTree = "<group>";
@@ -94,6 +100,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				21101012306C188100B311DF /* AccessAble */,
+				7A1C0001306C188100B311DF /* TripActivity */,
 			);
 			name = AccessAble;
 			packageProductDependencies = (
