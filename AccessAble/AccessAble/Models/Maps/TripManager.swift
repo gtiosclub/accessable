@@ -16,6 +16,7 @@ actor TripManager: TripStateProviding {
     private let routing: any RoutingService
     private let announcements: any AnnouncementEngineProtocol
     private let setBackgroundTracking: @Sendable (Bool) async -> Void
+    private let repeats: RepeatSettings
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
 
@@ -36,6 +37,7 @@ actor TripManager: TripStateProviding {
     private var startTask: Task<Void, Never>?
     private var watchdogTask: Task<Void, Never>?
     private var rerouteTask: Task<Void, Never>?
+    private var repeatTask: Task<Void, Never>?
     private var cueChecks: [Task<Void, Never>] = []
 
     /// Turn cues submitted and waiting for their delivery check, and those of them the engine has delivered.
@@ -61,12 +63,15 @@ actor TripManager: TripStateProviding {
     // guidance from fixes rougher than this is unreliable
     private static let weakSignalAccuracy: Double = 30
     private static let weakSignalWait: TimeInterval = 10
+    // about 25 m at a normal walk, so a repeat doesn't land on top of the next cue
+    private static let repeatInterval: Duration = .seconds(20)
 
     init(
         location: any LocationProvider,
         routing: any RoutingService,
         announcements: any AnnouncementEngineProtocol,
         setBackgroundTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
+        repeats: RepeatSettings = RepeatSettings(),
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
@@ -74,6 +79,7 @@ actor TripManager: TripStateProviding {
         self.routing = routing
         self.announcements = announcements
         self.setBackgroundTracking = setBackgroundTracking
+        self.repeats = repeats
         self.now = now
         self.sleep = sleep
         states.send(TripState(phase: .planning, updatedAt: now()))
@@ -176,12 +182,13 @@ actor TripManager: TripStateProviding {
     }
 
     private func cancelTasks() {
-        for task in [trackingTask, deliveryTask, startTask, watchdogTask, rerouteTask] {
+        for task in [trackingTask, deliveryTask, startTask, watchdogTask, rerouteTask, repeatTask] {
             task?.cancel()
         }
         for task in cueChecks {
             task.cancel()
         }
+        repeatTask = nil
         trackingTask = nil
         deliveryTask = nil
         startTask = nil
@@ -249,7 +256,7 @@ actor TripManager: TripStateProviding {
     }
 
     private func arrive(at time: Date, generation: Int) async {
-        for task in [watchdogTask, rerouteTask, deliveryTask] {
+        for task in [watchdogTask, rerouteTask, deliveryTask, repeatTask] {
             task?.cancel()
         }
         for task in cueChecks {
@@ -386,6 +393,38 @@ actor TripManager: TripStateProviding {
         }
     }
 
+    /// T49: after each navigation instruction, says the current one again every `repeatInterval`, as many times as
+    /// the user picked in Settings. A new instruction restarts the count; pausing, arriving or ending stops it.
+    private func restartRepeats() {
+        repeatTask?.cancel()
+        repeatTask = nil
+        let times = repeats.autoRepeat.repeatCount
+        guard phase == .active, times > 0 else { return }
+        let generation = generation
+        repeatTask = Task { await self.repeatGuidance(times: times, generation: generation) }
+    }
+
+    private func repeatGuidance(times: Int, generation: Int) async {
+        for _ in 0..<times {
+            do { try await sleep(Self.repeatInterval) } catch { return }
+            guard self.generation == generation, phase == .active, let text = currentInstruction() else { return }
+            // straight to the engine, since going through submit() would restart this loop
+            await announcements.submit(maneuver(text, .normal, expiresIn: 8, key: nil))
+        }
+    }
+
+    /// The instruction as it stands now, so a repeat never reads out an old distance.
+    private func currentInstruction() -> String? {
+        guard let route, let progress else { return nil }
+        if progress.isOffRoute { return offRouteSpeech }
+        // a missed turn is either rerouting or has its own way-back wording
+        let index = progress.nextStepIndex
+        guard missedTurnStep != index else { return nil }
+        let instruction = route.steps[index].spokenInstruction
+        if progress.distanceToNextStep <= RouteProgressTracker.nowDistance { return instruction }
+        return "In \(Self.metres(progress.distanceToNextStep)), \(Self.midSentence(instruction))"
+    }
+
     /// Resubmits a turn cue the engine dropped before speaking, once, while the turn is still ahead.
     private func scheduleCueCheck(step: Int, id: UUID, after lifetime: TimeInterval, generation: Int) {
         let version = routeVersion
@@ -497,6 +536,8 @@ actor TripManager: TripStateProviding {
     }
 
     private func submit(_ event: AnnouncementEvent) async {
+        // GPS warnings are .system, so they don't reset the repeats
+        if event.category == .maneuver { restartRepeats() }
         await announcements.submit(event)
     }
 

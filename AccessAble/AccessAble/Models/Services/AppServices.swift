@@ -20,6 +20,9 @@ struct AppServices: Sendable {
     /// What the camera warns about, read by the pipeline every frame. AppViewModel keeps it
     /// in step with the profile.
     var alertSettings = AlertSettings()
+    /// How many times navigation repeats its latest instruction. AppViewModel keeps it in step
+    /// with the preferences.
+    var repeatSettings = RepeatSettings()
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
@@ -29,6 +32,7 @@ struct AppServices: Sendable {
         let announcements = AnnouncementEngine(speech: SpeechOutput(), haptics: haptics)
         let askAISettings = AskAISettings()
         let alertSettings = AlertSettings()
+        let repeatSettings = RepeatSettings()
         let scene = liveScene(
             performance: performance, announcements: announcements,
             askAISettings: askAISettings, alertSettings: alertSettings
@@ -50,11 +54,13 @@ struct AppServices: Sendable {
             locationContext: LocationDescriber(location: location),
             commands: FoundationModelCommandInterpreter(),
             askAISettings: askAISettings,
-            alertSettings: alertSettings
+            alertSettings: alertSettings,
+            repeatSettings: repeatSettings
         )
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
-            setBackgroundTracking: { await location.setBackgroundTracking($0) }
+            setBackgroundTracking: { await location.setBackgroundTracking($0) },
+            repeats: repeatSettings
         )
         return services
     }
