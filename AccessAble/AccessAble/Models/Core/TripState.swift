@@ -71,6 +71,8 @@ struct TripState: Codable, Hashable, Sendable {
     var distanceToNextManeuver: Double?
     /// Metres along the route to the destination.
     var distanceRemaining: Double?
+    /// The user has left the route; `nextManeuver` then says how to get back.
+    var isOffRoute: Bool
     var updatedAt: Date
 
     init(
@@ -79,6 +81,7 @@ struct TripState: Codable, Hashable, Sendable {
         nextManeuver: Maneuver? = nil,
         distanceToNextManeuver: Double? = nil,
         distanceRemaining: Double? = nil,
+        isOffRoute: Bool = false,
         updatedAt: Date = .now
     ) {
         self.phase = phase
@@ -86,6 +89,7 @@ struct TripState: Codable, Hashable, Sendable {
         self.nextManeuver = nextManeuver
         self.distanceToNextManeuver = distanceToNextManeuver
         self.distanceRemaining = distanceRemaining
+        self.isOffRoute = isOffRoute
         self.updatedAt = updatedAt
     }
 
