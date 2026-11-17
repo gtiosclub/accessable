@@ -33,8 +33,9 @@ extension TripActivityAttributes.ContentState {
         destinationName: String, isStale: Bool,
         arrivalTime: Date.FormatStyle = Date.FormatStyle(date: .omitted, time: .shortened)
     ) -> String {
-        // the app stopped updating it, most likely because it was closed, so the turn may be long past
-        if isStale { return "Guidance stopped. Open AccessAble." }
+        // the app stopped updating it, because it was closed or has had no location for a while, so the turn may
+        // be long past
+        if isStale { return "Guidance not updating. Open AccessAble." }
         // routing instructions may already end in a full stop
         let instruction = instruction.hasSuffix(".") ? String(instruction.dropLast()) : instruction
         switch status {

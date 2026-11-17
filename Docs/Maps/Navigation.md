@@ -182,7 +182,7 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 
 - **Start.** The first active or paused state with a next maneuver starts one. A trip to a new destination starts a new one.
 - **Update.** An update is pushed at a new step or status, when the written distance changes and the user has moved 25 ft since the last push, and when the arrival time moves by a minute. Until arrival, one is also pushed at least once a minute, standing still or paused included.
-- **Stale.** Until arrival, each start and update sets a stale date 3 minutes on. If the app stops updating, for example because it was closed, the widget says "Guidance stopped. Open AccessAble." instead of a turn that may be long past. An arrived activity never goes stale.
+- **Stale.** Until arrival, each start and update sets a stale date 3 minutes on. If the app stops updating it, because it was closed or has had no location fix for that long, the widget says "Guidance not updating. Open AccessAble." instead of a turn that may be long past. An arrived activity never goes stale.
 - **Paused.** "Paused" with the turn below it and no distance; off route has no distance either.
 - **End.** Arrival ends it with an arrived card that stays 5 minutes. Ending the trip removes it, or the arrived card, at once. At launch, any activity left by a launch that ended mid-trip is removed.
 - **Failed start.** A Live Activity can only start while the app is in the foreground, and not at all when the user has turned Live Activities off. A failed start is tried again at the next step or status, and when the app comes to the foreground.

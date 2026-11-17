@@ -70,7 +70,7 @@ struct TripLiveActivity: Widget {
 private struct TripLockScreenView: View {
     let state: TripActivityAttributes.ContentState
     let destinationName: String
-    /// The app stopped updating it, so it says guidance stopped rather than show a turn that may be long past.
+    /// The app stopped updating it, so it says guidance isn't updating rather than show a turn that may be long past.
     let isStale: Bool
     /// Grows with the text, so the turn stays as easy to see as the words beside it.
     @ScaledMetric(relativeTo: .title) private var symbolSize = 48
@@ -145,7 +145,7 @@ private struct TurnSymbol: View {
 
 private extension TripActivityAttributes.ContentState {
     func headline(destinationName: String, isStale: Bool) -> String {
-        if isStale { return "Guidance stopped" }
+        if isStale { return "Guidance not updating" }
         return switch status {
         case .active, .offRoute: instruction
         case .paused: "Paused"
@@ -162,7 +162,7 @@ private extension TripActivityAttributes.ContentState {
         }
     }
 
-    /// Under the headline in place of the distance: what to do once guidance has stopped, or the turn waiting
+    /// Under the headline in place of the distance: what to do once guidance isn't updating, or the turn waiting
     /// while paused.
     func detail(isStale: Bool) -> String? {
         if isStale { return "Open AccessAble" }
@@ -171,7 +171,7 @@ private extension TripActivityAttributes.ContentState {
 
     /// Fits beside the camera in the compact Dynamic Island.
     func shortText(isStale: Bool) -> String? {
-        if isStale { return "Stopped" }
+        if isStale { return "Not updating" }
         return switch status {
         case .active: distance
         case .paused: "Paused"

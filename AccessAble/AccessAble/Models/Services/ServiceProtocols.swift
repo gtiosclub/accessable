@@ -116,7 +116,7 @@ protocol TripStateProviding: Sendable {
 protocol TripActivityClient: Sendable {
     /// Throws `TripActivityStartError.activitiesDisabled` when the user has turned Live Activities off,
     /// `.notInForeground` when the app isn't on screen, or the system's error when it refuses one. After `staleDate`, unless an update comes first, the widget
-    /// says guidance stopped; nil never goes stale.
+    /// says guidance isn't updating; nil never goes stale.
     func start(
         _ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState, staleDate: Date?
     ) async throws

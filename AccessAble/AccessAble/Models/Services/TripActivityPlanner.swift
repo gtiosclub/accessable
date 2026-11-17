@@ -7,7 +7,7 @@ struct TripActivityPlanner {
     typealias Content = TripActivityAttributes.ContentState
 
     enum Action: Equatable {
-        /// `staleDate` is when the lock screen should say guidance stopped, if no update comes first.
+        /// `staleDate` is when the lock screen should say guidance isn't updating, if no update comes first.
         case start(destinationName: String, Content, staleDate: Date)
         case update(Content, staleDate: Date)
         case end(Content, immediately: Bool)

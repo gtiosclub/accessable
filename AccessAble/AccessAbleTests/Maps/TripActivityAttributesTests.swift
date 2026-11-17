@@ -83,8 +83,8 @@ struct TripActivityAttributesTests {
     }
 
     @Test(arguments: [TripActivityAttributes.ContentState.Status.active, .offRoute])
-    func staleSaysGuidanceStoppedInsteadOfAnOldTurn(_ status: TripActivityAttributes.ContentState.Status) {
-        #expect(label(status, isStale: true) == "Guidance stopped. Open AccessAble.")
+    func staleSaysGuidanceIsNotUpdatingInsteadOfAnOldTurn(_ status: TripActivityAttributes.ContentState.Status) {
+        #expect(label(status, isStale: true) == "Guidance not updating. Open AccessAble.")
     }
 
     @Test
