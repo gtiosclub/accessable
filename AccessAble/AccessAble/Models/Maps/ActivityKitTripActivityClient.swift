@@ -23,9 +23,13 @@ actor ActivityKitTripActivityClient: TripActivityClient {
         await Self.activity(id: activityID)?.end(nil, dismissalPolicy: .immediate)
         activityID = nil
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw TripActivityStartError.activitiesDisabled }
-        activityID = try Activity.request(
-            attributes: attributes, content: ActivityContent(state: state, staleDate: staleDate), pushType: nil
-        ).id
+        do {
+            activityID = try Activity.request(
+                attributes: attributes, content: ActivityContent(state: state, staleDate: staleDate), pushType: nil
+            ).id
+        } catch ActivityAuthorizationError.visibility {
+            throw TripActivityStartError.notInForeground
+        }
     }
 
     func update(_ state: TripActivityAttributes.ContentState, staleDate: Date?) async {

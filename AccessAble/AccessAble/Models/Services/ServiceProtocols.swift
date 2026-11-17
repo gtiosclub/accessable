@@ -115,7 +115,7 @@ protocol TripStateProviding: Sendable {
 /// The trip's Live Activity on the lock screen and in the Dynamic Island; one at a time.
 protocol TripActivityClient: Sendable {
     /// Throws `TripActivityStartError.activitiesDisabled` when the user has turned Live Activities off,
-    /// or the system's error when it refuses one. After `staleDate`, unless an update comes first, the widget
+    /// `.notInForeground` when the app isn't on screen, or the system's error when it refuses one. After `staleDate`, unless an update comes first, the widget
     /// says guidance stopped; nil never goes stale.
     func start(
         _ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState, staleDate: Date?
@@ -130,8 +130,15 @@ protocol TripActivityClient: Sendable {
 
 enum TripActivityStartError: LocalizedError {
     case activitiesDisabled
+    /// A Live Activity can only be started while the app is on screen.
+    case notInForeground
 
-    var errorDescription: String? { "Live Activities are turned off for AccessAble." }
+    var errorDescription: String? {
+        switch self {
+        case .activitiesDisabled: "Live Activities are turned off for AccessAble."
+        case .notInForeground: "A Live Activity can only start while AccessAble is open."
+        }
+    }
 }
 
 /// Short spoken description of where the user is, e.g. "on Ferst Drive facing north".

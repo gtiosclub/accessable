@@ -10,10 +10,13 @@ struct TripActivityController: Sendable {
     let trip: any TripStateProviding
     let activity: any TripActivityClient
     let distances: DistanceSettings
+    /// Each time the app comes to the foreground, the only time a failed start can succeed.
+    let foregrounds: AsyncStream<Void>
 
     private enum Event {
         case state(TripState)
         case route(NavigationRoute?)
+        case foreground
     }
 
     func run() async {
@@ -23,6 +26,9 @@ struct TripActivityController: Sendable {
         await withDiscardingTaskGroup { group in
             group.addTask {
                 for await route in trip.tripRoutes() { continuation.yield(.route(route)) }
+            }
+            group.addTask {
+                for await _ in foregrounds { continuation.yield(.foreground) }
             }
             group.addTask {
                 for await state in trip.tripStates() { continuation.yield(.state(state)) }
@@ -38,6 +44,8 @@ struct TripActivityController: Sendable {
                     route = latest
                 case .state(let latest):
                     state = latest
+                case .foreground:
+                    planner.retryFailedStart()
                 }
                 guard let state,
                       let action = planner.action(for: state, route: route, formatter: distances.formatter)
@@ -59,6 +67,9 @@ struct TripActivityController: Sendable {
                                          staleDate: staleDate)
             } catch TripActivityStartError.activitiesDisabled {
                 log.info("No Live Activity for this trip: the user has turned them off")
+                return false
+            } catch TripActivityStartError.notInForeground {
+                log.info("No Live Activity yet: the app isn't open; trying again when it is")
                 return false
             } catch {
                 log.error("No Live Activity for this trip: \(error.localizedDescription, privacy: .public)")

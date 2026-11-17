@@ -216,6 +216,17 @@ struct TripActivityPlannerTests {
     }
 
     @Test
+    func aFailedStartIsTriedAgainOnTheSameStepInTheForeground() {
+        var planner = running()
+        planner.startFailed()
+        planner.retryFailedStart()
+        guard case .start = planner.action(for: trip(distance: 20), route: nil, formatter: .imperial) else {
+            Issue.record("Expected another start")
+            return
+        }
+    }
+
+    @Test
     func endingTheTripEndsImmediately() {
         var planner = running()
         let action = planner.action(for: .idle, route: nil, formatter: .imperial)

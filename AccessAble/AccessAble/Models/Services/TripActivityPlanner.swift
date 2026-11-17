@@ -39,7 +39,8 @@ struct TripActivityPlanner {
     /// The arrived card is still on the lock screen, for ending the trip to clear.
     private var showsArrival = false
     /// What a failed start would have shown. Tried again only at a new step or status, not on every fix,
-    /// since the cause (Live Activities turned off) rarely clears within a step.
+    /// since the cause (Live Activities turned off, or the app in the background) rarely clears within a step.
+    /// Also tried again when the app comes to the foreground.
     private var failedStart: Shown?
 
     mutating func action(for state: TripState, route: NavigationRoute?, formatter: DistanceFormatter) -> Action? {
@@ -79,6 +80,12 @@ struct TripActivityPlanner {
     mutating func startFailed() {
         failedStart = shown
         shown = nil
+    }
+
+    /// The app came to the foreground, where a start that failed in the background can succeed: the next state
+    /// tries again, even on the same step.
+    mutating func retryFailedStart() {
+        failedStart = nil
     }
 
     /// The trip ended, or its stream did: take the activity, or the arrived card, off the lock screen.

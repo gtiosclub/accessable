@@ -98,7 +98,8 @@ struct TripActivityControllerTests {
         for states: [TripState], activity: RecordingActivity = RecordingActivity(), units: DistanceUnits = .feet
     ) async -> [String] {
         await TripActivityController(trip: ScriptedTrip(states: states), activity: activity,
-                                     distances: DistanceSettings(units: units)).run()
+                                     distances: DistanceSettings(units: units),
+                                     foregrounds: AsyncStream { $0.finish() }).run()
         return await activity.calls
     }
 
@@ -177,7 +178,8 @@ struct TripActivityControllerTests {
         let provider = ControlledTrip()
         let activity = RecordingActivity()
         let controller = TripActivityController(
-            trip: provider, activity: activity, distances: DistanceSettings(units: .feet)
+            trip: provider, activity: activity, distances: DistanceSettings(units: .feet),
+            foregrounds: AsyncStream { $0.finish() }
         )
         let running = Task { await controller.run() }
 
@@ -192,6 +194,31 @@ struct TripActivityControllerTests {
             "end all",
             "start Clough Commons: Turn left onto Ferst Drive, 150 ft",
             "update active: Turn left onto Ferst Drive, 150 ft, arrives",
+            "end active now",
+        ])
+    }
+
+    @Test
+    func aFailedStartIsTriedAgainWhenTheAppComesToTheForeground() async {
+        let provider = ControlledTrip()
+        let activity = RecordingActivity(failingStarts: 1)
+        let (foregrounds, foreground) = AsyncStream<Void>.makeStream()
+        let controller = TripActivityController(
+            trip: provider, activity: activity, distances: DistanceSettings(units: .feet), foregrounds: foregrounds
+        )
+        let running = Task { await controller.run() }
+
+        provider.states.yield(trip(.active))
+        await activity.waitForCalls(2)
+        foreground.yield()
+        await activity.waitForCalls(3)
+        provider.states.finish()
+        await running.value
+
+        #expect(await activity.calls == [
+            "end all",
+            "start Clough Commons: Turn left onto Ferst Drive, 150 ft",
+            "start Clough Commons: Turn left onto Ferst Drive, 150 ft",
             "end active now",
         ])
     }
