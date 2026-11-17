@@ -97,12 +97,7 @@ struct TripPlan: Hashable, Sendable {
     var plannedRoute: PlannedRoute? = nil
 }
 
-struct Volunteer: Identifiable, Hashable, Sendable {
-    let id: String
-    var name: String
-    var availableUntil: String
-    var isOnline: Bool
-}
+// `Volunteer` now lives in Models/Calls/Volunteer.swift.
 
 struct ChatMessage: Identifiable, Hashable, Sendable {
     let id: UUID
