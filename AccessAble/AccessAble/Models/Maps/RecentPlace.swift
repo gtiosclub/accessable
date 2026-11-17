@@ -16,7 +16,7 @@ struct RecentPlace: Identifiable, Codable, Hashable, Sendable {
         name: String,
         address: String? = nil,
         coordinate: GeoCoordinate,
-        category: PlaceCategory = .campus,
+        category: PlaceCategory = .labeledPlaces,
         lastVisitedAt: Date = .now
     ) {
         self.id = id
@@ -28,7 +28,7 @@ struct RecentPlace: Identifiable, Codable, Hashable, Sendable {
         self.lastVisitedAt = lastVisitedAt
     }
 
-    init(destination: Destination, category: PlaceCategory = .campus, lastVisitedAt: Date = .now) {
+    init(destination: Destination, category: PlaceCategory = .labeledPlaces, lastVisitedAt: Date = .now) {
         self.init(
             name: destination.name,
             address: destination.address,
@@ -59,9 +59,9 @@ struct RecentPlace: Identifiable, Codable, Hashable, Sendable {
             name: name,
             address: address ?? "",
             category: category,
-            recordedRouteCount: 0,
             rating: 0,
             reviewCount: 0,
+            recordedRouteCount: 0,
             isSaved: false,
             isRecent: true,
             latitude: coordinate.latitude,
@@ -127,7 +127,7 @@ final class RecentPlacesStore {
 
     /// Records a destination when a trip starts, moving any matching destination to the top and keeping at most 10.
     @discardableResult
-    func record(destination: Destination, category: PlaceCategory = .campus, at date: Date = .now) -> RecentPlace {
+    func record(destination: Destination, category: PlaceCategory = .labeledPlaces, at date: Date = .now) -> RecentPlace {
         let existingID = places.first(where: { $0.matches(destination: destination) })?.id
         places.removeAll { $0.matches(destination: destination) }
 

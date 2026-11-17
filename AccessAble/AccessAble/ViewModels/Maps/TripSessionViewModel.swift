@@ -45,10 +45,12 @@ final class TripSessionViewModel {
     static let keepLookingFor: Duration = .seconds(20)
 
     @ObservationIgnored private let services: AppServices?
+    @ObservationIgnored private let recentPlaces: RecentPlacesStore?
     @ObservationIgnored private let warningLifetime: Duration
     @ObservationIgnored private let infoLifetime: Duration
     @ObservationIgnored private var blockDetector = RouteBlockDetector()
     @ObservationIgnored private var hasSetDestination = false
+    @ObservationIgnored private var hasRecordedRecent = false
     @ObservationIgnored private var conversation = AskAIConversation()
     /// The last obstacle warning and the last thing said on this trip, for "repeat".
     @ObservationIgnored private var lastWarning: String?
@@ -58,16 +60,19 @@ final class TripSessionViewModel {
 
     /// - Parameters:
     ///   - services: The app's services, for a real trip; nil for front end only.
+    ///   - recentPlaces: Where destinations are recorded when the trip starts.
     ///   - warningLifetime, infoLifetime: How long a red or blue bar stays before it fades.
     init(
         plan: TripPlan,
         services: AppServices? = nil,
+        recentPlaces: RecentPlacesStore? = nil,
         announcements: [TripAnnouncement] = [],
         warningLifetime: Duration = .seconds(8),
         infoLifetime: Duration = .seconds(12)
     ) {
         self.plan = plan
         self.services = services
+        self.recentPlaces = recentPlaces
         self.directions = services.map { TripViewModel(services: $0) }
         self.warningLifetime = warningLifetime
         self.infoLifetime = infoLifetime
@@ -116,6 +121,10 @@ final class TripSessionViewModel {
     /// the calling task is cancelled. The trip itself carries on in `TripManager` until
     /// `exit()`, so opening Settings from the paused card doesn't end it.
     func run() async {
+        if !hasRecordedRecent {
+            hasRecordedRecent = true
+            recentPlaces?.record(plan: plan)
+        }
         guard let services, let directions else { return }
         if !hasSetDestination {
             hasSetDestination = true

@@ -14,8 +14,8 @@ struct ActiveTripView: View {
     @State private var showsCommands = false
     private let services: AppServices?
 
-    init(plan: TripPlan, services: AppServices? = nil) {
-        _session = State(initialValue: TripSessionViewModel(plan: plan, services: services))
+    init(plan: TripPlan, services: AppServices? = nil, recentPlaces: RecentPlacesStore? = nil) {
+        _session = State(initialValue: TripSessionViewModel(plan: plan, services: services, recentPlaces: recentPlaces))
         self.services = services
     }
 

@@ -6,9 +6,11 @@ struct TripView: View {
     @State private var viewModel: TripViewModel
     @AccessibilityFocusState private var isInstructionFocused: Bool
     private let services: AppServices
+    private let recentPlaces: RecentPlacesStore?
 
-    init(services: AppServices) {
+    init(services: AppServices, recentPlaces: RecentPlacesStore? = nil) {
         self.services = services
+        self.recentPlaces = recentPlaces
         _viewModel = State(initialValue: TripViewModel(services: services))
     }
 
@@ -90,7 +92,12 @@ struct TripView: View {
                         ) {
                             Task {
                                 // the button is gone, so put VoiceOver on what to do first
-                                if await viewModel.startTrip() { isInstructionFocused = true }
+                                if await viewModel.startTrip() {
+                                    if let destination = viewModel.destination {
+                                        recentPlaces?.record(destination: destination)
+                                    }
+                                    isInstructionFocused = true
+                                }
                             }
                         }
                     }
