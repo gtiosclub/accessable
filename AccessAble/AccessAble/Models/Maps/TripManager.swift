@@ -59,8 +59,8 @@ actor TripManager: TripStateProviding {
     private var hasRerouted = false
     /// Where an asked-for reroute starts: the latest fix precise enough to start a route from.
     private var lastPreciseFix: GeoCoordinate?
-    /// Where the user is for saying which way the path or the destination lies: the latest fix, however rough.
-    private var lastFix: GeoCoordinate?
+    /// The latest fix, however rough, for saying which way the path or the destination lies only when it is precise.
+    private var lastFix: LocationSample?
     private var headingEstimator = HeadingEstimator()
     private var tripStartedAt = Date.distantPast
     private var lastGoodFixAt: Date?
@@ -71,8 +71,11 @@ actor TripManager: TripStateProviding {
     // a reroute that came back shows the server is answering, and a user still lost shouldn't wait as long again
     private static let reroutedInterval: TimeInterval = 15
     private static let maximumReroutes = 5
-    // a new route from a rough fix would start on the wrong side of the street
+    // a new route from a rough fix would start on the wrong side of the street, and a direction from one can point
+    // the wrong way
     private static let rerouteAccuracy: Double = 20
+    // a target nearer than twice the fix's accuracy may lie on either side of the user
+    private static let directionAccuracyFactor: Double = 2
     // VoiceOver moves focus when the Start button disappears; speaking at once would be cut off by that
     private static let startDelay: Duration = .milliseconds(750)
     private static let watchdogInterval: Duration = .seconds(5)
@@ -264,8 +267,11 @@ actor TripManager: TripStateProviding {
             }
         }
         if sample.horizontalAccuracy <= Self.rerouteAccuracy { lastPreciseFix = sample.coordinate }
-        // a bearing from a NaN fix would trap when turned into a direction
-        if sample.coordinate.latitude.isFinite, sample.coordinate.longitude.isFinite { lastFix = sample.coordinate }
+        // a bearing from a NaN fix would trap when turned into a direction, and a late fix is no longer where they are
+        if sample.coordinate.latitude.isFinite, sample.coordinate.longitude.isFinite,
+           sample.horizontalAccuracy.isFinite, sample.timestamp >= lastFix?.timestamp ?? .distantPast {
+            lastFix = sample
+        }
         headingEstimator.update(with: sample)
         // decided from the fixes before this one, so a reroute starts from the fix after the cue
         let rerouteOrigin = wantsReroute && sample.horizontalAccuracy <= Self.rerouteAccuracy
@@ -629,8 +635,9 @@ actor TripManager: TripStateProviding {
         guard let route, let destination, let arrival = route.steps.last else { return nil }
         let name = destination.name
         // from the user's heading, since Valhalla's side assumes they arrive facing along the route
-        let text = if let lastFix,
-                      GeoMath.distance(from: lastFix, to: destination.coordinate) >= Self.arrivalDirectionMinimum,
+        let text = if let origin = directionOrigin,
+                      GeoMath.distance(from: origin.coordinate, to: destination.coordinate)
+                          >= Self.arrivalDirectionMinimum,
                       let direction = direction(to: destination.coordinate) {
             "Arriving at \(name). \(name) is \(direction.phrase)."
         } else {
@@ -639,19 +646,30 @@ actor TripManager: TripStateProviding {
         return maneuver(text, .high, haptic: .arrived, expiresIn: 15, key: "arrived")
     }
 
-    /// Which way `target` lies from the user, or nil while the heading is unknown. Before the first fix the user is
-    /// taken to be at the route's start.
+    /// Where the user is and how far off that may be, or nil when the latest fix is too rough to say which way
+    /// anything lies. Before the first fix the user is taken to be at the route's start, where the route was planned.
+    private var directionOrigin: (coordinate: GeoCoordinate, accuracy: Double)? {
+        guard let lastFix else { return route.map { ($0.coordinates[0], 0) } }
+        guard lastFix.horizontalAccuracy <= Self.rerouteAccuracy else { return nil }
+        return (lastFix.coordinate, lastFix.horizontalAccuracy)
+    }
+
+    /// Which way `target` lies from the user, or nil while the heading is unknown, the latest fix is rough, or the
+    /// target is within twice its accuracy.
     private func direction(to target: GeoCoordinate) -> RelativeDirection? {
-        guard let route, let heading = headingEstimator.heading(at: now()) else { return nil }
-        let bearing = GeoMath.bearing(from: lastFix ?? route.coordinates[0], to: target)
+        guard let origin = directionOrigin, let heading = headingEstimator.heading(at: now()),
+              GeoMath.distance(from: origin.coordinate, to: target)
+                  >= Self.directionAccuracyFactor * origin.accuracy else { return nil }
+        let bearing = GeoMath.bearing(from: origin.coordinate, to: target)
         return RelativeDirection(.from(heading: heading.degrees, toAbsoluteBearing: bearing))
     }
 
     /// "The path is slightly left." or "Turn around, the path is behind you.", toward the route a little ahead of
-    /// the user's progress; nil while the heading is unknown.
+    /// the user's progress, further with a rougher fix; nil when `direction(to:)` is.
     private func pathSentence() -> String? {
-        guard let route, let progress else { return nil }
-        let ahead = min(route.totalDistance - progress.distanceRemaining + Self.pathLookAhead, route.totalDistance)
+        guard let route, let progress, let origin = directionOrigin else { return nil }
+        let lookAhead = max(Self.pathLookAhead, Self.directionAccuracyFactor * origin.accuracy)
+        let ahead = min(route.totalDistance - progress.distanceRemaining + lookAhead, route.totalDistance)
         let target = GeoMath.coordinate(atDistance: ahead, along: route.coordinates,
                                         cumulativeDistances: route.cumulativeDistances)
         guard let direction = direction(to: target) else { return nil }

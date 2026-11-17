@@ -1475,4 +1475,39 @@ struct TripManagerDirectionTests {
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("You may have passed the turn") } == [expected])
     }
+
+    @Test(arguments: [
+        // a cold-start fix may be anywhere within 40 m, so the path could lie either way
+        (40, "Starting directions to Library, about 90 metres. Walk north."),
+        // looks 20 m ahead rather than 15, twice the accuracy
+        (10, "Starting directions to Library, about 90 metres. Turn around, the path is behind you. "
+            + "In about 30 metres, turn right onto Ferst Drive."),
+    ] as [(Double, String)])
+    func startSaysWhereThePathIsOnlyFromAPreciseFix(_ accuracy: Double, _ expected: String) async throws {
+        let harness = try Harness(route: try shortFirstLegRoute())
+        await harness.start()
+        await harness.waitForSleepers(2)
+        // standing still, facing south
+        harness.location.headings.yield(HeadingSample(trueHeading: 180, magneticHeading: 184, accuracy: 10,
+                                                      timestamp: harness.clock.now()))
+        await harness.location.headings.waitUntilHandled()
+        // a metre off the path, so the point 20 m on is clearly not nearer than twice the accuracy
+        await harness.fix(harness.point(0, lateral: 1), accuracy: accuracy)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == expected)
+    }
+
+    @Test
+    func arrivalFromARoughFixSaysTheRoutesSide() async throws {
+        let harness = try Harness()
+        await harness.start(to: Destination(name: "Library", coordinate: harness.point(151.2, lateral: -20)))
+        await harness.walk(from: 0, to: 140, course: cornerCourse)
+        // 20 m from the destination, within twice the 22 m accuracy
+        for along in TripWalk.distances(from: 141.4, to: 160) {
+            await harness.fix(harness.point(along), accuracy: 22, course: 90)
+        }
+        let texts = await harness.engine.texts
+        #expect(texts.filter { $0.hasPrefix("Arriving") } == ["Arriving at Library. Your destination is on the left."])
+    }
+
 }
