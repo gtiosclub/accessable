@@ -182,6 +182,13 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
     func currentLocationDescription() async -> String? { nil }
 }
 
+/// Shows nothing, so previews and tests never put an activity on the lock screen.
+struct PlaceholderTripActivityClient: TripActivityClient {
+    func start(_ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState) async throws {}
+    func update(_ state: TripActivityAttributes.ContentState) async {}
+    func end(_ state: TripActivityAttributes.ContentState, immediately: Bool) async {}
+}
+
 /// Publishes one fixed state, so previews can show a trip in progress or arrived.
 struct PreviewTripProvider: TripStateProviding {
     let state: TripState

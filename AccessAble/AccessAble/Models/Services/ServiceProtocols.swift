@@ -112,6 +112,15 @@ protocol TripStateProviding: Sendable {
     func reroute() async
 }
 
+/// The trip's Live Activity on the lock screen and in the Dynamic Island; one at a time.
+protocol TripActivityClient: Sendable {
+    /// Throws when Live Activities are off or the system refuses one.
+    func start(_ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState) async throws
+    func update(_ state: TripActivityAttributes.ContentState) async
+    /// `immediately` removes it from the lock screen now; otherwise it stays a while so the final state can be read.
+    func end(_ state: TripActivityAttributes.ContentState, immediately: Bool) async
+}
+
 /// Short spoken description of where the user is, e.g. "on Ferst Drive facing north".
 /// Used by "Where am I" and added to Ask AI prompts.
 protocol LocationContextProviding: Sendable {

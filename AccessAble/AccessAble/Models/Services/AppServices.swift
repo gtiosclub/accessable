@@ -13,6 +13,7 @@ struct AppServices: Sendable {
     var routing: any RoutingService
     var destinationSearch: any DestinationSearching
     var trip: any TripStateProviding
+    var tripActivity: any TripActivityClient
     var locationContext: any LocationContextProviding
     var commands: any CommandInterpreting
     var auth: any AuthService
@@ -55,6 +56,7 @@ struct AppServices: Sendable {
             routing: ValhallaRoutingService(),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
+            tripActivity: ActivityKitTripActivityClient(),
             locationContext: LocationDescriber(location: location, distances: distanceSettings),
             commands: FoundationModelCommandInterpreter(),
             auth: FirebaseApp.app() != nil ? FirebaseAuthService() : PlaceholderAuthService(signedIn: false),
@@ -102,6 +104,8 @@ struct AppServices: Sendable {
         services.routing = PlaceholderRoutingService()
         // A real trip would start GPS tracking and background location from a preview or test.
         services.trip = PlaceholderTripProvider()
+        // Nor put a trip on the simulator's lock screen.
+        services.tripActivity = PlaceholderTripActivityClient()
         // Nor wait on GPS and Apple Maps for "where am I".
         services.locationContext = PlaceholderTripProvider()
         // Wording that doesn't change with the simulator's region.
