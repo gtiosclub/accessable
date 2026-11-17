@@ -46,7 +46,11 @@ struct SettingsView: View {
 
                 SettingsSectionTitle("Advanced")
                 VStack(spacing: 0) {
-                    SettingsToggleRow("System Screen Reader", isOn: $viewModel.preferences.usesSystemScreenReader)
+                    SettingsStatusRow(
+                        "System Screen Reader",
+                        value: viewModel.preferences.usesSystemScreenReader ? "On" : "Off",
+                        hint: "Reflects VoiceOver. Change it from iOS Settings, not here."
+                    )
                     SettingsToggleRow("Quick Settings", isOn: $viewModel.preferences.quickSettingsEnabled)
                     SettingsToggleRow("Spatial Audio", isOn: channelBinding(.spatialAudio))
                     profileControls
@@ -343,6 +347,32 @@ private struct SettingsToggleRow: View {
                 .foregroundStyle(.white)
                 .tint(SettingsPalette.accent)
         }
+    }
+}
+
+/// A row that reports a live fact (not a user preference), so it's text, not a `Toggle` the
+/// user could fight with changes it doesn't cause.
+private struct SettingsStatusRow: View {
+    let title: String
+    let value: String
+    var hint: String?
+
+    init(_ title: String, value: String, hint: String? = nil) {
+        self.title = title
+        self.value = value
+        self.hint = hint
+    }
+
+    var body: some View {
+        SettingsRow {
+            LabeledContent(title) {
+                Text(value).foregroundStyle(.white.opacity(0.75))
+            }
+            .font(.body)
+            .foregroundStyle(.white)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityHint(hint ?? "")
     }
 }
 
