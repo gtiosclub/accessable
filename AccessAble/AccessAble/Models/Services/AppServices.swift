@@ -16,6 +16,7 @@ struct AppServices: Sendable {
     var locationContext: any LocationContextProviding
     var commands: any CommandInterpreting
     var auth: any AuthService
+    var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
     // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
     // TODO(MATCH-x): replace these four placeholders with the real call services.
@@ -67,6 +68,9 @@ struct AppServices: Sendable {
             alertSettings: alertSettings,
             distanceSettings: distanceSettings
         )
+        if FirebaseApp.app() != nil {
+            services.userProfiles = FirestoreUserProfileStore()
+        }
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
             landmarks: services.landmarks,
@@ -110,6 +114,10 @@ struct AppServices: Sendable {
         services.distanceSettings = DistanceSettings(units: .metres)
         // Nor sign in to the real Firebase project.
         services.auth = PlaceholderAuthService()
+        services.userProfiles = PlaceholderUserProfileStore(profiles: [
+            UserProfile(userID: PlaceholderAuthService.sampleUser.id, role: .caller,
+                        displayName: "Preview caller", languages: ["English"], createdAt: .now)
+        ])
         return services
     }
 }

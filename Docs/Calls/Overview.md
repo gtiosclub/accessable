@@ -2,6 +2,8 @@
 
 Shared decisions for the video-call feature. Every call task builds on these.
 
+Email/password accounts and role routing: [VOLUNTEER-2 setup and verification](SignIn.md).
+
 **Rule for the whole feature: nothing costs money.** Every service stays on a free plan that
 needs no credit card, and there is no paid Apple Developer account. Firebase itself is created by
 REPORT-1 (#247); the call feature does not create a Firebase project or upgrade any plan.

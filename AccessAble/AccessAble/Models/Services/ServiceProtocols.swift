@@ -164,3 +164,13 @@ protocol VideoCallSession: Sendable {
     func connect(with ticket: CallTicket) async throws
     func disconnect() async
 }
+
+// MARK: - Signed-in account profiles (VOLUNTEER-2)
+
+/// Uses the same AuthUser.id as REPORT. A missing document means onboarding is needed;
+/// a failed read must throw, so a network/permission error never resets a user's role.
+protocol UserProfileStore: Sendable {
+    func load(userID: String) async throws -> UserProfile?
+    func save(userID: String, role: UserRole, displayName: String,
+              languages: [String]) async throws -> UserProfile
+}
