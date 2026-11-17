@@ -79,11 +79,17 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
         processor = LatestOnlyProcessor(label: "AccessAble.ARSceneAnalyzer.analysis") {
             [perception, broadcaster, announcementQueue, recorder, sessionManager, steering] captured in
+            guard !sessionManager.isPausedForCall else { return }
             let analysis = perception.analyze(captured.frame, interfaceOrientation: captured.interfaceOrientation)
+            // A frame already in flight when the call began must not publish stale warnings.
+            guard !sessionManager.isPausedForCall else { return }
             broadcaster.send(analysis.observation)
             if let steering {
                 let cue = perception.diagnostics.steering
-                Task { @MainActor in steering.update(cue) }
+                Task { @MainActor in
+                    guard !sessionManager.isPausedForCall else { return }
+                    steering.update(cue)
+                }
             }
             // Register emitted event IDs before delivery starts. A delivered warning can arrive
             // after its field-test scenario closes, and the recorder must retain its origin.
@@ -183,6 +189,21 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     }
 
     // MARK: - GuidanceStatusProviding
+
+    /// Call ownership does not add/remove any of the scene/trip clients' camera holds.
+    @MainActor
+    func pauseForCall() throws -> UUID {
+        let token = try sessionManager.beginCallCameraOwnership()
+        processor.cancelPending()
+        steering?.update(nil)
+        return token
+    }
+
+    @MainActor
+    func resumeAfterCall(_ token: UUID) throws {
+        perception.reset()
+        try sessionManager.endCallCameraOwnership(token)
+    }
 
     var guidanceStatus: GuidanceStatus { sessionManager.guidanceStatus }
 
@@ -340,6 +361,7 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     // MARK: - Frames
 
     private func receive(_ frame: ARFrame) {
+        guard !sessionManager.isPausedForCall else { return }
         let orientation = state.withLock { state -> UIInterfaceOrientation? in
             state.frameCounter += 1
             return state.frameCounter % state.frameStride == 0 ? state.interfaceOrientation : nil
