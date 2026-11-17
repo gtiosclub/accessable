@@ -141,6 +141,25 @@ struct TripActivityPlannerTests {
     }
 
     @Test
+    func arrivingWhilePausedEndsWithTheArrivedState() {
+        var planner = running()
+        _ = planner.action(for: trip(.paused), route: nil, formatter: .imperial)
+        var arrived = trip(.paused, maneuver: arrive)
+        arrived.hasArrived = true
+        guard case .end(let content, immediately: false) = planner.action(for: arrived, route: nil,
+                                                                          formatter: .imperial)
+        else {
+            Issue.record("Expected the arrived card")
+            return
+        }
+        #expect(content.status == .arrived)
+        // resuming makes the trip arrived, which is already shown
+        var resumed = arrived
+        resumed.phase = .arrived
+        #expect(planner.action(for: resumed, route: nil, formatter: .imperial) == nil)
+    }
+
+    @Test
     func endingTheTripAfterArrivalClearsTheArrivedCard() {
         var planner = running()
         _ = planner.action(for: trip(.arrived, maneuver: arrive), route: nil, formatter: .imperial)

@@ -45,7 +45,9 @@ struct TripActivityPlanner {
     private var failedStart: Shown?
 
     mutating func action(for state: TripState, route: NavigationRoute?, formatter: DistanceFormatter) -> Action? {
-        switch state.phase {
+        // arriving during a pause keeps the trip paused until resumed, with no more fixes, so the activity
+        // shows the arrival now rather than a paused turn that would go stale
+        switch state.hasArrived ? .arrived : state.phase {
         case .planning:
             failedStart = nil
             return finish()

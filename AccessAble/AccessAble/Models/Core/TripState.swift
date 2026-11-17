@@ -73,6 +73,9 @@ struct TripState: Codable, Hashable, Sendable {
     var distanceRemaining: Double?
     /// The user has left the route; `nextManeuver` then says how to get back.
     var isOffRoute: Bool
+    /// The user has reached the destination. True while `phase` is still `.paused` after arriving during a pause,
+    /// which becomes `.arrived` on resume.
+    var hasArrived: Bool
     var updatedAt: Date
 
     init(
@@ -82,6 +85,7 @@ struct TripState: Codable, Hashable, Sendable {
         distanceToNextManeuver: Double? = nil,
         distanceRemaining: Double? = nil,
         isOffRoute: Bool = false,
+        hasArrived: Bool = false,
         updatedAt: Date = .now
     ) {
         self.phase = phase
@@ -90,6 +94,7 @@ struct TripState: Codable, Hashable, Sendable {
         self.distanceToNextManeuver = distanceToNextManeuver
         self.distanceRemaining = distanceRemaining
         self.isOffRoute = isOffRoute
+        self.hasArrived = hasArrived
         self.updatedAt = updatedAt
     }
 

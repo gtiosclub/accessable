@@ -146,7 +146,7 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
   - Within 8 m of the step, or with a missed turn pending, resuming says nothing more than "Trip resumed.". The user may already be past the turn, so the next fix's turn cue, confirmation or missed turn says the right thing.
   - Resume speech is dropped if a reroute lands while "Trip resumed." is being said.
   - A turn cue that a pause stopped before it was submitted is given again by the tracker after resuming.
-  - An arrival while paused stays paused and is announced on resume.
+  - An arrival while paused stays paused, with `TripState.hasArrived` true, and is announced on resume.
 
 ### Wording
 
@@ -184,7 +184,7 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 - **Update.** An update is pushed at a new step or status, when the written distance changes and the user has moved 25 ft since the last push, and when the arrival time moves by a minute. Until arrival, one is also pushed at least once a minute, standing still or paused included.
 - **Stale.** Until arrival, each start and update sets a stale date 3 minutes on. If the app stops updating it, because it was closed or has had no location fix for that long, the widget says "Guidance not updating. Open AccessAble." instead of a turn that may be long past. An arrived activity never goes stale.
 - **Paused.** "Paused" with the turn below it and no distance; off route has no distance either.
-- **End.** Arrival ends it with an arrived card that stays 5 minutes. Ending the trip removes it, or the arrived card, at once. At launch, any activity left by a launch that ended mid-trip is removed.
+- **End.** Arrival, including during a pause, ends it with an arrived card that stays 5 minutes. Ending the trip removes it, or the arrived card, at once. At launch, any activity left by a launch that ended mid-trip is removed.
 - **Failed start.** A Live Activity can only start while the app is in the foreground, and not at all when the user has turned Live Activities off. A failed start is tried again at the next step or status, and when the app comes to the foreground.
 
 ## Known limits
