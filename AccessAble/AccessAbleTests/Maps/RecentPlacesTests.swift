@@ -28,7 +28,7 @@ struct RecentPlacesTests {
     @Test
     func startingTripRecordsRecentAndSurvivesRelaunch() async {
         let defaults = freshDefaults()
-        let firstApp = AppViewModel(defaults: defaults, services: .placeholder)
+        let firstApp = AppViewModel(defaults: defaults, services: .preview)
         let place = SampleContent.places[0]
         let plan = TripPlan(place: place, route: nil, isRecording: false)
 
@@ -39,7 +39,7 @@ struct RecentPlacesTests {
         #expect(firstApp.recentPlaces.first?.name == place.name)
 
         // Relaunch with the same UserDefaults
-        let relaunchedApp = AppViewModel(defaults: defaults, services: .placeholder)
+        let relaunchedApp = AppViewModel(defaults: defaults, services: .preview)
         #expect(relaunchedApp.recentPlaces.count == 1)
         #expect(relaunchedApp.recentPlaces.first?.name == place.name)
         #expect(relaunchedApp.recentPlaces.first?.address == place.address)
@@ -104,7 +104,7 @@ struct RecentPlacesTests {
     func searchExposesFiltersAndClearsRecents() async throws {
         let defaults = freshDefaults()
         let store = RecentPlacesStore(defaults: defaults)
-        store.record(destination: destination("Bobby Dodd Stadium", offset: 0.003), category: .campus)
+        store.record(destination: destination("Bobby Dodd Stadium", offset: 0.003), category: .labeledPlaces)
 
         let search = PlaceSearchViewModel(recentPlaces: store)
         #expect(search.recentPlaces.map(\.name) == ["Bobby Dodd Stadium"])

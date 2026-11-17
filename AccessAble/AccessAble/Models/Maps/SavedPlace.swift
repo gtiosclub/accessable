@@ -128,7 +128,7 @@ final class SavedPlacesStore {
     @ObservationIgnored private let defaults: UserDefaults?
     @ObservationIgnored private let storageKey: String
 
-    init(defaults: UserDefaults = .standard, storageKey: String = "savedPlaces") {
+    init(defaults: UserDefaults, storageKey: String = "savedPlaces") {
         self.defaults = defaults
         self.storageKey = storageKey
         self.places = Self.load(from: defaults, key: storageKey)

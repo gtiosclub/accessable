@@ -38,6 +38,11 @@ final class AppViewModel {
 
     let performance: PerformanceModeMonitor
     let services: AppServices
+    let savedPlacesStore: SavedPlacesStore
+    let recentPlacesStore: RecentPlacesStore
+
+    var savedPlaces: [SavedPlace] { savedPlacesStore.places }
+    var recentPlaces: [RecentPlace] { recentPlacesStore.places }
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var tripCameraTask: Task<Void, Never>?
@@ -49,6 +54,8 @@ final class AppViewModel {
         static let onboarded = "hasCompletedOnboarding"
         static let preferences = "settingsPreferences"
         static let callerPreferences = "callerPreferences.v1"
+        static let savedPlaces = "savedPlaces"
+        static let recentPlaces = "recentPlaces"
     }
 
     init(defaults: UserDefaults = .standard, services: AppServices? = nil) {
@@ -56,6 +63,8 @@ final class AppViewModel {
         let performance = PerformanceModeMonitor()
         self.performance = performance
         self.services = services ?? .live(performance: performance)
+        self.savedPlacesStore = SavedPlacesStore(defaults: defaults, storageKey: Keys.savedPlaces)
+        self.recentPlacesStore = RecentPlacesStore(defaults: defaults, storageKey: Keys.recentPlaces)
         self.profile = Self.load(GuidanceProfile.self, forKey: Keys.profile, from: defaults) ?? .default
         self.preferences = Self.load(SettingsPreferences.self, forKey: Keys.preferences, from: defaults) ?? .default
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarded)

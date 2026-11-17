@@ -20,9 +20,10 @@ enum SearchOrigin: Hashable, Sendable {
 ///
 /// The To field searches real places through `DestinationSearchViewModel` (MapKit
 /// autocomplete biased to campus), which owns the results, "no results", errors, the spoken
-/// count and resolving a pick into a `Destination`. Typing is debounced, so results settle
-/// once the user pauses rather than jumping on every letter, and `isSearching` says when they
-/// are about to change. The From field and saved places still search `SampleContent`.
+/// count and resolving a pick into a `Destination`, alongside user-saved places in
+/// `SavedPlacesStore` (shown first). Typing is debounced, so results settle once the user
+/// pauses rather than jumping on every letter, and `isSearching` says when they are about to
+/// change.
 @MainActor
 @Observable
 final class PlaceSearchViewModel {
@@ -64,6 +65,8 @@ final class PlaceSearchViewModel {
 
     @ObservationIgnored private let services: AppServices?
     @ObservationIgnored private let places: [SamplePlace]
+    let savedPlacesStore: SavedPlacesStore
+    let recentPlacesStore: RecentPlacesStore
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var namedAt: GeoCoordinate?
     @ObservationIgnored private var headingEstimator = HeadingEstimator()
@@ -74,16 +77,39 @@ final class PlaceSearchViewModel {
     init(
         services: AppServices? = nil,
         search: (any DestinationSearching)? = nil,
-        places: [SamplePlace] = SampleContent.places
+        places: [SamplePlace] = SampleContent.places,
+        savedPlaces: SavedPlacesStore? = nil,
+        recentPlaces: RecentPlacesStore? = nil
     ) {
         self.services = services
         self.places = places
+        self.savedPlacesStore = savedPlaces ?? SavedPlacesStore(places: [])
+        self.recentPlacesStore = recentPlaces ?? RecentPlacesStore(places: [])
         destinationSearch = DestinationSearchViewModel(
             search: search ?? services?.destinationSearch ?? PlaceholderDestinationSearch()
         )
     }
 
     // MARK: - Results
+
+    var savedPlaces: [SavedPlace] { savedPlacesStore.places }
+    var recentPlaces: [RecentPlace] { recentPlacesStore.places }
+
+    /// Saved places matching the active search text or category, shown ahead of live results.
+    var matchingSavedPlaces: [SavedPlace] {
+        guard isFiltering else { return [] }
+        return savedPlacesStore.matching(query: settledQuery, category: category)
+    }
+
+    /// Recent places matching the active search text or category.
+    var matchingRecentPlaces: [RecentPlace] {
+        guard isFiltering else { return [] }
+        return recentPlacesStore.matching(query: settledQuery, category: category)
+    }
+
+    func clearRecents() {
+        recentPlacesStore.clear()
+    }
 
     var isFiltering: Bool {
         !settledQuery.trimmingCharacters(in: .whitespaces).isEmpty || category != nil
@@ -94,7 +120,13 @@ final class PlaceSearchViewModel {
 
     var suggestions: [SearchSuggestion] { destinationSearch.suggestions }
     var problem: SearchProblem? { destinationSearch.problem }
-    var showsNoResults: Bool { isFiltering && !isSettling && destinationSearch.showsNoResults }
+    var showsNoResults: Bool {
+        isFiltering
+            && !isSettling
+            && matchingSavedPlaces.isEmpty
+            && matchingRecentPlaces.isEmpty
+            && destinationSearch.showsNoResults
+    }
 
     /// The picked result once it has been looked up. Opening it is up to the view.
     var selectedDestination: Destination? { destinationSearch.selectedDestination }
@@ -119,6 +151,20 @@ final class PlaceSearchViewModel {
     /// "3 results for Clough", "Searching…", or "No results" when suggestions can't load.
     var resultsSummary: String {
         if isSearching { return "Searching…" }
+        let savedCount = matchingSavedPlaces.count
+        let recentCount = matchingRecentPlaces.count
+        if savedCount > 0 {
+            let savedLabel = savedCount == 1 ? "1 saved place" : "\(savedCount) saved places"
+            if problem == .suggestionsUnavailable || suggestions.isEmpty {
+                return savedLabel
+            }
+            let liveCount = suggestions.count
+            let liveLabel = liveCount == 1 ? "1 result" : "\(liveCount) results"
+            return "\(savedLabel), \(liveLabel)"
+        }
+        if (problem == .suggestionsUnavailable || suggestions.isEmpty), recentCount > 0 {
+            return recentCount == 1 ? "1 recent place" : "\(recentCount) recent places"
+        }
         if problem == .suggestionsUnavailable { return "No results" }
         if let announcement = destinationSearch.resultsAnnouncement { return announcement }
         // Once a result is picked the announcement goes quiet; the count still shows.
@@ -126,16 +172,39 @@ final class PlaceSearchViewModel {
         return count == 1 ? "1 result" : "\(count) results"
     }
 
-    /// For the From field: matches for what was typed, or saved places when nothing was.
+    /// For the From field: saved places first, plus matching campus places when typed.
     var originResults: [SamplePlace] {
         let trimmed = settledOriginQuery.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return places.filter(\.isSaved) }
-        return nearestFirst(Self.search(trimmed, category: nil, in: places))
+        guard !trimmed.isEmpty else { return savedPlaces.map { $0.asSamplePlace() } }
+        let savedMatches = savedPlacesStore.matching(query: trimmed).map { $0.asSamplePlace() }
+        let otherMatches = nearestFirst(Self.search(trimmed, category: nil, in: places)).filter { candidate in
+            !savedMatches.contains { $0.name.caseInsensitiveCompare(candidate.name) == .orderedSame }
+        }
+        return savedMatches + otherMatches
+    }
+
+    /// Saved places matching the From query (used when the From field is focused).
+    var originSavedPlaces: [SavedPlace] {
+        let trimmed = settledOriginQuery.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return savedPlaces }
+        return savedPlacesStore.matching(query: trimmed)
     }
 
     /// Straight-line distance and an estimated walk, or nil without a location.
     func distanceText(to place: SamplePlace) -> String? {
-        guard let metres = distance(to: place) else { return nil }
+        distanceText(to: GeoCoordinate(latitude: place.latitude, longitude: place.longitude))
+    }
+
+    func distanceText(to savedPlace: SavedPlace) -> String? {
+        distanceText(to: savedPlace.coordinate)
+    }
+
+    func distanceText(to recentPlace: RecentPlace) -> String? {
+        distanceText(to: recentPlace.coordinate)
+    }
+
+    private func distanceText(to coordinate: GeoCoordinate) -> String? {
+        guard let metres = distance(to: coordinate) else { return nil }
         return Self.distanceText(metres: metres, distances: services?.distanceSettings.formatter ?? .metric)
     }
 
@@ -166,11 +235,12 @@ final class PlaceSearchViewModel {
     }
 
     private func distance(to place: SamplePlace) -> Double? {
+        distance(to: GeoCoordinate(latitude: place.latitude, longitude: place.longitude))
+    }
+
+    private func distance(to coordinate: GeoCoordinate) -> Double? {
         guard let location else { return nil }
-        return GeoMath.distance(
-            from: location.coordinate,
-            to: GeoCoordinate(latitude: place.latitude, longitude: place.longitude)
-        )
+        return GeoMath.distance(from: location.coordinate, to: coordinate)
     }
 
     private func nearestFirst(_ places: [SamplePlace]) -> [SamplePlace] {
