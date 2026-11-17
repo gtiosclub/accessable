@@ -35,6 +35,8 @@ struct TripLiveActivity: Widget {
                 if let text = context.state.shortText {
                     Text(text)
                         .bold()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
                 }
             } minimal: {
                 TurnSymbol(state: context.state)
@@ -45,11 +47,13 @@ struct TripLiveActivity: Widget {
 
 private struct TripLockScreenView: View {
     let context: ActivityViewContext<TripActivityAttributes>
+    /// Grows with the text, so the turn stays as easy to see as the words beside it.
+    @ScaledMetric(relativeTo: .title) private var symbolSize = 48
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             TurnSymbol(state: context.state)
-                .font(.system(size: 48, weight: .bold))
+                .font(.system(size: symbolSize, weight: .bold))
                 .accessibilityHidden(context.state.symbolIsDecorative)
             VStack(alignment: .leading, spacing: 8) {
                 Text(context.headline)
@@ -120,6 +124,7 @@ private extension TripActivityAttributes.ContentState {
     }
 }
 
+#if DEBUG
 extension TripActivityAttributes {
     static let preview = TripActivityAttributes(destinationName: "Clough Commons")
 }
@@ -181,3 +186,4 @@ extension TripActivityAttributes.ContentState {
     TripActivityAttributes.ContentState.offRoute
     TripActivityAttributes.ContentState.arrived
 }
+#endif
