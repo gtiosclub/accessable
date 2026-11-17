@@ -16,9 +16,11 @@ actor ActivityKitTripActivityClient: TripActivityClient {
     private var activityID: String?
 
     func start(_ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState) async throws {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw TripActivityStartError.activitiesDisabled }
-        // a new trip straight after arriving replaces the arrived card rather than sitting beside it
+        // a new trip straight after arriving replaces the arrived card rather than sitting beside it, and clears it
+        // even when Live Activities have since been turned off
         await Self.activity(id: activityID)?.end(nil, dismissalPolicy: .immediate)
+        activityID = nil
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw TripActivityStartError.activitiesDisabled }
         activityID = try Activity.request(
             attributes: attributes, content: ActivityContent(state: state, staleDate: nil), pushType: nil
         ).id
