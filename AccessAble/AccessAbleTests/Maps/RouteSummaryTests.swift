@@ -53,14 +53,14 @@ struct RouteSummaryTests {
         (.escalator, "1 escalator", "2 escalators"),
     ])
     func eachFeatureSingularAndPlural(_ kind: ManeuverKind, _ one: String, _ two: String) throws {
-        #expect(try summary(kinds: [kind]) == "About 6 minutes, 450 feet. \(one).")
-        #expect(try summary(kinds: [kind, kind]) == "About 6 minutes, 450 feet. \(two).")
+        #expect(try summary(kinds: [kind]) == "About 6 minutes, 450 feet. No turns, \(one).")
+        #expect(try summary(kinds: [kind, kind]) == "About 6 minutes, 450 feet. No turns, \(two).")
     }
 
     @Test
     func crosswalksSingularAndPlural() throws {
-        #expect(try summary(crosswalks: 1) == "About 6 minutes, 450 feet. 1 crosswalk.")
-        #expect(try summary(crosswalks: 2) == "About 6 minutes, 450 feet. 2 crosswalks.")
+        #expect(try summary(crosswalks: 1) == "About 6 minutes, 450 feet. No turns, 1 crosswalk.")
+        #expect(try summary(crosswalks: 2) == "About 6 minutes, 450 feet. No turns, 2 crosswalks.")
     }
 
     @Test

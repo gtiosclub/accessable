@@ -21,7 +21,7 @@ private func crossing(along: Double, lateral: Double = 0, control: CampusCrossin
 }
 
 struct RouteCrossingsTests {
-    @Test(arguments: [(0.0, true), (4, true), (-4, true), (8, false), (-8, false)])
+    @Test(arguments: [(0.0, true), (2, true), (-2, true), (4, false), (-4, false)])
     func onlyCrossingsOnTheRouteAreKept(lateral: Double, isKept: Bool) throws {
         let crossings = RouteCrossings.along(try northRoute(), crossings: [try crossing(along: 100, lateral: lateral)])
 
@@ -29,7 +29,7 @@ struct RouteCrossingsTests {
         if isKept { #expect(abs((crossings.first?.distanceAlongRoute ?? 0) - 100) < 0.01) }
     }
 
-    @Test(arguments: [(-15.0, false), (-3, true), (203, true), (215, false)])
+    @Test(arguments: [(-15.0, false), (-2, true), (202, true), (215, false)])
     func crossingsPastTheEndsAreKeptOnlyNearThem(along: Double, isKept: Bool) throws {
         let crossings = RouteCrossings.along(try northRoute(), crossings: [try crossing(along: along)])
 
@@ -51,7 +51,8 @@ struct RouteCrossingsTests {
     }
 
     @Test(arguments: [
-        (CampusCrossing.Control.unmarked, CampusCrossing.Control.unknown, CampusCrossing.Control.unknown),
+        (CampusCrossing.Control.unmarked, CampusCrossing.Control.unknown, CampusCrossing.Control.unmarked),
+        (.unknown, .unmarked, .unmarked),
         (.unknown, .marked, .marked),
         (.signals, .unmarked, .signals),
     ])

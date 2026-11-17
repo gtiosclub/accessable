@@ -272,6 +272,21 @@ struct RouteProgressTrackerTests {
         #expect(walk.states[..<(firstPast + 5)].allSatisfy { !$0.isOffRoute })
     }
 
+    // a gap in fixes mustn't let two of them alone decide it
+    @Test
+    func walkingAwayNeedsThreeFixesHoweverFarApart() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        let fixes = walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime), course: 270)
+        // one fix every 5 s, the first of them 21 m off
+        walk.feed(stride(from: 14, to: fixes.count, by: 5).map { fixes[$0] })
+
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 2, .offRoute)])
+    }
+
     @Test
     func walkingAwayWithoutAWalkingDirectionWaitsForTheThirtyMetreRule() throws {
         let route = try cornerRoute()
@@ -469,6 +484,23 @@ struct RouteProgressTrackerTests {
         // the route starts south; walk 15.4 m north
         walk.feed((0...11).map { (along: -1.4 * Double($0), lateral: 0) })
         #expect(walk.logged == [Logged(8, .wrongWay)])
+    }
+
+    @Test
+    func offRouteOnTheSameFixReplacesTheWrongWay() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        // west from the start: rough fixes give no wrong way, until a precise one 28 m off, which also has been
+        // walking away for 5 s
+        let path = (0...20).map { (along: 0.0, lateral: -1.4 * Double($0)) }
+        let fixes = TripWalk.fixes(on: route, path: path, start: walk.nextTime, accuracy: 12)
+            .enumerated().map { index, fix in
+                var fix = fix
+                if index == 0 || index == 20 { fix.horizontalAccuracy = 5 }
+                return fix
+            }
+        walk.feed(walking(fixes, course: 270))
+        #expect(walk.logged == [Logged(20, .offRoute)])
     }
 
     @Test

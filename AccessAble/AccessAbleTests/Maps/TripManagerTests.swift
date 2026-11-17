@@ -412,7 +412,7 @@ private struct Harness {
         manager = TripManager(
             location: location, routing: router, announcements: engine,
             landmarks: landmarks, campusBuildings: { buildings }, campusCrossings: { crossings },
-            setBackgroundTracking: { [background] in background.record($0) },
+            setTripTracking: { [background] in background.record($0) },
             distances: distances,
             now: { [clock] in clock.now() },
             sleep: { [clock] in try await clock.sleep($0) }
@@ -429,11 +429,11 @@ private struct Harness {
 
     /// Feeds one fix on the current trip's stream and waits until it is handled, then moves the clock on. A
     /// quarter-second offset keeps fix times apart from the clock times other state changes use. A `course` comes
-    /// with a walking speed, so the fix gives the heading.
+    /// with a walking speed, so the fix gives the heading. A `timestamp` stands for a fix that arrives late.
     @discardableResult
-    func fix(_ coordinate: GeoCoordinate, accuracy: Double = 5, course: Double? = nil,
+    func fix(_ coordinate: GeoCoordinate, accuracy: Double = 5, course: Double? = nil, timestamp: Date? = nil,
              then seconds: TimeInterval = 1) async -> TripState {
-        let time = clock.now().addingTimeInterval(0.25)
+        let time = timestamp ?? clock.now().addingTimeInterval(0.25)
         location.yield(LocationSample(coordinate: coordinate, horizontalAccuracy: accuracy, timestamp: time,
                                       speed: course.map { _ in 1.4 }, course: course),
                        toStream: location.streamCount - 1)
@@ -567,6 +567,9 @@ struct TripManagerTests {
 
         let events = await harness.engine.waitForCount(5)
         #expect(events[1].text == "In about 40 metres, \(phrase).")
+        // said even with Important only, and still in time behind a long start sentence
+        #expect(events[1].priority == .high)
+        #expect(events[1].expiresAt == events[1].createdAt.addingTimeInterval(15))
         #expect(events[2].text == instruction)
         #expect(events[2].haptic == .attention)
     }
@@ -1131,7 +1134,7 @@ struct TripManagerCrossingTests {
         (CampusCrossing.Control.signals, true, "Crosswalk ahead, with audible signal."),
         (.signals, false, "Crosswalk ahead, with a traffic signal."),
         (.marked, false, "Crosswalk ahead."),
-        (.unknown, false, "Crosswalk ahead."),
+        (.unknown, false, "Road crossing ahead."),
         (.unmarked, false, "Road crossing ahead, unmarked."),
     ])
     func crossingAheadIsSpokenForItsControl(_ control: CampusCrossing.Control, _ audibleSignal: Bool,
@@ -1452,12 +1455,14 @@ struct TripManagerDirectionTests {
     }
 
     @Test(arguments: [
-        (0.0, "You may have passed the turn. It is behind you, about 20 metres away. "
-            + "From there, turn right onto Ferst Drive."),
-        (nil, "You may have passed the turn. Turn around and walk back about 20 metres, "
-            + "then turn right onto Ferst Drive."),
+        // not which way to turn there: walking back reaches the corner from the other side
+        (0.0, 5.0, "You may have passed the turn. It is behind you, about 20 metres away."),
+        (nil, 5, "You may have passed the turn. Turn around and walk back about 20 metres."),
+        // the corner is nearer than twice the accuracy, so it could lie either way
+        (0, 15, "You may have passed the turn. Turn around and walk back about 20 metres."),
     ])
-    func missedTurnWithNoRerouteSaysWhereTheTurnIs(_ course: Double?, _ expected: String) async throws {
+    func missedTurnWithNoRerouteSaysWhereTheTurnIs(_ course: Double?, _ accuracy: Double,
+                                                   _ expected: String) async throws {
         let harness = try Harness()
         await harness.start()
         let facing: ((Double) -> Double)? = course.map { course in { _ in course } }
@@ -1470,9 +1475,107 @@ struct TripManagerDirectionTests {
         // straight on north past the corner, 1.4 m on from the last fix at 99.4 m
         let corner = harness.route.coordinates[1]
         for metres in TripWalk.distances(from: 1, to: 25) {
-            await harness.fix(TripWalk.destination(from: corner, bearing: 0, distance: metres), course: course)
+            await harness.fix(TripWalk.destination(from: corner, bearing: 0, distance: metres), accuracy: accuracy,
+                              course: course)
         }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("You may have passed the turn") } == [expected])
+    }
+
+    @Test(arguments: [
+        // a cold-start fix may be anywhere within 40 m, so the path could lie either way
+        (40, "Starting directions to Library, about 90 metres. Walk north."),
+        // looks 20 m ahead rather than 15, twice the accuracy
+        (10, "Starting directions to Library, about 90 metres. Turn around, the path is behind you. "
+            + "In about 30 metres, turn right onto Ferst Drive."),
+    ] as [(Double, String)])
+    func startSaysWhereThePathIsOnlyFromAPreciseFix(_ accuracy: Double, _ expected: String) async throws {
+        let harness = try Harness(route: try shortFirstLegRoute())
+        await harness.start()
+        await harness.waitForSleepers(2)
+        // standing still, facing south
+        harness.location.headings.yield(HeadingSample(trueHeading: 180, magneticHeading: 184, accuracy: 10,
+                                                      timestamp: harness.clock.now()))
+        await harness.location.headings.waitUntilHandled()
+        // a metre off the path, so the point 20 m on is clearly not nearer than twice the accuracy
+        await harness.fix(harness.point(0, lateral: 1), accuracy: accuracy)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == expected)
+    }
+
+    @Test(arguments: [
+        // the destination, about 20 m away, is nearer than twice the accuracy, so it could lie either way
+        (12.0, "Arriving at Library. Your destination is on the left."),
+        (5, "Arriving at Library. Library is on your left."),
+    ])
+    func arrivalSaysWhereTheDestinationIsOnlyBeyondTwiceTheAccuracy(_ accuracy: Double,
+                                                                    _ expected: String) async throws {
+        let harness = try Harness()
+        await harness.start(to: Destination(name: "Library", coordinate: harness.point(151.2, lateral: -20)))
+        await harness.walk(from: 0, to: 140, course: cornerCourse)
+        for along in TripWalk.distances(from: 141.4, to: 160) {
+            await harness.fix(harness.point(along), accuracy: accuracy, course: 90)
+        }
+        let texts = await harness.engine.texts
+        #expect(texts.filter { $0.hasPrefix("Arriving") } == [expected])
+    }
+
+    @Test
+    func aLateFixDoesNotReplaceANewerOne() async throws {
+        let harness = try Harness(route: try shortFirstLegRoute())
+        await harness.start()
+        await harness.waitForSleepers(2)
+        // standing still, facing south, with the path behind
+        harness.location.headings.yield(HeadingSample(trueHeading: 180, magneticHeading: 184, accuracy: 10,
+                                                      timestamp: harness.clock.now()))
+        await harness.location.headings.waitUntilHandled()
+        let now = harness.clock.now()
+        await harness.fix(harness.point(0, lateral: 1), timestamp: now, then: 0)
+        // older fixes arriving late, still recent enough to use: a rough one, then a precise one 40 m north, past
+        // the corner, with the path ahead
+        await harness.fix(harness.point(0), accuracy: 40, timestamp: now.addingTimeInterval(-3), then: 0)
+        await harness.fix(TripWalk.destination(from: harness.point(0), bearing: 0, distance: 40),
+                          timestamp: now.addingTimeInterval(-4), then: 0)
+        harness.clock.advance(by: 0.75)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 90 metres. Turn around, the path is behind you. "
+            + "In about 30 metres, turn right onto Ferst Drive.")
+    }
+
+    @Test(arguments: [
+        (4.0, "Starting directions to Library, about 90 metres. Turn around, the path is behind you. "
+            + "In about 30 metres, turn right onto Ferst Drive."),
+        // the user may have walked on since
+        (6, "Starting directions to Library, about 90 metres. Walk north."),
+    ])
+    func directionsNeedARecentFix(_ age: Double, _ expected: String) async throws {
+        let harness = try Harness(route: try shortFirstLegRoute())
+        await harness.start()
+        await harness.waitForSleepers(2)
+        harness.location.headings.yield(HeadingSample(trueHeading: 180, magneticHeading: 184, accuracy: 10,
+                                                      timestamp: harness.clock.now()))
+        await harness.location.headings.waitUntilHandled()
+        // the start is spoken 0.75 s on, when the fix is that much older again
+        await harness.fix(harness.point(0, lateral: 1),
+                          timestamp: harness.clock.now().addingTimeInterval(0.75 - age), then: 0)
+        harness.clock.advance(by: 0.75)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == expected)
+    }
+
+    @Test
+    func startDoesNotWarnOfArrivingNearby() async throws {
+        let start = GeoCoordinate(latitude: 33.775, longitude: -84.399)
+        let route = try NavigationRoute(coordinates: [start, TripWalk.destination(from: start, bearing: 0, distance: 30)],
+                                        steps: [
+            RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Walk north.", spokenInstruction: "Walk north."),
+            RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
+        ], estimatedDuration: 25)
+        let harness = try Harness(route: route)
+        await harness.start()
+        await harness.waitForSleepers(2)
+        await harness.fix(harness.point(0), course: 0)
+        let announcement = try #require(await harness.engine.waitForCount(1).first)
+        #expect(announcement.text == "Starting directions to Library, about 30 metres. The path is ahead.")
     }
 }

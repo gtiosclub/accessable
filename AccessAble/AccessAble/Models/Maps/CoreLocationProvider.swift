@@ -40,8 +40,9 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
     override init() {
         super.init()
         manager.delegate = self
-        // a few degrees of change can't alter which way to go, and every update costs battery
-        manager.headingFilter = 5
+        // every reading, not only changes: a phone held still would otherwise send none, and its heading would go
+        // stale; the compass runs only while someone subscribes
+        manager.headingFilter = kCLHeadingFilterNone
         apply(.browsing)
         publishAuthorization()
     }

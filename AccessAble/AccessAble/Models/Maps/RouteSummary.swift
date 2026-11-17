@@ -31,14 +31,15 @@ struct RouteSummary: Equatable, Sendable {
     func text(distances: DistanceFormatter) -> String {
         let minutes = max(1, Int((duration / 60).rounded()))
         let time = "About \(minutes) \(minutes == 1 ? "minute" : "minutes"), \(distances.words(distance))."
+        // turns always, so a walk with none says so before its other counts
         let counts = [
-            Self.count(turns, "turn", "turns"),
+            turns == 0 ? "No turns" : Self.count(turns, "turn", "turns"),
             Self.count(stairs, "flight of stairs", "flights of stairs"),
             Self.count(elevators, "elevator", "elevators"),
             Self.count(escalators, "escalator", "escalators"),
             Self.count(crosswalks, "crosswalk", "crosswalks"),
         ].compactMap { $0 }
-        return "\(time) \(counts.isEmpty ? "No turns" : counts.joined(separator: ", "))."
+        return "\(time) \(counts.joined(separator: ", "))."
     }
 
     private static func count(_ n: Int, _ singular: String, _ plural: String) -> String? {
