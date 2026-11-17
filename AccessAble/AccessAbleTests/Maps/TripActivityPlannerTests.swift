@@ -1,0 +1,182 @@
+import Foundation
+import Testing
+@testable import AccessAble
+
+private let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
+private let turnLeft = Maneuver(kind: .turnLeft, instruction: "Turn left onto Ferst Drive",
+                                coordinate: GeoCoordinate(latitude: 33.775, longitude: -84.399))
+private let arrive = Maneuver(kind: .arrive, instruction: "Arrive",
+                              coordinate: GeoCoordinate(latitude: 33.776, longitude: -84.399))
+
+private func trip(
+    _ phase: TripPhase = .active, maneuver: Maneuver = turnLeft, distance: Double? = 45.72,
+    remaining: Double? = 280, offRoute: Bool = false, at time: Date = start
+) -> TripState {
+    TripState(phase: phase, destinationName: "Clough Commons", nextManeuver: maneuver,
+              distanceToNextManeuver: distance, distanceRemaining: remaining, isOffRoute: offRoute, updatedAt: time)
+}
+
+/// 280 m in 200 s: 1.4 m/s.
+private func route() throws -> NavigationRoute {
+    let origin = GeoCoordinate(latitude: 33.775, longitude: -84.399)
+    return try NavigationRoute(coordinates: [origin, TripWalk.destination(from: origin, bearing: 0, distance: 280)],
+                               steps: [
+                                   RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Head north.",
+                                             spokenInstruction: "Head north."),
+                                   RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive",
+                                             spokenInstruction: "You have arrived."),
+                               ], estimatedDuration: 200)
+}
+
+struct TripActivityPlannerTests {
+    /// The planner after the first active state, so each test starts with an activity running.
+    private func running() -> TripActivityPlanner {
+        var planner = TripActivityPlanner()
+        _ = planner.action(for: trip(), route: nil, formatter: .imperial)
+        return planner
+    }
+
+    @Test
+    func startsOnTheFirstActiveState() {
+        var planner = TripActivityPlanner()
+        #expect(planner.action(for: trip(), route: nil, formatter: .imperial) == .start(
+            destinationName: "Clough Commons",
+            .init(status: .active, instruction: "Turn left onto Ferst Drive", distance: "150 ft",
+                  symbolName: "arrow.turn.up.left", arrival: nil)
+        ))
+    }
+
+    @Test
+    func noTripStartsNothing() {
+        var planner = TripActivityPlanner()
+        #expect(planner.action(for: .idle, route: nil, formatter: .imperial) == nil)
+        #expect(planner.action(for: trip(.arrived), route: nil, formatter: .imperial) == nil)
+        #expect(planner.finish() == nil)
+    }
+
+    @Test
+    func lessThan25FeetIsNotAnUpdate() {
+        var planner = running()
+        #expect(planner.action(for: trip(distance: 45.72 - 7.5), route: nil, formatter: .imperial) == nil)
+    }
+
+    @Test
+    func smallChangesAddUpTo25Feet() {
+        var planner = running()
+        #expect(planner.action(for: trip(distance: 42), route: nil, formatter: .imperial) == nil)
+        let update = planner.action(for: trip(distance: 38), route: nil, formatter: .imperial)
+        guard case .update(let content) = update else {
+            Issue.record("Expected an update, got \(String(describing: update))")
+            return
+        }
+        #expect(content.distance == "125 ft")
+    }
+
+    @Test
+    func aNewStepIsAnUpdate() {
+        var planner = running()
+        let update = planner.action(for: trip(maneuver: arrive, distance: 45), route: nil, formatter: .imperial)
+        #expect(update == .update(.init(status: .active, instruction: "Arrive", distance: "150 ft",
+                                        symbolName: "mappin.and.ellipse", arrival: nil)))
+    }
+
+    @Test
+    func pausedUpdatesTheStatus() {
+        var planner = running()
+        let update = planner.action(for: trip(.paused), route: nil, formatter: .imperial)
+        #expect(update == .update(.init(status: .paused, instruction: "Turn left onto Ferst Drive",
+                                        distance: "150 ft", symbolName: "arrow.turn.up.left", arrival: nil)))
+        #expect(planner.action(for: trip(.paused), route: nil, formatter: .imperial) == nil)
+    }
+
+    @Test
+    func offRouteUpdatesTheStatusWithoutADistance() {
+        var planner = running()
+        let lost = Maneuver(kind: .turnLeft, instruction: "Off route. Finding a new route.",
+                            coordinate: turnLeft.coordinate)
+        let update = planner.action(for: trip(maneuver: lost, distance: nil, offRoute: true), route: nil,
+                                    formatter: .imperial)
+        #expect(update == .update(.init(status: .offRoute, instruction: "Off route. Finding a new route.",
+                                        distance: nil, symbolName: "arrow.turn.up.left", arrival: nil)))
+    }
+
+    @Test
+    func arrivalEndsWithTheArrivedStateAndIgnoresWhatFollows() {
+        var planner = running()
+        #expect(planner.action(for: trip(.arrived, maneuver: arrive), route: nil, formatter: .imperial) == .end(
+            .init(status: .arrived, instruction: "You have arrived", distance: nil,
+                  symbolName: "mappin.and.ellipse", arrival: nil),
+            immediately: false
+        ))
+        #expect(planner.action(for: trip(.arrived, maneuver: arrive), route: nil, formatter: .imperial) == nil)
+        #expect(planner.action(for: .idle, route: nil, formatter: .imperial) == nil)
+    }
+
+    @Test
+    func endingTheTripEndsImmediately() {
+        var planner = running()
+        let action = planner.action(for: .idle, route: nil, formatter: .imperial)
+        guard case .end(let content, let immediately) = action else {
+            Issue.record("Expected an end, got \(String(describing: action))")
+            return
+        }
+        #expect(content.instruction == "Turn left onto Ferst Drive")
+        #expect(immediately)
+        #expect(planner.finish() == nil)
+    }
+
+    @Test
+    func aNewTripStartsAgain() {
+        var planner = running()
+        _ = planner.action(for: .idle, route: nil, formatter: .imperial)
+        guard case .start = planner.action(for: trip(), route: nil, formatter: .imperial) else {
+            Issue.record("Expected a new activity")
+            return
+        }
+    }
+
+    @Test
+    func theStreamEndingEndsImmediately() {
+        var planner = running()
+        guard case .end(_, immediately: true) = planner.finish() else {
+            Issue.record("Expected an immediate end")
+            return
+        }
+    }
+
+    @Test(arguments: [(DistanceFormatter.imperial, "150 ft"), (.metric, "50 m")])
+    func distanceIsInTheUsersUnits(_ formatter: DistanceFormatter, _ written: String) {
+        var planner = TripActivityPlanner()
+        guard case .start(_, let content) = planner.action(for: trip(), route: nil, formatter: formatter) else {
+            Issue.record("Expected a start")
+            return
+        }
+        #expect(content.distance == written)
+    }
+
+    @Test
+    func arrivalIsAtTheRoutesWalkingSpeed() throws {
+        var planner = TripActivityPlanner()
+        guard case .start(_, let content) = planner.action(for: trip(remaining: 140), route: try route(),
+                                                           formatter: .imperial)
+        else {
+            Issue.record("Expected a start")
+            return
+        }
+        // 140 m at 1.4 m/s
+        let arrival = try #require(content.arrival)
+        #expect(abs(arrival.timeIntervalSince(start) - 100) < 0.5)
+    }
+
+    @Test
+    func noArrivalTimeWhilePaused() throws {
+        var planner = TripActivityPlanner()
+        guard case .start(_, let content) = planner.action(for: trip(.paused), route: try route(),
+                                                           formatter: .imperial)
+        else {
+            Issue.record("Expected a start")
+            return
+        }
+        #expect(content.arrival == nil)
+    }
+}
