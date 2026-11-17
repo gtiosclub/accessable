@@ -76,6 +76,9 @@ actor TripManager: TripStateProviding {
     private static let rerouteAccuracy: Double = 20
     // a target nearer than twice the fix's accuracy may lie on either side of the user
     private static let directionAccuracyFactor: Double = 2
+    // seconds; after a dropout the last fix is no longer where the user is. The tracker's start rule uses the same
+    // limit for a cached fix
+    private static let directionFixAge: TimeInterval = 5
     // VoiceOver moves focus when the Start button disappears; speaking at once would be cut off by that
     private static let startDelay: Duration = .milliseconds(750)
     private static let watchdogInterval: Duration = .seconds(5)
@@ -649,16 +652,17 @@ actor TripManager: TripStateProviding {
         return maneuver(text, .high, haptic: .arrived, expiresIn: 15, key: "arrived")
     }
 
-    /// Where the user is and how far off that may be, or nil when the latest fix is too rough to say which way
-    /// anything lies. Before the first fix the user is taken to be at the route's start, where the route was planned.
+    /// Where the user is and how far off that may be, or nil when the latest fix is too rough or too old to say which
+    /// way anything lies. Before the first fix the user is taken to be at the route's start, where the route was planned.
     private var directionOrigin: (coordinate: GeoCoordinate, accuracy: Double)? {
         guard let lastFix else { return route.map { ($0.coordinates[0], 0) } }
-        guard lastFix.horizontalAccuracy <= Self.rerouteAccuracy else { return nil }
+        guard lastFix.horizontalAccuracy <= Self.rerouteAccuracy,
+              now().timeIntervalSince(lastFix.timestamp) <= Self.directionFixAge else { return nil }
         return (lastFix.coordinate, lastFix.horizontalAccuracy)
     }
 
-    /// Which way `target` lies from the user, or nil while the heading is unknown, the latest fix is rough, or the
-    /// target is within twice its accuracy.
+    /// Which way `target` lies from the user, or nil while the heading is unknown, the latest fix is rough or old, or
+    /// the target is within twice its accuracy.
     private func direction(to target: GeoCoordinate) -> RelativeDirection? {
         guard let origin = directionOrigin, let heading = headingEstimator.heading(at: now()),
               GeoMath.distance(from: origin.coordinate, to: target)

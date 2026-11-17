@@ -1542,6 +1542,26 @@ struct TripManagerDirectionTests {
             + "In about 30 metres, turn right onto Ferst Drive.")
     }
 
+    @Test(arguments: [
+        (4.0, "Starting directions to Library, about 90 metres. Turn around, the path is behind you. "
+            + "In about 30 metres, turn right onto Ferst Drive."),
+        // the user may have walked on since
+        (6, "Starting directions to Library, about 90 metres. Walk north."),
+    ])
+    func directionsNeedARecentFix(_ age: Double, _ expected: String) async throws {
+        let harness = try Harness(route: try shortFirstLegRoute())
+        await harness.start()
+        await harness.waitForSleepers(2)
+        harness.location.headings.yield(HeadingSample(trueHeading: 180, magneticHeading: 184, accuracy: 10,
+                                                      timestamp: harness.clock.now()))
+        await harness.location.headings.waitUntilHandled()
+        // the start is spoken 0.75 s on, when the fix is that much older again
+        await harness.fix(harness.point(0, lateral: 1),
+                          timestamp: harness.clock.now().addingTimeInterval(0.75 - age), then: 0)
+        harness.clock.advance(by: 0.75)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == expected)
+    }
 
     @Test
     func startDoesNotWarnOfArrivingNearby() async throws {

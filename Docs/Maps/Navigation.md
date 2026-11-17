@@ -154,7 +154,7 @@ Distances are spoken by `DistanceFormatter` in the user's units: feet rounded to
 
 Where two texts are given for one event, the first is used when the heading is known and the second when it isn't. `{direction}` is one of eight: "ahead", "slightly right", "on your right", "behind you on your right", "behind you", "behind you on your left", "on your left", "slightly left". It comes from the bearing to the target relative to the heading, in 45° sectors centred on straight ahead.
 
-A direction is said only from a fix accurate to 20 m that is not older than the one before it, and only to a target at least twice the fix's accuracy away. Otherwise the heading-unknown text is used. Before the first fix, the user is taken to be at the route's start.
+A direction is said only from the latest fix, when it is accurate to 20 m and at most 5 s old (a late fix older than the one before it is ignored), and only to a target at least twice the fix's accuracy away. Otherwise the heading-unknown text is used. Before the first fix, the user is taken to be at the route's start.
 
 The path sentence is "The path is {direction}.", or "Turn around, the path is behind you." It points at the route `max(15 m, 2 × accuracy)` beyond the user's progress.
 
