@@ -1,14 +1,16 @@
 import Foundation
 
 /// What the trip's Live Activity should do for each trip state: start when guidance begins, update
-/// at each new step and roughly every 25 ft, end at arrival or when the trip ends. Pure, so
+/// at each new step, roughly every 25 ft and at least once a minute, end at arrival or when the trip ends. Pure, so
 /// `TripActivityController` stays a thin loop and the throttling is tested without ActivityKit.
 struct TripActivityPlanner {
     typealias Content = TripActivityAttributes.ContentState
 
     enum Action: Equatable {
-        case start(destinationName: String, Content)
-        case update(Content)
+        /// `staleDate` is when the lock screen should say guidance stopped, if no update comes first; nil while
+        /// paused, when the turn shown can't go out of date.
+        case start(destinationName: String, Content, staleDate: Date?)
+        case update(Content, staleDate: Date?)
         case end(Content, immediately: Bool)
     }
 
@@ -18,11 +20,18 @@ struct TripActivityPlanner {
     static let minimumDistanceChange = 25 * 0.3048
     /// The arrival time is pushed when it moves by at least this, since the lock screen shows it to the minute.
     static let minimumArrivalChange: TimeInterval = 60
+    /// While guidance is live, the activity counts as stale this long after its last update, so if the app is
+    /// closed mid-trip the lock screen stops showing a turn that may be long past.
+    static let staleAfter: TimeInterval = 3 * 60
+    /// While guidance is live, an update is pushed at least this often, even standing still, so a running app's
+    /// activity never goes stale.
+    static let refreshInterval: TimeInterval = 60
 
     private struct Shown {
         var content: Content
         var maneuver: Maneuver
         var distance: Double?
+        var updatedAt: Date
     }
 
     /// What the running activity shows; nil when none is running.
@@ -47,7 +56,9 @@ struct TripActivityPlanner {
         case .active, .paused:
             guard let maneuver = state.nextManeuver, let destinationName = state.destinationName else { return nil }
             let content = Self.content(for: state, maneuver: maneuver, route: route, formatter: formatter)
-            let next = Shown(content: content, maneuver: maneuver, distance: state.distanceToNextManeuver)
+            let next = Shown(content: content, maneuver: maneuver, distance: state.distanceToNextManeuver,
+                             updatedAt: state.updatedAt)
+            let staleDate = content.status == .paused ? nil : state.updatedAt.addingTimeInterval(Self.staleAfter)
             guard let shown else {
                 if let failedStart, next.content.status == failedStart.content.status,
                    next.maneuver == failedStart.maneuver {
@@ -56,11 +67,11 @@ struct TripActivityPlanner {
                 failedStart = nil
                 self.shown = next
                 showsArrival = false
-                return .start(destinationName: destinationName, content)
+                return .start(destinationName: destinationName, content, staleDate: staleDate)
             }
             guard Self.differs(next, from: shown) else { return nil }
             self.shown = next
-            return .update(content)
+            return .update(content, staleDate: staleDate)
         }
     }
 
@@ -83,6 +94,9 @@ struct TripActivityPlanner {
 
     private static func differs(_ next: Shown, from shown: Shown) -> Bool {
         guard next.content.status == shown.content.status, next.maneuver == shown.maneuver else { return true }
+        if next.content.status != .paused, next.updatedAt.timeIntervalSince(shown.updatedAt) >= refreshInterval {
+            return true
+        }
         switch (next.content.arrival, shown.content.arrival) {
         case let (next?, shown?) where abs(next.timeIntervalSince(shown)) >= minimumArrivalChange: return true
         case (_?, nil), (nil, _?): return true

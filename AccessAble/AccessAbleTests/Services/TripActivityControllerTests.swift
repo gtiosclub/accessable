@@ -51,7 +51,9 @@ private actor RecordingActivity: TripActivityClient {
 
     init(failingStarts: Int = 0) { self.failingStarts = failingStarts }
 
-    func start(_ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState) async throws {
+    func start(
+        _ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState, staleDate: Date?
+    ) async throws {
         record("start \(attributes.destinationName): \(state.instruction), \(state.distance ?? "-")")
         guard failingStarts == 0 else {
             failingStarts -= 1
@@ -59,7 +61,7 @@ private actor RecordingActivity: TripActivityClient {
         }
     }
 
-    func update(_ state: TripActivityAttributes.ContentState) async {
+    func update(_ state: TripActivityAttributes.ContentState, staleDate: Date?) async {
         record("update \(state.status): \(state.instruction), \(state.distance ?? "-")"
             + (state.arrival == nil ? "" : ", arrives"))
     }

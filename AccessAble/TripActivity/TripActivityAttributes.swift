@@ -30,8 +30,11 @@ extension TripActivityAttributes.ContentState {
     /// What VoiceOver reads for the whole activity, so the turn and its distance are heard as one
     /// sentence: "Turn left onto Ferst Drive, in 150 feet. Arrive at 3:42 PM."
     func accessibilityLabel(
-        destinationName: String, arrivalTime: Date.FormatStyle = Date.FormatStyle(date: .omitted, time: .shortened)
+        destinationName: String, isStale: Bool,
+        arrivalTime: Date.FormatStyle = Date.FormatStyle(date: .omitted, time: .shortened)
     ) -> String {
+        // the app stopped updating it, most likely because it was closed, so the turn may be long past
+        if isStale { return "Guidance stopped. Open AccessAble." }
         // routing instructions may already end in a full stop
         let instruction = instruction.hasSuffix(".") ? String(instruction.dropLast()) : instruction
         switch status {

@@ -36,13 +36,14 @@ struct TripActivityAttributesTests {
 
     private func label(
         _ status: TripActivityAttributes.ContentState.Status, _ instruction: String = "Turn left onto Ferst Drive",
-        distance: (written: String, spoken: String)? = ("150 ft", "150 feet"), arrival: Date? = nil
+        distance: (written: String, spoken: String)? = ("150 ft", "150 feet"), arrival: Date? = nil,
+        isStale: Bool = false
     ) -> String {
         TripActivityAttributes.ContentState(
             status: status, instruction: instruction, distance: distance?.written, spokenDistance: distance?.spoken,
             symbolName: "arrow.turn.up.left",
             arrival: arrival
-        ).accessibilityLabel(destinationName: "Clough Commons", arrivalTime: Self.time)
+        ).accessibilityLabel(destinationName: "Clough Commons", isStale: isStale, arrivalTime: Self.time)
     }
 
     @Test
@@ -79,6 +80,11 @@ struct TripActivityAttributesTests {
     @Test
     func offRouteReadsTheRecoveryInstruction() {
         #expect(label(.offRoute, "Off route. Finding a new route.", distance: nil) == "Off route. Finding a new route.")
+    }
+
+    @Test(arguments: [TripActivityAttributes.ContentState.Status.active, .offRoute])
+    func staleSaysGuidanceStoppedInsteadOfAnOldTurn(_ status: TripActivityAttributes.ContentState.Status) {
+        #expect(label(status, isStale: true) == "Guidance stopped. Open AccessAble.")
     }
 
     @Test

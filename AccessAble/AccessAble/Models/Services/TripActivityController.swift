@@ -53,9 +53,10 @@ struct TripActivityController: Sendable {
     @discardableResult
     private func perform(_ action: TripActivityPlanner.Action) async -> Bool {
         switch action {
-        case .start(let destinationName, let state):
+        case .start(let destinationName, let state, let staleDate):
             do {
-                try await activity.start(TripActivityAttributes(destinationName: destinationName), state: state)
+                try await activity.start(TripActivityAttributes(destinationName: destinationName), state: state,
+                                         staleDate: staleDate)
             } catch TripActivityStartError.activitiesDisabled {
                 log.info("No Live Activity for this trip: the user has turned them off")
                 return false
@@ -63,8 +64,8 @@ struct TripActivityController: Sendable {
                 log.error("No Live Activity for this trip: \(error.localizedDescription, privacy: .public)")
                 return false
             }
-        case .update(let state):
-            await activity.update(state)
+        case .update(let state, let staleDate):
+            await activity.update(state, staleDate: staleDate)
         case .end(let state, let immediately):
             await activity.end(state, immediately: immediately)
         }
