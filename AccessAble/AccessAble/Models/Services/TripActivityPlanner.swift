@@ -28,6 +28,8 @@ struct TripActivityPlanner {
     static let refreshInterval: TimeInterval = 60
 
     private struct Shown {
+        /// A new destination is a new activity, since the destination is fixed in its attributes.
+        var destinationName: String
         var content: Content
         var maneuver: Maneuver
         var distance: Double?
@@ -57,12 +59,12 @@ struct TripActivityPlanner {
         case .active, .paused:
             guard let maneuver = state.nextManeuver, let destinationName = state.destinationName else { return nil }
             let content = Self.content(for: state, maneuver: maneuver, route: route, formatter: formatter)
-            let next = Shown(content: content, maneuver: maneuver, distance: state.distanceToNextManeuver,
+            let next = Shown(destinationName: destinationName, content: content, maneuver: maneuver, distance: state.distanceToNextManeuver,
                              updatedAt: state.updatedAt)
             let staleDate = content.status == .paused ? nil : state.updatedAt.addingTimeInterval(Self.staleAfter)
-            guard let shown else {
-                if let failedStart, next.content.status == failedStart.content.status,
-                   next.maneuver == failedStart.maneuver {
+            guard let shown, shown.destinationName == destinationName else {
+                if let failedStart, next.destinationName == failedStart.destinationName,
+                   next.content.status == failedStart.content.status, next.maneuver == failedStart.maneuver {
                     return nil
                 }
                 failedStart = nil

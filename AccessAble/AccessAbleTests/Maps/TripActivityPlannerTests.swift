@@ -171,6 +171,19 @@ struct TripActivityPlannerTests {
     }
 
     @Test
+    func aTripToANewDestinationStartsANewActivity() {
+        var planner = running()
+        var next = trip()
+        next.destinationName = "Student Center"
+        guard case .start(destinationName: "Student Center", _, _) = planner.action(for: next, route: nil,
+                                                                                   formatter: .imperial)
+        else {
+            Issue.record("Expected a new activity")
+            return
+        }
+    }
+
+    @Test
     func noManeuverStartsNothing() {
         var planner = TripActivityPlanner()
         let state = TripState(phase: .active, destinationName: "Clough Commons", updatedAt: start)
