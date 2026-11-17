@@ -552,6 +552,24 @@ struct TripManagerTests {
         #expect(events.allSatisfy { $0.dedupKey?.hasPrefix(tripPrefix) == true })
     }
 
+    @Test(arguments: [("Take the stairs up.", "stairs going up"), ("Take the stairs.", "stairs")])
+    func stairsWarningSaysWhichWayAndTheCueKeepsValhallasWords(_ instruction: String, _ phrase: String)
+        async throws {
+        let corner = try cornerRoute()
+        var steps = corner.steps
+        steps[1] = RouteStep(kind: .stairs, coordinateIndex: 1, instruction: instruction,
+                             spokenInstruction: instruction)
+        let harness = try Harness(route: try NavigationRoute(coordinates: corner.coordinates, steps: steps,
+                                                             estimatedDuration: corner.estimatedDuration))
+        await harness.start()
+        await harness.walk(from: 0, to: 160)
+
+        let events = await harness.engine.waitForCount(5)
+        #expect(events[1].text == "In about 40 metres, \(phrase).")
+        #expect(events[2].text == instruction)
+        #expect(events[2].haptic == .attention)
+    }
+
     @Test
     func pausedTripKeepsTrackingAndSpeaksTheMissedCueOnResume() async throws {
         let harness = try Harness()

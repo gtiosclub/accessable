@@ -781,6 +781,75 @@ struct RouteProgressTrackerTests {
         #expect(fixes.count == 2 && fixes[0] == fixes[1])
     }
 
+    // without the warning, at 2 m/s the turn is passed with the next step 7 m ahead, inside nowDistance
+    @Test
+    func stairsAfterAShortLegAreWarnedBeforeTheTurn() throws {
+        func walk(_ kind: ManeuverKind) throws -> Walk {
+            walkAtTwoMetresASecond(try closeStepsRoute([
+                (15, 270, .turnLeft, "Turn left onto the walkway.", false),
+                (40, 270, kind, "Take the stairs up.", false),
+            ]))
+        }
+        let stairs = try walk(.stairs)
+        #expect(cueKinds(stairs.logged) == [
+            .prepare(step: 1, distance: 0), .prepare(step: 2, distance: 0), .now(step: 1), .now(step: 2),
+            .prepare(step: 3, distance: 0), .arrived,
+        ])
+        let warning = try #require(stairs.logged.first { cueKinds([$0]) == [.prepare(step: 2, distance: 0)] })
+        guard case let .prepare(_, distance) = warning.event else { return }
+        #expect((30...40).contains(distance))
+        #expect(cueKinds(try walk(.straight).logged) == [
+            .prepare(step: 1, distance: 0), .now(step: 1), .now(step: 2), .prepare(step: 3, distance: 0), .arrived,
+        ])
+    }
+
+    @Test
+    func stairsAfterAMultiCueTurnStillGetTheirWarning() throws {
+        func walk(_ kind: ManeuverKind) throws -> Walk {
+            walkAtTwoMetresASecond(try closeStepsRoute([
+                (30, 270, .turnLeft, "Turn left onto the walkway. Then Take the stairs.", true),
+                (40, 270, kind, "Take the stairs.", false),
+            ]))
+        }
+        #expect(cueKinds(try walk(.stairs).logged) == [
+            .prepare(step: 1, distance: 0), .prepare(step: 2, distance: 0), .now(step: 1), .now(step: 2),
+            .prepare(step: 3, distance: 0), .arrived,
+        ])
+        #expect(cueKinds(try walk(.straight).logged) == [
+            .prepare(step: 1, distance: 0), .now(step: 1), .now(step: 2), .prepare(step: 3, distance: 0), .arrived,
+        ])
+    }
+
+    // six metres after a turn the stairs are cued together with it, so only a look past the turn warns of them
+    @Test
+    func stairsRightAfterATurnAreStillWarned() throws {
+        let walk = walkAtTwoMetresASecond(try closeStepsRoute([
+            (6, 270, .turnLeft, "Turn left onto the walkway.", false),
+            (40, 270, .stairs, "Take the stairs.", false),
+        ]))
+        let kinds = cueKinds(walk.logged)
+        let warning = try #require(kinds.firstIndex(of: .prepare(step: 2, distance: 0)))
+        #expect(warning < (try #require(kinds.firstIndex(of: .now(step: 1)))))
+        #expect(kinds.filter { $0 == .prepare(step: 2, distance: 0) }.count == 1)
+    }
+
+    @Test(arguments: [30.0, 5.0])
+    func stairsNearTheStartAreWarnedOnTheFirstFix(_ firstLeg: Double) throws {
+        func walk(_ kind: ManeuverKind) throws -> Walk {
+            var walk = Walk(try syntheticRoute([
+                (0, firstLeg, .depart, "Walk north."), (270, 50, kind, "Take the stairs down."),
+            ]))
+            walk.feed(onRoute([0]))
+            return walk
+        }
+        let stairs = try walk(.stairs).logged
+        #expect(stairs.first == Logged(0, .prepare(step: 1, distance: firstLeg)))
+        // inside nowDistance the warning comes just before the cue
+        let rest = Array(stairs.map(\.event).dropFirst())
+        #expect(rest == (firstLeg > RouteProgressTracker.nowDistance ? [] : [Event.now(step: 1)]))
+        #expect(!cueKinds(try walk(.turnLeft).logged).contains(.prepare(step: 1, distance: 0)))
+    }
+
     @Test
     func chainOfStepsFourMetresApartIsCuedTogether() throws {
         let route = try closeStepsRoute([

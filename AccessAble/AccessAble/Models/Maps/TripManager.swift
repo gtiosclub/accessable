@@ -562,8 +562,8 @@ actor TripManager: TripStateProviding {
         guard let route else { return nil }
         switch event {
         case let .prepare(step, distance):
-            let text = "In \(spoken(distance)), \(Self.midSentence(route.steps[step].spokenInstruction))"
-            return maneuver(text, .normal, expiresIn: 8, key: "step-\(step)-prepare")
+            return maneuver(prepareText(route.steps[step], in: distance), .normal, expiresIn: 8,
+                            key: "step-\(step)-prepare")
         case let .now(step):
             return maneuver(route.steps[step].spokenInstruction, .high, haptic: route.steps[step].kind.haptic,
                             expiresIn: Self.nowCueLifetime(progress.distanceToNextStep), key: "step-\(step)-now")
@@ -640,9 +640,10 @@ actor TripManager: TripStateProviding {
         guard route.steps.count > 1 else { return "" }
         let step = route.steps[1]
         let position = route.cumulativeDistances[step.coordinateIndex]
-        guard position <= RouteProgressTracker.prepareDistance, let progress else { return "" }
+        // the tracker warns of stairs itself on the first fix, so saying them here would say them twice
+        guard step.kind != .stairs, position <= RouteProgressTracker.prepareDistance, let progress else { return "" }
         let distance = max(position - (route.totalDistance - progress.distanceRemaining), 0)
-        return " In \(spoken(distance)), \(Self.midSentence(step.spokenInstruction))"
+        return " " + prepareText(step, in: distance)
     }
 
     /// What to do next, spoken after "Trip resumed.". Nothing within `nowDistance` of a turn, where the user may
@@ -660,8 +661,14 @@ actor TripManager: TripStateProviding {
             tracker.markPrepared(step: index)
             self.tracker = tracker
         }
-        let text = "In \(spoken(distance)), \(Self.midSentence(route.steps[index].spokenInstruction))"
-        return maneuver(text, .normal, expiresIn: 8, key: nil)
+        return maneuver(prepareText(route.steps[index], in: distance), .normal, expiresIn: 8, key: nil)
+    }
+
+    /// "In about 30 feet, turn left onto Ferst Drive." Stairs say which way they go instead of Valhalla's "Take the
+    /// stairs", so the warning names the change of level.
+    private func prepareText(_ step: RouteStep, in distance: Double) -> String {
+        let action = step.kind == .stairs ? step.stairsPhrase + "." : Self.midSentence(step.spokenInstruction)
+        return "In \(spoken(distance)), \(action)"
     }
 
     /// Keys carry the trip and route, so a quick restart or a reroute isn't deduplicated against the old one.

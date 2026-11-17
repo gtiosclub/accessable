@@ -152,6 +152,15 @@ extension RouteStep {
         spokenInstruction = try container.decode(String.self, forKey: .spokenInstruction)
         announcesNextStep = try container.decodeIfPresent(Bool.self, forKey: .announcesNextStep) ?? false
     }
+
+    /// "stairs going up" or "stairs going down" when the instruction text says which way, otherwise "stairs".
+    var stairsPhrase: String {
+        let words = Set((instruction + " " + spokenInstruction).lowercased()
+            .split(whereSeparator: { !$0.isLetter }).map(String.init))
+        if !words.isDisjoint(with: ["up", "upstairs"]) { return "stairs going up" }
+        if !words.isDisjoint(with: ["down", "downstairs"]) { return "stairs going down" }
+        return "stairs"
+    }
 }
 
 /// Always valid: created and decoded only through the validating init, which derives the distances.

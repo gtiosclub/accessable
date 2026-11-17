@@ -262,6 +262,10 @@ private extension ManeuverKind {
         case .uTurn: "arrow.uturn.up"
         case .cross: "figure.walk"
         case .arrive: "mappin.and.ellipse"
+        case .stairs, .escalator: "figure.stairs"
+        case .elevator: "arrow.up.arrow.down"
+        case .enterBuilding: "door.left.hand.open"
+        case .exitBuilding: "door.right.hand.open"
         }
     }
 }

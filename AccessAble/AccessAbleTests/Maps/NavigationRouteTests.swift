@@ -99,6 +99,26 @@ struct NavigationRouteTests {
                                   spokenInstruction: "Turn left."))
     }
 
+    @Test(arguments: [
+        ("Take the stairs up.", "stairs going up"),
+        ("Take the stairs DOWN to the plaza.", "stairs going down"),
+        ("Walk upstairs.", "stairs going up"),
+        ("Head downstairs to Level 1.", "stairs going down"),
+        ("Take the stairs.", "stairs"),
+        ("Take the stairs by the support column to the underpass.", "stairs"),
+    ])
+    func stairsPhraseSaysWhichWayWhenTheTextDoes(_ text: String, _ phrase: String) {
+        let step = RouteStep(kind: .stairs, coordinateIndex: 1, instruction: text, spokenInstruction: text)
+        #expect(step.stairsPhrase == phrase)
+    }
+
+    @Test
+    func stairsPhraseReadsTheSpokenInstructionToo() {
+        let step = RouteStep(kind: .stairs, coordinateIndex: 1, instruction: "Take the stairs.",
+                             spokenInstruction: "Take the stairs down.")
+        #expect(step.stairsPhrase == "stairs going down")
+    }
+
     @Test
     func buildsTheSampleRoute() {
         let route = MapsSamples.route
