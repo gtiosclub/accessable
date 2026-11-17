@@ -17,6 +17,8 @@ struct TripActivityController: Sendable {
     }
 
     func run() async {
+        // nothing is shown yet, so anything on the lock screen is from a launch that ended mid-trip
+        await activity.endAll()
         let (events, continuation) = AsyncStream<Event>.makeStream()
         await withDiscardingTaskGroup { group in
             group.addTask {
@@ -28,33 +30,44 @@ struct TripActivityController: Sendable {
             }
             var planner = TripActivityPlanner()
             var route: NavigationRoute?
+            var state: TripState?
             for await event in events {
                 switch event {
                 case .route(let latest):
+                    // a state can arrive before its route, and a reroute changes the arrival time
                     route = latest
-                case .state(let state):
-                    if let action = planner.action(for: state, route: route, formatter: distances.formatter) {
-                        await perform(action)
-                    }
+                case .state(let latest):
+                    state = latest
                 }
+                guard let state,
+                      let action = planner.action(for: state, route: route, formatter: distances.formatter)
+                else { continue }
+                if !(await perform(action)) { planner.startFailed() }
             }
             if let action = planner.finish() { await perform(action) }
             group.cancelAll()
         }
     }
 
-    private func perform(_ action: TripActivityPlanner.Action) async {
+    /// False when the activity couldn't start.
+    @discardableResult
+    private func perform(_ action: TripActivityPlanner.Action) async -> Bool {
         switch action {
         case .start(let destinationName, let state):
             do {
                 try await activity.start(TripActivityAttributes(destinationName: destinationName), state: state)
+            } catch TripActivityStartError.activitiesDisabled {
+                log.info("No Live Activity for this trip: the user has turned them off")
+                return false
             } catch {
                 log.error("No Live Activity for this trip: \(error.localizedDescription, privacy: .public)")
+                return false
             }
         case .update(let state):
             await activity.update(state)
         case .end(let state, let immediately):
             await activity.end(state, immediately: immediately)
         }
+        return true
     }
 }

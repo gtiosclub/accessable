@@ -61,6 +61,29 @@ struct TripActivityPlannerTests {
     }
 
     @Test
+    func exactly25FeetIsAnUpdate() {
+        // doubling and halving are exact, so the change is exactly the threshold
+        let step = TripActivityPlanner.minimumDistanceChange
+        var planner = TripActivityPlanner()
+        _ = planner.action(for: trip(distance: 2 * step), route: nil, formatter: .imperial)
+        #expect(planner.action(for: trip(distance: step.nextUp), route: nil, formatter: .imperial) == nil)
+        guard case .update(let content) = planner.action(for: trip(distance: step), route: nil, formatter: .imperial)
+        else {
+            Issue.record("Expected an update")
+            return
+        }
+        #expect(content.distance == "25 ft")
+    }
+
+    @Test
+    func anUnchangedWrittenDistanceIsNotAnUpdate() {
+        var planner = TripActivityPlanner()
+        _ = planner.action(for: trip(distance: 1_609), route: nil, formatter: .imperial)
+        // 40 m on, still "1 mi"
+        #expect(planner.action(for: trip(distance: 1_569), route: nil, formatter: .imperial) == nil)
+    }
+
+    @Test
     func smallChangesAddUpTo25Feet() {
         var planner = running()
         #expect(planner.action(for: trip(distance: 42), route: nil, formatter: .imperial) == nil)
@@ -109,7 +132,53 @@ struct TripActivityPlannerTests {
             immediately: false
         ))
         #expect(planner.action(for: trip(.arrived, maneuver: arrive), route: nil, formatter: .imperial) == nil)
+    }
+
+    @Test
+    func endingTheTripAfterArrivalClearsTheArrivedCard() {
+        var planner = running()
+        _ = planner.action(for: trip(.arrived, maneuver: arrive), route: nil, formatter: .imperial)
+        guard case .end(let content, immediately: true) = planner.action(for: .idle, route: nil,
+                                                                         formatter: .imperial)
+        else {
+            Issue.record("Expected an immediate end")
+            return
+        }
+        #expect(content.status == .arrived)
         #expect(planner.action(for: .idle, route: nil, formatter: .imperial) == nil)
+    }
+
+    @Test
+    func aSecondTripAfterArrivalStartsAgain() {
+        var planner = running()
+        _ = planner.action(for: trip(.arrived, maneuver: arrive), route: nil, formatter: .imperial)
+        guard case .start = planner.action(for: trip(), route: nil, formatter: .imperial) else {
+            Issue.record("Expected a new activity")
+            return
+        }
+        // the new trip's own end, not the old arrived card's
+        guard case .end(let content, immediately: true) = planner.finish() else {
+            Issue.record("Expected an immediate end")
+            return
+        }
+        #expect(content.status == .active)
+    }
+
+    @Test
+    func noManeuverStartsNothing() {
+        var planner = TripActivityPlanner()
+        let state = TripState(phase: .active, destinationName: "Clough Commons", updatedAt: start)
+        #expect(planner.action(for: state, route: nil, formatter: .imperial) == nil)
+    }
+
+    @Test
+    func aFailedStartIsTriedAgain() {
+        var planner = running()
+        planner.startFailed()
+        guard case .start = planner.action(for: trip(distance: 45), route: nil, formatter: .imperial) else {
+            Issue.record("Expected another start")
+            return
+        }
     }
 
     @Test
@@ -166,6 +235,34 @@ struct TripActivityPlannerTests {
         // 140 m at 1.4 m/s
         let arrival = try #require(content.arrival)
         #expect(abs(arrival.timeIntervalSince(start) - 100) < 0.5)
+    }
+
+    @Test
+    func aRouteAfterItsStateAddsTheArrivalTime() throws {
+        var planner = running()
+        guard case .update(let content) = planner.action(for: trip(), route: try route(), formatter: .imperial) else {
+            Issue.record("Expected an update")
+            return
+        }
+        #expect(content.arrival != nil)
+    }
+
+    @Test
+    func anArrivalTimeAMinuteLaterIsAnUpdate() throws {
+        let route = try route()
+        var planner = TripActivityPlanner()
+        _ = planner.action(for: trip(), route: route, formatter: .imperial)
+        // standing still
+        #expect(planner.action(for: trip(at: start + 59), route: route, formatter: .imperial) == nil)
+        guard case .update(let content) = planner.action(for: trip(at: start + 60), route: route,
+                                                         formatter: .imperial)
+        else {
+            Issue.record("Expected an update")
+            return
+        }
+        // 280 m at 1.4 m/s, from a minute later
+        let arrival = try #require(content.arrival)
+        #expect(abs(arrival.timeIntervalSince(start) - 260) < 0.5)
     }
 
     @Test

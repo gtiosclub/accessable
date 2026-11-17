@@ -187,6 +187,7 @@ struct PlaceholderTripActivityClient: TripActivityClient {
     func start(_ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState) async throws {}
     func update(_ state: TripActivityAttributes.ContentState) async {}
     func end(_ state: TripActivityAttributes.ContentState, immediately: Bool) async {}
+    func endAll() async {}
 }
 
 /// Publishes one fixed state, so previews can show a trip in progress or arrived.
