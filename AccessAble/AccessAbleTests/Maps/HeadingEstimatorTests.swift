@@ -90,6 +90,20 @@ struct HeadingEstimatorTests {
         #expect(estimate([fix(speed: 1.4)], at: 3.1) == nil)
     }
 
+    @Test func walkingDirectionOfAFixIsItsCourseWhileWalking() {
+        #expect(HeadingEstimator.walkingDirection(of: fix(speed: 1.4)) == 212)
+        #expect(HeadingEstimator.walkingDirection(of: fix(speed: 0.7, courseAccuracy: 45)) == 212)
+        #expect(HeadingEstimator.walkingDirection(of: fix(speed: 1.4, courseAccuracy: nil)) == 212)
+    }
+
+    @Test(arguments: [
+        fix(speed: nil), fix(speed: 0.69), fix(speed: 1.4, course: nil), fix(speed: 1.4, courseAccuracy: 46),
+        fix(speed: 1.4, course: .nan),
+    ])
+    func fixWithoutAWalkingDirection(_ sample: LocationSample) {
+        #expect(HeadingEstimator.walkingDirection(of: sample) == nil)
+    }
+
     @Test func nothingReceivedIsUnknown() {
         #expect(estimate() == nil)
     }

@@ -64,6 +64,7 @@ struct RouteProgressTracker {
     private var sightedStep = -1
     private var missedTurnRun: (since: Date, misses: Int)?
     private var offRouteRun: (first: LocationSample, count: Int)?
+    private var walkingAwayRun: (since: Date, offset: Double)?
     private var rejoinSince: Date?
     private var wrongWayOrigin: (coordinate: GeoCoordinate, progress: Double, offset: Double)?
     private var wrongWayDone = false
@@ -107,6 +108,13 @@ struct RouteProgressTracker {
     private static let offRouteFixes = 3
     private static let offRouteDuration: TimeInterval = 10
     private static let offRouteMovement: Double = 8
+    // nearer than the usual limit is safe only because the walking direction must also point away from the route:
+    // drift while standing at a crosswalk has no walking direction, and walking along a wide sidewalk agrees with it
+    private static let walkingAwayDistance: Double = 20
+    // more than a diagonal across a crossing, so cutting a corner or weaving round an obstacle doesn't count
+    private static let walkingAwayAngle: Double = 60
+    // several fixes of walking that way, so one stray course or position doesn't trigger it
+    private static let walkingAwayDuration: TimeInterval = 5
     // close enough to be on the path again
     private static let rejoinDistance: Double = 15
     // two fixes this far apart confirm a rejoin or a missed turn, so one stray fix can't
@@ -198,7 +206,10 @@ struct RouteProgressTracker {
             } else {
                 missedTurnRun = nil
             }
-            if leavesRoute(sample, at: projection) { events.append(.offRoute) }
+            // either rule; once one fires the other's run is cleared, so a fix gives one event
+            if leavesRoute(sample, at: projection) || walksAwayFromRoute(sample, at: projection) {
+                events.append(.offRoute)
+            }
         }
 
         let passed = passSteps()
@@ -358,11 +369,44 @@ struct RouteProgressTracker {
               GeoMath.distance(from: run.first.coordinate, to: sample.coordinate) >= Self.offRouteMovement else {
             return false
         }
+        markOffRoute()
+        return true
+    }
+
+    /// Faster than `leavesRoute` when the walking direction points away from the route's direction of travel and the
+    /// user keeps getting no nearer to it. Standing still never counts, since it has no walking direction.
+    private mutating func walksAwayFromRoute(_ sample: LocationSample, at projection: RouteProjection) -> Bool {
+        let offset = abs(projection.sideOffset)
+        let limit = max(Self.walkingAwayDistance, Self.offRouteAccuracyFactor * sample.horizontalAccuracy)
+        let segment = projection.segmentIndex
+        // a segment under a metre gives a noisy bearing
+        guard offset > limit, let direction = HeadingEstimator.walkingDirection(of: sample),
+              route.cumulativeDistances[segment + 1] - route.cumulativeDistances[segment] >= 1 else {
+            walkingAwayRun = nil
+            return false
+        }
+        let routeBearing = GeoMath.bearing(from: route.coordinates[segment], to: route.coordinates[segment + 1])
+        let turn = GeoMath.normalizedBearing(direction - routeBearing)
+        // walking back toward the route at a steep angle is returning, not leaving
+        guard min(turn, 360 - turn) > Self.walkingAwayAngle, offset >= walkingAwayRun?.offset ?? offset else {
+            walkingAwayRun = nil
+            return false
+        }
+        guard let run = walkingAwayRun else {
+            walkingAwayRun = (sample.timestamp, offset)
+            return false
+        }
+        guard sample.timestamp.timeIntervalSince(run.since) >= Self.walkingAwayDuration else { return false }
+        markOffRoute()
+        return true
+    }
+
+    private mutating func markOffRoute() {
         isOffRoute = true
         offRouteRun = nil
+        walkingAwayRun = nil
         rejoinSince = nil
         missedTurnRun = nil
-        return true
     }
 
     /// Accepts the rejoin point even behind progress, since the user may have walked back to the route.

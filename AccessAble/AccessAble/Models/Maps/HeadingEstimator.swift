@@ -41,12 +41,9 @@ struct HeadingEstimator {
 
     /// nil means unknown: better no direction than a wrong one.
     func heading(at time: Date) -> UserHeading? {
-        if let location, isFresh(location.timestamp, at: time), let speed = location.speed,
-           speed >= Self.minimumWalkingSpeed {
+        if let location, isFresh(location.timestamp, at: time), Self.isWalking(location) {
             // a phone swinging in a pocket gives a compass reading that isn't where the user faces
-            guard let course = location.course, (location.courseAccuracy ?? 0) <= Self.maximumCourseError else {
-                return nil
-            }
+            guard let course = Self.walkingDirection(of: location) else { return nil }
             return UserHeading(degrees: course, source: .walkingDirection, timestamp: location.timestamp)
         }
         guard let compass, compass.accuracy <= Self.maximumCompassError, isFresh(compass.timestamp, at: time) else {
@@ -54,6 +51,18 @@ struct HeadingEstimator {
         }
         return UserHeading(degrees: compass.trueHeading ?? compass.magneticHeading, source: .compass,
                            timestamp: compass.timestamp)
+    }
+
+    /// The fix's direction of travel in degrees from true north, when it is moving at walking speed with a course
+    /// precise enough to trust. Doesn't check how old the fix is.
+    static func walkingDirection(of sample: LocationSample) -> Double? {
+        guard isWalking(sample), let course = sample.course, course.isFinite,
+              (sample.courseAccuracy ?? 0) <= maximumCourseError else { return nil }
+        return course
+    }
+
+    private static func isWalking(_ sample: LocationSample) -> Bool {
+        sample.speed.map { $0 >= minimumWalkingSpeed } ?? false
     }
 
     private func isFresh(_ timestamp: Date, at time: Date) -> Bool {
