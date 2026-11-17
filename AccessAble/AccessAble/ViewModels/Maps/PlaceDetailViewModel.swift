@@ -13,8 +13,10 @@ final class PlaceDetailViewModel {
     /// Finds the route. Kept so its retry and error rules aren't copied here.
     let planner: TripViewModel
     @ObservationIgnored private let distanceSettings: DistanceSettings
-    /// Read when the summary is, so tests can avoid parsing the bundled file.
+    /// Read when a route first arrives, so tests can avoid parsing the bundled file.
     @ObservationIgnored private let campusCrossings: @Sendable () -> [CampusCrossing]
+    /// What the current route involves, counted once per route rather than on every read of `summary`.
+    @ObservationIgnored private var counted: (route: NavigationRoute, summary: RouteSummary)?
 
     /// `planned` is a route an earlier screen found; without it one is asked for.
     init(
@@ -45,13 +47,21 @@ final class PlaceDetailViewModel {
     /// Waiting for a location fix or for the routing service.
     var isLoading: Bool { route == nil && errorMessage == nil && !needsLocationAccess }
 
-    /// "About 6 minutes, 450 feet. 3 turns, 2 crosswalks.", in the user's units. Shown, and
-    /// spoken when the route arrives.
+    /// "About 6 minutes, 450 feet. 3 turns, 2 crosswalks.", in the user's units, read each
+    /// time so a change in Settings shows at once.
     var summary: String? {
-        route.map {
-            RouteSummary(route: $0, crossings: RouteCrossings.along($0, crossings: campusCrossings()))
-                .text(distances: distanceSettings.formatter)
+        guard let route else { return nil }
+        if counted?.route != route {
+            let crossings = RouteCrossings.along(route, crossings: campusCrossings())
+            counted = (route, RouteSummary(route: route, crossings: crossings))
         }
+        return counted?.summary.text(distances: distanceSettings.formatter)
+    }
+
+    /// Posted once when the route arrives, so the user knows Start is there and what the walk
+    /// involves.
+    var routeReadyAnnouncement: String? {
+        summary.map { "Route ready. \($0)" }
     }
 
     /// What each step says, in order, as spoken during the trip.

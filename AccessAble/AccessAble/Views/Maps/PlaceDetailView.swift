@@ -76,8 +76,8 @@ struct PlaceDetailView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
-        // route failed is spoken as on the Trip screen; route ready says the summary instead
-        .announcesRoute(details.planner) { details.summary }
+        // route failed is spoken as on the Trip screen; route ready adds the summary
+        .announcesRoute(details.planner) { details.routeReadyAnnouncement }
         .task { await details.start() }
     }
 }

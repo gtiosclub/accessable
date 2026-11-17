@@ -64,6 +64,16 @@ private func crossing(at fraction: Double) -> CampusCrossing {
                           control: .marked, audibleSignal: false)
 }
 
+private final class ReadCounter: Sendable {
+    private let reads = Mutex(0)
+
+    func record() {
+        reads.withLock { $0 += 1 }
+    }
+
+    var count: Int { reads.withLock { $0 } }
+}
+
 /// Two crossings on the route and one a block away, which isn't.
 private let campusCrossings = [
     crossing(at: 1.0 / 3), crossing(at: 2.0 / 3),
@@ -95,7 +105,9 @@ struct PlaceDetailViewModelTests {
         #expect(!details.isLoading)
         #expect(details.route == plannedRoute)
         #expect(details.steps == ["Walk east on Ferst Drive.", "You have arrived at Clough."])
-        #expect(details.summary == "About 4 minutes, 240 metres. 2 crosswalks.")
+        #expect(details.summary == "About 4 minutes, 240 metres. No turns, 2 crosswalks.")
+        // so the user knows Start is there
+        #expect(details.routeReadyAnnouncement == "Route ready. About 4 minutes, 240 metres. No turns, 2 crosswalks.")
     }
 
     @Test
@@ -144,7 +156,7 @@ struct PlaceDetailViewModelTests {
         // as the route picker makes it from the route place details found
         let details = PlaceDetailViewModel(destination: clough, services: services, planned: planned,
                                            campusCrossings: { campusCrossings })
-        #expect(details.summary == "About 4 minutes, 240 metres. 2 crosswalks.")
+        #expect(details.summary == "About 4 minutes, 240 metres. No turns, 2 crosswalks.")
 
         await details.start()
         await details.planner.routeTask?.value
@@ -169,5 +181,24 @@ struct PlaceDetailViewModelTests {
 
         distances.units = .feet
         #expect(details.summary == "About 4 minutes, 0.2 miles. No turns.")
+    }
+
+    @Test
+    func crossingsAreCountedOncePerRoute() async {
+        let reads = ReadCounter()
+        var services = AppServices.preview
+        services.location = OneFixLocationProvider()
+        services.routing = FlakyRouting(isOnline: true)
+        services.trip = PlaceholderTripProvider()
+        let details = PlaceDetailViewModel(destination: clough, services: services, campusCrossings: {
+            reads.record()
+            return campusCrossings
+        })
+        await details.start()
+        await details.planner.routeTask?.value
+        for _ in 0..<3 {
+            #expect(details.summary == "About 4 minutes, 240 metres. No turns, 2 crosswalks.")
+        }
+        #expect(reads.count == 1)
     }
 }
