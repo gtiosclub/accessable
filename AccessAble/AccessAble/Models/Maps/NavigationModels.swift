@@ -99,7 +99,6 @@ struct Destination: Codable, Hashable, Sendable {
 struct SearchSuggestion: Identifiable, Equatable, Sendable {
     let title: String
     let subtitle: String
-    var coordinate: GeoCoordinate? = nil
 
     var id: String { "\(title)\n\(subtitle)" }
 }

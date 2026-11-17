@@ -382,12 +382,11 @@ struct PlaceSearchView: View {
                         .buttonStyle(.pill(.outline, size: .compact))
                 }
             }
-            ForEach(Array(search.suggestions.enumerated()), id: \.element.id) { index, suggestion in
+            ForEach(search.suggestions) { suggestion in
                 SuggestionRow(
                     suggestion: suggestion,
                     highlight: search.settledQuery,
-                    isResolving: search.isResolving(suggestion),
-                    spokenLabel: search.spokenLabel(for: suggestion, at: index)
+                    isResolving: search.isResolving(suggestion)
                 ) {
                     search.select(suggestion)
                 }
@@ -485,7 +484,6 @@ private struct SuggestionRow: View {
     let suggestion: SearchSuggestion
     var highlight = ""
     var isResolving = false
-    var spokenLabel: String?
     let action: () -> Void
 
     var body: some View {
@@ -522,7 +520,7 @@ private struct SuggestionRow: View {
         .buttonStyle(.plain)
         .disabled(isResolving)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(spokenLabel ?? [suggestion.title, suggestion.subtitle].filter { !$0.isEmpty }.joined(separator: ", "))
+        .accessibilityLabel([suggestion.title, suggestion.subtitle].filter { !$0.isEmpty }.joined(separator: ", "))
         .accessibilityValue(isResolving ? "Loading details" : "")
         .accessibilityHint("Opens this place")
         .accessibilityAddTraits(.isButton)

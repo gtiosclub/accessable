@@ -29,33 +29,17 @@ final class DestinationSearchViewModel {
     private(set) var isSearching = false
     private(set) var isResolving = false
     private(set) var problem: SearchProblem?
-    private(set) var location: LocationSample?
-    private(set) var heading: UserHeading?
 
     @ObservationIgnored private let search: any DestinationSearching
-    @ObservationIgnored private let locationProvider: (any LocationProvider)?
-    @ObservationIgnored private let distances: DistanceSettings?
     @ObservationIgnored private var selectionTask: Task<Void, Never>?
     @ObservationIgnored private var lastSearchedQuery = ""
-    @ObservationIgnored private var headingEstimator = HeadingEstimator()
-    @ObservationIgnored private var newestReadingTime: Date?
 
     convenience init(services: AppServices) {
-        self.init(
-            search: services.destinationSearch,
-            location: services.location,
-            distances: services.distanceSettings
-        )
+        self.init(search: services.destinationSearch)
     }
 
-    init(
-        search: any DestinationSearching,
-        location: (any LocationProvider)? = nil,
-        distances: DistanceSettings? = nil
-    ) {
+    init(search: any DestinationSearching) {
         self.search = search
-        locationProvider = location
-        self.distances = distances
     }
 
     var trimmedQuery: String {
@@ -75,37 +59,7 @@ final class DestinationSearchViewModel {
         }
     }
 
-    func spokenLabel(for suggestion: SearchSuggestion, at index: Int) -> String {
-        SearchResultSpeech.label(
-            for: suggestion,
-            at: index,
-            from: location?.coordinate,
-            heading: heading,
-            distances: distances?.formatter ?? DistanceSettings().formatter
-        )
-    }
-
     func start() async {
-        guard let locationProvider else {
-            await listenForSuggestions()
-            return
-        }
-        await withDiscardingTaskGroup { group in
-            group.addTask { await self.listenForSuggestions() }
-            group.addTask {
-                for await sample in locationProvider.locationSamples() {
-                    await self.receive(sample)
-                }
-            }
-            group.addTask {
-                for await sample in locationProvider.headingSamples() {
-                    await self.receive(sample)
-                }
-            }
-        }
-    }
-
-    private func listenForSuggestions() async {
         for await result in search.suggestions() {
             isSearching = false
             // The service replays its latest results to a new listener, and they can be for an
@@ -124,24 +78,6 @@ final class DestinationSearchViewModel {
                 problem = .suggestionsUnavailable
             }
         }
-    }
-
-    private func receive(_ sample: LocationSample) {
-        guard sample.horizontalAccuracy <= 100 else { return }
-        location = sample
-        headingEstimator.update(with: sample)
-        updateHeading(readingTime: sample.timestamp)
-    }
-
-    private func receive(_ sample: HeadingSample) {
-        headingEstimator.update(with: sample)
-        updateHeading(readingTime: sample.timestamp)
-    }
-
-    private func updateHeading(readingTime: Date) {
-        let now = max(newestReadingTime ?? readingTime, readingTime)
-        newestReadingTime = now
-        heading = headingEstimator.heading(at: now)
     }
 
     func queryChanged() {
