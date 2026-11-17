@@ -7,27 +7,32 @@ import WidgetKit
 struct TripLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: TripActivityAttributes.self) { context in
-            TripLockScreenView(context: context)
+            TripLockScreenView(state: context.state, destinationName: context.attributes.destinationName)
                 .activityBackgroundTint(.black)
                 .activitySystemActionForegroundColor(.white)
         } dynamicIsland: { context in
             DynamicIsland {
+                // the bottom region's sentence says what the symbol and distance show
                 DynamicIslandExpandedRegion(.leading) {
                     TurnSymbol(state: context.state)
                         .font(.largeTitle.bold())
-                        .accessibilityHidden(context.state.symbolIsDecorative)
+                        .accessibilityHidden(true)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     if let distance = context.state.distance {
                         Text(distance)
                             .font(.title2.bold())
+                            .accessibilityHidden(true)
                     }
                 }
                 DynamicIslandExpandedRegion(.bottom) {
-                    Text(context.headline)
+                    Text(context.state.headline(destinationName: context.attributes.destinationName))
                         .font(.title3.bold())
                         .lineLimit(2)
                         .minimumScaleFactor(0.7)
+                        .accessibilityLabel(
+                            context.state.accessibilityLabel(destinationName: context.attributes.destinationName)
+                        )
                 }
             } compactLeading: {
                 TurnSymbol(state: context.state)
@@ -45,27 +50,28 @@ struct TripLiveActivity: Widget {
     }
 }
 
+/// Takes the state rather than the activity's context, so previews can show it at any text size.
 private struct TripLockScreenView: View {
-    let context: ActivityViewContext<TripActivityAttributes>
+    let state: TripActivityAttributes.ContentState
+    let destinationName: String
     /// Grows with the text, so the turn stays as easy to see as the words beside it.
     @ScaledMetric(relativeTo: .title) private var symbolSize = 48
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
-            TurnSymbol(state: context.state)
+            TurnSymbol(state: state)
                 .font(.system(size: symbolSize, weight: .bold))
-                .accessibilityHidden(context.state.symbolIsDecorative)
             VStack(alignment: .leading, spacing: 8) {
-                Text(context.headline)
+                Text(state.headline(destinationName: destinationName))
                     .font(.title.bold())
                     .lineLimit(3)
                     .minimumScaleFactor(0.6)
-                if context.state.status == .active {
+                if state.status == .active {
                     HStack(spacing: 16) {
-                        if let distance = context.state.distance {
+                        if let distance = state.distance {
                             Text(distance)
                         }
-                        if let arrival = context.state.arrival {
+                        if let arrival = state.arrival {
                             Text("Arrive \(Text(arrival, style: .time))")
                         }
                     }
@@ -78,6 +84,8 @@ private struct TripLockScreenView: View {
         }
         .foregroundStyle(.white)
         .padding()
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(state.accessibilityLabel(destinationName: destinationName))
     }
 }
 
@@ -90,17 +98,15 @@ private struct TurnSymbol: View {
     }
 }
 
-private extension ActivityViewContext<TripActivityAttributes> {
-    var headline: String {
-        switch state.status {
-        case .active, .offRoute: state.instruction
+private extension TripActivityAttributes.ContentState {
+    func headline(destinationName: String) -> String {
+        switch status {
+        case .active, .offRoute: instruction
         case .paused: "Paused"
-        case .arrived: "Arrived at \(attributes.destinationName)"
+        case .arrived: "Arrived at \(destinationName)"
         }
     }
-}
 
-private extension TripActivityAttributes.ContentState {
     var symbol: String {
         switch status {
         case .active: symbolName
@@ -109,9 +115,6 @@ private extension TripActivityAttributes.ContentState {
         case .arrived: "mappin.and.ellipse"
         }
     }
-
-    /// The headline says the same thing, except off route, where the warning sign is the cue.
-    var symbolIsDecorative: Bool { status != .offRoute }
 
     /// Fits beside the camera in the compact Dynamic Island.
     var shortText: String? {

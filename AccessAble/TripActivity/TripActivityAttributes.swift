@@ -23,3 +23,26 @@ struct TripActivityAttributes: ActivityAttributes {
 
     var destinationName: String
 }
+
+extension TripActivityAttributes.ContentState {
+    /// What VoiceOver reads for the whole activity, so the turn and its distance are heard as one
+    /// sentence: "Turn left onto Ferst Drive, in 150 ft. Arrive at 3:42 PM."
+    func accessibilityLabel(
+        destinationName: String, arrivalTime: Date.FormatStyle = Date.FormatStyle(date: .omitted, time: .shortened)
+    ) -> String {
+        // routing instructions may already end in a full stop
+        let instruction = instruction.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        switch status {
+        case .active:
+            let turn = distance.map { "\(instruction), in \($0)." } ?? "\(instruction)."
+            guard let arrival else { return turn }
+            return "\(turn) Arrive at \(arrival.formatted(arrivalTime))."
+        case .paused:
+            return "Paused. \(instruction)."
+        case .offRoute:
+            return "\(instruction)."
+        case .arrived:
+            return "Arrived at \(destinationName)."
+        }
+    }
+}
