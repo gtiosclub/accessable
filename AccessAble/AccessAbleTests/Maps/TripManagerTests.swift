@@ -1512,4 +1512,19 @@ struct TripManagerDirectionTests {
         #expect(texts.filter { $0.hasPrefix("Arriving") } == ["Arriving at Library. Your destination is on the left."])
     }
 
+    @Test
+    func startDoesNotWarnOfArrivingNearby() async throws {
+        let start = GeoCoordinate(latitude: 33.775, longitude: -84.399)
+        let route = try NavigationRoute(coordinates: [start, TripWalk.destination(from: start, bearing: 0, distance: 30)],
+                                        steps: [
+            RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Walk north.", spokenInstruction: "Walk north."),
+            RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
+        ], estimatedDuration: 25)
+        let harness = try Harness(route: route)
+        await harness.start()
+        await harness.waitForSleepers(2)
+        await harness.fix(harness.point(0), course: 0)
+        let announcement = try #require(await harness.engine.waitForCount(1).first)
+        #expect(announcement.text == "Starting directions to Library, about 30 metres. The path is ahead.")
+    }
 }

@@ -684,8 +684,10 @@ actor TripManager: TripStateProviding {
         guard route.steps.count > 1 else { return "" }
         let step = route.steps[1]
         let position = route.cumulativeDistances[step.coordinateIndex]
-        // the tracker warns of stairs itself on the first fix, so saying them here would say them twice
-        guard step.kind != .stairs, position <= RouteProgressTracker.prepareDistance, let progress else { return "" }
+        // the tracker warns of stairs itself on the first fix, so saying them here would say them twice; arriving has
+        // its own announcement
+        guard step.kind != .stairs, step.kind != .arrive, position <= RouteProgressTracker.prepareDistance,
+              let progress else { return "" }
         let distance = max(position - (route.totalDistance - progress.distanceRemaining), 0)
         return " " + prepareText(step, in: distance)
     }
