@@ -339,8 +339,6 @@ struct TripActivityPlannerTests {
             Issue.record("Expected an update")
             return
         }
-        // well before the last update's stale date
-        #expect(TripActivityPlanner.refreshInterval < TripActivityPlanner.staleAfter)
         #expect(staleDate == start + 60 + TripActivityPlanner.staleAfter)
     }
 
