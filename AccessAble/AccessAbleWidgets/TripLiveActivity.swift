@@ -86,6 +86,8 @@ private struct TripLockScreenView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(state.headline(destinationName: destinationName, isStale: isStale))
                     .font(.title.bold())
+                    // without the symbol, the headline carries its yellow off-route cue
+                    .foregroundStyle(showsOffRouteHeadline ? .yellow : .white)
                     .lineLimit(3)
                     .minimumScaleFactor(0.5)
                 if let detail = state.detail(isStale: isStale) {
@@ -118,6 +120,10 @@ private struct TripLockScreenView: View {
         .padding()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(state.accessibilityLabel(destinationName: destinationName, isStale: isStale))
+    }
+
+    private var showsOffRouteHeadline: Bool {
+        dynamicTypeSize.isAccessibilitySize && state.status == .offRoute && !isStale
     }
 
     @ViewBuilder private var distanceText: some View {
