@@ -398,11 +398,12 @@ private struct Harness {
     let manager: TripManager
     let route: NavigationRoute
 
-    /// No campus buildings by default, so only the landmark tests have any to match.
+    /// No campus buildings or crossings by default, so only the landmark and crossing tests have any.
     init(
         route: NavigationRoute? = nil,
         reroutes: [Result<NavigationRoute, RoutingError>] = [],
         buildings: [CampusBuilding] = [],
+        crossings: [CampusCrossing] = [],
         distances: DistanceSettings = DistanceSettings(units: .metres)
     ) throws {
         let route = try route ?? cornerRoute()
@@ -410,7 +411,7 @@ private struct Harness {
         router = ScriptedRouter(reroutes)
         manager = TripManager(
             location: location, routing: router, announcements: engine,
-            landmarks: landmarks, campusBuildings: { buildings },
+            landmarks: landmarks, campusBuildings: { buildings }, campusCrossings: { crossings },
             setBackgroundTracking: { [background] in background.record($0) },
             distances: distances,
             now: { [clock] in clock.now() },
@@ -1115,6 +1116,72 @@ struct TripManagerTests {
         let texts = await harness.engine.texts
         let resumed = try #require(texts.firstIndex(of: "Trip resumed."))
         #expect(!texts[resumed...].contains("You're off the route. Finding a new route."))
+    }
+}
+
+// MARK: Crossings
+
+private func isCrossingCue(_ event: AnnouncementEvent) -> Bool {
+    event.dedupKey?.contains("-crossing-") == true
+}
+
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerCrossingTests {
+    @Test(arguments: [
+        (CampusCrossing.Control.signals, true, "Crosswalk ahead, with audible signal."),
+        (.signals, false, "Crosswalk ahead, with a traffic signal."),
+        (.marked, false, "Crosswalk ahead."),
+        (.unknown, false, "Crosswalk ahead."),
+        (.unmarked, false, "Road crossing ahead, unmarked."),
+    ])
+    func crossingAheadIsSpokenForItsControl(_ control: CampusCrossing.Control, _ audibleSignal: Bool,
+                                            _ expected: String) async throws {
+        let crosswalk = CampusCrossing(coordinate: TripWalk.point(on: try cornerRoute(), along: 50), control: control,
+                                       audibleSignal: audibleSignal)
+        let harness = try Harness(crossings: [crosswalk])
+        await harness.start()
+        // the crossing falls due at 30 m, before the turn's prepare at 60 m
+        await harness.walk(from: 0, to: 45)
+
+        let events = await harness.engine.waitForCount(2)
+        let event = try #require(events.first(where: isCrossingCue))
+        #expect(events.filter(isCrossingCue).count == 1)
+        #expect(event.text == expected)
+        #expect(event.priority == .high)
+        #expect(event.haptic == .attention)
+        #expect(event.category == .maneuver)
+        #expect(event.expiresAt == event.createdAt.addingTimeInterval(8))
+        #expect(event.dedupKey?.hasSuffix("-v0-crossing-0") == true)
+    }
+
+    @Test
+    func rerouteUsesTheNewRoutesCrossings() async throws {
+        let newRoute = try eastRoute(from: harness0Origin)
+        // one ahead on the old route that the walk never reaches, and one 50 m along the new route
+        let oldRouteCrossing = CampusCrossing(coordinate: TripWalk.point(on: try cornerRoute(), along: 80),
+                                              control: .marked, audibleSignal: false)
+        let newRouteCrossing = CampusCrossing(coordinate: TripWalk.point(on: newRoute, along: 50), control: .signals,
+                                              audibleSignal: false)
+        let harness = try Harness(reroutes: [.success(newRoute)], crossings: [oldRouteCrossing, newRouteCrossing])
+        await harness.start()
+        await harness.walk(from: 0, to: 50)
+        await harness.goOffRoute(at: 49)
+        // the request goes out on the fix after the off-route cue
+        await harness.fix(harness0Origin)
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+        _ = await harness.states.waitFor { $0.nextManeuver?.instruction == "Arrive" }
+        await harness.engine.waitForCount(3)
+        #expect(!(await harness.engine.submitted.contains(where: isCrossingCue)))
+
+        // due at 30 m along the new route, before the arrival's prepare at 40 m
+        for along in TripWalk.distances(from: 0, to: 35) {
+            await harness.fix(TripWalk.destination(from: harness0Origin, bearing: 90, distance: along))
+        }
+        let events = await harness.engine.waitForCount(4)
+        let crossings = events.filter(isCrossingCue)
+        #expect(crossings.map(\.text) == ["Crosswalk ahead, with a traffic signal."])
+        #expect(crossings.first?.dedupKey?.hasSuffix("-v1-crossing-0") == true)
     }
 }
 

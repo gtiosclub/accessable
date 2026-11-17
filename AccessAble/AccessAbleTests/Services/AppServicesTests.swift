@@ -20,6 +20,11 @@ struct AppServicesTests {
     }
 
     @Test
+    func previewNeverSpeaksAloud() {
+        #expect(AppServices.preview.announcements is PlaceholderAnnouncementEngine)
+    }
+
+    @Test
     func previewNeverStartsRealTrips() {
         #expect(AppServices.preview.trip is PlaceholderTripProvider)
     }
