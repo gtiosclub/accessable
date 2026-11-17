@@ -101,10 +101,12 @@ struct TripActivityPlanner {
         for state: TripState, maneuver: Maneuver, route: NavigationRoute?, formatter: DistanceFormatter
     ) -> Content {
         let status: Content.Status = state.phase == .paused ? .paused : state.isOffRoute ? .offRoute : .active
+        let distance = status == .offRoute ? nil : state.distanceToNextManeuver
         return Content(
             status: status,
             instruction: maneuver.instruction,
-            distance: status == .offRoute ? nil : state.distanceToNextManeuver.map(formatter.written),
+            distance: distance.map(formatter.written),
+            spokenDistance: distance.map(formatter.words),
             symbolName: maneuver.kind.symbolName,
             arrival: status == .active ? arrival(for: state, route: route) : nil
         )
@@ -119,7 +121,7 @@ struct TripActivityPlanner {
     }
 
     private static let arrived = Content(
-        status: .arrived, instruction: "You have arrived", distance: nil,
+        status: .arrived, instruction: "You have arrived", distance: nil, spokenDistance: nil,
         symbolName: ManeuverKind.arrive.symbolName, arrival: nil
     )
 }

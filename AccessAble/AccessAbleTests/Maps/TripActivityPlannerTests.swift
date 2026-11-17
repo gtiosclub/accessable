@@ -42,7 +42,7 @@ struct TripActivityPlannerTests {
         #expect(planner.action(for: trip(), route: nil, formatter: .imperial) == .start(
             destinationName: "Clough Commons",
             .init(status: .active, instruction: "Turn left onto Ferst Drive", distance: "150 ft",
-                  symbolName: "arrow.turn.up.left", arrival: nil)
+                  spokenDistance: "150 feet", symbolName: "arrow.turn.up.left", arrival: nil)
         ))
     }
 
@@ -100,7 +100,7 @@ struct TripActivityPlannerTests {
         var planner = running()
         let update = planner.action(for: trip(maneuver: arrive, distance: 45), route: nil, formatter: .imperial)
         #expect(update == .update(.init(status: .active, instruction: "Arrive", distance: "150 ft",
-                                        symbolName: "mappin.and.ellipse", arrival: nil)))
+                                        spokenDistance: "150 feet", symbolName: "mappin.and.ellipse", arrival: nil)))
     }
 
     @Test
@@ -108,7 +108,8 @@ struct TripActivityPlannerTests {
         var planner = running()
         let update = planner.action(for: trip(.paused), route: nil, formatter: .imperial)
         #expect(update == .update(.init(status: .paused, instruction: "Turn left onto Ferst Drive",
-                                        distance: "150 ft", symbolName: "arrow.turn.up.left", arrival: nil)))
+                                        distance: "150 ft", spokenDistance: "150 feet",
+                                        symbolName: "arrow.turn.up.left", arrival: nil)))
         #expect(planner.action(for: trip(.paused), route: nil, formatter: .imperial) == nil)
     }
 
@@ -120,14 +121,15 @@ struct TripActivityPlannerTests {
         let update = planner.action(for: trip(maneuver: lost, distance: nil, offRoute: true), route: nil,
                                     formatter: .imperial)
         #expect(update == .update(.init(status: .offRoute, instruction: "Off route. Finding a new route.",
-                                        distance: nil, symbolName: "arrow.turn.up.left", arrival: nil)))
+                                        distance: nil, spokenDistance: nil, symbolName: "arrow.turn.up.left",
+                                        arrival: nil)))
     }
 
     @Test
     func arrivalEndsWithTheArrivedStateAndIgnoresWhatFollows() {
         var planner = running()
         #expect(planner.action(for: trip(.arrived, maneuver: arrive), route: nil, formatter: .imperial) == .end(
-            .init(status: .arrived, instruction: "You have arrived", distance: nil,
+            .init(status: .arrived, instruction: "You have arrived", distance: nil, spokenDistance: nil,
                   symbolName: "mappin.and.ellipse", arrival: nil),
             immediately: false
         ))
@@ -241,14 +243,15 @@ struct TripActivityPlannerTests {
         }
     }
 
-    @Test(arguments: [(DistanceFormatter.imperial, "150 ft"), (.metric, "50 m")])
-    func distanceIsInTheUsersUnits(_ formatter: DistanceFormatter, _ written: String) {
+    @Test(arguments: [(DistanceFormatter.imperial, "150 ft", "150 feet"), (.metric, "50 m", "50 metres")])
+    func distanceIsInTheUsersUnits(_ formatter: DistanceFormatter, _ written: String, _ spoken: String) {
         var planner = TripActivityPlanner()
         guard case .start(_, let content) = planner.action(for: trip(), route: nil, formatter: formatter) else {
             Issue.record("Expected a start")
             return
         }
         #expect(content.distance == written)
+        #expect(content.spokenDistance == spoken)
     }
 
     @Test

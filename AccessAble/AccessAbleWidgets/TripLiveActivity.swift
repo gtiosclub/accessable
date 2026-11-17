@@ -145,6 +145,7 @@ extension TripActivityAttributes.ContentState {
         status: .active,
         instruction: "Turn left onto Ferst Drive",
         distance: "150 ft",
+        spokenDistance: "150 feet",
         symbolName: "arrow.turn.up.left",
         arrival: .now.addingTimeInterval(8 * 60)
     )
@@ -152,6 +153,7 @@ extension TripActivityAttributes.ContentState {
         status: .paused,
         instruction: "Turn left onto Ferst Drive",
         distance: "150 ft",
+        spokenDistance: "150 feet",
         symbolName: "arrow.turn.up.left",
         arrival: nil
     )
@@ -159,6 +161,7 @@ extension TripActivityAttributes.ContentState {
         status: .offRoute,
         instruction: "Off route. Finding a new way",
         distance: nil,
+        spokenDistance: nil,
         symbolName: "arrow.turn.up.left",
         arrival: nil
     )
@@ -166,6 +169,7 @@ extension TripActivityAttributes.ContentState {
         status: .arrived,
         instruction: "You have arrived",
         distance: nil,
+        spokenDistance: nil,
         symbolName: "mappin.and.ellipse",
         arrival: nil
     )
