@@ -20,7 +20,7 @@ actor TripManager: TripStateProviding {
     private let campusBuildings: @Sendable () -> [CampusBuilding]
     /// Read when a trip starts or reroutes, like `campusBuildings`.
     private let campusCrossings: @Sendable () -> [CampusCrossing]
-    private let setBackgroundTracking: @Sendable (Bool) async -> Void
+    private let setTripTracking: @Sendable (Bool) async -> Void
     private let distances: DistanceSettings
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
@@ -101,7 +101,7 @@ actor TripManager: TripStateProviding {
         landmarks: any LandmarkObserving = PlaceholderLandmarkProvider(),
         campusBuildings: @escaping @Sendable () -> [CampusBuilding] = { CampusLandmarks.buildings },
         campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all },
-        setBackgroundTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
+        setTripTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
         distances: DistanceSettings = DistanceSettings(units: .metres),
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
@@ -112,7 +112,7 @@ actor TripManager: TripStateProviding {
         self.landmarks = landmarks
         self.campusBuildings = campusBuildings
         self.campusCrossings = campusCrossings
-        self.setBackgroundTracking = setBackgroundTracking
+        self.setTripTracking = setTripTracking
         self.distances = distances
         self.now = now
         self.sleep = sleep
@@ -180,10 +180,10 @@ actor TripManager: TripStateProviding {
         }
         startTask = Task { await self.announceStart(generation: generation) }
         watchdogTask = Task { await self.watchSignal(generation: generation) }
-        await setBackgroundTracking(true)
+        await setTripTracking(true)
         // an end that ran during the await may have switched it off before this switched it on
         if self.generation != generation, phase == .planning {
-            await setBackgroundTracking(false)
+            await setTripTracking(false)
         }
     }
 
@@ -229,7 +229,7 @@ actor TripManager: TripStateProviding {
         destination = nil
         routes.send(nil)
         states.send(TripState(phase: .planning, updatedAt: now()))
-        await setBackgroundTracking(false)
+        await setTripTracking(false)
         // a trip started meanwhile shouldn't hear that it ended
         guard self.generation == generation else { return }
         await submit(confirmation("Trip ended."))
@@ -345,7 +345,7 @@ actor TripManager: TripStateProviding {
         // last, since this runs inside the tracking task
         trackingTask?.cancel()
         trackingTask = nil
-        await setBackgroundTracking(false)
+        await setTripTracking(false)
     }
 
     private func markDelivered(_ id: UUID, generation: Int) {

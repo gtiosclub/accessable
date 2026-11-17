@@ -412,7 +412,7 @@ private struct Harness {
         manager = TripManager(
             location: location, routing: router, announcements: engine,
             landmarks: landmarks, campusBuildings: { buildings }, campusCrossings: { crossings },
-            setBackgroundTracking: { [background] in background.record($0) },
+            setTripTracking: { [background] in background.record($0) },
             distances: distances,
             now: { [clock] in clock.now() },
             sleep: { [clock] in try await clock.sleep($0) }
