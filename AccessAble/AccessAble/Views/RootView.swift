@@ -5,7 +5,17 @@ struct RootView: View {
     @Environment(AppViewModel.self) private var app
 
     var body: some View {
-        AccountGateView(services: app.services)
+        Group {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-LiveKitMediaTest") {
+                LiveKitMediaTestView(services: app.services)
+            } else {
+                AccountGateView(services: app.services)
+            }
+            #else
+            AccountGateView(services: app.services)
+            #endif
+        }
         // The redesign is dark throughout; this also keeps the status bar light.
         .preferredColorScheme(.dark)
     }
