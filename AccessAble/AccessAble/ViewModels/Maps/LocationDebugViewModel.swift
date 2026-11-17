@@ -20,7 +20,13 @@ final class LocationDebugViewModel {
     /// Newest first.
     private(set) var recentSamples: [LocationSample] = []
 
+    /// `nil` when unknown.
+    private(set) var heading: UserHeading?
+
     @ObservationIgnored private let services: AppServices
+    @ObservationIgnored private var headingEstimator = HeadingEstimator()
+    // staleness is judged against the newest reading of either kind, so the heading updates without a timer
+    @ObservationIgnored private var newestReadingTime: Date?
 
     static let historyLimit = 20
 
@@ -43,6 +49,16 @@ final class LocationDebugViewModel {
 
     var countField: Field {
         Field(label: "Readings received", value: "\(sampleCount)", spokenValue: "\(sampleCount)")
+    }
+
+    var headingField: Field {
+        guard let heading else { return Field(label: "Heading", value: "Unknown", spokenValue: "Unknown") }
+        let degrees = Int(heading.degrees.rounded()) % 360
+        let source = switch heading.source {
+        case .walkingDirection: "walking direction"
+        case .compass: "compass"
+        }
+        return Field(label: "Heading", value: "\(degrees)° · \(source)", spokenValue: "\(degrees) degrees, \(source)")
     }
 
     func ageField(at now: Date) -> Field {
@@ -85,6 +101,11 @@ final class LocationDebugViewModel {
                     await self.receive(sample)
                 }
             }
+            group.addTask { [services] in
+                for await sample in services.location.headingSamples() {
+                    await self.receive(sample)
+                }
+            }
         }
     }
 
@@ -93,6 +114,19 @@ final class LocationDebugViewModel {
     private func receive(_ sample: LocationSample) {
         sampleCount += 1
         recentSamples = Array(([sample] + recentSamples).prefix(Self.historyLimit))
+        headingEstimator.update(with: sample)
+        updateHeading(readingTime: sample.timestamp)
+    }
+
+    private func receive(_ sample: HeadingSample) {
+        headingEstimator.update(with: sample)
+        updateHeading(readingTime: sample.timestamp)
+    }
+
+    private func updateHeading(readingTime: Date) {
+        let now = max(newestReadingTime ?? readingTime, readingTime)
+        newestReadingTime = now
+        heading = headingEstimator.heading(at: now)
     }
 
     // "Unavailable" rather than 0 or blank, so a missing reading can't be mistaken for a real one
