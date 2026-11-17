@@ -168,7 +168,7 @@ extension TripActivityAttributes.ContentState {
     )
     static let offRoute = Self(
         status: .offRoute,
-        instruction: "Off route. Finding a new way",
+        instruction: "Off route. Finding a new route.",
         distance: nil,
         spokenDistance: nil,
         symbolName: "arrow.turn.up.left",

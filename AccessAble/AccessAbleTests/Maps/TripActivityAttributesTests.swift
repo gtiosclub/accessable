@@ -15,7 +15,7 @@ struct TripActivityAttributesTests {
         ),
         TripActivityAttributes.ContentState(
             status: .offRoute,
-            instruction: "Off route. Finding a new way",
+            instruction: "Off route. Finding a new route.",
             distance: nil,
             spokenDistance: nil,
             symbolName: "exclamationmark.triangle.fill",
