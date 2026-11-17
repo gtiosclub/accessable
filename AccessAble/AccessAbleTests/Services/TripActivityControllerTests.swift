@@ -149,13 +149,13 @@ struct TripActivityControllerTests {
     }
 
     @Test
-    func aFailedStartIsTriedAgainOnTheNextState() async {
-        let calls = await calls(for: [trip(.active), trip(.active, distance: 45), .idle],
+    func aFailedStartIsTriedAgainAtTheNextStep() async {
+        let calls = await calls(for: [trip(.active), trip(.active, distance: 20), trip(.active, "Arrive"), .idle],
                                 activity: RecordingActivity(failingStarts: 1))
         #expect(calls == [
             "end all",
             "start Clough Commons: Turn left onto Ferst Drive, 150 ft",
-            "start Clough Commons: Turn left onto Ferst Drive, 150 ft",
+            "start Clough Commons: Arrive, 150 ft",
             "end active now",
         ])
     }
@@ -166,7 +166,8 @@ struct TripActivityControllerTests {
         let route = try NavigationRoute(
             coordinates: [origin, TripWalk.destination(from: origin, bearing: 0, distance: 280)],
             steps: [
-                RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Head north.", spokenInstruction: "Head north."),
+                RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Head north.",
+                          spokenInstruction: "Head north."),
                 RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "Arrive."),
             ],
             estimatedDuration: 200

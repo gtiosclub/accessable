@@ -172,10 +172,38 @@ struct TripActivityPlannerTests {
     }
 
     @Test
-    func aFailedStartIsTriedAgain() {
+    func aFailedStartIsNotTriedAgainOnTheSameStep() {
         var planner = running()
         planner.startFailed()
-        guard case .start = planner.action(for: trip(distance: 45), route: nil, formatter: .imperial) else {
+        #expect(planner.action(for: trip(distance: 20), route: nil, formatter: .imperial) == nil)
+    }
+
+    @Test
+    func aFailedStartIsTriedAgainAtANewStep() {
+        var planner = running()
+        planner.startFailed()
+        guard case .start = planner.action(for: trip(maneuver: arrive), route: nil, formatter: .imperial) else {
+            Issue.record("Expected another start")
+            return
+        }
+    }
+
+    @Test
+    func aFailedStartIsTriedAgainAtANewStatus() {
+        var planner = running()
+        planner.startFailed()
+        guard case .start = planner.action(for: trip(.paused), route: nil, formatter: .imperial) else {
+            Issue.record("Expected another start")
+            return
+        }
+    }
+
+    @Test
+    func aFailedStartIsTriedAgainOnANewTrip() {
+        var planner = running()
+        planner.startFailed()
+        #expect(planner.action(for: .idle, route: nil, formatter: .imperial) == nil)
+        guard case .start = planner.action(for: trip(), route: nil, formatter: .imperial) else {
             Issue.record("Expected another start")
             return
         }

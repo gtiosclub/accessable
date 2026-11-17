@@ -29,12 +29,17 @@ struct TripActivityPlanner {
     private var shown: Shown?
     /// The arrived card is still on the lock screen, for ending the trip to clear.
     private var showsArrival = false
+    /// What a failed start would have shown. Tried again only at a new step or status, not on every fix,
+    /// since the cause (Live Activities turned off) rarely clears within a step.
+    private var failedStart: Shown?
 
     mutating func action(for state: TripState, route: NavigationRoute?, formatter: DistanceFormatter) -> Action? {
         switch state.phase {
         case .planning:
+            failedStart = nil
             return finish()
         case .arrived:
+            failedStart = nil
             guard shown != nil else { return nil }
             shown = nil
             showsArrival = true
@@ -44,6 +49,11 @@ struct TripActivityPlanner {
             let content = Self.content(for: state, maneuver: maneuver, route: route, formatter: formatter)
             let next = Shown(content: content, maneuver: maneuver, distance: state.distanceToNextManeuver)
             guard let shown else {
+                if let failedStart, next.content.status == failedStart.content.status,
+                   next.maneuver == failedStart.maneuver {
+                    return nil
+                }
+                failedStart = nil
                 self.shown = next
                 showsArrival = false
                 return .start(destinationName: destinationName, content)
@@ -54,8 +64,9 @@ struct TripActivityPlanner {
         }
     }
 
-    /// The client couldn't start the activity: the next state tries again.
+    /// The client couldn't start the activity: the next step or status tries again.
     mutating func startFailed() {
+        failedStart = shown
         shown = nil
     }
 
