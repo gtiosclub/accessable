@@ -180,7 +180,7 @@ struct TripActivityControllerTests {
                                               time + 5 + TripActivityPlanner.staleAfter])
     }
 
-    @Test
+    @Test(.timeLimit(.minutes(1)))
     func aRouteAfterItsStateAddsTheArrivalTime() async throws {
         let origin = GeoCoordinate(latitude: 33.775, longitude: -84.399)
         let route = try NavigationRoute(
@@ -215,7 +215,7 @@ struct TripActivityControllerTests {
         ])
     }
 
-    @Test
+    @Test(.timeLimit(.minutes(1)))
     func aFailedStartIsTriedAgainWhenTheAppComesToTheForeground() async {
         let provider = ControlledTrip()
         // what the real client throws when asked in the background
