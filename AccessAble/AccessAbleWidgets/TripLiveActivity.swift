@@ -155,10 +155,9 @@ private extension TripActivityAttributes.ContentState {
 
     var symbol: String {
         switch status {
-        case .active: symbolName
+        case .active, .arrived: symbolName
         case .paused: "pause.fill"
         case .offRoute: "exclamationmark.triangle.fill"
-        case .arrived: "mappin.and.ellipse"
         }
     }
 
