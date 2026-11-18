@@ -18,7 +18,7 @@ struct TripControlPanel: View {
     var body: some View {
         VStack(spacing: 16) {
             HStack(spacing: 14) {
-                Button("Call Help", action: onCallHelp)
+                AgentButton("Call Help", action: onCallHelp)
                     .buttonStyle(.pill(.primary))
                     .disabled(disabled.contains(.callHelp))
                     .accessibilityHint("Video call a volunteer")
@@ -30,11 +30,13 @@ struct TripControlPanel: View {
                     fill: Theme.red,
                     foreground: .white,
                     diameter: 56,
+                    // The trip's own push-to-talk microphone, not for the voice agent to press.
+                    isAgentControl: false,
                     action: onMicrophone
                 )
                 .disabled(disabled.contains(.microphone))
             }
-            Button("Pause Trip", action: onPauseTrip)
+            AgentButton("Pause Trip", action: onPauseTrip)
                 .buttonStyle(.pill(.destructive))
                 .disabled(disabled.contains(.pauseTrip))
                 .accessibilityHint("Opens settings, continue, exit, and call help")

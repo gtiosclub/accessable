@@ -51,6 +51,7 @@ struct VolunteerChatView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back")
+            .agentButton("Back") { router.pop() }
 
             HelperAvatar(isOnline: volunteer.isOnline, size: 64)
             VStack(alignment: .leading, spacing: 4) {
@@ -68,7 +69,8 @@ struct VolunteerChatView: View {
                 label: "Video call \(volunteer.name)",
                 fill: Theme.red,
                 foreground: .white,
-                diameter: 54
+                diameter: 54,
+                agentNeedsConfirmation: true
             ) {
                 isCalling = true
             }
@@ -98,6 +100,7 @@ struct VolunteerChatView: View {
                 .lineLimit(1...4)
                 .submitLabel(.send)
                 .onSubmit(send)
+                .agentTextField("Message", text: $draft, hint: "submit sends it", onSubmit: send)
             Button(action: send) {
                 Image(systemName: "paperplane")
                     .font(.title2)
@@ -106,6 +109,8 @@ struct VolunteerChatView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Send")
+            // Inside .disabled, so the agent sees when there's nothing to send.
+            .agentButton("Send", action: send)
             .disabled(trimmedDraft.isEmpty)
         }
         .padding(.leading, 20)

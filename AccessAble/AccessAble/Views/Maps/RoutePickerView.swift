@@ -29,23 +29,23 @@ struct RoutePickerView: View {
                     RouteStepsList(steps: route.steps)
                         .padding(.top, 4)
                     VStack(spacing: 14) {
-                        Button("Pick Route") {
+                        AgentButton("Pick Route") {
                             router.push(.trip(TripPlan(place: place, route: route, isRecording: false, origin: origin)))
                         }
                         .buttonStyle(.pill(.primary))
                         .accessibilityHint("Starts walking this route")
 
                         HStack(spacing: 16) {
-                            Button("Last Route") { index -= 1 }
+                            AgentButton("Last Route") { index -= 1 }
                                 .buttonStyle(.pill(.outline))
                                 .disabled(index == 0)
-                            Button("Next Route") { index += 1 }
+                            AgentButton("Next Route") { index += 1 }
                                 .buttonStyle(.pill(.primary))
                                 .disabled(index == routes.count - 1)
                         }
                     }
                     .padding(.top, 8)
-                    Button("Back") { router.pop() }
+                    AgentButton("Back") { router.pop() }
                         .buttonStyle(.plain)
                         .font(.subheadline)
                         .frame(maxWidth: .infinity, minHeight: AccessibilityMetrics.minimumTapTarget)

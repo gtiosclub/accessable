@@ -54,6 +54,7 @@ struct CallHelpView: View {
                     .buttonStyle(.plain)
                     .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
                     .accessibilityHint(item == .live ? "Volunteers available now" : "Saved and recent volunteers")
+                    .agentButton("\(item.rawValue) tab", isSelected: isSelected) { tab = item }
                 }
             }
             Rectangle()
@@ -106,6 +107,7 @@ private struct VolunteerRow: View {
                     fill: Theme.red,
                     foreground: .white,
                     diameter: 54,
+                    agentNeedsConfirmation: true,
                     action: onCall
                 )
                 CircleIconButton(
@@ -140,7 +142,7 @@ struct CallingView: View {
                 .font(.title3)
                 .accessibilityLabel("Calling \(volunteer.name)")
             Spacer()
-            Button("End Call", action: onEnd)
+            AgentButton("End Call", action: onEnd)
                 .buttonStyle(.pill(.destructive))
                 .padding(.horizontal, 24)
                 .padding(.bottom, 24)

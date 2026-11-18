@@ -36,6 +36,9 @@ final class SpeechOutput: NSObject {
     // Speaks text and returns when finished, interrupted, or stop()
     // interrupting: cut off whatever is currently speaking for critical events
     func speak(_ text: String, rate: Float, interrupting: Bool) async {
+        // The voice agent stops listening while the app talks, so it doesn't hear itself.
+        AudioSessionCoordinator.shared.speechStarted()
+        defer { AudioSessionCoordinator.shared.speechEnded() }
         if UIAccessibility.isVoiceOverRunning, UIApplication.shared.applicationState == .active {
             await announceWithVoiceOver(text, interrupting: interrupting)
         } else {
@@ -55,12 +58,8 @@ final class SpeechOutput: NSObject {
         if interrupting, synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
-        // Set every time: dictation switches the shared session to .record, which would make speech silent
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(
-            .playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers]
-        )
-        try? session.setActive(true)
+        // Every time: dictation switches the shared session to .record, which would make speech silent
+        AudioSessionCoordinator.shared.activateForPlayback()
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voice
         utterance.rate = rate // GuidanceProfile.speechRate is already in AVSpeechUtterance units
@@ -88,8 +87,7 @@ final class SpeechOutput: NSObject {
     private func utteranceEnded(_ id: ObjectIdentifier) {
         waiting.removeValue(forKey: id)?.resume()
         if waiting.isEmpty, !synthesizer.isSpeaking {
-            // De-active
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            AudioSessionCoordinator.shared.deactivateAfterPlayback()
         }
     }
  

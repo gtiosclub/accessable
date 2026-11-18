@@ -127,6 +127,21 @@ struct PlaceSearchView: View {
                 }
                 .accessibilityLabel(isOrigin ? "From" : "To")
                 .accessibilityValue(isOrigin && search.originQuery.isEmpty ? originName : text.wrappedValue)
+                .agentTextField(
+                    isOrigin ? "From" : "To",
+                    // Focusing the field shows its matches, as when typing by hand.
+                    text: Binding(get: { text.wrappedValue }, set: {
+                        text.wrappedValue = $0
+                        focusedField = field
+                    }),
+                    hint: isOrigin
+                        ? "starting point; empty means My Location, \(search.locationDetail)"
+                        : "destination search; matching places are listed as buttons",
+                    onSubmit: {
+                        search.search()
+                        if isOrigin { focusedField = .destination }
+                    }
+                )
 
                 if isOrigin, focusedField != .origin, search.originQuery.isEmpty {
                     originTag
@@ -146,6 +161,10 @@ struct PlaceSearchView: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(isOrigin ? "Clear starting point" : "Clear search")
+                .agentButton(isOrigin ? "Clear starting point" : "Clear search") {
+                    text.wrappedValue = ""
+                    search.search()
+                }
             }
             Button {
                 Task { await search.toggleDictation(into: field) }
@@ -212,6 +231,10 @@ struct PlaceSearchView: View {
                 .background(.white.opacity(0.12), in: Circle())
         }
         .buttonStyle(.plain)
+        .agentButton("Swap starting point and destination") {
+            search.swap()
+            focusedField = nil
+        }
         .disabled(!search.canSwap)
         .opacity(search.canSwap ? 1 : Theme.dimmedOpacity)
         .accessibilityLabel("Swap starting point and destination")
@@ -259,6 +282,10 @@ struct PlaceSearchView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Your location, \(search.locationDetail)")
             .accessibilityAddTraits(search.origin == .myLocation ? [.isButton, .isSelected] : .isButton)
+            .agentButton("Your location", hint: "start from where you are", isSelected: search.origin == .myLocation) {
+                search.chooseOrigin(.myLocation)
+                focusedField = .destination
+            }
 
             sectionTitle(
                 search.originQuery.isEmpty ? "Saved places" : "Matches",
@@ -324,6 +351,13 @@ struct PlaceSearchView: View {
         .accessibilityLabel("\(item.displayName), \(count) \(count == 1 ? "place" : "places")")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityHint(isSelected ? "Shows every kind of place" : "Shows only \(item.displayName.lowercased())")
+        .agentButton(
+            "\(item.displayName) filter",
+            hint: "\(count) \(count == 1 ? "place" : "places"); \(isSelected ? "press to show all places" : "press to show only these")",
+            isSelected: isSelected
+        ) {
+            search.category = isSelected ? nil : item
+        }
     }
 
     /// "Showing 3 of 24 places" and a removable tag for each active filter.
@@ -378,6 +412,7 @@ struct PlaceSearchView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Remove filter: \(label)")
+        .agentButton("Remove filter: \(label)", action: remove)
     }
 
     private var resultsList: some View {
@@ -386,7 +421,7 @@ struct PlaceSearchView: View {
                 VStack(alignment: .leading, spacing: 10) {
                     Text(search.settledQuery.isEmpty ? "No places match." : "No places match “\(search.settledQuery)”.")
                         .foregroundStyle(.white)
-                    Button("Clear filters") { search.clearFilters() }
+                    AgentButton("Clear filters") { search.clearFilters() }
                         .buttonStyle(.pill(.outline, size: .compact))
                 }
             }
@@ -437,6 +472,9 @@ struct PlaceSearchView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .agentButton(isExpanded.wrappedValue ? "Fewer locations" : moreLabel) {
+                    isExpanded.wrappedValue.toggle()
+                }
             }
         }
         .padding(.top, 8)
@@ -505,6 +543,12 @@ private struct PlaceRow: View {
         .accessibilityLabel(accessibilityText)
         .accessibilityHint(hint ?? "")
         .accessibilityAddTraits(.isButton)
+        .agentButton(place.name, hint: agentHint, action: action)
+    }
+
+    /// Distance and category, so the agent can tell "the closest cafe" from the rest.
+    private var agentHint: String {
+        ([place.category.displayName] + [distance].compactMap { $0 }).joined(separator: ", ")
     }
 
     /// The name with the letters that matched the search lit in cyan.

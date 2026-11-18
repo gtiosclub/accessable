@@ -44,6 +44,23 @@ final class SettingsViewModel {
 
     var currentPerformanceMode: PerformanceMode { app.performance.mode }
 
+    // MARK: - Voice assistant key
+
+    /// What is typed in the key field; cleared once saved.
+    var apiKeyDraft = ""
+    private(set) var hasSavedAPIKey = ClaudeAPIKeyStore.hasSavedKey
+
+    func saveAPIKey() {
+        guard ClaudeAPIKeyStore.save(apiKeyDraft) else { return }
+        apiKeyDraft = ""
+        hasSavedAPIKey = true
+    }
+
+    func removeAPIKey() {
+        ClaudeAPIKeyStore.remove()
+        hasSavedAPIKey = false
+    }
+
     func isEnabled(_ channel: GuidanceChannels) -> Bool {
         profile.channels.contains(channel)
     }

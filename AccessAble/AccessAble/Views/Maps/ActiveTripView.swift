@@ -55,6 +55,7 @@ struct ActiveTripView: View {
                 )
             }
             .accessibilityHidden(session.isRouteBlocked || session.isPaused)
+            .environment(\.agentControlsHidden, session.isRouteBlocked || session.isPaused)
 
             if session.isRouteBlocked {
                 RouteBlockedScreen(
@@ -209,6 +210,9 @@ struct ActiveTripView: View {
         .padding(4)
         .background(.black.opacity(0.6), in: Capsule())
         .accessibilityHint("Obstacle warnings continue in both views")
+        .agentChoice("View", options: ["Camera", "Map"], selected: session.showsMap ? "Map" : "Camera") { choice in
+            session.showsMap = choice == "Map"
+        }
     }
 }
 
@@ -264,15 +268,16 @@ struct TripPausedCard: View {
             Text(message)
                 .font(.subheadline)
                 .multilineTextAlignment(.center)
-            Button("Continue Walking", action: onContinue)
+            AgentButton("Continue Walking", action: onContinue)
                 .buttonStyle(.pill(.primary))
-            Button("Exit Trip", action: onExit)
+            // Ending a trip by voice asks first: a misheard word mustn't drop the route.
+            AgentButton("Exit Trip", needsConfirmation: true, action: onExit)
                 .buttonStyle(.pill(.destructive))
                 .accessibilityHint(isRecording ? "Ends the trip and saves the recorded route" : "Ends the trip")
             HStack(spacing: 14) {
-                Button("Settings", action: onSettings)
+                AgentButton("Settings", action: onSettings)
                     .buttonStyle(.pill(.outline))
-                Button("Call Help", action: onCallHelp)
+                AgentButton("Call Help", action: onCallHelp)
                     .buttonStyle(.pill(.outline))
             }
         }
@@ -311,14 +316,14 @@ struct RouteBlockedCard: View {
                 Text("Something is blocking the path ahead. Would you like a safer route?")
                     .font(.subheadline)
                     .multilineTextAlignment(.center)
-                Button("Call Help", action: onCallHelp)
+                AgentButton("Call Help", action: onCallHelp)
                     .buttonStyle(.pill(.outline))
-                Button("Re-Route", action: onReroute)
+                AgentButton("Re-Route", action: onReroute)
                     .buttonStyle(.pill(.destructive))
                     .accessibilityHint("Finds a safer route")
-                Button("Pause Trip", action: onPause)
+                AgentButton("Pause Trip", action: onPause)
                     .buttonStyle(.pill(.destructive))
-                Button("Continue Walking", action: onContinue)
+                AgentButton("Continue Walking", action: onContinue)
                     .buttonStyle(.pill(.primary))
             }
             .frame(maxWidth: .infinity)

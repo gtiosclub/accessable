@@ -25,19 +25,19 @@ struct PlaceDetailView: View {
                             .padding(.top, 4)
                     }
                     VStack(spacing: 14) {
-                        Button("Start & Record New Route") {
+                        AgentButton("Start & Record New Route") {
                             router.push(.trip(TripPlan(place: place, route: nil, isRecording: true, origin: origin)))
                         }
                         .buttonStyle(.pill(.destructive))
                         .accessibilityHint("Starts walking and saves the route you take")
 
                         if place.recordedRouteCount > 0 {
-                            Button("Start Recorded Route") { router.push(.routes(place, .recorded, origin: origin)) }
+                            AgentButton("Start Recorded Route") { router.push(.routes(place, .recorded, origin: origin)) }
                                 .buttonStyle(.pill(.primary))
                         }
-                        Button("Start New Route") { router.push(.routes(place, .new, origin: origin)) }
+                        AgentButton("Start New Route") { router.push(.routes(place, .new, origin: origin)) }
                             .buttonStyle(.pill(.primary))
-                        Button("Back") { router.pop() }
+                        AgentButton("Back") { router.pop() }
                             .buttonStyle(.pill(.outline))
                     }
                     .padding(.top, 8)

@@ -41,6 +41,7 @@ struct LandingView: View {
             .background(.black.opacity(0.6), in: Capsule())
             .accessibilityLabel("Developer tools")
             .accessibilityHint("Computer vision, maps, haptics, and command features")
+            .agentButton("Developer tools") { router.push(.developerTools) }
             Spacer()
             CircleIconButton(systemImage: "info", label: "Voice commands") {
                 showsCommands = true
@@ -49,7 +50,7 @@ struct LandingView: View {
     }
 
     private var searchButton: some View {
-        Button("Search Destination") { router.push(.search) }
+        AgentButton("Search Destination") { router.push(.search) }
             .buttonStyle(.pill(.primary))
     }
 }

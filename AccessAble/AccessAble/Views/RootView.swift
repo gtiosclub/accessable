@@ -20,18 +20,41 @@ struct RootView: View {
 /// Landing page and everything pushed from it.
 struct MainFlowView: View {
     @Environment(AppViewModel.self) private var app
+    @Environment(\.scenePhase) private var scenePhase
     @State private var router = AppRouter()
+    @State private var agentRegistry = AgentControlRegistry()
+    /// Made in `.task`, which runs once, so the view's init stays free of side effects.
+    @State private var agent: VoiceAgentViewModel?
     private let intents = IntentsModel.shared
 
     var body: some View {
         @Bindable var router = router
-        NavigationStack(path: $router.path) {
-            LandingView()
-                .navigationDestination(for: AppRoute.self) { route in
-                    destination(for: route)
-                }
+        // Stacked rather than a safe-area inset: screens inside the NavigationStack don't see an
+        // inset added outside it, and the bar would cover their bottom buttons.
+        VStack(spacing: 0) {
+            NavigationStack(path: $router.path) {
+                LandingView()
+                    .navigationDestination(for: AppRoute.self) { route in
+                        destination(for: route)
+                    }
+            }
+            if let agent {
+                VoiceAgentBar(agent: agent) { router.push(.settings) }
+                    .padding(.top, 4)
+                    .background(Color.black.ignoresSafeArea(edges: .bottom))
+            }
         }
         .environment(router)
+        .environment(\.agentRegistry, agentRegistry)
+        .task {
+            guard agent == nil else { return }
+            let agent = VoiceAgentViewModel(services: app.services, router: router, registry: agentRegistry)
+            self.agent = agent
+            await agent.start()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            Task { await agent?.appActivityChanged(isActive: phase == .active) }
+        }
         .onChange(of: intents.pending, initial: true) { _, destination in
             guard let destination else { return }
             router.path = [.feature(destination)]
@@ -52,6 +75,8 @@ struct MainFlowView: View {
             ActiveTripView(plan: plan, services: app.services)
         case .settings:
             SettingsView(app: app)
+                // Changing a setting by voice asks first.
+                .environment(\.agentActionsNeedConfirmation, true)
         case .callHelp:
             CallHelpView()
         case .chat(let volunteer):

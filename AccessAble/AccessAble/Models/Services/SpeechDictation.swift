@@ -15,6 +15,7 @@ final class SpeechDictation {
     @ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
     @ObservationIgnored private var task: SFSpeechRecognitionTask?
     @ObservationIgnored private var wasCancelled = false
+    @ObservationIgnored private var holdsMicrophone = false
     /// Partial and final transcripts. `isFinal` is true once Speech has finished the utterance.
     @ObservationIgnored var onTranscript: ((String, _ isFinal: Bool) -> Void)?
     /// Called with a message that's safe to read aloud whenever dictation fails.
@@ -40,6 +41,9 @@ final class SpeechDictation {
 
         task?.cancel()
         task = nil
+        // The voice agent lets go of the microphone until this dictation ends.
+        AudioSessionCoordinator.shared.dictationWillStart()
+        holdsMicrophone = true
         let recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
         recognitionRequest.shouldReportPartialResults = true
         recognitionRequest.requiresOnDeviceRecognition = true
@@ -101,6 +105,10 @@ final class SpeechDictation {
         if audioEngine.isRunning { audioEngine.stop() }
         audioEngine.inputNode.removeTap(onBus: 0)
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if holdsMicrophone {
+            holdsMicrophone = false
+            AudioSessionCoordinator.shared.dictationDidEnd()
+        }
     }
 
     private func handleResult(transcript: String?, isFinal: Bool, didFail: Bool) {

@@ -81,17 +81,22 @@ extension ButtonStyle where Self == PillButtonStyle {
     }
 }
 
-/// Round icon button (settings, info, microphone, call, message).
+/// Round icon button (settings, info, microphone, call, message). The voice agent can press
+/// it by its label unless `isAgentControl` is false.
 struct CircleIconButton: View {
     let systemImage: String
-    let label: LocalizedStringKey
+    let label: String
     var hint: LocalizedStringKey?
     var fill: Color = Theme.cyan
     var foreground: Color = .black
     var diameter: CGFloat = 64
+    /// Ask before the voice agent presses it. Nil inherits `agentActionsNeedConfirmation`.
+    var agentNeedsConfirmation: Bool?
+    var isAgentControl = true
     let action: () -> Void
 
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.agentControlsHidden) private var agentControlsHidden
 
     var body: some View {
         Button(action: action) {
@@ -107,6 +112,8 @@ struct CircleIconButton: View {
         .buttonStyle(.plain)
         .accessibilityLabel(label)
         .accessibilityHint(hint ?? "")
+        .agentButton(label, needsConfirmation: agentNeedsConfirmation, action: action)
+        .environment(\.agentControlsHidden, agentControlsHidden || !isAgentControl)
     }
 }
 
@@ -176,6 +183,7 @@ struct ScreenHeader: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Back")
+            .agentButton("Back", action: onBack)
 
             // One line like the design; wrap instead at accessibility text sizes.
             Text(title)

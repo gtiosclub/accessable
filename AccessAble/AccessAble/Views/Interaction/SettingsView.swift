@@ -26,6 +26,8 @@ struct SettingsView: View {
                 }
                 .padding(.leading, 8)
 
+                voiceAssistantCard
+
                 SettingsSectionTitle("Navigation Info Output")
                 SettingsCard("Auto Repeat Announcements") {
                     ForEach(AutoRepeat.allCases, id: \.self) { option in
@@ -127,6 +129,7 @@ struct SettingsView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Done")
             .accessibilityHint("Closes settings. Changes are already saved.")
+            .agentButton("Done", hint: "closes settings", needsConfirmation: false) { dismiss() }
         }
         .padding(.top, 8)
     }
@@ -135,27 +138,27 @@ struct SettingsView: View {
     @ViewBuilder
     private var profileControls: some View {
         @Bindable var viewModel = viewModel
-        SettingsPickerRow("Vision Preset", selection: Binding(
-            get: { viewModel.profile.visionLevel },
-            set: { viewModel.applyPreset($0) }
-        )) {
-            ForEach(VisionLevel.allCases, id: \.self) { Text($0.displayName) }
-        }
-        SettingsPickerRow("Announcement Detail", selection: $viewModel.profile.verbosity) {
-            Text("Important only").tag(Verbosity.passive)
-            Text("Everything").tag(Verbosity.active)
-        }
+        SettingsPickerRow(
+            "Vision Preset",
+            selection: Binding(
+                get: { viewModel.profile.visionLevel },
+                set: { viewModel.applyPreset($0) }
+            ),
+            choices: VisionLevel.allCases.map { ($0.displayName, $0) }
+        )
+        SettingsPickerRow(
+            "Announcement Detail",
+            selection: $viewModel.profile.verbosity,
+            choices: [("Important only", .passive), ("Everything", .active)]
+        )
         SettingsSliderRow("Speech Rate", value: $viewModel.profile.speechRate, in: 0.3...0.7)
         SettingsSliderRow("Haptic Strength", value: $viewModel.profile.hapticIntensity, in: 0...1)
         SettingsPickerRow(
             "Performance",
             selection: $viewModel.performanceSetting,
-            footnote: "Currently \(viewModel.currentPerformanceMode == .battery ? "saving battery" : "using best quality")"
-        ) {
-            Text("Automatic").tag(PerformanceModeSetting.automatic)
-            Text("Best quality").tag(PerformanceModeSetting.normal)
-            Text("Save battery").tag(PerformanceModeSetting.battery)
-        }
+            footnote: "Currently \(viewModel.currentPerformanceMode == .battery ? "saving battery" : "using best quality")",
+            choices: [("Automatic", .automatic), ("Best quality", .normal), ("Save battery", .battery)]
+        )
     }
 
     private var resetCard: some View {
@@ -184,6 +187,48 @@ struct SettingsView: View {
         }
         .buttonStyle(.plain)
         .accessibilityHint("Asks before resetting")
+        // The agent's spoken yes-or-no stands in for the dialog.
+        .agentButton("Reset to Default Settings", hint: "restores every setting on this page", needsConfirmation: true) {
+            viewModel.resetToDefaults()
+        }
+    }
+
+    /// The Claude API key the voice assistant needs. Typed by hand only: never by voice.
+    private var voiceAssistantCard: some View {
+        @Bindable var viewModel = viewModel
+        return VStack(alignment: .leading, spacing: 10) {
+            Text("Voice Assistant")
+                .font(.subheadline.bold())
+                .accessibilityAddTraits(.isHeader)
+            Text(viewModel.hasSavedAPIKey
+                ? "A Claude API key is saved. What you say to the assistant is sent to Anthropic to be understood."
+                : "Add a Claude API key to control the app by voice. What you say to the assistant is sent to Anthropic to be understood.")
+                .font(.footnote)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 8) {
+                SecureField("Claude API key", text: $viewModel.apiKeyDraft)
+                    .textContentType(.password)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .padding(.horizontal, 10)
+                    .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
+                    .background(.black.opacity(0.3), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .onSubmit { viewModel.saveAPIKey() }
+                Button("Save") { viewModel.saveAPIKey() }
+                    .buttonStyle(.pill(.primary, size: .compact))
+                    .fixedSize()
+                    .disabled(viewModel.apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if viewModel.hasSavedAPIKey {
+                Button("Remove Saved Key", role: .destructive) { viewModel.removeAPIKey() }
+                    .font(.subheadline)
+                    .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
+            }
+        }
+        .foregroundStyle(.white)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .settingsCardBackground()
     }
 
     /// T23's ranking: the order Ask AI mentions things in. Arrows, not drag handles, since the
@@ -210,8 +255,12 @@ struct SettingsView: View {
                 .font(.subheadline)
                 .foregroundStyle(.white)
             Spacer(minLength: 0)
-            moveButton("chevron.up", isEnabled: position > 1) { viewModel.moveAIPriority(category, by: -1) }
-            moveButton("chevron.down", isEnabled: position < order.count) { viewModel.moveAIPriority(category, by: 1) }
+            moveButton("chevron.up", agentLabel: "Move \(category.displayName) up", isEnabled: position > 1) {
+                viewModel.moveAIPriority(category, by: -1)
+            }
+            moveButton("chevron.down", agentLabel: "Move \(category.displayName) down", isEnabled: position < order.count) {
+                viewModel.moveAIPriority(category, by: 1)
+            }
         }
         .frame(maxWidth: .infinity, minHeight: AccessibilityMetrics.minimumTapTarget, alignment: .leading)
         // VoiceOver hears one row and moves it with the rotor's Actions.
@@ -222,7 +271,9 @@ struct SettingsView: View {
         .accessibilityAction(named: "Move down") { viewModel.moveAIPriority(category, by: 1) }
     }
 
-    private func moveButton(_ systemImage: String, isEnabled: Bool, action: @escaping () -> Void) -> some View {
+    private func moveButton(
+        _ systemImage: String, agentLabel: String, isEnabled: Bool, action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             Image(systemName: systemImage)
                 .font(.body.weight(.semibold))
@@ -231,6 +282,7 @@ struct SettingsView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .agentButton(agentLabel, action: action)
         .disabled(!isEnabled)
         .opacity(isEnabled ? 1 : 0.3)
     }
@@ -342,31 +394,44 @@ private struct SettingsToggleRow: View {
                 .font(.body)
                 .foregroundStyle(.white)
                 .tint(SettingsPalette.accent)
+                .agentToggle(title, isOn: $isOn)
         }
     }
 }
 
-private struct SettingsPickerRow<Value: Hashable, Options: View>: View {
+private struct SettingsPickerRow<Value: Hashable>: View {
     let title: String
     @Binding var selection: Value
     var footnote: String?
-    @ViewBuilder let options: Options
+    /// Listed as data rather than views, so the voice agent can read and pick them too.
+    let choices: [(label: String, value: Value)]
 
-    init(_ title: String, selection: Binding<Value>, footnote: String? = nil, @ViewBuilder options: () -> Options) {
+    init(_ title: String, selection: Binding<Value>, footnote: String? = nil, choices: [(label: String, value: Value)]) {
         self.title = title
         _selection = selection
         self.footnote = footnote
-        self.options = options()
+        self.choices = choices
     }
 
     var body: some View {
         SettingsRow {
             VStack(alignment: .leading, spacing: 2) {
                 LabeledContent {
-                    Picker(title, selection: $selection) { options }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                        .tint(SettingsPalette.accent)
+                    Picker(title, selection: $selection) {
+                        ForEach(choices.indices, id: \.self) { index in
+                            Text(choices[index].label).tag(choices[index].value)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .tint(SettingsPalette.accent)
+                    .agentChoice(
+                        title,
+                        options: choices.map(\.label),
+                        selected: choices.first { $0.value == selection }?.label
+                    ) { label in
+                        if let choice = choices.first(where: { $0.label == label }) { selection = choice.value }
+                    }
                 } label: {
                     Text(title).foregroundStyle(.white)
                 }
@@ -399,6 +464,11 @@ private struct SettingsSliderRow: View {
                     .accessibilityHidden(true)
                 Slider(value: $value, in: range) { Text(title) }
                     .tint(SettingsPalette.accent)
+                    .agentSlider(
+                        title,
+                        value: Binding(get: { Double(value) }, set: { value = Float($0) }),
+                        in: Double(range.lowerBound) ... Double(range.upperBound)
+                    )
             }
         }
     }
@@ -436,6 +506,7 @@ private struct SettingsCard<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .settingsCardBackground()
         .accessibilityElement(children: .contain)
+        .environment(\.agentLabelPrefix, title)
     }
 }
 
@@ -472,6 +543,7 @@ private struct SettingsOptionRow: View {
         }
         .buttonStyle(.plain)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .agentButton(title, hint: isSelected ? "checked; press to uncheck" : "unchecked; press to check", isSelected: isSelected, action: action)
     }
 }
 

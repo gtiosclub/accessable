@@ -68,11 +68,7 @@ final class SteeringTones {
         }
         guard !engine.isRunning else { return true }
         // The same session settings speech uses, so the two mix instead of cutting each other off.
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(
-            .playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers]
-        )
-        try? session.setActive(true)
+        AudioSessionCoordinator.shared.activateForPlayback()
         do {
             try engine.start()
             return true
