@@ -64,8 +64,8 @@ final class PlaceDetailViewModel {
         summary.map { "Route ready. \($0)" }
     }
 
-    /// What each step says, in order, as spoken during the trip.
-    var steps: [String] { route?.steps.map(\.spokenInstruction) ?? [] }
+    /// What each step says, in order, without the compass direction of the first, which the trip doesn't say either.
+    var steps: [String] { route?.steps.map { RouteStep.withoutCompassDirection($0.spokenInstruction) } ?? [] }
 
     /// Asks for the route, then follows location until cancelled. A route found earlier is
     /// kept when the screen comes back.
