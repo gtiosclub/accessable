@@ -56,7 +56,8 @@ struct LandingView: View {
 
 /// Satellite map of campus with the real route, the destination, and the user where they
 /// really are. It follows the user, turned so the way they face is up, until they pan the map
-/// themselves; the compass shows where north is whenever it is turned. The arrow points the way
+/// themselves, and again from the location button; the compass shows where north is whenever
+/// it is turned. The arrow points the way
 /// the user faces, and is a dot while that isn't known. VoiceOver reads it as one element with
 /// `accessibilityLabel`; the spoken directions carry the details.
 struct CampusMap: View {
@@ -96,6 +97,8 @@ struct CampusMap: View {
         .mapStyle(.imagery(elevation: .flat))
         .mapControls {
             MapCompass()
+            // following stops when the user pans; this brings it back
+            MapUserLocationButton()
         }
         .onMapCameraChange(frequency: .continuous) { context in
             mapHeading = context.camera.heading
