@@ -18,6 +18,11 @@ struct AppServices: Sendable {
     var auth: any AuthService
     // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
+    // TODO(MATCH-x): replace these four placeholders with the real call services.
+    var volunteers: any VolunteerDirectory = PlaceholderVolunteerDirectory()
+    var presence: any PresenceService = PlaceholderPresenceService()
+    var callSignaling: any CallSignaling = PlaceholderCallSignaling()
+    var videoCall: any VideoCallSession = PlaceholderVideoCallSession()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
     var askAISettings = AskAISettings()
