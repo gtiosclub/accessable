@@ -176,6 +176,8 @@ extension RouteStep {
         if let street = rest.prefixMatch(of: /\s+on\s+/) {
             return "Follow " + rest[street.range.upperBound...]
         }
+        // only where the direction ends the phrase, so "Walk North Avenue." is a street, not a direction
+        guard rest.isEmpty || rest.prefixMatch(of: /[.,;]|\s+(?:for|to|toward)\s/) != nil else { return text }
         return "Follow the path" + rest
     }
 }
