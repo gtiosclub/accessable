@@ -108,15 +108,15 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 
 ## Trip map
 
-`CampusMap` on the trip screen follows the user with the way they face at the top, until they pan it. The compass appears whenever the map is turned, so north can still be found. The user's arrow points the way they face, turned back by however far the map is turned, and is a dot while MapKit has no compass reading. VoiceOver still reads the map as one element.
+`CampusMap` on the trip screen follows the user with the way they face at the top, until they pan it; the location button follows again. The compass appears whenever the map is turned, so north can still be found. The user's arrow points the way they face, turned back by however far the map is turned, and is a dot while MapKit has no compass reading. VoiceOver still reads the map as one element.
 
 ## Field-test recorder
 
-Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at every launch. While it is on, each trip writes one CSV file to `Documents/TripRecordings/`, which stays on the phone until it is shared from that screen.
+Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at every launch. While it is on, each trip writes one CSV file to `Documents/TripRecordings/`, which is excluded from backups, so recordings stay on the phone until shared from that screen. The screen can also delete them all.
 
 - A `fix` row for every location fix: time, position, accuracy, speed, course and its accuracy, the heading used and where it came from, the compass accuracy, progress along the route, the tracker's side offset, the next step, whether off route, and the tracker's events.
 - An `announcement` row for everything submitted to the announcement engine, whether or not it was then spoken.
-- `TripManager` asks the recorder whether it is recording before building a row, so it costs nothing while off. A file that can't be written is logged, stops, and its error shows on the recorder screen; the trip carries on.
+- `TripManager` builds no fix row unless the recorder is recording, so it costs nothing while off. Rows are written as they happen, under the recorder's lock. A file that can't be written is logged, stops, and its error shows on the recorder screen; the trip carries on.
 
 ## Crosswalks
 
@@ -213,7 +213,7 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
   - It needs a fix accurate to 10 m at both ends of the movement.
   - With none in the first 40 m, there is no warning, which beats a false "turn around".
 - **Off route is slower with rough fixes.** With fixes accurate to 15 to 20 m, the limits grow to 22.5 to 30 m and GPS noise near them ends runs, so walking straight off the route takes 15 to 38 s in simulated walks, against 16 to 24 s with fixes accurate to 5 to 10 m. Walking beside the route 12 to 18 m out with fixes accurate to 10 to 25 m can still be called off route now and then.
-- **Cutting a small U is within GPS error.** A block narrower than about twice the 20 m lateral gate is never more than 20 m from a user walking straight across it, so crossing it can count as walking it, turns included.
+- **Cutting across near the end of a U is within GPS error.** Crossing a U or switchback within about 20 m of its end gains no more along the route, beyond the straight line, than cutting the inside of a corner does, so it counts as walking it: its turns go unsaid, with only "Continue for …" or the next step's warning. Crossing further from its end is off route.
 - **Missed-turn detection covers turns of 60° or more only.**
   - Walking straight past a gentler bend relies on off-route detection.
   - At 30°, that can take about 60 m.
