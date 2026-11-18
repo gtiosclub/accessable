@@ -240,7 +240,7 @@ struct LiveSceneView: View {
 
     /// Walk / Find / Read / Describe, after Magnifier's detection modes.
     private var modePicker: some View {
-        Picker("Mode", selection: $viewModel.mode) {
+        Picker("Mode", selection: $viewModel.mode.withSelectionHaptic()) {
             ForEach(LiveMode.allCases, id: \.self) { mode in
                 Text(mode.title).tag(mode)
             }
@@ -376,7 +376,11 @@ struct LiveSceneView: View {
     private func controlButton(
         _ title: String, systemImage: String, tint: Color = .accentColor, action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        // Accessibility Buttons → Selection
+        Button {
+            Haptics.play(.selection)
+            action()
+        } label: {
             VStack(spacing: 4) {
                 Image(systemName: systemImage)
                     .font(.title2)
@@ -395,21 +399,21 @@ struct LiveSceneView: View {
     private var alertMenu: some View {
         @Bindable var app = app
         return Menu {
-            Picker("Warn me about", selection: $app.profile.alertFilter.minimumDanger) {
+            Picker("Warn me about", selection: $app.profile.alertFilter.minimumDanger.withSelectionHaptic()) {
                 ForEach(DangerLevel.allCases, id: \.self) { level in
                     Text(level.displayName).tag(level)
                 }
             }
             .pickerStyle(.menu)
-            Picker("Warn me within", selection: $app.profile.alertFilter.maximumDistance) {
+            Picker("Warn me within", selection: $app.profile.alertFilter.maximumDistance.withSelectionHaptic()) {
                 ForEach(AlertFilter.distanceChoices, id: \.self) { distance in
                     Text(String(format: "%g metres", distance)).tag(distance)
                 }
             }
             .pickerStyle(.menu)
-            Toggle("Vibration", isOn: channelBinding(.haptics, in: $app.profile))
+            Toggle("Vibration", isOn: channelBinding(.haptics, in: $app.profile).withSelectionHaptic())
             // Steering beeps from the side to move towards; best with headphones.
-            Toggle("Sound cues", isOn: channelBinding(.spatialAudio, in: $app.profile))
+            Toggle("Sound cues", isOn: channelBinding(.spatialAudio, in: $app.profile).withSelectionHaptic())
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: "slider.horizontal.3")

@@ -4,7 +4,8 @@ import os
  
 private let log = Logger(subsystem: "AccessAble", category: "Haptics")
  
-/// Owner: Haptics (3.2). Plays the AHAP files named by `HapticID`, one at a time.
+/// Owner: Haptics (3.2). Plays the AHAP files named by `HapticID`, one at a time, or the
+/// system haptic for IDs that have one.
 /// `intensity` (the user's Haptic intensity setting, 0...1) scales the whole pattern.
 /// Patterns with a `loopPeriod` repeat for at most `maxLoopDuration`, so a warning can't keep
 /// buzzing after whatever caused it has gone; nothing reports that a hazard has passed.
@@ -17,6 +18,12 @@ actor CoreHapticsRenderer: HapticRendering {
     private static let maxLoopDuration: Duration = .seconds(3)
  
     func play(_ id: HapticID, intensity: Float) async {
+        if let system = id.systemHaptic {
+            // Replaces whatever is playing, like an AHAP pattern would.
+            await stop()
+            await Haptics.render(system, intensity: intensity)
+            return
+        }
         guard supportsHaptics, intensity > 0, let pattern = pattern(for: id) else { return }
         do {
             let engine = try runningEngine()

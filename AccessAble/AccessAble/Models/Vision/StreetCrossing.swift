@@ -175,6 +175,7 @@ struct StreetSignalAnnouncer: Sendable {
                 category: .landmark,
                 priority: .normal,
                 text: Self.phrase(for: nearest),
+                haptic: .feature,
                 distance: nearest.distance,
                 bearing: nearest.bearing,
                 source: .sceneDescription,

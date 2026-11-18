@@ -426,16 +426,8 @@ struct ObstacleAnnouncer: Sendable {
         }
         guard shouldSpeak, let subject else { return nil }
 
-        var (priority, haptic) = urgency(ofBand: band, of: bands.count)
-        // Short of "Stop", a buzz that says which way beats one that only says "near": the
-        // haptics team's turn patterns, so it can be followed with the phone in a pocket.
-        if band < stopBand {
-            switch side(of: advicePath) {
-            case .left: haptic = .turnLeft
-            case .right: haptic = .turnRight
-            case nil: break
-            }
-        }
+        // Obstruction Ahead → Warning, even when the speech says which way to go round it.
+        let (priority, haptic) = urgency(ofBand: band, of: bands.count)
         guard admit(priority, at: time) else { return nil }
         // Only a fresh warning can go quiet; a nearer band or new advice within one is news.
         let hapticOnly = path.announcedBand == nil && band < stopBand
@@ -578,7 +570,7 @@ struct ObstacleAnnouncer: Sendable {
         case .dropOff:
             return priority < .high ? (.high, .obstacleNearer) : (priority, haptic)
         default:
-            return priority == .critical ? (.high, .attention) : (priority, haptic)
+            return priority == .critical ? (.high, .obstacleNearer) : (priority, haptic)
         }
     }
 }
