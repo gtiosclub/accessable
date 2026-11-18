@@ -22,7 +22,7 @@ actor TripManager: TripStateProviding {
     private let campusCrossings: @Sendable () -> [CampusCrossing]
     private let setTripTracking: @Sendable (Bool) async -> Void
     private let distances: DistanceSettings
-    /// Writes nothing, and is asked for nothing, unless recording is on.
+    /// Writes nothing unless recording is on, and fix rows aren't even built then.
     private let recorder: TripRecorder?
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
@@ -766,7 +766,7 @@ actor TripManager: TripStateProviding {
     }
 
     private func submit(_ event: AnnouncementEvent) async {
-        if let recorder, recorder.isRecording { recorder.record(announcement: event.text, at: event.createdAt) }
+        recorder?.record(announcement: event.text, at: event.createdAt)
         await announcements.submit(event)
     }
 

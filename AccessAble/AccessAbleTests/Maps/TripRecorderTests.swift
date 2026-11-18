@@ -79,4 +79,32 @@ struct TripRecorderTests {
             #expect(older == [TripRecorder.header])
         }
     }
+
+    @Test
+    func keepsRecordingsOutOfBackups() throws {
+        try withRecorder { recorder in
+            recorder.setEnabled(true)
+            recorder.tripStarted(at: start)
+            let values = try recorder.directory.resourceValues(forKeys: [.isExcludedFromBackupKey])
+            #expect(values.isExcludedFromBackup == true)
+        }
+    }
+
+    @Test
+    func deletingFinishesTheFileBeingWrittenAndRemovesEveryRecording() throws {
+        try withRecorder { recorder in
+            recorder.setEnabled(true)
+            recorder.tripStarted(at: start)
+            recorder.tripStarted(at: start.addingTimeInterval(60))
+            try recorder.deleteRecordings()
+
+            #expect(!recorder.isRecording)
+            let recordings = try recorder.recordings()
+            #expect(recordings.isEmpty)
+            // still on, so the next trip records again
+            recorder.tripStarted(at: start.addingTimeInterval(120))
+            let next = try recorder.recordings()
+            #expect(next.count == 1)
+        }
+    }
 }

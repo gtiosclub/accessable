@@ -6,6 +6,7 @@ struct TripRecorderView: View {
     @State private var isEnabled: Bool
     @State private var recordings: [URL] = []
     @State private var listError: String?
+    @State private var confirmsDelete = false
 
     init(recorder: TripRecorder) {
         self.recorder = recorder
@@ -18,8 +19,9 @@ struct TripRecorderView: View {
                 Toggle("Record trips", isOn: $isEnabled)
                     .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
             } footer: {
-                Text("While on, each trip saves every location fix and announcement to a file on this phone. "
-                    + "Nothing leaves the phone unless you share a file. Turns off when the app restarts.")
+                Text("While on, each trip saves every location fix and announcement to a file on this phone, kept "
+                    + "out of backups. Nothing leaves the phone unless you share a file. Turns off when the app "
+                    + "restarts.")
             }
 
             if let error = listError ?? recorder.lastError {
@@ -41,6 +43,18 @@ struct TripRecorderView: View {
                     .accessibilityHint("Shares this recording as a CSV file")
                 }
             }
+
+            if !recordings.isEmpty {
+                Section {
+                    Button("Delete All Recordings", role: .destructive) { confirmsDelete = true }
+                        .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
+                }
+            }
+        }
+        .confirmationDialog("Delete all trip recordings?", isPresented: $confirmsDelete, titleVisibility: .visible) {
+            Button("Delete All Recordings", role: .destructive, action: deleteAll)
+        } message: {
+            Text("This can't be undone.")
         }
         .navigationTitle("Trip recorder")
         .navigationBarTitleDisplayMode(.inline)
@@ -49,6 +63,15 @@ struct TripRecorderView: View {
             refresh()
         }
         .onAppear(perform: refresh)
+    }
+
+    private func deleteAll() {
+        do {
+            try recorder.deleteRecordings()
+            refresh()
+        } catch {
+            listError = error.localizedDescription
+        }
     }
 
     private func refresh() {

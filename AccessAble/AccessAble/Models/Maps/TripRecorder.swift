@@ -10,7 +10,7 @@ private let log = Logger(subsystem: "AccessAble", category: "TripRecorder")
 ///
 /// Off by default and at every launch. While it is off, `isRecording` is false and `TripManager` builds no rows, so
 /// it costs nothing. A file is started when a trip starts and finished when it ends or arrives. Files stay on this
-/// phone, in `Documents/TripRecordings/`, until the user shares one.
+/// phone, in `Documents/TripRecordings/`, which is kept out of backups, until the user shares or deletes them.
 final class TripRecorder: Sendable {
     /// What one location fix did to the trip.
     struct Fix: Sendable {
@@ -71,6 +71,7 @@ final class TripRecorder: Sendable {
 
     /// Starts a new file for a trip, when recording is on.
     func tripStarted(at time: Date) {
+        // a trip replacing one that never ended finishes that one's file, so rows never mix two trips
         let previous = state.withLock { state -> FileHandle? in
             defer { state.file = nil }
             return state.file
@@ -79,6 +80,11 @@ final class TripRecorder: Sendable {
         guard isEnabled else { return }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            // location history mustn't leave the phone in an iCloud or computer backup
+            var values = URLResourceValues()
+            values.isExcludedFromBackup = true
+            var excluded = directory
+            try excluded.setResourceValues(values)
             let name = "trip-" + Self.fileTime.format(time).replacingOccurrences(of: ":", with: "-") + ".csv"
             let url = directory.appending(path: name)
             guard FileManager.default.createFile(atPath: url.path(), contents: Data((Self.header + "\n").utf8)) else {
@@ -129,7 +135,18 @@ final class TripRecorder: Sendable {
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
     }
 
+    /// Deletes every recording, finishing the one being written first.
+    func deleteRecordings() throws {
+        tripEnded()
+        for url in try recordings() {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    /// Synchronous, under the lock: one short line a second or so, which is cheaper than a hop to another queue and
+    /// keeps rows in the order they happened.
     private func write(_ fields: [String]) {
+        guard isRecording else { return }
         let line = Data((fields.map(Self.escape).joined(separator: ",") + "\n").utf8)
         do {
             try state.withLock { state in try state.file?.write(contentsOf: line) }
