@@ -613,6 +613,7 @@ struct TripManagerTests {
         }
         let arrived = try #require(await harness.states.current)
         #expect(arrived.phase == .paused)
+        #expect(arrived.hasArrived)
         await harness.location.waitForTermination(ofStream: 0)
         await waitUntil { harness.background.values == [true, false] }
 

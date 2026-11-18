@@ -184,8 +184,10 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
 
 /// Shows nothing, so previews and tests never put an activity on the lock screen.
 struct PlaceholderTripActivityClient: TripActivityClient {
-    func start(_ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState) async throws {}
-    func update(_ state: TripActivityAttributes.ContentState) async {}
+    func start(
+        _ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState, staleDate: Date?
+    ) async throws {}
+    func update(_ state: TripActivityAttributes.ContentState, staleDate: Date?) async {}
     func end(_ state: TripActivityAttributes.ContentState, immediately: Bool) async {}
     func endAll() async {}
 }

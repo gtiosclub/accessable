@@ -15,21 +15,29 @@ actor ActivityKitTripActivityClient: TripActivityClient {
     /// awaited on from inside the actor. Kept after a delayed end, so ending the trip can still dismiss it.
     private var activityID: String?
 
-    func start(_ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState) async throws {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw TripActivityStartError.activitiesDisabled }
-        // a new trip straight after arriving replaces the arrived card rather than sitting beside it
+    func start(
+        _ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState, staleDate: Date?
+    ) async throws {
+        // a new trip straight after arriving replaces the arrived card rather than sitting beside it, and clears it
+        // even when Live Activities have since been turned off
         await Self.activity(id: activityID)?.end(nil, dismissalPolicy: .immediate)
-        activityID = try Activity.request(
-            attributes: attributes, content: ActivityContent(state: state, staleDate: nil), pushType: nil
-        ).id
+        activityID = nil
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { throw TripActivityStartError.activitiesDisabled }
+        do {
+            activityID = try Activity.request(
+                attributes: attributes, content: ActivityContent(state: state, staleDate: staleDate), pushType: nil
+            ).id
+        } catch ActivityAuthorizationError.visibility {
+            throw TripActivityStartError.notInForeground
+        }
     }
 
-    func update(_ state: TripActivityAttributes.ContentState) async {
+    func update(_ state: TripActivityAttributes.ContentState, staleDate: Date?) async {
         guard let activity = Self.activity(id: activityID) else {
             forgetDismissed()
             return
         }
-        await activity.update(ActivityContent(state: state, staleDate: nil))
+        await activity.update(ActivityContent(state: state, staleDate: staleDate))
     }
 
     func end(_ state: TripActivityAttributes.ContentState, immediately: Bool) async {
