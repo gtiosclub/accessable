@@ -32,6 +32,7 @@ final class AppViewModel {
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var tripCameraTask: Task<Void, Never>?
+    @ObservationIgnored private var tripActivityTask: Task<Void, Never>?
 
     private enum Keys {
         static let profile = "guidanceProfile"
@@ -58,6 +59,10 @@ final class AppViewModel {
 
         let tripCamera = TripCameraCoordinator(trip: self.services.trip, scene: self.services.scene)
         tripCameraTask = Task { await tripCamera.run() }
+        let tripActivity = TripActivityController(
+            trip: self.services.trip, activity: self.services.tripActivity, distances: self.services.distanceSettings
+        )
+        tripActivityTask = Task { await tripActivity.run() }
     }
 
     func completeOnboarding(with profile: GuidanceProfile) {

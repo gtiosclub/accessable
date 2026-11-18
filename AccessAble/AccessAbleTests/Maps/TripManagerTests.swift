@@ -694,10 +694,12 @@ struct TripManagerTests {
         let offRoute = try #require(await harness.states.current)
         #expect(offRoute.nextManeuver?.instruction == "Off route. Finding a new route.")
         #expect(offRoute.distanceToNextManeuver == nil)
+        #expect(offRoute.isOffRoute)
 
         await harness.router.respond()
         let rerouted = await harness.states.waitFor { $0.nextManeuver?.instruction == "Arrive" }
         #expect(abs((rerouted.distanceRemaining ?? 0) - 80) < 0.5)
+        #expect(!rerouted.isOffRoute)
         // the map redraws from this stream
         var routes = harness.manager.tripRoutes().makeAsyncIterator()
         let latest = try #require(await routes.next())
