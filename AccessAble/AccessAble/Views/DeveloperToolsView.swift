@@ -38,6 +38,10 @@ struct DeveloperToolsView: View {
                      hint: "Search a destination and walk a real route") {
                     TripView(services: app.services)
                 }
+                link("Trip recorder", systemImage: "record.circle",
+                     hint: "Records each trip's location fixes and announcements to a file you can share") {
+                    TripRecorderView(recorder: app.services.tripRecorder)
+                }
                 #if DEBUG
                 link("Location readings", systemImage: "location",
                      hint: "Shows the location permission and the latest GPS readings") {

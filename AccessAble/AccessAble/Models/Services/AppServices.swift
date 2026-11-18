@@ -27,6 +27,8 @@ struct AppServices: Sendable {
     /// Feet or metres for the trip, search and "where am I". AppViewModel keeps it in step with
     /// the profile.
     var distanceSettings = DistanceSettings()
+    /// Field-test recording of trips, off until turned on in Developer Tools.
+    var tripRecorder = TripRecorder()
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
@@ -66,7 +68,8 @@ struct AppServices: Sendable {
             location: location, routing: services.routing, announcements: services.announcements,
             landmarks: services.landmarks,
             setTripTracking: { await location.setTripTracking($0) },
-            distances: distanceSettings
+            distances: distanceSettings,
+            recorder: services.tripRecorder
         )
         return services
     }

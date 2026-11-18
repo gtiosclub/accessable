@@ -408,7 +408,8 @@ private struct Harness {
         reroutes: [Result<NavigationRoute, RoutingError>] = [],
         buildings: [CampusBuilding] = [],
         crossings: [CampusCrossing] = [],
-        distances: DistanceSettings = DistanceSettings(units: .metres)
+        distances: DistanceSettings = DistanceSettings(units: .metres),
+        recorder: TripRecorder? = nil
     ) throws {
         let route = try route ?? cornerRoute()
         self.route = route
@@ -418,6 +419,7 @@ private struct Harness {
             landmarks: landmarks, campusBuildings: { buildings }, campusCrossings: { crossings },
             setTripTracking: { [background] in background.record($0) },
             distances: distances,
+            recorder: recorder,
             now: { [clock] in clock.now() },
             sleep: { [clock] in try await clock.sleep($0) }
         )
@@ -1716,3 +1718,46 @@ struct TripManagerDepartureTests {
     }
 }
 
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerRecordingTests {
+    @Test
+    func recordsEachFixAndAnnouncementWhileOn() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recorder = TripRecorder(directory: directory)
+        recorder.setEnabled(true)
+        let harness = try Harness(recorder: recorder)
+        await harness.start()
+        await harness.walk(from: 0, to: 50)
+        await harness.goOffRoute(at: 49)
+        await harness.manager.endTrip()
+
+        let url = try #require(try recorder.recordings().first)
+        let rows = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init)
+        let fixes = rows.filter { $0.hasPrefix("fix,") }
+        // 36 fixes walking, 32 going off route
+        #expect(fixes.count == 36 + 32)
+        let offRoute = try #require(fixes.first { $0.contains(",offRoute,") })
+        // off route, still before the corner at step 1, 40 m to the left
+        #expect(offRoute.contains(",-40.0,1,1,offRoute,"))
+        #expect(rows.contains {
+            $0.hasPrefix("announcement,") && $0.hasSuffix(",You're off the route. Finding a new route.")
+        })
+        #expect(rows.last?.hasSuffix(",Trip ended.") == true)
+        #expect(!recorder.isRecording)
+    }
+
+    @Test
+    func recordsNothingWhileOff() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recorder = TripRecorder(directory: directory)
+        let harness = try Harness(recorder: recorder)
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        await harness.manager.endTrip()
+
+        let recordings = try recorder.recordings()
+        #expect(recordings.isEmpty)
+    }
+}

@@ -22,6 +22,8 @@ actor TripManager: TripStateProviding {
     private let campusCrossings: @Sendable () -> [CampusCrossing]
     private let setTripTracking: @Sendable (Bool) async -> Void
     private let distances: DistanceSettings
+    /// Writes nothing, and is asked for nothing, unless recording is on.
+    private let recorder: TripRecorder?
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
 
@@ -106,6 +108,7 @@ actor TripManager: TripStateProviding {
         campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all },
         setTripTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
         distances: DistanceSettings = DistanceSettings(units: .metres),
+        recorder: TripRecorder? = nil,
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
@@ -117,6 +120,7 @@ actor TripManager: TripStateProviding {
         self.campusCrossings = campusCrossings
         self.setTripTracking = setTripTracking
         self.distances = distances
+        self.recorder = recorder
         self.now = now
         self.sleep = sleep
         states.send(TripState(phase: .planning, updatedAt: now()))
@@ -163,6 +167,7 @@ actor TripManager: TripStateProviding {
         isSignalWeak = false
         routes.send(route)
         publish(at: now())
+        recorder?.tripStarted(at: now())
 
         // subscribed before any await, so a fix or delivery can't slip past while this trip is set up
         let samples = location.locationSamples()
@@ -233,9 +238,10 @@ actor TripManager: TripStateProviding {
         routes.send(nil)
         states.send(TripState(phase: .planning, updatedAt: now()))
         await setTripTracking(false)
-        // a trip started meanwhile shouldn't hear that it ended
+        // a trip started meanwhile shouldn't hear that it ended, and has its own recording
         guard self.generation == generation else { return }
         await submit(confirmation("Trip ended."))
+        recorder?.tripEnded()
     }
 
     private func cancelTasks() {
@@ -280,6 +286,7 @@ actor TripManager: TripStateProviding {
         let update = tracker.update(with: sample, emitsCues: phase == .active)
         self.tracker = tracker
         progress = update.state
+        record(sample, update, on: tracker.route)
         if update.events.contains(.arrived) {
             await arrive(at: sample.timestamp, generation: generation)
             return
@@ -345,6 +352,7 @@ actor TripManager: TripStateProviding {
             if let arrival = arrivalAnnouncement() { await submit(arrival) }
         }
         guard self.generation == generation else { return }
+        recorder?.tripEnded()
         // last, since this runs inside the tracking task
         trackingTask?.cancel()
         trackingTask = nil
@@ -758,7 +766,18 @@ actor TripManager: TripStateProviding {
     }
 
     private func submit(_ event: AnnouncementEvent) async {
+        if let recorder, recorder.isRecording { recorder.record(announcement: event.text, at: event.createdAt) }
         await announcements.submit(event)
+    }
+
+    private func record(_ sample: LocationSample, _ update: RouteProgressTracker.Update, on route: NavigationRoute) {
+        guard let recorder, recorder.isRecording else { return }
+        recorder.record(TripRecorder.Fix(
+            sample: sample, heading: headingEstimator.heading(at: now()),
+            compassAccuracy: headingEstimator.compassAccuracy,
+            progress: route.totalDistance - update.state.distanceRemaining, sideOffset: update.sideOffset,
+            nextStepIndex: update.state.nextStepIndex, isOffRoute: update.state.isOffRoute, events: update.events
+        ))
     }
 
     /// Long enough to reach the turn at a slow walk, so a cue stuck behind other speech still arrives in time.

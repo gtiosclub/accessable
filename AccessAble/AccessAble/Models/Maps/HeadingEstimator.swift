@@ -39,6 +39,9 @@ struct HeadingEstimator {
         compass = sample
     }
 
+    /// Degrees, of the latest compass reading, whether or not it is precise enough to use.
+    var compassAccuracy: Double? { compass?.accuracy }
+
     /// nil means unknown: better no direction than a wrong one.
     func heading(at time: Date) -> UserHeading? {
         if let location, isFresh(location.timestamp, at: time), Self.isWalking(location) {

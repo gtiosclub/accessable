@@ -42,6 +42,8 @@ struct RouteProgressTracker {
         var state: Progress
         /// In delivery order.
         var events: [GuidanceEvent]
+        /// Metres from the route of the fix as measured here, negative left of travel; nil when the fix was ignored.
+        var sideOffset: Double? = nil
     }
 
     let route: NavigationRoute
@@ -238,13 +240,13 @@ struct RouteProgressTracker {
         if isAtDestination(sample) {
             hasArrived = true
             nextStepIndex = route.steps.count - 1
-            return Update(state: state, events: [.arrived])
+            return Update(state: state, events: [.arrived], sideOffset: projection.sideOffset)
         }
         if emitsCues, !isOffRoute {
             events += turnCues(passed: passed)
             events += crossingCues()
         }
-        return Update(state: state, events: events)
+        return Update(state: state, events: events, sideOffset: projection.sideOffset)
     }
 
     private func isAdmissible(_ sample: LocationSample) -> Bool {
