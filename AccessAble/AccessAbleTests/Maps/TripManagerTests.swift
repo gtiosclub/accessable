@@ -715,6 +715,18 @@ struct TripManagerTests {
     }
 
     @Test
+    func rerouteStartsFromTheFixThatFindsTheUserOffRoute() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 50)
+        // off route on the 32nd fix, with no fix after it
+        await harness.goOffRoute(at: 49)
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.requests == [harness0Origin])
+        #expect(await harness.engine.texts.last == "You're off the route. Finding a new route.")
+    }
+
+    @Test
     func askedForRerouteWhileOnTheRouteFollowsTheNewRoute() async throws {
         // Route Blocked Ahead's "find another way": still on the route, so no off-route reroute would come
         let walked = TripWalk.distances(from: 0, to: 20).last ?? 0
@@ -831,9 +843,9 @@ struct TripManagerTests {
         let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
         await harness.start()
         await harness.walk(from: 0, to: 50)
+        // the first request goes out on the fix that finds the user off route, at the clock time 15 s before the
+        // second may
         await harness.goOffRoute(at: 49)
-        // the first request goes out on this fix, at the clock time 15 s before the second may
-        await harness.fix(harness0Origin)
         await harness.router.waitForRequests(1)
         await harness.router.respond()
         await harness.states.waitFor { $0.nextManeuver?.instruction == "Arrive" }
@@ -858,9 +870,9 @@ struct TripManagerTests {
         let harness = try Harness(reroutes: [.failure(.serverUnavailable), .failure(.serverUnavailable)])
         await harness.start()
         await harness.walk(from: 0, to: 50)
+        // the first request goes out on the fix that finds the user off route
         await harness.goOffRoute(at: 49)
         let away = harness.point(49, lateral: -40)
-        await harness.fix(away)
         await harness.router.waitForRequests(1)
         await waitUntil {
             await harness.engine.texts.contains("Couldn't get a new route. Walk back the way you came.")
@@ -952,7 +964,10 @@ struct TripManagerTests {
         let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
         await harness.start()
         await harness.walk(from: 0, to: 50)
-        await harness.goOffRoute(at: 49)
+        // found off route by a fix too rough to start a route from, so the reroute waits for a precise one
+        for index in 1...32 {
+            await harness.fix(harness.point(49, lateral: -min(1.4 * Double(index), 40)), accuracy: index == 32 ? 22 : 5)
+        }
         #expect(await harness.states.current?.nextManeuver?.instruction == "Off route. Finding a new route.")
         // two rough fixes back on the route start the rejoin; the precise third confirms it
         await harness.fix(harness.point(49, lateral: -5), accuracy: 22)
@@ -1579,3 +1594,4 @@ struct TripManagerDirectionTests {
         #expect(announcement.text == "Starting directions to Library, about 30 metres. The path is ahead.")
     }
 }
+

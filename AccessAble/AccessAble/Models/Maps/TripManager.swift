@@ -276,9 +276,6 @@ actor TripManager: TripStateProviding {
             lastFix = sample
         }
         headingEstimator.update(with: sample)
-        // decided from the fixes before this one, so a reroute starts from the fix after the cue
-        let rerouteOrigin = wantsReroute && sample.horizontalAccuracy <= Self.rerouteAccuracy
-            ? sample.coordinate : nil
 
         let update = tracker.update(with: sample, emitsCues: phase == .active)
         self.tracker = tracker
@@ -291,8 +288,11 @@ actor TripManager: TripStateProviding {
         for case let .missedTurn(step, _) in update.events { missedTurnStep = step }
         if update.events.contains(.backOnRoute) { missedTurnStep = nil }
         publish(at: sample.timestamp)
-        // this fix may have brought the user back
-        if let rerouteOrigin, needsReroute { requestReroute(from: rerouteOrigin, generation: generation) }
+        // from this fix when it is precise enough, even the one that found the user off the route: the public server
+        // is slow, so waiting for the next fix only adds to it
+        if wantsReroute, sample.horizontalAccuracy <= Self.rerouteAccuracy {
+            requestReroute(from: sample.coordinate, generation: generation)
+        }
 
         guard phase == .active else { return }
         pending += update.events.compactMap { event in
