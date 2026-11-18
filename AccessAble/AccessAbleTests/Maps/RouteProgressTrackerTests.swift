@@ -1024,6 +1024,29 @@ private func isTurnCue(_ event: Event) -> Bool {
     }
 }
 
+/// Turns passed without a word: no `.now` before, and on the fix that passed them neither a confirmation nor a cue
+/// for a later step, which says what comes next instead.
+private func skippedTurns(in walk: Walk) -> [Int] {
+    var skipped: [Int] = []
+    var previous = 1
+    for (fix, state) in walk.states.enumerated() where state.nextStepIndex > previous {
+        let events = walk.logged.filter { $0.fix == fix }.map(\.event)
+        for step in previous..<state.nextStepIndex {
+            let cued = walk.logged.contains { $0.fix <= fix && $0.event == .now(step: step) }
+            let spoken = events.contains {
+                switch $0 {
+                case .passedTurnConfirmation, .missedTurn: true
+                case let .prepare(later, _), let .now(later): later > step
+                default: false
+                }
+            }
+            if !cued, !spoken { skipped.append(step) }
+        }
+        previous = state.nextStepIndex
+    }
+    return skipped
+}
+
 /// Walks like those of a field test outdoors: walking at 1.4 m/s with a fix a second, a position error that drifts,
 /// and a course that is sometimes too rough to use.
 struct RouteProgressTrackerFieldWalkTests {
@@ -1116,7 +1139,8 @@ struct RouteProgressTrackerFieldWalkTests {
         }
     }
 
-    // walking beside the route, including on the inside of each corner, where the leg after it is nearer
+    // walking beside the route, including on the inside of each corner, where the leg after it is nearer, with no
+    // turn passed unheard
     @Test(arguments: [0.0, -12, 18])
     func realisticWalksAlongTheRouteStayOnIt(_ lateral: Double) throws {
         let routes = [
@@ -1134,7 +1158,37 @@ struct RouteProgressTrackerFieldWalkTests {
                 let path = FieldWalk.path(on: route, lateral: lateral)
                 walk.feed(FieldWalk.fixes(along: path, accuracy: 5...10, courseAccuracy: 10...70, seed: seed))
                 #expect(!walk.logged.contains { $0.event == .offRoute }, "route \(index), seed \(seed)")
+                #expect(walk.states.last?.nextStepIndex == route.steps.count - 1, "route \(index), seed \(seed)")
+                #expect(skippedTurns(in: walk).isEmpty, "route \(index), seed \(seed)")
             }
+        }
+    }
+
+    // Crossing a switchback near its end is no longer than cutting the inside of a corner, so it can't be told from
+    // walking the route; the docs' known limits say so. Crossing it further from its end is off route, before the turns.
+    @Test(arguments: [
+        // 10 m before the end of a 15 m-wide switchback: progress moves to the way back, and "Continue for …" is the
+        // only word, so the two turns of the switchback go unsaid
+        (10.0, false),
+        (35, true),
+    ])
+    func crossingASwitchbackIsOffRouteOnlyFarFromItsEnd(_ beforeEnd: Double, _ isOffRoute: Bool) throws {
+        let route = try syntheticRoute([
+            (0, 60, .depart, "Walk north."), (90, 15, .turnRight, "Turn right."),
+            (180, 60, .turnRight, "Turn right."), (90, 60, .turnLeft, "Turn left."),
+        ])
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 60 - beforeEnd)))
+        let start = walk.fixCount
+        let along = walk.tracker.route.totalDistance - (walk.states.last?.distanceRemaining ?? 0)
+        let across = (1...30).map { (along: along, lateral: 1.4 * Double($0)) }
+        walk.feed(walking(TripWalk.fixes(on: route, path: across, start: walk.nextTime), course: 90))
+
+        let afterStart = walk.logged.drop { $0.fix < start }
+        #expect(afterStart.contains { $0.event == .offRoute } == isOffRoute)
+        if !isOffRoute {
+            #expect(afterStart.map(\.event) == [.passedTurnConfirmation(step: 2)])
+            #expect(try #require(walk.states.last).nextStepIndex == 3)
         }
     }
 }
