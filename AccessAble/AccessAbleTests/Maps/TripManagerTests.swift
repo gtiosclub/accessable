@@ -349,6 +349,10 @@ private func waitUntil(_ condition: () async -> Bool) async {
     while await !condition() { await Task.yield() }
 }
 
+/// How a route with an unknown heading is set off on, from its "Walk north." or "Head east.".
+private let setOff = "Follow the path. You'll be warned if it's the wrong way."
+private let newRouteSpeech = "New route. \(setOff)"
+
 private let library = Destination(name: "Library", coordinate: GeoCoordinate(latitude: 33.7759, longitude: -84.3984))
 
 /// North 100 m, right onto Ferst Drive, then 60 m east to the destination.
@@ -497,7 +501,7 @@ struct TripManagerTests {
         await harness.waitForSleepers(2)
         harness.clock.advance(by: 0.75)
         let start = try #require(await harness.engine.waitForCount(1).first)
-        #expect(start.text == "Starting directions to Library, about 160 metres. Walk north.")
+        #expect(start.text == "Starting directions to Library, about 160 metres. \(setOff)")
         #expect(start.priority == .high)
         #expect(start.category == .maneuver)
         #expect(start.source == .navigation)
@@ -512,7 +516,7 @@ struct TripManagerTests {
         await harness.waitForSleepers(2)
         harness.clock.advance(by: 0.75)
         let start = try #require(await harness.engine.waitForCount(1).first)
-        #expect(start.text == "Starting directions to Library, about 160 metres. Walk north.")
+        #expect(start.text == "Starting directions to Library, about 160 metres. \(setOff)")
 
         // changed in Settings mid-trip: the next cue is in feet, 40 m rounded to 25 ft steps
         distances.units = .feet
@@ -530,7 +534,7 @@ struct TripManagerTests {
 
         let events = await harness.engine.waitForCount(5)
         #expect(events.map(\.text) == [
-            "Starting directions to Library, about 160 metres. Walk north.",
+            "Starting directions to Library, about 160 metres. \(setOff)",
             "In about 40 metres, turn right onto Ferst Drive.",
             "Turn right onto Ferst Drive.",
             "In about 40 metres, your destination is on the left.",
@@ -588,7 +592,7 @@ struct TripManagerTests {
         #expect(paused.phase == .paused)
         #expect(abs((paused.distanceRemaining ?? 0) - (160 - 95.2)) < 0.01)
         #expect(await harness.engine.texts == [
-            "Starting directions to Library, about 160 metres. Walk north.", "Trip paused.",
+            "Starting directions to Library, about 160 metres. \(setOff)", "Trip paused.",
         ])
 
         await harness.manager.resumeTrip()
@@ -703,7 +707,7 @@ struct TripManagerTests {
         let latest = try #require(await routes.next())
         #expect(latest == (try eastRoute(from: origin)))
         await harness.engine.waitForCount(3)
-        #expect(await harness.engine.texts.last == "New route. Head east.")
+        #expect(await harness.engine.texts.last == newRouteSpeech)
 
         // the new route is followed, with no second request
         for along in TripWalk.distances(from: 0, to: 10) {
@@ -742,7 +746,7 @@ struct TripManagerTests {
         await harness.router.respond()
         let rerouted = await harness.states.waitFor { $0.nextManeuver?.instruction == "Arrive" }
         #expect(abs((rerouted.distanceRemaining ?? 0) - 80) < 0.5)
-        await waitUntil { await harness.engine.texts.contains("New route. Head east.") }
+        await waitUntil { await harness.engine.texts.contains(newRouteSpeech) }
         let texts = await harness.engine.texts
         #expect(texts.contains("Finding a new route from here."))
         #expect(!texts.contains("Trip ended."))
@@ -993,7 +997,7 @@ struct TripManagerTests {
         await harness.answerReroute()
         // the pause above is the only state change
         #expect(await harness.states.current?.nextManeuver?.instruction == "Turn right onto Ferst Drive.")
-        #expect(await !harness.engine.texts.contains("New route. Head east."))
+        #expect(await !harness.engine.texts.contains(newRouteSpeech))
     }
 
     @Test
@@ -1011,7 +1015,7 @@ struct TripManagerTests {
         await waitUntil { await harness.engine.texts.contains("Arriving at Library. Your destination is on the left.") }
         await harness.answerReroute()
         #expect(await harness.states.current == arrived)
-        #expect(await !harness.engine.texts.contains("New route. Head east."))
+        #expect(await !harness.engine.texts.contains(newRouteSpeech))
     }
 
     @Test(arguments: [false, true])
@@ -1037,7 +1041,7 @@ struct TripManagerTests {
         } else {
             #expect(await harness.states.current?.phase == .planning)
         }
-        #expect(await !harness.engine.texts.contains("New route. Head east."))
+        #expect(await !harness.engine.texts.contains(newRouteSpeech))
     }
 
     @Test
@@ -1127,7 +1131,7 @@ struct TripManagerTests {
         let resuming = Task { await harness.manager.resumeTrip() }
         await harness.engine.waitUntilHeld()
         await harness.router.respond()
-        await waitUntil { await harness.engine.texts.contains("New route. Head east.") }
+        await waitUntil { await harness.engine.texts.contains(newRouteSpeech) }
         await harness.engine.release()
         await resuming.value
 
@@ -1408,7 +1412,8 @@ struct TripManagerDirectionTests {
         await harness.waitForSleepers(2)
         await harness.fix(harness.point(0))
         let start = try #require(await harness.engine.waitForCount(1).first)
-        #expect(start.text == "Starting directions to Library, about 90 metres. Walk north.")
+        #expect(start.text == "Starting directions to Library, about 90 metres. \(setOff)"
+            + " In about 30 metres, turn right onto Ferst Drive.")
     }
 
     @Test
@@ -1499,7 +1504,8 @@ struct TripManagerDirectionTests {
 
     @Test(arguments: [
         // a cold-start fix may be anywhere within 40 m, so the path could lie either way
-        (40, "Starting directions to Library, about 90 metres. Walk north."),
+        (40, "Starting directions to Library, about 90 metres. \(setOff)"
+            + " In about 30 metres, turn right onto Ferst Drive."),
         // looks 20 m ahead rather than 15, twice the accuracy
         (10, "Starting directions to Library, about 90 metres. Turn around, the path is behind you. "
             + "In about 30 metres, turn right onto Ferst Drive."),
@@ -1561,8 +1567,9 @@ struct TripManagerDirectionTests {
         (4.0, "Starting directions to Library, about 90 metres. Turn around, the path is behind you. "
             + "In about 30 metres, turn right onto Ferst Drive."),
         // the user may have walked on since
-        (6, "Starting directions to Library, about 90 metres. Walk north."),
-    ])
+        (6, "Starting directions to Library, about 90 metres. \(setOff)"
+            + " In about 30 metres, turn right onto Ferst Drive."),
+    ] as [(Double, String)])
     func directionsNeedARecentFix(_ age: Double, _ expected: String) async throws {
         let harness = try Harness(route: try shortFirstLegRoute())
         await harness.start()
@@ -1592,6 +1599,120 @@ struct TripManagerDirectionTests {
         await harness.fix(harness.point(0), course: 0)
         let announcement = try #require(await harness.engine.waitForCount(1).first)
         #expect(announcement.text == "Starting directions to Library, about 30 metres. The path is ahead.")
+    }
+}
+
+// MARK: Setting off
+
+/// The corner route as Valhalla words it, naming the street and a compass direction.
+private func namedCornerRoute() throws -> NavigationRoute {
+    let route = try cornerRoute()
+    return try NavigationRoute(coordinates: route.coordinates, steps: [
+        RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Walk north on Ferst Drive.",
+                  spokenInstruction: "Walk north on Ferst Drive. Then Turn right onto Atlantic Drive."),
+        RouteStep(kind: .turnRight, coordinateIndex: 1, instruction: "Turn right onto Atlantic Drive.",
+                  spokenInstruction: "Turn right onto Atlantic Drive."),
+        RouteStep(kind: .arrive, coordinateIndex: 2, instruction: "Your destination is on the left.",
+                  spokenInstruction: "Your destination is on the left."),
+    ], estimatedDuration: 130)
+}
+
+/// A reroute answer from `origin`, east along Atlantic Drive, as Valhalla words it.
+private func namedEastRoute(from origin: GeoCoordinate) throws -> NavigationRoute {
+    try NavigationRoute(coordinates: [origin, TripWalk.destination(from: origin, bearing: 90, distance: 80)], steps: [
+        RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Head east on Atlantic Drive.",
+                  spokenInstruction: "Head east on Atlantic Drive."),
+        RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
+    ], estimatedDuration: 60)
+}
+
+private func namesACompassDirection(_ text: String) -> Bool {
+    text.contains(/(?i)\b(?:north|south|east|west)(?:east|west)?\b/)
+}
+
+/// Every state the trip publishes, in order.
+private final class StateLog: Sendable {
+    private let states = Mutex<[TripState]>([])
+
+    init(_ manager: TripManager) {
+        let stream = manager.tripStates()
+        Task { [self] in
+            for await state in stream { states.withLock { $0.append(state) } }
+        }
+    }
+
+    var instructions: [String] { states.withLock { $0.compactMap(\.nextManeuver?.instruction) } }
+}
+
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerDepartureTests {
+    @Test(arguments: [
+        (true, "Starting directions to Library, about 160 metres. The path is ahead."),
+        (false, "Starting directions to Library, about 160 metres. Follow Ferst Drive. "
+            + "You'll be warned if it's the wrong way."),
+    ])
+    func startNamesTheStreetWithoutACompassDirection(_ facingNorth: Bool, _ expected: String) async throws {
+        let harness = try Harness(route: try namedCornerRoute())
+        await harness.start()
+        await harness.waitForSleepers(2)
+        if facingNorth {
+            harness.location.headings.yield(HeadingSample(trueHeading: 0, magneticHeading: 4, accuracy: 10,
+                                                          timestamp: harness.clock.now()))
+            await harness.location.headings.waitUntilHandled()
+        }
+        harness.clock.advance(by: 0.75)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == expected)
+    }
+
+    @Test(arguments: [
+        // walking west, away from the route, which heads east from here
+        (270.0, "New route. Turn around, the path is behind you."),
+        (nil, "New route. Follow Atlantic Drive. You'll be warned if it's the wrong way."),
+    ] as [(Double?, String)])
+    func newRouteSaysWhereThePathIsLikeTheStart(_ course: Double?, _ expected: String) async throws {
+        let harness = try Harness(route: try namedCornerRoute(),
+                                  reroutes: [.success(try namedEastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 50)
+        for index in 1...32 {
+            await harness.fix(harness.point(49, lateral: -min(1.4 * Double(index), 40)), course: course)
+        }
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        #expect(await harness.engine.texts.filter { $0.hasPrefix("New route.") } == [expected])
+    }
+
+    // nothing said or shown names a compass direction: not the start, the next step, a new route, or its next step
+    @Test(arguments: [nil, 270.0])
+    func noCompassDirectionIsSaidOrShown(_ course: Double?) async throws {
+        let harness = try Harness(route: try namedCornerRoute(),
+                                  reroutes: [.success(try namedEastRoute(from: harness0Origin))])
+        let states = StateLog(harness.manager)
+        await harness.start()
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+        await harness.engine.waitForCount(1)
+        await harness.walk(from: 0, to: 50, course: course.map { _ in { _ in 0 } })
+        for index in 1...32 {
+            await harness.fix(harness.point(49, lateral: -min(1.4 * Double(index), 40)), course: course)
+        }
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        for metres in TripWalk.distances(from: 0, to: 20) {
+            await harness.fix(TripWalk.destination(from: harness0Origin, bearing: 90, distance: metres),
+                              course: course.map { _ in 90 })
+        }
+        await harness.manager.endTrip()
+
+        let texts = await harness.engine.texts
+        #expect(texts.contains { $0.hasPrefix("Starting directions") })
+        #expect(!texts.contains(where: namesACompassDirection), "\(texts)")
+        let instructions = states.instructions
+        #expect(instructions.contains("Turn right onto Atlantic Drive."))
+        #expect(!instructions.contains(where: namesACompassDirection), "\(instructions)")
     }
 }
 
