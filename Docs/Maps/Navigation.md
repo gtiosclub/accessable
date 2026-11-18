@@ -151,7 +151,7 @@ Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at e
   - There is no rerouting while paused. An answer that lands during a pause is applied without being announced.
   - An answer is dropped if, by the time it lands, the user is back on the route, has arrived, or the trip has ended or been replaced.
 - **Next step.** `TripState.nextManeuver` is the next step after departing, with its instruction as `RouteStep.withoutCompassDirection` gives it, so the screen, and anything else that shows the state, never says "north".
-- **Off-route state.** While off route, `TripState.nextManeuver` keeps the next step's kind and coordinate, but its instruction is status text ("Off route. Finding a new route." or "Off route. Head back toward the path."). `distanceToNextManeuver` is nil.
+- **Off-route state.** While off route, `TripState.isOffRoute` is true and `TripState.nextManeuver` keeps the next step's kind and coordinate, but its instruction is status text ("Off route. Finding a new route." or "Off route. Head back toward the path."). `distanceToNextManeuver` is nil.
 - **Turn cues.**
   - `now` cues expire after `clamp((d + 5) / 1.3, 4, 15)` s.
   - A cue that was actually submitted, but not delivered by then, is resubmitted once. That needs the turn still ahead, no missed turn there, and the same route.
@@ -166,7 +166,7 @@ Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at e
   - Within 8 m of the step, or with a missed turn pending, resuming says nothing more than "Trip resumed.". The user may already be past the turn, so the next fix's turn cue, confirmation or missed turn says the right thing.
   - Resume speech is dropped if a reroute lands while "Trip resumed." is being said.
   - A turn cue that a pause stopped before it was submitted is given again by the tracker after resuming.
-  - An arrival while paused stays paused and is announced on resume.
+  - An arrival while paused stays paused, with `TripState.hasArrived` true, and is announced on resume.
 
 ### Wording
 
@@ -197,6 +197,17 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 | arrived | "Arriving at {name}. {name} is {direction}.", when the latest fix is at least `max(5 m, 2 × accuracy)` from the destination. Otherwise, or with the heading unknown: "Arriving at {name}. {arrive instruction}" | high | 15 s |
 | weak / back | "GPS signal is weak. Directions may be delayed." / "GPS signal is back." (system category) | high / normal | 10 s / 6 s |
 | pause, resume, end | "Trip paused." / "Trip resumed." / "Trip ended.", with no dedup key, so the engine merges them with the voice command's | high | none |
+
+## Live Activity
+
+`TripActivityController` puts the trip on the lock screen and in the Dynamic Island, through `TripActivityPlanner`'s rules. It's updated locally, never by push.
+
+- **Start.** The first active or paused state with a next maneuver starts one. A trip to a new destination starts a new one.
+- **Update.** An update is pushed at a new step or status, when the written distance changes and the user has moved 25 ft since the last push, and when the arrival time moves by a minute. Until arrival, one is also pushed at least once a minute, standing still or paused included.
+- **Stale.** Until arrival, each start and update sets a stale date 3 minutes on. If the app stops updating it, because it was closed or has had no location fix for that long, the widget says "Guidance not updating. Open AccessAble." instead of a turn that may be long past. An arrived activity never goes stale.
+- **Paused.** "Paused" with the turn below it and no distance; off route has no distance either.
+- **End.** Arrival, including during a pause, ends it with an arrived card that stays 5 minutes. Ending the trip removes it, or the arrived card, at once. At launch, any activity left by a launch that ended mid-trip is removed.
+- **Failed start.** A Live Activity can only start while the app is in the foreground, and not at all when the user has turned Live Activities off. A failed start is tried again at the next step or status, and when the app comes to the foreground.
 
 ## Known limits
 

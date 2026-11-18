@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct AccessAbleApp: App {
     @State private var app: AppViewModel
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         // The config file is kept out of git, so a checkout without it runs on the placeholder
@@ -18,6 +19,9 @@ struct AccessAbleApp: App {
         WindowGroup {
             RootView()
                 .environment(app)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { app.appBecameActive() }
         }
     }
 }

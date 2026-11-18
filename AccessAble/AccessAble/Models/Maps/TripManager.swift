@@ -376,6 +376,8 @@ actor TripManager: TripStateProviding {
                                    coordinate: route.coordinates[step.coordinateIndex]),
             distanceToNextManeuver: progress.isOffRoute ? nil : progress.distanceToNextStep,
             distanceRemaining: progress.distanceRemaining,
+            isOffRoute: progress.isOffRoute,
+            hasArrived: phase == .arrived || arrivedWhilePaused,
             updatedAt: time
         ))
     }
