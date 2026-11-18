@@ -70,7 +70,7 @@ struct RouteProgressTracker {
     private var sightedStep = -1
     private var missedTurnRun: (since: Date, misses: Int)?
     private var offRouteRun: (first: LocationSample, count: Int)?
-    private var walkingAwayRun: (since: Date, offset: Double, count: Int)?
+    private var walkingAwayRun: (since: Date, offset: Double, count: Int, isShort: Bool)?
     private var rejoinSince: Date?
     private var wrongWayOrigin: (coordinate: GeoCoordinate, progress: Double, offset: Double)?
     private var wrongWayDone = false
@@ -88,6 +88,8 @@ struct RouteProgressTracker {
     // dense geometry needs enough segments, sparse fixes need enough distance
     private static let forwardWindowSegments = 10
     private static let forwardWindowDistance: Double = 100
+    // walking beside the route on the inside of a corner, at the lateral gate, gains twice that along it at once
+    private static let cornerCutAllowance: Double = 2 * minimumLateralGate
     // only a fix this far from every segment ahead looks behind, so noise can't drag progress back
     private static let backwardSearchOffset: Double = 25
     private static let backwardSearchSegments = 3
@@ -127,6 +129,9 @@ struct RouteProgressTracker {
     // the fixes arrive
     private static let walkingAwayDuration: TimeInterval = 5
     private static let walkingAwayFixes = 3
+    // a course this far or more off parallel toward the route is heading back to it; the course noise of someone
+    // walking alongside it, either way, stays within this
+    private static let returningAngle: Double = 30
     // close enough to be on the path again
     private static let rejoinDistance: Double = 15
     // two fixes this far apart confirm a rejoin or a missed turn, so one stray fix can't
@@ -262,8 +267,7 @@ struct RouteProgressTracker {
         }
         let here = route.projection(of: sample.coordinate, segments: current..<current + 1)
         var best = here
-        if current + 1 < end {
-            let ahead = route.projection(of: sample.coordinate, segments: current + 1..<end)
+        if let ahead = nearestReachableProjection(of: sample, segments: current + 1..<end) {
             let difference = abs(ahead.sideOffset) - abs(here.sideOffset)
             if abs(difference) <= Self.sharedGeometryTolerance {
                 // shared geometry, such as an out-and-back leg, ties either way by rounding: the leg ahead only once
@@ -280,6 +284,27 @@ struct RouteProgressTracker {
             if abs(behind.sideOffset) < abs(best.sideOffset) { best = behind }
         }
         return best
+    }
+
+    /// The nearest projection onto `segments` the user could have walked to along the route from accepted progress.
+    ///
+    /// Walking along the route, the distance gained is never much more than the straight line from where progress
+    /// stands: a little more round a bend, and up to twice the lateral gate when cutting the inside of a corner. Where
+    /// the route doubles back, as round a U, its far side can be much nearer in a straight line than along the route.
+    /// A user walking across to it has left the route, and measuring them from it would hide that and skip the turns
+    /// between without a word, so it isn't a candidate.
+    private func nearestReachableProjection(of sample: LocationSample, segments: Range<Int>) -> RouteProjection? {
+        let start = GeoMath.coordinate(atDistance: progress, along: route.coordinates,
+                                       cumulativeDistances: route.cumulativeDistances)
+        var nearest: RouteProjection?
+        for segment in segments {
+            let candidate = route.projection(of: sample.coordinate, segments: segment..<segment + 1)
+            let shortcut = GeoMath.distance(from: start, to: candidate.coordinate) + Self.cornerCutAllowance
+            guard candidate.distanceAlongRoute - progress <= shortcut,
+                  abs(candidate.sideOffset) < abs(nearest?.sideOffset ?? .infinity) else { continue }
+            nearest = candidate
+        }
+        return nearest
     }
 
     /// The last segment whose start is at or before `distance`.
@@ -392,29 +417,47 @@ struct RouteProgressTracker {
     }
 
     /// Faster than `leavesRoute` when the walking direction points away from the route's direction of travel and the
-    /// user keeps getting no nearer to it. Standing still never counts, since it has no walking direction.
+    /// user ends up no nearer to it. Standing still never counts, since it has no walking direction.
+    ///
+    /// Outdoors, each fix's position is off by several metres and one course in a few is too rough to trust, so the
+    /// run is decided by what each fix can tell:
+    /// - A fix without a usable walking direction says nothing about which way the user walks: it neither counts nor
+    ///   ends the run.
+    /// - Walking back toward the route is told from the course, not from one fix being nearer than another, which
+    ///   noise alone often makes it. The user must be no nearer only over the whole run.
     private mutating func walksAwayFromRoute(_ sample: LocationSample, at projection: RouteProjection) -> Bool {
         let offset = abs(projection.sideOffset)
         let limit = max(Self.walkingAwayDistance, Self.offRouteAccuracyFactor * sample.horizontalAccuracy)
-        let segment = projection.segmentIndex
+        // the leg being walked: a segment behind progress, which only the search behind finds, can run another way,
+        // as the leg before a corner does for someone on its inside
+        let segment = max(projection.segmentIndex, self.segment(containing: progress))
         // a segment under a metre gives a noisy bearing
-        guard offset > limit, let direction = HeadingEstimator.walkingDirection(of: sample),
-              route.cumulativeDistances[segment + 1] - route.cumulativeDistances[segment] >= 1 else {
+        guard route.cumulativeDistances[segment + 1] - route.cumulativeDistances[segment] >= 1 else {
             walkingAwayRun = nil
             return false
         }
+        guard offset > limit else {
+            // one fix that falls short, as noise near the limit gives, doesn't end the run; two in a row do
+            if let run = walkingAwayRun, !run.isShort { walkingAwayRun?.isShort = true } else { walkingAwayRun = nil }
+            return false
+        }
+        guard let direction = HeadingEstimator.walkingDirection(of: sample) else { return false }
         let routeBearing = GeoMath.bearing(from: route.coordinates[segment], to: route.coordinates[segment + 1])
         let turn = GeoMath.normalizedBearing(direction - routeBearing)
-        // walking back toward the route at a steep angle is returning, not leaving
-        guard min(turn, 360 - turn) > Self.walkingAwayAngle, offset >= walkingAwayRun?.offset ?? offset else {
+        // how much of each metre walked takes the user further from the route; negative is toward it
+        let away = sin(turn * .pi / 180) * (projection.sideOffset < 0 ? -1 : 1)
+        // walking alongside the route, or back toward it, isn't leaving it
+        guard min(turn, 360 - turn) > Self.walkingAwayAngle, away > -sin(Self.returningAngle * .pi / 180) else {
             walkingAwayRun = nil
             return false
         }
-        var run = walkingAwayRun ?? (since: sample.timestamp, offset: offset, count: 0)
+        var run = walkingAwayRun ?? (since: sample.timestamp, offset: offset, count: 0, isShort: false)
         run.count += 1
+        run.isShort = false
         walkingAwayRun = run
         guard run.count >= Self.walkingAwayFixes,
-              sample.timestamp.timeIntervalSince(run.since) >= Self.walkingAwayDuration else { return false }
+              sample.timestamp.timeIntervalSince(run.since) >= Self.walkingAwayDuration,
+              offset >= run.offset else { return false }
         markOffRoute()
         return true
     }
