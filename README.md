@@ -48,7 +48,8 @@ AccessAble/                              Xcode project folder
     │       ├── GeometricObstacleDetector.swift  obstacles by geometry, no labels (T11)
     │       ├── GroundProfiler.swift, ElevationHazardDetector.swift  kerbs, steps, drop-offs (T12)
     │       ├── PeopleDetector.swift, PeopleDetection.swift  Vision people detection (T14)
-    │       ├── ObjectDetector.swift, DFineObjectDetector.swift  Core ML object detection, D-FINE-nano (T13, T31)
+    │       ├── ObjectDetector.swift, DETRObjectDetector.swift  Core ML object detection: RF-DETR, else D-FINE (T13, T31)
+    │       ├── OutdoorClasses.swift, SidewalkGuide.swift  street-furniture classes; keeping to the sidewalk
     │       ├── DetectionFusion.swift    labels geometric obstacles with recognized objects
     │       ├── ObjectTracker.swift      stable track IDs across frames (T15)
     │       ├── ObstacleAnnouncer.swift  when to announce what (T16)
@@ -131,6 +132,15 @@ and nothing distance-based is announced.
 
 See [docs/ComputerVision.md](docs/ComputerVision.md) for the CV architecture, data
 contracts and task status.
+
+### Models
+
+`sh Scripts/download-models.sh --rfdetr` fetches the ground-segmentation model and exports the
+RF-DETR Small detector (needs Python; ~5 min). Without them the app falls back to the D-FINE
+model in git. `Scripts/models/` exports and benchmarks the models; `Scripts/training/` builds an
+outdoor dataset and fine-tunes the detector on street furniture COCO doesn't know (see its README).
+The fine-tuned `rfdetr_s_outdoor.mlpackage` is not in git either. Copy it into `Resources` to use
+it; the app prefers it over the COCO model.
 
 ## Accessibility baseline (every PR)
 
