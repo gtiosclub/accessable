@@ -10,6 +10,11 @@ struct AppServicesTests {
     }
 
     @Test
+    func liveFallsBackToAppleMapsWhenValhallaFails() {
+        #expect(AppServices.live(performance: PerformanceModeMonitor()).routing is FallbackRoutingService)
+    }
+
+    @Test
     func liveGuidesTripsWithTripManager() {
         #expect(AppServices.live(performance: PerformanceModeMonitor()).trip is TripManager)
     }
