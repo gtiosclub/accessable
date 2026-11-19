@@ -16,6 +16,8 @@ struct TripCameraCoordinator: Sendable {
             let wantsCamera = state.phase == .active
             guard wantsCamera != holdsCamera else { continue }
             if wantsCamera {
+                // before start(), since a running session keeps its tracking
+                await geoTracking?.setGeoTrackingWanted(true)
                 do {
                     try await scene.start()
                     holdsCamera = true
@@ -25,8 +27,15 @@ struct TripCameraCoordinator: Sendable {
             } else {
                 await scene.stop()
                 holdsCamera = false
+                await geoTracking?.setGeoTrackingWanted(false)
             }
         }
-        if holdsCamera { await scene.stop() }
+        if holdsCamera {
+            await scene.stop()
+            await geoTracking?.setGeoTrackingWanted(false)
+        }
     }
+
+    /// Trips geo-track where they can (AR-2), for a sharper position than GPS.
+    private var geoTracking: (any GeoTrackingProviding)? { scene as? any GeoTrackingProviding }
 }

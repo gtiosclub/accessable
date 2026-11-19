@@ -38,6 +38,17 @@ private actor RecordingScene: SceneObservationProviding {
     func stop() async { calls.append("stop") }
 }
 
+private actor GeoScene: SceneObservationProviding, GeoTrackingProviding {
+    private(set) var calls: [String] = []
+
+    nonisolated func observations() -> AsyncStream<SceneObservation> { AsyncStream { $0.finish() } }
+    nonisolated func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> { AsyncStream { $0.finish() } }
+
+    func start() async throws { calls.append("start") }
+    func stop() async { calls.append("stop") }
+    func setGeoTrackingWanted(_ wanted: Bool) async { calls.append(wanted ? "geo" : "no geo") }
+}
+
 struct TripCameraCoordinatorTests {
     private func calls(for phases: [TripPhase], scene: RecordingScene = RecordingScene()) async -> [String] {
         await TripCameraCoordinator(trip: ScriptedTrip(phases: phases), scene: scene).run()
@@ -58,6 +69,14 @@ struct TripCameraCoordinatorTests {
     @Test
     func releasesTheCameraWhenTheStreamEndsMidTrip() async {
         #expect(await calls(for: [.active]) == ["start", "stop"])
+    }
+
+    @Test
+    func tripsAskForGeoTrackingBeforeTheCameraStarts() async {
+        let scene = GeoScene()
+        await TripCameraCoordinator(trip: ScriptedTrip(phases: [.active, .paused, .active]), scene: scene).run()
+
+        #expect(await scene.calls == ["geo", "start", "stop", "no geo", "geo", "start", "stop", "no geo"])
     }
 
     @Test

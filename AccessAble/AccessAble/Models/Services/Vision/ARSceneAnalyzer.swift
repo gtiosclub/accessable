@@ -15,7 +15,7 @@ import UIKit
 /// Every feature shares this one camera. `start()` and `stop()` nest: tracking starts with
 /// the first `start()`, later ones join it without resetting the world, and the session
 /// only pauses when every `start()` has had its `stop()`.
-final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, GuidanceStatusProviding, Sendable {
+final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, GuidanceStatusProviding, GeoTrackingProviding, Sendable {
     let sessionManager: ARSessionManager
     let perception: ScenePerception
     /// Idle unless a field test is being recorded from the Live detection screen.
@@ -332,7 +332,21 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     /// Doors come from the mesh, which is only built in Find or during a "take me to…".
     private func updateMesh() {
         let wanted = perception.mode.usesMesh || state.withLock { $0.isNavigating }
-        Task { @MainActor [sessionManager] in sessionManager.setMeshReconstruction(wanted) }
+        Task { @MainActor [sessionManager, perception] in
+            // leaving geo-tracking for the mesh restarts the world, so nothing remembered holds
+            if sessionManager.setMeshReconstruction(wanted) { perception.reset() }
+        }
+    }
+
+    // MARK: - GeoTrackingProviding (AR-2)
+
+    func setGeoTrackingWanted(_ wanted: Bool) async {
+        let available = wanted ? await ARSessionManager.isGeoTrackingAvailableHere() : false
+        await MainActor.run { sessionManager.setGeoTracking(available) }
+    }
+
+    func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> {
+        sessionManager.geoTrackingUpdates()
     }
 
     var navigationStatus: NavigationStatus? { perception.navigationStatus }
