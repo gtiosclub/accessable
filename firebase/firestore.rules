@@ -42,6 +42,41 @@ service cloud.firestore {
       return /databases/$(database)/documents/rateLimits/$(request.auth.uid);
     }
 
+    // VOLUNTEER-2: private account profiles. Directory/presence data belongs
+    // in a separate collection; callers must not list other users' private profiles.
+    function validLanguageAt(languages, i) {
+      return i >= languages.size()
+        || (languages[i] is string && languages[i].size() >= 1
+            && languages[i].size() <= 40 && languages[i].matches('.*[^ ].*'));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['role', 'displayName', 'languages', 'createdAt'])
+        && data.keys().hasOnly(['role', 'displayName', 'languages', 'createdAt'])
+        && data.role in ['caller', 'volunteer']
+        && data.displayName is string && data.displayName.size() >= 1
+        && data.displayName.size() <= 80 && data.displayName.matches('.*[^ ].*')
+        && data.createdAt is timestamp
+        && data.languages is list && data.languages.size() >= 1 && data.languages.size() <= 10
+        && validLanguageAt(data.languages, 0) && validLanguageAt(data.languages, 1)
+        && validLanguageAt(data.languages, 2) && validLanguageAt(data.languages, 3)
+        && validLanguageAt(data.languages, 4) && validLanguageAt(data.languages, 5)
+        && validLanguageAt(data.languages, 6) && validLanguageAt(data.languages, 7)
+        && validLanguageAt(data.languages, 8) && validLanguageAt(data.languages, 9);
+    }
+
+    match /users/{userId} {
+      allow get: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && request.auth.uid == userId
+        && isValidUser(request.resource.data)
+        && request.resource.data.createdAt == request.time;
+      allow update: if signedIn() && request.auth.uid == userId
+        && isValidUser(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['role', 'displayName', 'languages']);
+      allow delete: if signedIn() && request.auth.uid == userId;
+    }
+
     match /reports/{reportId} {
       allow get: if signedIn();
       allow list: if signedIn() && request.query.limit <= 200;

@@ -7,7 +7,13 @@ struct OnboardingViewModelTests {
     @Test
     func walksThroughEveryStepInOrder() {
         let viewModel = OnboardingViewModel()
+        #expect(viewModel.step == .accountRole)
+        viewModel.chooseAccountRole(.volunteer)
+        #expect(viewModel.step == .accountDetails)
+        viewModel.displayName = "Alex"
+        viewModel.finishAccountDetails()
         #expect(viewModel.step == .role)
+        #expect(viewModel.accountRole == .volunteer)
 
         viewModel.chooseRole(.sighted)
         #expect(viewModel.step == .voiceOver)
