@@ -51,6 +51,13 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// camera from 60 to about 34 fps and slow every analyzed frame, and only "take me to…"
     /// uses it (to find doors), so it runs only while that is active.
     private let wantsMesh = Mutex(false)
+    /// Whether the next `start()` geo-tracks (AR-2): set for trips, only where geo-tracking is available.
+    private let wantsGeoTracking = Mutex(false)
+    /// What the running session uses; nil while stopped.
+    private let runningTracking = Mutex<SessionTracking?>(nil)
+    private let geoBroadcaster = Broadcaster<GeoTrackingUpdate>()
+    /// Frame timestamp of the last geo update sent.
+    private let lastGeoUpdate = Mutex<TimeInterval>(-.infinity)
     private let log = Logger(subsystem: "AccessAble", category: "ARSessionManager")
 
     /// How long ARKit is given to relocalize after an interruption before guidance is
@@ -60,7 +67,8 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    /// Starts world tracking. Calling it while running restarts tracking from scratch.
+    /// Starts world tracking, or geo-tracking when it is wanted and the mesh isn't. Calling it
+    /// while running restarts tracking from scratch.
     @MainActor
     func start() throws {
         guard ARWorldTrackingConfiguration.isSupported else {
@@ -68,6 +76,24 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             throw ARSessionManagerError.worldTrackingUnsupported
         }
 
+        let wantsMesh = wantsMesh.withLock { $0 }
+        let tracking = SessionTracking.choose(geoWanted: wantsGeoTracking.withLock { $0 }, meshWanted: wantsMesh)
+        let configuration: ARConfiguration = switch tracking {
+        case .world: worldTrackingConfiguration(mesh: wantsMesh)
+        case .geo: geoTrackingConfiguration()
+        }
+
+        health.withLock { $0.reset() }
+        cancelRecoveryTimeout()
+        runningTracking.withLock { $0 = tracking }
+        lastGeoUpdate.withLock { $0 = -.infinity }
+        session.delegate = self
+        session.delegateQueue = frameQueue
+        session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+        setStatus(.running)
+    }
+
+    private func worldTrackingConfiguration(mesh: Bool) -> ARWorldTrackingConfiguration {
         let configuration = ARWorldTrackingConfiguration()
         configuration.worldAlignment = .gravity
         configuration.planeDetection = []
@@ -77,31 +103,119 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             log.notice("sceneDepth unsupported; running without LiDAR depth")
         }
         // T36: classified mesh for doors and windows, only while something needs it
-        configuration.sceneReconstruction = meshReconstruction(wanted: wantsMesh.withLock { $0 })
+        configuration.sceneReconstruction = meshReconstruction(wanted: mesh)
+        return configuration
+    }
 
-        health.withLock { $0.reset() }
-        cancelRecoveryTimeout()
-        session.delegate = self
-        session.delegateQueue = frameQueue
-        session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
-        setStatus(.running)
+    /// World +Y is still up (east-up-south), so the floor fit and corridor hold. It has no
+    /// mesh, which is why `SessionTracking.choose` keeps world tracking while doors are wanted.
+    private func geoTrackingConfiguration() -> ARGeoTrackingConfiguration {
+        let configuration = ARGeoTrackingConfiguration()
+        configuration.planeDetection = []
+        if ARGeoTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
+            configuration.frameSemantics.insert(.sceneDepth)
+        } else {
+            log.notice("sceneDepth unsupported with geo-tracking; running without LiDAR depth")
+        }
+        return configuration
     }
 
     /// Turns the classified mesh on or off without restarting tracking. Takes effect at the
     /// next `start()` when the session isn't running.
+    ///
+    /// - Returns: true when tracking had to restart from scratch: the mesh was wanted while
+    ///   geo-tracking, which can't build one, so the session went back to world tracking.
     @MainActor
-    func setMeshReconstruction(_ enabled: Bool) {
+    @discardableResult
+    func setMeshReconstruction(_ enabled: Bool) -> Bool {
         let changed = wantsMesh.withLock { wanted in
             defer { wanted = enabled }
             return wanted != enabled
         }
-        guard changed,
-              let configuration = session.configuration?.copy() as? ARWorldTrackingConfiguration
-        else { return }
+        guard changed else { return false }
+        if enabled, runningTracking.withLock({ $0 }) == .geo {
+            log.notice("mesh wanted while geo-tracking; switching to world tracking")
+            try? start()
+            return true
+        }
+        guard let configuration = session.configuration?.copy() as? ARWorldTrackingConfiguration else { return false }
         configuration.sceneReconstruction = meshReconstruction(wanted: enabled)
         // Re-running without .resetTracking keeps the world; dropping the mesh's anchors
         // stops stale doors from being found after it is switched off.
         session.run(configuration, options: enabled ? [] : [.removeExistingAnchors])
+        return false
+    }
+
+    // MARK: - Geo-tracking (AR-2)
+
+    /// False in the Simulator and on devices without an A12 or later chip and GPS.
+    static var isGeoTrackingSupported: Bool { ARGeoTrackingConfiguration.isSupported }
+
+    /// Whether the next `start()` should geo-track. It doesn't restart a running session:
+    /// that would reset the world CV has mapped. A call pauses and restarts the session, so
+    /// the choice carries over the call.
+    @MainActor
+    func setGeoTracking(_ wanted: Bool) {
+        wantsGeoTracking.withLock { $0 = wanted }
+    }
+
+    /// What the running session uses; nil while stopped.
+    var tracking: SessionTracking? { runningTracking.withLock { $0 } }
+
+    /// Whether Apple has geo-tracking imagery where the phone is. Gives up after `timeout`,
+    /// since the camera waits on it and obstacle warnings shouldn't.
+    static func isGeoTrackingAvailableHere(timeout: Duration = .seconds(3)) async -> Bool {
+        guard isGeoTrackingSupported else { return false }
+        return await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                await withCheckedContinuation { continuation in
+                    ARGeoTrackingConfiguration.checkAvailability { available, _ in continuation.resume(returning: available) }
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(for: timeout)
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// Position and heading about once a second while geo-tracking; nothing otherwise.
+    func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> {
+        geoBroadcaster.stream(bufferingPolicy: .bufferingNewest(4))
+    }
+
+    /// Runs on the frame queue. Copies what it needs, so the frame isn't kept.
+    private func publishGeoUpdate(from frame: ARFrame, in session: ARSession) {
+        guard let status = frame.geoTrackingStatus else { return }
+        let due = lastGeoUpdate.withLock { last in
+            guard frame.timestamp - last >= 1 else { return false }
+            last = frame.timestamp
+            return true
+        }
+        guard due else { return }
+
+        let transform = frame.camera.transform
+        var update = GeoTrackingUpdate(
+            state: GeoTrackingUpdate.State(status.state),
+            accuracy: GeoTrackingUpdate.Accuracy(status.accuracy),
+            timestamp: .now
+        )
+        guard update.state == .localized else {
+            geoBroadcaster.send(update)
+            return
+        }
+        update.heading = GeoTrackingUpdate.heading(cameraTransform: transform)
+        let position = SIMD3(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
+        session.getGeoLocation(forPoint: position) { [geoBroadcaster, update] coordinate, altitude, error in
+            guard error == nil else { return }
+            var located = update
+            located.coordinate = GeoCoordinate(coordinate)
+            located.altitude = altitude
+            geoBroadcaster.send(located)
+        }
     }
 
     private func meshReconstruction(wanted: Bool) -> ARConfiguration.SceneReconstruction {
@@ -114,6 +228,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     func stop() {
         cancelRecoveryTimeout()
         session.pause()
+        runningTracking.withLock { $0 = nil }
         setStatus(.idle)
     }
 
@@ -213,6 +328,7 @@ extension ARSessionManager: ARSessionDelegate {
         for handler in current {
             handler(frame)
         }
+        publishGeoUpdate(from: frame, in: session)
     }
 
     func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
