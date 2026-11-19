@@ -9,27 +9,70 @@ struct FusedLocationProvider: LocationProvider {
 
     func locationSamples() -> AsyncStream<LocationSample> {
         guard let geoTracking else { return gps.locationSamples() }
-        // subscribed here, not in the task, so no reading sent before the task starts is lost
-        let gpsSamples = gps.locationSamples()
-        let arSamples = ARGeoLocationProvider(geoTracking: geoTracking).locationSamples()
-        let (readings, input) = AsyncStream.makeStream(of: LocationFusion.Reading.self)
+        return Self.merged([
+            gps.locationSamples().relayed { LocationFusion.Reading.gps($0) },
+            ARGeoLocationProvider(geoTracking: geoTracking).locationSamples().relayed { .ar($0) },
+        ]) {
+            var fusion = LocationFusion()
+            return { fusion.receive($0) }
+        }
+    }
 
+    /// The compass, plus the camera's heading while geo-tracking is locked on (AR-4). A heading is only as right as
+    /// the lock, so it comes through only with a position `LocationFusion` trusts.
+    func headingSamples() -> AsyncStream<HeadingSample> {
+        guard let geoTracking else { return gps.headingSamples() }
+        return Self.merged([
+            gps.headingSamples().relayed { HeadingReading.compass($0) },
+            gps.locationSamples().relayed { .gps($0) },
+            geoTracking.geoTrackingUpdates().relayed { .ar($0) },
+        ]) {
+            var fusion = LocationFusion()
+            return { reading in
+                switch reading {
+                case .compass(let sample):
+                    return sample
+                case .gps(let sample):
+                    _ = fusion.receive(.gps(sample))
+                    return nil
+                case .ar(let update):
+                    guard let location = ARGeoLocationProvider.sample(from: update),
+                          fusion.receive(.ar(location)) != nil
+                    else { return nil }
+                    return ARGeoLocationProvider.headingSample(from: update)
+                }
+            }
+        }
+    }
+
+    private enum HeadingReading: Sendable {
+        case compass(HeadingSample)
+        case gps(LocationSample)
+        case ar(GeoTrackingUpdate)
+    }
+
+    /// Hands readings from every source to one handler in arrival order, and passes on what it returns. Ends when
+    /// any source ends.
+    private static func merged<Reading: Sendable, Output: Sendable>(
+        _ sources: [AsyncStream<Reading>],
+        handler makeHandler: @escaping @Sendable () -> (Reading) -> Output?
+    ) -> AsyncStream<Output> {
+        let (readings, input) = AsyncStream.makeStream(of: Reading.self)
         return AsyncStream(bufferingPolicy: .bufferingNewest(8)) { continuation in
             let task = Task {
                 await withDiscardingTaskGroup { group in
-                    group.addTask {
-                        for await sample in gpsSamples { input.yield(.gps(sample)) }
-                        input.finish()
-                    }
-                    group.addTask {
-                        for await sample in arSamples { input.yield(.ar(sample)) }
-                    }
-                    group.addTask {
-                        var fusion = LocationFusion()
-                        for await reading in readings {
-                            if let sample = fusion.receive(reading) { continuation.yield(sample) }
+                    for source in sources {
+                        group.addTask {
+                            for await reading in source { input.yield(reading) }
+                            input.finish()
                         }
-                        // ends the AR loop too, through onTermination
+                    }
+                    group.addTask {
+                        let handle = makeHandler()
+                        for await reading in readings {
+                            if let output = handle(reading) { continuation.yield(output) }
+                        }
+                        // ends the other loops too, through onTermination
                         continuation.finish()
                     }
                 }
@@ -38,7 +81,6 @@ struct FusedLocationProvider: LocationProvider {
         }
     }
 
-    func headingSamples() -> AsyncStream<HeadingSample> { gps.headingSamples() }
     func authorizationStates() -> AsyncStream<LocationAuthorization> { gps.authorizationStates() }
     func requestAuthorization() async { await gps.requestAuthorization() }
 }
@@ -96,5 +138,18 @@ struct LocationFusion {
     private func freshGPS(at time: Date) -> LocationSample? {
         guard let latestGPS, abs(time.timeIntervalSince(latestGPS.timestamp)) <= Self.gpsFreshness else { return nil }
         return latestGPS
+    }
+}
+
+private extension AsyncStream {
+    /// `map`, kept an `AsyncStream` so streams of different readings can be merged.
+    func relayed<T: Sendable>(_ transform: @escaping @Sendable (Element) -> T) -> AsyncStream<T> where Element: Sendable {
+        AsyncStream<T> { continuation in
+            let task = Task {
+                for await element in self { continuation.yield(transform(element)) }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
     }
 }

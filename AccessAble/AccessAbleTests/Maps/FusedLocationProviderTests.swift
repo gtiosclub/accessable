@@ -58,6 +58,12 @@ struct ARGeoLocationProviderTests {
         #expect(ARGeoLocationProvider.sample(from: update(0, accuracy: .undetermined)) == nil)
         #expect(ARGeoLocationProvider.sample(from: update(0, state: .localizing)) == nil)
 
+        #expect(ARGeoLocationProvider.headingSample(from: update(0))?.accuracy == 5)
+        #expect(ARGeoLocationProvider.headingSample(from: update(0, state: .localizing)) == nil)
+        var noHeading = update(0)
+        noHeading.heading = nil
+        #expect(ARGeoLocationProvider.headingSample(from: noHeading) == nil)
+
         var noPosition = update(0)
         noPosition.coordinate = nil
         #expect(ARGeoLocationProvider.sample(from: noPosition) == nil)
@@ -148,11 +154,27 @@ struct FusedLocationProviderTests {
     }
 
     @Test
+    func geoTrackingHeadingComesThroughOnceTrusted() async {
+        let fused = FusedLocationProvider(
+            gps: ScriptedGPS(samples: []),
+            geoTracking: ScriptedGeoTracking(updates: [update(0, accuracy: .low), update(1, accuracy: .medium)])
+        )
+
+        for await heading in fused.headingSamples() {
+            #expect(heading == HeadingSample(trueHeading: 0, magneticHeading: 0, accuracy: 10,
+                                             timestamp: start + 1, source: .ar))
+            break
+        }
+    }
+
+    @Test
     func recordingsFromBeforeSourceDecodeAsGPS() throws {
         let old = #"{"coordinate":{"latitude":33.7745,"longitude":-84.3974},"horizontalAccuracy":5,"timestamp":0}"#
         let sample = try JSONDecoder().decode(LocationSample.self, from: Data(old.utf8))
 
         #expect(sample.source == .gps)
+        let compass = #"{"magneticHeading":4,"accuracy":10,"timestamp":0}"#
+        #expect(try JSONDecoder().decode(HeadingSample.self, from: Data(compass.utf8)).source == .compass)
         let arSample = LocationSample(coordinate: techGreen, horizontalAccuracy: 3, timestamp: start, source: .ar)
         #expect(try JSONDecoder().decode(LocationSample.self, from: JSONEncoder().encode(arSample)) == arSample)
     }
