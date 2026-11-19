@@ -45,7 +45,9 @@ struct AppServices: Sendable {
             askAISettings: askAISettings, alertSettings: alertSettings
         )
         let trip = PlaceholderTripProvider()        // TODO(Maps 2.2): TripManager / RouteProgressTracker
-        let location = CoreLocationProvider()
+        let gps = CoreLocationProvider()
+        // AR readings only flow while a trip has the camera geo-tracking (AR-2)
+        let location = FusedLocationProvider(gps: gps, geoTracking: scene as? any GeoTrackingProviding)
         var services = AppServices(
             // The same engine the camera pipeline submits to, so what the UI hears and shows
             // is what CV emitted. A second instance here would receive nothing.
@@ -59,7 +61,7 @@ struct AppServices: Sendable {
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
             tripActivity: ActivityKitTripActivityClient(),
-            locationContext: LocationDescriber(location: location, distances: distanceSettings),
+            locationContext: LocationDescriber(location: gps, distances: distanceSettings),
             commands: FoundationModelCommandInterpreter(),
             auth: FirebaseApp.app() != nil ? FirebaseAuthService() : PlaceholderAuthService(signedIn: false),
             askAISettings: askAISettings,
@@ -69,7 +71,7 @@ struct AppServices: Sendable {
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
             landmarks: services.landmarks,
-            setTripTracking: { await location.setTripTracking($0) },
+            setTripTracking: { await gps.setTripTracking($0) },
             distances: distanceSettings,
             recorder: services.tripRecorder
         )
