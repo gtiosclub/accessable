@@ -20,17 +20,20 @@ final class RuledAskAIResponder: AskAIResponder {
     private let policy: AskAIPolicy
     private let settings: AskAISettings
     private let now: @Sendable () -> Date
+    private let usesMetricUnits: @Sendable () -> Bool
     private let history = Mutex<[(sentence: String, at: Date)]>([])
 
     /// `model` defaults to the on-device model reading the same `settings`.
     init(
         settings: AskAISettings = AskAISettings(),
+    usesMetricUnits: @escaping @Sendable () -> Bool = { true },
         model: (any AskAIResponder)? = nil,
         policy: AskAIPolicy = AskAIPolicy(),
         now: @escaping @Sendable () -> Date = { .now }
     ) {
         self.settings = settings
-        self.model = model ?? RuledOnDeviceResponder(settings: settings)
+        self.usesMetricUnits = usesMetricUnits
+        self.model = model ?? RuledOnDeviceResponder(settings: settings, usesMetricUnits: usesMetricUnits)
         self.policy = policy
         self.now = now
     }
@@ -46,7 +49,9 @@ final class RuledAskAIResponder: AskAIResponder {
             history.removeAll { time.timeIntervalSince($0.at) > policy.repeatWindow }
             let result = policy.apply(
                 raw, question: question, facts: facts,
-                priorities: settings.priorities, recentlySaid: Set(history.map(\.sentence))
+                priorities: settings.priorities,
+                recentlySaid: Set(history.map(\.sentence)),
+                usesMetricUnits: usesMetricUnits()
             )
             history += result.newlySaid.map { ($0, time) }
             return result.answer
@@ -86,7 +91,8 @@ struct AskAIPolicy: Sendable {
         question: String,
         facts: ImageFacts,
         priorities: AIPriorities = .default,
-        recentlySaid: Set<String> = []
+        recentlySaid: Set<String> = [],
+        usesMetricUnits: Bool = true
     ) -> Result {
         let asksAboutCrossing = Self.asksAboutCrossing(question)
 
@@ -102,7 +108,7 @@ struct AskAIPolicy: Sendable {
         let content = fit(allowed.filter { !recentlySaid.contains(Self.normalized($0)) })
 
         var spoken: [String] = []
-        if let hazard = urgentHazard(in: facts, notMentionedIn: answer) {
+        if let hazard = urgentHazard(in: facts, notMentionedIn: answer, usesMetricUnits: usesMetricUnits) {
             spoken.append(hazard)
         }
         if asksAboutCrossing {
@@ -133,20 +139,20 @@ struct AskAIPolicy: Sendable {
 
     /// The nearest close hazard the answer leaves out, as a sentence. Drop-offs and steps
     /// first, then obstacles. Safety repeats: this is never suppressed as "already said".
-    private func urgentHazard(in facts: ImageFacts, notMentionedIn answer: String) -> String? {
+    private func urgentHazard(in facts: ImageFacts, notMentionedIn answer: String, usesMetricUnits: Bool) -> String? {
         let spoken = answer.lowercased()
         let ground = facts.elevationHazards
             .filter { $0.type != .unknown && Double($0.distance) <= urgentHazardDistance }
             .min { $0.distance < $1.distance }
         if let ground {
             let words = ground.type == .dropOff ? ["drop"] : ["step", "kerb", "curb", "stair"]
-            return words.contains(where: spoken.contains) ? nil : SpokenPhrasing.describe(ground)
+            return words.contains(where: spoken.contains) ? nil : SpokenPhrasing.describe(ground, usesMetricUnits: usesMetricUnits)
         }
         let obstacle = facts.detections
             .filter { $0.isHazard && ($0.distance ?? .infinity) <= urgentObstacleDistance }
             .min { ($0.distance ?? .infinity) < ($1.distance ?? .infinity) }
         if let obstacle, !spoken.contains(obstacle.label.lowercased()) {
-            return SpokenPhrasing.describe(obstacle)
+            return SpokenPhrasing.describe(obstacle, usesMetricUnits: usesMetricUnits)
         }
         return nil
     }
@@ -256,7 +262,7 @@ enum AskAIRules {
     /// The facts grouped by `AIInfoCategory` in the user's order (T23), with T19's wording
     /// for each item, then the question.
     static func prompt(
-        question: String, facts: ImageFacts, priorities: AIPriorities = .default, conversation: [AskAITurn] = []
+        question: String, facts: ImageFacts, priorities: AIPriorities = .default, conversation: [AskAITurn] = [], usesMetricUnits: Bool = true
     ) -> String {
         var lines: [String] = []
         if let transcript = AskAIConversation.transcript(of: conversation) {
@@ -277,9 +283,9 @@ enum AskAIRules {
 
         func describe(_ detection: Detection) -> String {
             let color = facts.detectionColors[detection.id].map { " Main colour: \($0)." } ?? ""
-            return "- \(SpokenPhrasing.describe(detection))\(color)"
+            return "- \(SpokenPhrasing.describe(detection, usesMetricUnits: usesMetricUnits))\(color)"
         }
-        let hazards = facts.elevationHazards.map { "- \(SpokenPhrasing.describe($0))" }
+        let hazards = facts.elevationHazards.map { "- \(SpokenPhrasing.describe($0, usesMetricUnits: usesMetricUnits))" }
             + facts.detections.filter { $0.isHazard && $0.label != "person" }.map(describe)
         var people = facts.detections.filter { $0.label == "person" }.map(describe)
         if !facts.people.isEmpty {
@@ -313,6 +319,7 @@ enum AskAIRules {
 /// template where Apple Intelligence is unavailable or the model fails.
 struct RuledOnDeviceResponder: AskAIResponder {
     var settings = AskAISettings()
+    var usesMetricUnits: @Sendable () -> Bool = { true }
 
     func answer(_ question: String, facts: ImageFacts) async throws -> String {
         try await answer(question, facts: facts, conversation: [])
@@ -324,7 +331,8 @@ struct RuledOnDeviceResponder: AskAIResponder {
             do {
                 let session = LanguageModelSession(instructions: AskAIRules.instructions)
                 let prompt = AskAIRules.prompt(
-                    question: question, facts: facts, priorities: settings.priorities, conversation: conversation
+                    question: question, facts: facts, priorities: settings.priorities, conversation: conversation,
+                    usesMetricUnits: usesMetricUnits()
                 )
                 return try await session.respond(to: prompt).content
             } catch {
@@ -332,6 +340,8 @@ struct RuledOnDeviceResponder: AskAIResponder {
             }
         }
         #endif
-        return TemplateAskAIResponder().answer(question, facts: facts)
+        return TemplateAskAIResponder(
+            usesMetricUnits: usesMetricUnits()
+        ).answer(question, facts: facts)
     }
 }

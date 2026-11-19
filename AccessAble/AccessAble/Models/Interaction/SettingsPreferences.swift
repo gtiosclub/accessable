@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// How many times an unprompted announcement repeats before it waits for the user to ask again.
 enum AutoRepeat: String, Codable, CaseIterable, Sendable {
@@ -67,5 +68,25 @@ struct SettingsPreferences: Codable, Hashable, Sendable {
             usesSystemScreenReader: true,
             quickSettingsEnabled: true
         )
+    }
+}
+
+/// Settings the running app reads while the user changes preferences.
+final class RuntimeSettings: Sendable {
+    private struct State: Sendable {
+        var phoneAimingHelp = true
+        var usesMetricUnits = true
+    }
+    
+    private let state = Mutex(State())
+    
+    var phoneAimingHelp: Bool {
+        get { state.withLock { $0.phoneAimingHelp } }
+        set { state.withLock { $0.phoneAimingHelp = newValue }}
+    }
+    
+    var usesMetricUnits: Bool {
+        get { state.withLock { $0.usesMetricUnits } }
+        set { state.withLock { $0.usesMetricUnits = newValue } }
     }
 }

@@ -157,7 +157,7 @@ struct StreetSignalAnnouncer: Sendable {
     private var framesSeen: [String: Int] = [:]
     private var lastSpoken: [String: TimeInterval] = [:]
 
-    mutating func announcements(for detections: [Detection], at time: TimeInterval) -> [AnnouncementEvent] {
+    mutating func announcements(for detections: [Detection], at time: TimeInterval, usesMetricUnits: Bool = true) -> [AnnouncementEvent] {
         let present = Dictionary(grouping: detections.filter { Self.labels.contains($0.label) }, by: \.label)
         framesSeen = framesSeen.filter { present[$0.key] != nil }
 
@@ -174,7 +174,7 @@ struct StreetSignalAnnouncer: Sendable {
             events.append(AnnouncementEvent(
                 category: .landmark,
                 priority: .normal,
-                text: Self.phrase(for: nearest),
+                text: Self.phrase(for: nearest, usesMetricUnits: usesMetricUnits),
                 distance: nearest.distance,
                 bearing: nearest.bearing,
                 source: .sceneDescription,
@@ -188,8 +188,8 @@ struct StreetSignalAnnouncer: Sendable {
 
     /// "Stop sign on your right, 4 metres." Without depth there's no bearing, so the side
     /// comes from where the box is in the frame.
-    static func phrase(for detection: Detection) -> String {
-        if detection.bearing != nil { return SpokenPhrasing.describe(detection) }
+    static func phrase(for detection: Detection, usesMetricUnits: Bool = true) -> String {
+        if detection.bearing != nil { return SpokenPhrasing.describe(detection, usesMetricUnits: usesMetricUnits) }
         let name = detection.label.prefix(1).uppercased() + detection.label.dropFirst()
         let x = detection.boundingBox.midX
         let side = x < 0.33 ? "on your left" : x < 0.66 ? "ahead" : "on your right"

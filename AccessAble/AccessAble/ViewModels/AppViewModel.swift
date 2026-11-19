@@ -19,7 +19,11 @@ final class AppViewModel {
 
     /// Settings-page choices that are not part of the GuidanceProfile.
     var preferences: SettingsPreferences {
-        didSet { save(preferences, forKey: Keys.preferences) }
+        didSet {
+            save(preferences, forKey: Keys.preferences)
+            services.runtimeSettings.phoneAimingHelp = preferences.phoneAimingHelp
+            services.runtimeSettings.usesMetricUnits = preferences.usesMetricUnits
+        }
     }
 
     var hasCompletedOnboarding: Bool {
@@ -46,6 +50,8 @@ final class AppViewModel {
         self.profile = Self.load(GuidanceProfile.self, forKey: Keys.profile, from: defaults) ?? .default
         self.preferences = Self.load(SettingsPreferences.self, forKey: Keys.preferences, from: defaults) ?? .default
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarded)
+        self.services.runtimeSettings.phoneAimingHelp = self.preferences.phoneAimingHelp
+        self.services.runtimeSettings.usesMetricUnits = self.preferences.usesMetricUnits
 
         let profile = self.profile
         self.services.askAISettings.priorities = profile.aiPriorities

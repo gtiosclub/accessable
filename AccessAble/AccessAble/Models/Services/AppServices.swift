@@ -20,6 +20,7 @@ struct AppServices: Sendable {
     /// What the camera warns about, read by the pipeline every frame. AppViewModel keeps it
     /// in step with the profile.
     var alertSettings = AlertSettings()
+    var runtimeSettings = RuntimeSettings()
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
@@ -29,9 +30,11 @@ struct AppServices: Sendable {
         let announcements = AnnouncementEngine(speech: SpeechOutput(), haptics: haptics)
         let askAISettings = AskAISettings()
         let alertSettings = AlertSettings()
+        let runtimeSettings = RuntimeSettings()
         let scene = liveScene(
             performance: performance, announcements: announcements,
-            askAISettings: askAISettings, alertSettings: alertSettings
+            askAISettings: askAISettings, alertSettings: alertSettings,
+            runtimeSettings: runtimeSettings
         )
         let trip = PlaceholderTripProvider()        // TODO(Maps 2.2): TripManager / RouteProgressTracker
         let location = CoreLocationProvider()
@@ -50,10 +53,12 @@ struct AppServices: Sendable {
             locationContext: LocationDescriber(location: location),
             commands: FoundationModelCommandInterpreter(),
             askAISettings: askAISettings,
-            alertSettings: alertSettings
+            alertSettings: alertSettings,
+            runtimeSettings: runtimeSettings
         )
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
+            runtimeSettings: runtimeSettings,
             setBackgroundTracking: { await location.setBackgroundTracking($0) }
         )
         return services
@@ -66,15 +71,22 @@ struct AppServices: Sendable {
         performance: PerformanceModeMonitor,
         announcements: any AnnouncementSink,
         askAISettings: AskAISettings,
-        alertSettings: AlertSettings
+        alertSettings: AlertSettings,
+        runtimeSettings: RuntimeSettings
     ) -> any SceneObservationProviding & SceneDescribing {
         guard ARSessionManager.isSupported else { return PlaceholderSceneProvider() }
         return ARSceneAnalyzer(
             sessionManager: ARSessionManager(),
-            perception: ScenePerception(alertSettings: alertSettings),
+            perception: ScenePerception(
+                alertSettings: alertSettings,
+                runtimeSettings: runtimeSettings
+            ),
             performance: performance,
             announcements: announcements,
-            askAI: AskAI(responder: RuledAskAIResponder(settings: askAISettings)), // T23 order, T24 rules
+            askAI: AskAI(responder: RuledAskAIResponder(settings: askAISettings, usesMetricUnits: {
+                runtimeSettings.usesMetricUnits
+            })), // T23 order, T24 rules
+            runtimeSettings: runtimeSettings,
             steering: SteeringTones()
         )
     }

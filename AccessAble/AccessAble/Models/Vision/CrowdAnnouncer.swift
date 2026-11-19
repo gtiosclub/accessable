@@ -40,7 +40,8 @@ struct CrowdAnnouncer: Sendable {
     mutating func announcements(
         for crowds: [CrowdRegion],
         at time: TimeInterval,
-        now: Date = .now
+        now: Date = .now,
+        usesMetricUnits: Bool = true
     ) -> [AnnouncementEvent] {
         guard let crowd = crowds.first(where: {
             abs($0.bearing.degrees) <= maximumBearing && $0.nearestDistance <= maximumDistance
@@ -50,7 +51,7 @@ struct CrowdAnnouncer: Sendable {
         }
         lastSeen = time
 
-        let text = SpokenPhrasing.describe(crowd)
+        let text = SpokenPhrasing.describe(crowd, usesMetricUnits: usesMetricUnits)
         let isFirstSighting = spokenText == nil
         let dueAgain = time - lastSpoken >= minimumInterval && text != spokenText
         guard isFirstSighting || dueAgain else { return [] }
