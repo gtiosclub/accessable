@@ -15,7 +15,7 @@ struct SceneDescriptionBuilder: Sendable {
     var maxItems = 4
     var crowdTuning = CrowdTuning.default
 
-    func describe(_ observation: SceneObservation) -> String {
+    func describe(_ observation: SceneObservation, usesMetricUnits: Bool = true) -> String {
         let grouped = detectCrowds(
             among: observation.detections.filter { $0.label.lowercased() == "person" },
             tuning: crowdTuning
@@ -24,11 +24,30 @@ struct SceneDescriptionBuilder: Sendable {
         let remaining = observation.prioritizedDetections.filter { !groupedIDs.contains($0.id) }
 
         // Hazards keep their place at the front; a crowd outranks the rest of the scene.
-        let sentences = observation.elevationHazards.map(SpokenPhrasing.describe)
-            + remaining.filter(\.isHazard).map(SpokenPhrasing.describe)
-            + grouped.crowds.map(SpokenPhrasing.describe)
-            + remaining.filter { !$0.isHazard && isWorthDescribing($0) }.map(SpokenPhrasing.describe)
-            + observation.recognizedText.map { "\($0.string) is visible \(direction(of: $0.boundingBox.midX))." }
+        let hazardSentences = observation.elevationHazards.map {
+            SpokenPhrasing.describe($0, usesMetricUnits: usesMetricUnits)
+        }
+        
+        let obstacleSentences = remaining.filter(\.isHazard).map {
+            SpokenPhrasing.describe($0, usesMetricUnits: usesMetricUnits)
+        }
+        
+        let crowdSentences = grouped.crowds.map {
+            SpokenPhrasing.describe($0, usesMetricUnits: usesMetricUnits)
+        }
+        
+        let objectSentences = remaining
+            .filter { !$0.isHazard && isWorthDescribing($0) }
+            .map {
+                SpokenPhrasing.describe($0, usesMetricUnits: usesMetricUnits)
+            }
+        
+        let textSentences = observation.recognizedText.map {
+            "\($0.string) is visible \(direction(of: $0.boundingBox.midX))."
+        }
+        
+        let sentences = hazardSentences + obstacleSentences + crowdSentences + objectSentences + textSentences
+        
         guard !sentences.isEmpty else { return "Nothing detected nearby." }
         return sentences.prefix(maxItems).joined(separator: " ")
     }

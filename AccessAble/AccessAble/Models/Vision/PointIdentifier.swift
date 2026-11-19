@@ -41,11 +41,16 @@ struct PointIdentifier: Sendable {
 
     /// What to say for `identify(in:)`: the text as read, or the object with its direction
     /// and distance ("Chair 2 metres ahead."), which is what someone pointing needs next.
-    func spokenIdentification(in observation: SceneObservation) -> String? {
+    func spokenIdentification(in observation: SceneObservation, usesMetricUnits: Bool = true) -> String? {
         if let text = bestText(in: observation.recognizedText) {
             return text.string.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return bestDetection(in: observation.detections).map(SpokenPhrasing.describe)
+        return bestDetection(in: observation.detections).map {
+            SpokenPhrasing.describe(
+                $0,
+                usesMetricUnits: usesMetricUnits
+            )
+        }
     }
 
     private func bestText(in items: [RecognizedText]) -> RecognizedText? {

@@ -227,17 +227,17 @@ enum AskAIPrompt {
         Never say that a path or a street crossing is safe.
         """
 
-    static func prompt(question: String, facts: ImageFacts) -> String {
+    static func prompt(question: String, facts: ImageFacts, usesMetricUnits: Bool = true) -> String {
         var lines: [String] = []
         if facts.isEmpty {
             lines.append("Vision found nothing it could read or recognize in the picture.")
         }
         if !facts.elevationHazards.isEmpty || !facts.detections.isEmpty {
             lines.append("Detected around the user, most important first:")
-            lines += facts.elevationHazards.map { "- \(SpokenPhrasing.describe($0))" }
+            lines += facts.elevationHazards.map { "- \(SpokenPhrasing.describe($0, usesMetricUnits: usesMetricUnits))" }
             lines += facts.detections.map { detection in
                 let color = facts.detectionColors[detection.id].map { " Main colour: \($0)." } ?? ""
-                return "- \(SpokenPhrasing.describe(detection))\(color)"
+                return "- \(SpokenPhrasing.describe(detection, usesMetricUnits: usesMetricUnits))\(color)"
             }
         }
         if !facts.text.isEmpty {
@@ -269,6 +269,7 @@ enum AskAIPrompt {
 
 /// Answers without a language model, by matching the question's words against the facts.
 struct TemplateAskAIResponder: AskAIResponder {
+    var usesMetricUnits: Bool = true
     func answer(_ question: String, facts: ImageFacts) -> String {
         var asked = Self.words(in: question)
         let asksColor = !asked.isDisjoint(with: Self.colorWords)
@@ -280,7 +281,7 @@ struct TemplateAskAIResponder: AskAIResponder {
                 facts.detectionColors[detection.id].map { "\(Self.capitalized(detection.label)) looks \($0)." }
             }
             if asksColor, !colors.isEmpty { return colors.prefix(3).joined(separator: " ") }
-            if let overview = overview(of: facts) { return overview }
+            if let overview = overview(of: facts, usesMetricUnits: usesMetricUnits) { return overview }
         }
         if !asked.isDisjoint(with: Self.personWords) {
             asked.insert("person")
@@ -290,12 +291,12 @@ struct TemplateAskAIResponder: AskAIResponder {
 
         var sentences = facts.elevationHazards
             .filter { !Self.words(in: SpokenPhrasing.name(of: $0.type)).isDisjoint(with: asked) }
-            .map(SpokenPhrasing.describe)
+            .map { SpokenPhrasing.describe($0, usesMetricUnits: usesMetricUnits) }
         sentences += facts.detections
             .filter { !Self.words(in: $0.label).isDisjoint(with: asked) }
             .map { detection in
                 let color = asksColor ? facts.detectionColors[detection.id].map { " It looks \($0)." } ?? "" : ""
-                return SpokenPhrasing.describe(detection) + color
+                return SpokenPhrasing.describe(detection, usesMetricUnits: usesMetricUnits) + color
             }
         sentences += facts.text
             .filter { text in
@@ -322,13 +323,15 @@ struct TemplateAskAIResponder: AskAIResponder {
     }
 
     /// "Describe my surroundings" (T18) over the facts, or nil when there is nothing it describes.
-    private func overview(of facts: ImageFacts) -> String? {
+    private func overview(of facts: ImageFacts, usesMetricUnits: Bool) -> String? {
         guard !facts.detections.isEmpty || !facts.elevationHazards.isEmpty || !facts.text.isEmpty else { return nil }
         return SceneDescriptionBuilder().describe(SceneObservation(
             detections: facts.detections,
             recognizedText: facts.text,
             elevationHazards: facts.elevationHazards
-        ))
+        ),
+        usesMetricUnits: usesMetricUnits
+        )
     }
 
     private static func capitalized(_ label: String) -> String {

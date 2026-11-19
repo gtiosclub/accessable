@@ -67,7 +67,7 @@ struct ApproachAnnouncer: Sendable {
     mutating func announcements(
         for threats: [ApproachThreat],
         at time: TimeInterval,
-        now: Date = .now
+        now: Date = .now,
     ) -> [AnnouncementEvent] {
         var events: [AnnouncementEvent] = []
 
