@@ -18,3 +18,4 @@ struct Report: Codable, Equatable, Identifiable, Sendable {
     var reporterID: String
     
 }
+

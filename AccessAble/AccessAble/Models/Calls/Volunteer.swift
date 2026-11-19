@@ -15,6 +15,11 @@ struct Volunteer: Identifiable, Hashable, Sendable {
     var isOnline: Bool
     /// Last heartbeat. Defaults to now so sample content never looks stale.
     var lastSeen: Date = Date()
+    var languages: [String] = []
+    var bio: String = ""
+    var inCall: Bool = false
+    var ringingCallID: String? = nil
+    var ringingSince: Date? = nil
 
     /// Online toggle on AND a recent heartbeat. Callers use this, not `isOnline` alone.
     func isReachable(at now: Date = Date()) -> Bool {
