@@ -26,3 +26,14 @@ struct Volunteer: Identifiable, Hashable, Sendable {
         isOnline && now.timeIntervalSince(lastSeen) < Self.staleAfter
     }
 }
+
+extension Array where Element == Volunteer {
+    func sortedForDirectory(at now: Date = Date()) -> [Volunteer] {
+        sorted { a, b in
+            let aReachable = a.isReachable(at: now)
+            let bReachable = b.isReachable(at:now)
+            if aReachable != bReachable { return aReachable}
+            return a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+        }
+    }
+}

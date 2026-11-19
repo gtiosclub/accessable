@@ -62,14 +62,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A1C0FF05306C188100B311DF /* Config */ = {
-			isa = PBXGroup;
-			children = (
-				A1C0FF01306C188100B311DF /* Shared.xcconfig */,
-			);
-			path = Config;
-			sourceTree = "<group>";
-		};
 		21101007306C188100B311DF = {
 			isa = PBXGroup;
 			children = (
@@ -87,6 +79,14 @@
 				4E5A1701306C188100B311DF /* AccessAbleTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A1C0FF05306C188100B311DF /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A1C0FF01306C188100B311DF /* Shared.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */

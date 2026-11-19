@@ -254,6 +254,12 @@ actor PlaceholderAuthService: AuthService {
 struct PlaceholderVolunteerDirectory: VolunteerDirectory {
     var volunteers: [Volunteer] = SampleContent.activeVolunteers
 
+    func allVolunteers() -> AsyncStream<[Volunteer]> {
+        AsyncStream { continuation in
+            continuation.yield(volunteers.sortedForDirectory())
+            continuation.finish()
+        }
+    }
     func onlineVolunteers() -> AsyncStream<[Volunteer]> {
         AsyncStream { continuation in
             continuation.yield(volunteers)

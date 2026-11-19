@@ -134,6 +134,7 @@ protocol AuthService: Sendable {
 /// Who can be called right now.
 protocol VolunteerDirectory: Sendable {
     /// Volunteers that are reachable now (Online toggle on and a recent `lastSeen`), replaced on each change.
+    func allVolunteers() -> AsyncStream<[Volunteer]>
     func onlineVolunteers() -> AsyncStream<[Volunteer]>
 }
 
