@@ -1436,6 +1436,22 @@ struct TripManagerDirectionTests {
         #expect(start.text == "Starting directions to Library, about 160 metres. Turn around, the path is behind you.")
     }
 
+    @Test
+    func startUsesTheARHeadingOverTheCompass() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.waitForSleepers(2)
+        // the compass says north, but the camera, matched to street imagery, faces south
+        harness.location.headings.yield(HeadingSample(trueHeading: 0, magneticHeading: 4, accuracy: 10,
+                                                      timestamp: harness.clock.now()))
+        harness.location.headings.yield(HeadingSample(trueHeading: 180, magneticHeading: 180, accuracy: 5,
+                                                      timestamp: harness.clock.now(), source: .ar))
+        await harness.location.headings.waitUntilHandled()
+        harness.clock.advance(by: 0.75)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 160 metres. Turn around, the path is behind you.")
+    }
+
     @Test(arguments: [
         (151.2, -20.0, "Arriving at Library. Library is on your left."),
         (151.2, 20, "Arriving at Library. Library is on your right."),

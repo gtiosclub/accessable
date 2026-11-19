@@ -67,6 +67,26 @@ struct HeadingSample: Codable, Equatable, Sendable {
     /// Maximum deviation in degrees.
     var accuracy: Double
     var timestamp: Date
+    /// Where the reading came from (AR-4).
+    var source: HeadingSource = .compass
+}
+
+enum HeadingSource: String, Codable, Sendable {
+    case compass
+    /// The way the camera faces, from ARKit geo-tracking. True north only, so `magneticHeading` repeats it.
+    case ar
+}
+
+extension HeadingSample {
+    /// Readings saved before `source` existed decode as compass.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        trueHeading = try container.decodeIfPresent(Double.self, forKey: .trueHeading)
+        magneticHeading = try container.decode(Double.self, forKey: .magneticHeading)
+        accuracy = try container.decode(Double.self, forKey: .accuracy)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        source = try container.decodeIfPresent(HeadingSource.self, forKey: .source) ?? .compass
+    }
 }
 
 extension HeadingSample {

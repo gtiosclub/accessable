@@ -26,6 +26,26 @@ struct ARGeoLocationProvider: Sendable {
         return LocationSample(coordinate: coordinate, horizontalAccuracy: radius, timestamp: update.timestamp, source: .ar)
     }
 
+    /// Nil until geo-tracking has localized with a known accuracy, or while the camera points almost straight up or
+    /// down.
+    static func headingSample(from update: GeoTrackingUpdate) -> HeadingSample? {
+        guard update.state == .localized, let heading = update.heading,
+              let accuracy = headingAccuracy(update.accuracy)
+        else { return nil }
+        return HeadingSample(trueHeading: heading, magneticHeading: heading, accuracy: accuracy,
+                             timestamp: update.timestamp, source: .ar)
+    }
+
+    /// Degrees. A guess from the grade, like `horizontalAccuracy`; low is past what `HeadingEstimator` trusts.
+    static func headingAccuracy(_ accuracy: GeoTrackingUpdate.Accuracy) -> Double? {
+        switch accuracy {
+        case .high: 5
+        case .medium: 10
+        case .low: 30
+        case .undetermined: nil
+        }
+    }
+
     /// Metres. ARKit gives only a grade, so these are cautious guesses until the AR-6 walk measures them.
     static func horizontalAccuracy(_ accuracy: GeoTrackingUpdate.Accuracy) -> Double? {
         switch accuracy {

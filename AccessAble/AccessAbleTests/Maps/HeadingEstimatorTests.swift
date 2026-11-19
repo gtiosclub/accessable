@@ -25,7 +25,33 @@ private func estimate(_ fixes: [LocationSample] = [], _ headings: [HeadingSample
     return estimator.heading(at: start.addingTimeInterval(seconds))
 }
 
+private func arHeading(_ degrees: Double = 140, accuracy: Double = 5, at seconds: Double = 0) -> HeadingSample {
+    HeadingSample(trueHeading: degrees, magneticHeading: degrees, accuracy: accuracy,
+                  timestamp: start.addingTimeInterval(seconds), source: .ar)
+}
+
 struct HeadingEstimatorTests {
+    @Test func arHeadingWinsOverWalkingAndTheCompass() {
+        #expect(estimate([fix(speed: 1.4)], [compass(), arHeading()])
+            == UserHeading(degrees: 140, source: .ar, timestamp: start))
+        // a compass reading after it doesn't replace it
+        #expect(estimate([], [arHeading(), compass(at: 0.5)], at: 0.5)?.source == .ar)
+    }
+
+    @Test func staleOrRoughARHeadingFallsBack() {
+        #expect(estimate([fix(speed: 1.4, at: 2)], [arHeading()], at: 2)?.source == .ar)
+        #expect(estimate([fix(speed: 1.4, at: 2.1)], [arHeading()], at: 2.1)?.source == .walkingDirection)
+        #expect(estimate([], [compass(), arHeading(accuracy: 30)])?.source == .compass)
+    }
+
+    @Test func arHeadingIsNotTheCompassAccuracy() {
+        var estimator = HeadingEstimator()
+        estimator.update(with: compass(accuracy: 15))
+        estimator.update(with: arHeading(accuracy: 5, at: 1))
+
+        #expect(estimator.compassAccuracy == 15)
+    }
+
     @Test func walkingDirectionWinsWhileMoving() {
         #expect(estimate([fix(speed: 1.4)], [compass()])
             == UserHeading(degrees: 212, source: .walkingDirection, timestamp: start))
