@@ -74,6 +74,8 @@ final class ScenePerception: Sendable {
         var surfaceAhead: (kind: SurfaceKind, share: Float)?
         /// Step downs and drop-offs segmentation showed to be flat floor, this frame.
         var hazardsDismissedBySurface = 0
+        /// Where the user is relative to the sidewalk, once confirmed; `.unknown` indoors.
+        var sidewalk: SidewalkSituation = .unknown
     }
 
     private let peopleDetector: PeopleDetector
@@ -82,6 +84,10 @@ final class ScenePerception: Sendable {
     /// Ground segmentation; nil when the model isn't bundled.
     private let surfaceReader: SurfaceReader?
     private let surfaceAnnouncer = Mutex(SurfaceAnnouncer())
+    /// Keeping to the sidewalk outdoors, from segmentation.
+    private let sidewalkGuide = Mutex(SidewalkGuide())
+    /// When a crosswalk was last confirmed: walking in the road is expected for a while after.
+    private let lastCrosswalk = Mutex<TimeInterval>(-.infinity)
     private let cameraQualityEvaluator = CameraQualityEvaluator()
     private let cameraQualityState = Mutex(CameraQualityState())
     private let corridorWidth: Float
@@ -126,7 +132,7 @@ final class ScenePerception: Sendable {
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
-        objectDetector: (any ObjectDetecting)? = DFineObjectDetector(),
+        objectDetector: (any ObjectDetecting)? = DETRObjectDetector.bundled(),
         textReader: TextReader = TextReader(),
         surfaceReader: SurfaceReader? = SurfaceReader(),
         corridorWidth: Float = WalkingCorridor.default.width,
@@ -165,6 +171,8 @@ final class ScenePerception: Sendable {
         streetSignals.withLock { $0 = StreetSignalAnnouncer() }
         signs.withLock { $0 = SignAnnouncer() }
         surfaceAnnouncer.withLock { $0 = SurfaceAnnouncer() }
+        sidewalkGuide.withLock { $0 = SidewalkGuide() }
+        lastCrosswalk.withLock { $0 = -.infinity }
         appliedFilter.withLock { $0 = nil }
         speechBudget.withLock { $0 = SpeechBudget() }
         // Otherwise the rate is averaged over the time the camera was off, and reads ~1 fps.
@@ -238,6 +246,7 @@ final class ScenePerception: Sendable {
             width: 96, height: max(Int(96 * upright.height / upright.width), 1)
         ).flatMap { detectCrosswalk(in: $0) }
         let crosswalkBox = crosswalkConfirmer.withLock { $0.update(stripes) }
+        if crosswalkBox != nil { lastCrosswalk.withLock { $0 = frame.timestamp } }
         lap("Crosswalk")
         var obstacles: [Detection] = []
         var hazards: [ElevationHazard] = []
@@ -270,13 +279,34 @@ final class ScenePerception: Sendable {
         if let depthMap {
             let camera = frame.camera
             let intrinsics = depthIntrinsics(for: camera, depth: depthMap)
+            let cloud = unprojectDepthMap(depthMap, intrinsics: intrinsics, cameraTransform: camera.transform)
 
-            // T5 + T7 — distance and direction for each recognized object.
+            // T10 — the floor everything else is measured against. When none is in view
+            // (close to a wall, the floor leaves the frame) the remembered one stands in.
+            let floor = floorMemory.withLock {
+                $0.update(fit: detectFloorPlane(points: cloud), cameraPosition: corridor.origin, at: frame.timestamp)
+            }
+            diagnostics.floor = floor.plane
+            diagnostics.cameraHeight = floor.cameraHeight
+            diagnostics.isFloorMeasured = floor.isMeasured
+
+            // T5 + T7 — distance and direction for each recognized object. LiDAR reaches about
+            // 5 m, less in sunlight; outdoors the car, cyclist or bus that matters is often past
+            // that. Those fall back to the camera-only estimate (T33: floor contact and known
+            // size), so approach warnings (T34) can follow vehicles from 25 m rather than 5.
+            let cameraIntrinsics = capturedIntrinsics(for: camera)
             recognized = recognized.map { detection in
                 let region = imageOrientation.sensorRect(fromUpright: detection.boundingBox)
                 guard let position = worldPosition(
                     ofRegion: region, in: depthMap, intrinsics: intrinsics, cameraTransform: camera.transform
-                ) else { return detection }
+                ) else {
+                    let (located, isInPath) = locatedWithoutDepth(
+                        detection, floor: floor, heading: heading, orientation: imageOrientation,
+                        intrinsics: cameraIntrinsics, cameraTransform: camera.transform
+                    )
+                    if isInPath { inPath.insert(detection.id) }
+                    return located
+                }
                 var located = detection
                 located.distance = Double(heading.distance(to: position))
                 located.bearing = heading.bearing(to: position)
@@ -288,17 +318,6 @@ final class ScenePerception: Sendable {
                 }
                 return located
             }
-
-            let cloud = unprojectDepthMap(depthMap, intrinsics: intrinsics, cameraTransform: camera.transform)
-
-            // T10 — the floor everything else is measured against. When none is in view
-            // (close to a wall, the floor leaves the frame) the remembered one stands in.
-            let floor = floorMemory.withLock {
-                $0.update(fit: detectFloorPlane(points: cloud), cameraPosition: corridor.origin, at: frame.timestamp)
-            }
-            diagnostics.floor = floor.plane
-            diagnostics.cameraHeight = floor.cameraHeight
-            diagnostics.isFloorMeasured = floor.isMeasured
 
             // T11 — obstacles by geometry, no labels needed. Against a remembered floor
             // the tolerance is looser: the real floor may sit a few centimetres off it,
@@ -362,38 +381,11 @@ final class ScenePerception: Sendable {
             diagnostics.isFloorMeasured = floor.isMeasured
 
             recognized = recognized.map { detection in
-                let contact = groundContactDistance(
-                    box: detection.boundingBox, orientation: imageOrientation, floor: floor,
-                    corridor: heading, intrinsics: intrinsics, cameraTransform: camera.transform
-                )
-                let sizeRange = ObjectSizePriors.prior(for: detection.label).flatMap {
-                    distanceRange(
-                        box: detection.boundingBox, orientation: imageOrientation,
-                        prior: $0, intrinsics: intrinsics
-                    )
-                }
-                guard let estimate = combinedDistance(groundContact: contact, sizeRange: sizeRange) else {
-                    return detection
-                }
-                // With a floor contact the position is known outright; from size alone the
-                // object is placed along the ray through its box, which still gives a usable
-                // bearing and in-path test.
-                let centre = imageOrientation.sensorPoint(
-                    fromUpright: CGPoint(x: detection.boundingBox.midX, y: detection.boundingBox.midY)
-                )
-                let position = contact?.position ?? worldPoint(
-                    sensorPoint: centre, atDistance: Float(estimate.meters),
+                let (located, isInPath) = locatedWithoutDepth(
+                    detection, floor: floor, heading: heading, orientation: imageOrientation,
                     intrinsics: intrinsics, cameraTransform: camera.transform
                 )
-                var located = detection
-                located.distance = estimate.meters
-                located.distanceAccuracy = estimate.accuracy
-                located.worldPosition = position
-                guard let position else { return located }
-                located.bearing = heading.bearing(to: position)
-                if heading.contains(position), detection.isHazard || detection.label == "person" {
-                    inPath.insert(detection.id)
-                }
+                if isInPath { inPath.insert(detection.id) }
                 return located
             }
         }
@@ -415,6 +407,16 @@ final class ScenePerception: Sendable {
             hazards = checked
         }
         diagnostics.surfaceAhead = surface?.dominant(in: SurfaceMap.groundAhead)
+        // The ground around the walking line in metres, for keeping to the sidewalk.
+        let groundLayout: GroundLayout? = if let surface, let height = diagnostics.cameraHeight {
+            GroundLayout(isOutdoors: surface.looksOutdoors, generation: surface.generation) { along, lateral in
+                let ground = heading.origin + heading.forward * along + heading.right * lateral - SIMD3<Float>(0, height, 0)
+                let point = frame.camera.projectPoint(ground, orientation: interfaceOrientation, viewportSize: upright)
+                return surface.kind(at: CGPoint(x: point.x / upright.width, y: point.y / upright.height))
+            }
+        } else {
+            nil
+        }
         lap("Depth")
         let detections = tracker.withLock {
             $0.update(fuse(obstacles: obstacles, recognized: recognized), at: frame.timestamp)
@@ -501,8 +503,17 @@ final class ScenePerception: Sendable {
             lastPathAnnouncement.withLock { $0 = frame.timestamp }
         }
         if mode.watchesStreet {
+            let sidewalk = sidewalkGuide.withLock { guide in
+                let isCrossing = frame.timestamp - lastCrosswalk.withLock { $0 } < 15
+                return (guide.announcements(for: groundLayout, isCrossing: isCrossing, at: frame.timestamp), guide.current)
+            }
+            diagnostics.sidewalk = sidewalk.1
+            announcements += sidewalk.0
             announcements += surfaceAnnouncer.withLock { $0.announcements(for: surface, at: frame.timestamp) }
                 .filter { _ in diagnostics.surfaceAhead.map { filter.allows(DangerLevel(of: $0.kind)) } ?? false }
+                // Once the sidewalk guide knows where the user is, it says what the road means
+                // for them ("Curb ahead", "Road close on your right"); "Road ahead" would repeat it.
+                .filter { sidewalk.1 == .unknown || $0.dedupKey != "surface-ahead-road" }
         }
         if mode.announcesSigns {
             announcements += signs.withLock {
@@ -584,6 +595,48 @@ private extension ScenePerception {
             log.error("object detection failed: \(error.localizedDescription, privacy: .public)")
         }
         return detections
+    }
+
+    /// T33 — places a recognized object without depth: where its box meets the floor, cross-
+    /// checked against the object's known size. Used on phones without LiDAR, and on LiDAR
+    /// phones for whatever is beyond the sensor's reach. `intrinsics` describe the captured
+    /// image. Returns the detection (unchanged when nothing could be estimated) and whether it
+    /// stands in the walking corridor.
+    func locatedWithoutDepth(
+        _ detection: Detection,
+        floor: FloorEstimate,
+        heading: WalkingCorridor,
+        orientation: CGImagePropertyOrientation,
+        intrinsics: CameraIntrinsics,
+        cameraTransform: simd_float4x4
+    ) -> (Detection, isInPath: Bool) {
+        let contact = groundContactDistance(
+            box: detection.boundingBox, orientation: orientation, floor: floor,
+            corridor: heading, intrinsics: intrinsics, cameraTransform: cameraTransform
+        )
+        let sizeRange = ObjectSizePriors.prior(for: detection.label).flatMap {
+            distanceRange(box: detection.boundingBox, orientation: orientation, prior: $0, intrinsics: intrinsics)
+        }
+        guard let estimate = combinedDistance(groundContact: contact, sizeRange: sizeRange) else {
+            return (detection, false)
+        }
+        // With a floor contact the position is known outright; from size alone the object is
+        // placed along the ray through its box, which still gives a usable bearing and in-path test.
+        let centre = orientation.sensorPoint(
+            fromUpright: CGPoint(x: detection.boundingBox.midX, y: detection.boundingBox.midY)
+        )
+        let position = contact?.position ?? worldPoint(
+            sensorPoint: centre, atDistance: Float(estimate.meters),
+            intrinsics: intrinsics, cameraTransform: cameraTransform
+        )
+        var located = detection
+        located.distance = estimate.meters
+        located.distanceAccuracy = estimate.accuracy
+        located.worldPosition = position
+        guard let position else { return (located, false) }
+        located.bearing = heading.bearing(to: position)
+        let isInPath = heading.contains(position) && (detection.isHazard || detection.label == "person")
+        return (located, isInPath)
     }
 
     /// True when `feedback` has held for `CameraQualityState.persistence` and the same

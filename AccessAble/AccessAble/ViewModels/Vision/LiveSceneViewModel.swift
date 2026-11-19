@@ -433,6 +433,7 @@ final class LiveSceneViewModel {
             surfaceDescription = diagnostics.surfaceAhead.map { surface in
                 String(format: "Ground ahead: %@ %.0f%%", surface.kind.rawValue, surface.share * 100)
                     + (diagnostics.hazardsDismissedBySurface > 0 ? ", \(diagnostics.hazardsDismissedBySurface) drop(s) dismissed" : "")
+                    + Self.describe(sidewalk: diagnostics.sidewalk)
             }
             sessionDescription = Self.describe(
                 tracking: analyzer.sessionManager.trackingStateDescription,
@@ -650,6 +651,17 @@ final class LiveSceneViewModel {
             for await _ in NotificationCenter.default.notifications(named: UIDevice.orientationDidChangeNotification) {
                 apply(UIDevice.current.orientation)
             }
+        }
+    }
+
+    /// The sidewalk guide's confirmed reading, for the developer readout; empty when unknown.
+    private static func describe(sidewalk: SidewalkSituation) -> String {
+        switch sidewalk {
+        case .unknown: ""
+        case .onSidewalk: "\nSidewalk: on it"
+        case let .roadBeside(side, edge): String(format: "\nSidewalk: road %.2f m %@", edge, side.rawValue)
+        case let .inRoad(side): "\nSidewalk: in road, sidewalk \(side?.rawValue ?? "not seen")"
+        case let .curbAhead(distance): String(format: "\nSidewalk: curb %.1f m ahead", distance)
         }
     }
 
