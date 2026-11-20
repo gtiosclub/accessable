@@ -6,6 +6,13 @@ struct VolunteerHomeView: View {
     let signOut: () async throws -> Void
     @State private var errorMessage: String?
     @State private var signingOut = false
+    @State private var availability: VolunteerAvailabilityViewModel
+    
+    init(profile: UserProfile, presence: any PresenceService, signOut: @escaping () async throws -> Void) {
+        self.profile = profile
+        self.signOut = signOut
+        _availability = State(initialValue: VolunteerAvailabilityViewModel(presence: presence))
+    }
 
     var body: some View {
         NavigationStack {
@@ -16,7 +23,18 @@ struct VolunteerHomeView: View {
                     Label("Volunteer", systemImage: "person.fill")
                 }
                 Section {
-                    Text("You're signed in as a volunteer. Call availability will be added in the matching feature.")
+                    Toggle("Online", isOn: Binding(
+                        get: { availability.isOnline },
+                        set: { newValue in Task { await availability.setOnline(newValue) } }
+                    ))
+                    .disabled(availability.isUpdating)
+                    .frame(minHeight: 44)
+                    .accessibilityHint("When on, callers can see and call you while AccessAble is open on screen")
+                    if let message = availability.errorMessage {
+                        Text(message).foregroundStyle(.red)
+                    }
+                } footer: {
+                    Text("You stay online only while AccessAble is open on an unlocked phone. Leaving the app or locking your phone turns this off.")
                 }
                 Section {
                     Button("Sign out") {
@@ -33,6 +51,7 @@ struct VolunteerHomeView: View {
                 if let errorMessage { Text(errorMessage).foregroundStyle(.red) }
             }
             .navigationTitle("Volunteer home")
+            .task { await availability.start() }
         }
     }
 }

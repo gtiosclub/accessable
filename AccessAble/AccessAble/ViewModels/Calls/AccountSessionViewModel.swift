@@ -15,13 +15,15 @@ final class AccountSessionViewModel {
     private(set) var state: State = .loading
     private let auth: any AuthService
     private let profiles: any UserProfileStore
+    private let presence: any PresenceService
     private var activeUser: AuthUser?
     private var loadTask: Task<Void, Never>?
     private var generation = UUID()
 
-    init(auth: any AuthService, profiles: any UserProfileStore) {
+    init(auth: any AuthService, profiles: any UserProfileStore, presence: any PresenceService = PlaceholderPresenceService()) {
         self.auth = auth
         self.profiles = profiles
+        self.presence = presence
     }
 
     func listen() async {
@@ -74,6 +76,7 @@ final class AccountSessionViewModel {
     }
 
     func signOut() async throws {
+        try? await presence.setOnline(false)
         try await auth.signOut()
         loadTask?.cancel()
         generation = UUID()
