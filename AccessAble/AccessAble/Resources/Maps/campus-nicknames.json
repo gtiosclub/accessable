@@ -1,0 +1,389 @@
+{
+  "places": [
+    {
+      "name": "Clough Undergraduate Learning Commons",
+      "nicknames": ["CULC", "Clough", "Clough Commons", "G. Wayne Clough Undergraduate Learning Commons"],
+      "address": "266 4th St NW, Atlanta, GA 30313",
+      "latitude": 33.774220,
+      "longitude": -84.396299
+    },
+    {
+      "name": "John Lewis Student Center",
+      "nicknames": ["Student Center", "SC", "JLSC", "Wenn Student Center", "Wenn"],
+      "address": "351 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.773913,
+      "longitude": -84.398587
+    },
+    {
+      "name": "Campus Recreation Center",
+      "nicknames": ["CRC", "Rec Center", "Campus Rec"],
+      "address": "750 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.775662,
+      "longitude": -84.404041
+    },
+    {
+      "name": "McCamish Pavilion",
+      "nicknames": ["McCamish", "Alexander Memorial Coliseum", "Alexander Memorial Coliseum in McCamish Pavilion"],
+      "address": "965 Fowler St NW, Atlanta, GA 30318",
+      "latitude": 33.780688,
+      "longitude": -84.392769
+    },
+    {
+      "name": "Tech Green",
+      "nicknames": ["Tech Green"],
+      "latitude": 33.774300,
+      "longitude": -84.397500
+    },
+    {
+      "name": "Skiles Classroom Building",
+      "nicknames": ["Skiles", "Skiles Building", "William Vernon Skiles Building"],
+      "address": "686 Cherry St NW, Atlanta, GA 30313",
+      "latitude": 33.773854,
+      "longitude": -84.396041
+    },
+    {
+      "name": "Klaus Advanced Computing Building",
+      "nicknames": ["Klaus", "KACB", "Christopher W. Klaus Advanced Computing Building"],
+      "address": "266 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.776453,
+      "longitude": -84.395952
+    },
+    {
+      "name": "Howey Physics Building",
+      "nicknames": ["Howey", "Howey Building", "Howey Physics", "Physics Building"],
+      "address": "837 State St NW, Atlanta, GA 30332",
+      "latitude": 33.777558,
+      "longitude": -84.398366
+    },
+    {
+      "name": "West Village Dining Commons",
+      "nicknames": ["West Village", "WeVi", "West Village Dining", "WV"],
+      "address": "532 8th St NW, Atlanta, GA 30318",
+      "latitude": 33.779495,
+      "longitude": -84.405053
+    },
+    {
+      "name": "North Avenue Dining Hall",
+      "nicknames": ["NAV", "North Ave", "North Ave Dining", "North Ave Dining Hall"],
+      "address": "120 North Ave NW, Atlanta, GA 30313",
+      "latitude": 33.770960,
+      "longitude": -84.391651
+    },
+    {
+      "name": "Brittain Dining Hall",
+      "nicknames": ["Brittain", "Brittain Dining", "Marion L. Brittain Dining Hall"],
+      "address": "355 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.772494,
+      "longitude": -84.391144
+    },
+    {
+      "name": "Tech Tower",
+      "nicknames": ["Tech Tower", "Evans Administration Building", "Lettie Pate Whitehead Evans Administration Building"],
+      "address": "225 North Ave NW, Atlanta, GA 30332",
+      "latitude": 33.772386,
+      "longitude": -84.394889
+    },
+    {
+      "name": "Kessler Campanile",
+      "nicknames": ["Campanile", "Kessler Campanile"],
+      "latitude": 33.774270,
+      "longitude": -84.398080
+    },
+    {
+      "name": "Price Gilbert Memorial Library",
+      "nicknames": ["Library", "Price Gilbert", "Price Gilbert Library", "Georgia Tech Library"],
+      "address": "704 Cherry St NW, Atlanta, GA 30313",
+      "latitude": 33.774217,
+      "longitude": -84.395561
+    },
+    {
+      "name": "Crosland Tower",
+      "nicknames": ["Crosland", "Library East", "Dorothy Murray Crosland Tower"],
+      "latitude": 33.774080,
+      "longitude": -84.394981
+    },
+    {
+      "name": "College of Computing Building",
+      "nicknames": ["CCB", "CoC", "College of Computing"],
+      "address": "801 Atlantic Dr NW, Atlanta, GA 30332",
+      "latitude": 33.777211,
+      "longitude": -84.397474
+    },
+    {
+      "name": "Instructional Center",
+      "nicknames": ["IC", "Instructional Center"],
+      "address": "759 Ferst Dr NW, Atlanta, GA 30318",
+      "latitude": 33.775464,
+      "longitude": -84.401437
+    },
+    {
+      "name": "Van Leer Building",
+      "nicknames": ["Van Leer", "VL", "ECE Building"],
+      "address": "777 Atlantic Dr NW, Atlanta, GA 30332",
+      "latitude": 33.775429,
+      "longitude": -84.397485
+    },
+    {
+      "name": "Mason Building",
+      "nicknames": ["Mason", "CEE Building", "Jesse W. Mason Building"],
+      "address": "790 Atlantic Dr NW, Atlanta, GA 30332",
+      "latitude": 33.776449,
+      "longitude": -84.398396
+    },
+    {
+      "name": "Boggs Chemistry Building",
+      "nicknames": ["Boggs", "Boggs Building", "Chemistry Building"],
+      "address": "770 State St NW, Atlanta, GA 30332",
+      "latitude": 33.774980,
+      "longitude": -84.399672
+    },
+    {
+      "name": "Ford Environmental Science and Technology Building",
+      "nicknames": ["Ford", "Ford ES&T", "ES&T", "EST", "Ford Motor Company Environmental Science and Technology Building"],
+      "address": "311 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.779041,
+      "longitude": -84.395903
+    },
+    {
+      "name": "Kendeda Building for Innovative Sustainable Design",
+      "nicknames": ["Kendeda", "Kendeda Building"],
+      "address": "422 Ferst Dr NW, Atlanta, GA 30313",
+      "latitude": 33.778556,
+      "longitude": -84.399535
+    },
+    {
+      "name": "Scheller College of Business",
+      "nicknames": ["Scheller", "Business School", "College of Business"],
+      "address": "800 West Peachtree St NW, Atlanta, GA 30308",
+      "latitude": 33.776274,
+      "longitude": -84.388219
+    },
+    {
+      "name": "CODA",
+      "nicknames": ["Coda Building", "Coda Tech Square"],
+      "address": "756 West Peachtree St NW, Atlanta, GA 30308",
+      "latitude": 33.775500,
+      "longitude": -84.387888
+    },
+    {
+      "name": "Technology Square Research Building",
+      "nicknames": ["TSRB", "Tech Square Research", "Technology Square Research Building (TSRB)"],
+      "address": "85 5th St NW, Atlanta, GA 30308",
+      "latitude": 33.777355,
+      "longitude": -84.390056
+    },
+    {
+      "name": "Global Learning Center",
+      "nicknames": ["GLC", "Global Learning & Conference Center", "Global Learning and Conference Center"],
+      "address": "84 5th St NW, Atlanta, GA 30308",
+      "latitude": 33.776335,
+      "longitude": -84.390035
+    },
+    {
+      "name": "Georgia Tech Hotel & Conference Center",
+      "nicknames": ["GT Hotel", "Tech Hotel", "Georgia Tech Hotel"],
+      "address": "800 Spring St NW, Atlanta, GA 30308",
+      "latitude": 33.776391,
+      "longitude": -84.389332
+    },
+    {
+      "name": "Barnes & Noble at Georgia Tech",
+      "nicknames": ["Bookstore", "GT Bookstore", "Barnes & Noble", "Barnes and Noble", "Barnes & Noble Bookstore @ Georgia Tech"],
+      "address": "48 5th St NW, Atlanta, GA 30308",
+      "latitude": 33.776349,
+      "longitude": -84.388404
+    },
+    {
+      "name": "Ferst Center for the Arts",
+      "nicknames": ["Ferst Center", "Robert H. Ferst Center for the Arts"],
+      "address": "349 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.774791,
+      "longitude": -84.399209
+    },
+    {
+      "name": "Exhibition Hall",
+      "nicknames": ["ExHall"],
+      "address": "460 4th St NW, Atlanta, GA 30313",
+      "latitude": 33.774626,
+      "longitude": -84.401707
+    },
+    {
+      "name": "Smithgall Student Services Building",
+      "nicknames": ["Flag Building", "Smithgall", "Student Services", "Charles A. Smithgall Jr. Building"],
+      "address": "353 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.774382,
+      "longitude": -84.399509
+    },
+    {
+      "name": "Bill Moore Student Success Center",
+      "nicknames": ["SSC", "Student Success Center", "Admissions"],
+      "address": "219 Uncle Heinie Way NW, Atlanta, GA 30332",
+      "latitude": 33.772422,
+      "longitude": -84.393944
+    },
+    {
+      "name": "Stamps Health Services",
+      "nicknames": ["Stamps", "Health Center", "Health Services", "Joseph B. Whitehead Student Health Center", "Whitehead Building"],
+      "address": "740 Ferst Dr NW, Atlanta, GA 30318",
+      "latitude": 33.774809,
+      "longitude": -84.403050
+    },
+    {
+      "name": "Manufacturing Related Disciplines Complex",
+      "nicknames": ["MRDC"],
+      "address": "801 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.776826,
+      "longitude": -84.400463
+    },
+    {
+      "name": "Love Manufacturing Building",
+      "nicknames": ["Love", "Love Building", "MRDC II", "J. Erskine Love Manufacturing Building"],
+      "address": "771 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.776586,
+      "longitude": -84.401953
+    },
+    {
+      "name": "Groseclose Building",
+      "nicknames": ["ISyE", "Groseclose", "ISyE Building", "Colonel Frank F. Groseclose Building"],
+      "address": "765 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.775726,
+      "longitude": -84.401763
+    },
+    {
+      "name": "Guggenheim Aerospace Engineering Building",
+      "nicknames": ["Guggenheim", "AE Building", "Daniel Guggenheim School of Aerospace Engineering"],
+      "address": "270 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.771577,
+      "longitude": -84.395762
+    },
+    {
+      "name": "Marcus Nanotechnology Building",
+      "nicknames": ["Marcus", "Marcus Nano", "Bernie Marcus Nanotechnology Building"],
+      "address": "345 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.778854,
+      "longitude": -84.398532
+    },
+    {
+      "name": "Petit Biotechnology Building",
+      "nicknames": ["IBB", "Petit Biotech", "Parker H. Petit Biotechnology Building"],
+      "address": "315 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.779072,
+      "longitude": -84.397083
+    },
+    {
+      "name": "Krone Engineered Biosystems Building",
+      "nicknames": ["EBB", "Krone", "Engineered Biosystems Building", "Rodger A. and Helen B. Krone Engineered Biosystems Building"],
+      "address": "950 Atlantic Dr NW, Atlanta, GA 30332",
+      "latitude": 33.780862,
+      "longitude": -84.398429
+    },
+    {
+      "name": "Whitaker Biomedical Engineering Building",
+      "nicknames": ["Whitaker", "BME", "BME Building", "U.A. Whitaker Building"],
+      "address": "313 Ferst Dr NW, Atlanta, GA 30332",
+      "latitude": 33.778622,
+      "longitude": -84.396914
+    },
+    {
+      "name": "Molecular Science and Engineering Building",
+      "nicknames": ["MoSE", "Robinson", "Glen P. Robinson, Jr. Building"],
+      "address": "901 Atlantic Dr NW, Atlanta, GA 30332",
+      "latitude": 33.779817,
+      "longitude": -84.396598
+    },
+    {
+      "name": "Bobby Dodd Stadium",
+      "nicknames": ["Bobby Dodd", "Grant Field", "BDS"],
+      "address": "150 Bobby Dodd Way NW, Atlanta, GA 30332",
+      "latitude": 33.772440,
+      "longitude": -84.392820
+    },
+    {
+      "name": "North Avenue Apartments",
+      "nicknames": ["North Ave Apts", "North Ave Apartments", "NAA", "NAV Apartments"],
+      "address": "120 North Ave NW, Atlanta, GA 30313",
+      "latitude": 33.770464,
+      "longitude": -84.391082
+    },
+    {
+      "name": "Graduate Living Center",
+      "nicknames": ["Grad Living Center", "GLC Dorm"],
+      "address": "301 10th St NW, Atlanta, GA 30318",
+      "latitude": 33.781917,
+      "longitude": -84.396559
+    },
+    {
+      "name": "Eighth Street Apartments",
+      "nicknames": ["8th Street", "8th St Apts", "Eighth Street"],
+      "latitude": 33.780165,
+      "longitude": -84.404331
+    },
+    {
+      "name": "Woodruff Residence Hall",
+      "nicknames": ["Woodruff", "Woodies", "Woody's", "Woodruff North", "Woodruff South"],
+      "latitude": 33.779368,
+      "longitude": -84.406537
+    },
+    {
+      "name": "D. M. Smith Building",
+      "nicknames": ["DM Smith", "D.M. Smith", "Smith Building"],
+      "address": "685 Cherry St NW, Atlanta, GA 30313",
+      "latitude": 33.773666,
+      "longitude": -84.395312
+    },
+    {
+      "name": "Coon Building",
+      "nicknames": ["Coon", "Psychology Building", "John Saylor Coon Building"],
+      "address": "654 Cherry St NW, Atlanta, GA 30313",
+      "latitude": 33.772849,
+      "longitude": -84.395858
+    },
+    {
+      "name": "Bunger-Henry Building",
+      "nicknames": ["Bunger-Henry", "BH", "ChBE"],
+      "address": "778 Atlantic Dr NW, Atlanta, GA 30332",
+      "latitude": 33.775635,
+      "longitude": -84.397989
+    },
+    {
+      "name": "Architecture Building",
+      "nicknames": ["Arch", "Architecture East", "Architecture West"],
+      "address": "247 4th St NW, Atlanta, GA 30332",
+      "latitude": 33.776203,
+      "longitude": -84.395473
+    },
+    {
+      "name": "Pettit Microelectronics Research Center",
+      "nicknames": ["MiRC", "Pettit", "Joseph M. Pettit Microelectronics Research Center"],
+      "address": "791 Atlantic Dr NW, Atlanta, GA 30332",
+      "latitude": 33.776806,
+      "longitude": -84.397434
+    },
+    {
+      "name": "Georgia Tech Police Department",
+      "nicknames": ["GTPD", "Campus Police", "GT Police", "Georgia Tech Police"],
+      "address": "879 Hemphill Ave NW, Atlanta, GA 30318",
+      "latitude": 33.781244,
+      "longitude": -84.403436
+    },
+    {
+      "name": "Couch Building",
+      "nicknames": ["Couch", "Music Building", "School of Music"],
+      "address": "840 McMillan St NW, Atlanta, GA 30318",
+      "latitude": 33.778380,
+      "longitude": -84.404596
+    },
+    {
+      "name": "O'Keefe Building",
+      "nicknames": ["O'Keefe", "OKeefe", "O'Keefe Main Building"],
+      "latitude": 33.778972,
+      "longitude": -84.392020
+    },
+    {
+      "name": "Lyman Hall Building",
+      "nicknames": ["Lyman Hall", "Bursar", "Bursar's Office"],
+      "latitude": 33.772957,
+      "longitude": -84.394143
+    }
+  ]
+}

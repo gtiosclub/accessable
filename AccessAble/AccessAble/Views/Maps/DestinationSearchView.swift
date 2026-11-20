@@ -60,7 +60,7 @@ struct DestinationSearchView: View {
                     }
                     .accessibilityElement(children: .combine)
                 }
-                ForEach(viewModel.suggestions) { suggestion in
+                ForEach(Array(viewModel.suggestions.enumerated()), id: \.element.id) { index, suggestion in
                     let isSelected = suggestion.id == viewModel.selectedSuggestionID
                     Button {
                         viewModel.select(suggestion)
@@ -92,6 +92,7 @@ struct DestinationSearchView: View {
                         .minimumTapTarget()
                     }
                     .tint(.primary)
+                    .accessibilityLabel(viewModel.spokenLabel(for: suggestion, at: index))
                     .accessibilityAddTraits(isSelected ? .isSelected : [])
                     .accessibilityValue(isSelected && viewModel.isResolving ? "Loading details" : "")
                     .accessibilityHint("Selects this destination")

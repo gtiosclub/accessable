@@ -49,6 +49,7 @@ final class PlaceSearchViewModel {
     let destinationSearch: DestinationSearchViewModel
 
     private(set) var location: LocationSample?
+    private(set) var heading: UserHeading?
     private(set) var authorization: LocationAuthorization = .notDetermined
     /// The street the user is on, from reverse geocoding: "Ferst Dr NW".
     private(set) var locationName: String?
@@ -65,6 +66,8 @@ final class PlaceSearchViewModel {
     @ObservationIgnored private let places: [SamplePlace]
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var namedAt: GeoCoordinate?
+    @ObservationIgnored private var headingEstimator = HeadingEstimator()
+    @ObservationIgnored private var newestReadingTime: Date?
 
     /// `search` overrides `services.destinationSearch`; without either it searches a few
     /// sample places, for previews and tests.
@@ -134,6 +137,25 @@ final class PlaceSearchViewModel {
     func distanceText(to place: SamplePlace) -> String? {
         guard let metres = distance(to: place) else { return nil }
         return Self.distanceText(metres: metres, distances: services?.distanceSettings.formatter ?? .metric)
+    }
+
+    /// VoiceOver label for a live search result: includes distance (WIRE-7 units) and direction
+    /// (relative when NAV-2 knows the heading, otherwise cardinal) for the top 5 results only.
+    func spokenLabel(for suggestion: SearchSuggestion, at index: Int) -> String {
+        SearchResultSpeech.label(
+            for: suggestion,
+            at: index,
+            from: searchOriginCoordinate,
+            heading: origin == .myLocation ? heading : nil,
+            distances: services?.distanceSettings.formatter ?? DistanceSettings().formatter
+        )
+    }
+
+    private var searchOriginCoordinate: GeoCoordinate? {
+        if let place = origin.place {
+            return GeoCoordinate(latitude: place.latitude, longitude: place.longitude)
+        }
+        return location?.coordinate
     }
 
     static func distanceText(metres: Double, distances: DistanceFormatter) -> String {
@@ -265,6 +287,11 @@ final class PlaceSearchViewModel {
                     await self.receive(sample)
                 }
             }
+            group.addTask {
+                for await sample in services.location.headingSamples() {
+                    await self.receive(sample)
+                }
+            }
         }
     }
 
@@ -276,9 +303,22 @@ final class PlaceSearchViewModel {
         // A fix this rough would put the user in the wrong building.
         guard sample.horizontalAccuracy <= 100 else { return }
         location = sample
+        headingEstimator.update(with: sample)
+        updateHeading(readingTime: sample.timestamp)
         if let namedAt, GeoMath.distance(from: namedAt, to: sample.coordinate) < Self.renameDistance { return }
         namedAt = sample.coordinate
         Task { await self.name(sample.coordinate) }
+    }
+
+    private func receive(_ sample: HeadingSample) {
+        headingEstimator.update(with: sample)
+        updateHeading(readingTime: sample.timestamp)
+    }
+
+    private func updateHeading(readingTime: Date) {
+        let now = max(newestReadingTime ?? readingTime, readingTime)
+        newestReadingTime = now
+        heading = headingEstimator.heading(at: now)
     }
 
     private func name(_ coordinate: GeoCoordinate) async {

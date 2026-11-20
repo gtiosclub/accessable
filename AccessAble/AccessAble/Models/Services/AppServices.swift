@@ -70,11 +70,13 @@ struct AppServices: Sendable {
         )
         if FirebaseApp.app() != nil {
             services.userProfiles = FirestoreUserProfileStore()
+            services.volunteers = FirestoreVolunteerDirectory()
+            services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
         }
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
             landmarks: services.landmarks,
-            setBackgroundTracking: { await location.setBackgroundTracking($0) },
+            setTripTracking: { await location.setTripTracking($0) },
             distances: distanceSettings
         )
         return services
@@ -104,6 +106,9 @@ struct AppServices: Sendable {
     @MainActor
     static var preview: AppServices {
         var services = live(performance: PerformanceModeMonitor())
+        // Nor speak aloud: tests build many of these at once, and real speech from several of them has frozen
+        // the whole test run inside the system's speech framework.
+        services.announcements = PlaceholderAnnouncementEngine()
         // Previews and tests must not reach the network or spend the public server's fair-use budget.
         services.routing = PlaceholderRoutingService()
         // A real trip would start GPS tracking and background location from a preview or test.
@@ -118,6 +123,8 @@ struct AppServices: Sendable {
             UserProfile(userID: PlaceholderAuthService.sampleUser.id, role: .caller,
                         displayName: "Preview caller", languages: ["English"], createdAt: .now)
         ])
+        services.volunteers = PlaceholderVolunteerDirectory()
+        services.presence = PlaceholderPresenceService()
         return services
     }
 }

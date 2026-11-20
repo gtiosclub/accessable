@@ -139,9 +139,21 @@ struct PlaceholderRoutingService: RoutingService {
 /// Hardcoded campus places so previews don't call MapKit.
 struct PlaceholderDestinationSearch: DestinationSearching {
     static let samples = [
-        SearchSuggestion(title: "Georgia Tech Library", subtitle: "260 Fourth St NW, Atlanta, GA"),
-        SearchSuggestion(title: "John Lewis Student Center", subtitle: "351 Ferst Dr NW, Atlanta, GA"),
-        SearchSuggestion(title: "Campus Recreation Center", subtitle: "750 Ferst Dr NW, Atlanta, GA"),
+        SearchSuggestion(
+            title: "Georgia Tech Library",
+            subtitle: "260 Fourth St NW, Atlanta, GA",
+            coordinate: GeoCoordinate(latitude: 33.774217, longitude: -84.395561)
+        ),
+        SearchSuggestion(
+            title: "John Lewis Student Center",
+            subtitle: "351 Ferst Dr NW, Atlanta, GA",
+            coordinate: GeoCoordinate(latitude: 33.773913, longitude: -84.398587)
+        ),
+        SearchSuggestion(
+            title: "Campus Recreation Center",
+            subtitle: "750 Ferst Dr NW, Atlanta, GA",
+            coordinate: GeoCoordinate(latitude: 33.775662, longitude: -84.404041)
+        ),
     ]
 
     /// Replays the latest results, so a listener that subscribes after a query still gets them.
@@ -242,6 +254,12 @@ actor PlaceholderAuthService: AuthService {
 struct PlaceholderVolunteerDirectory: VolunteerDirectory {
     var volunteers: [Volunteer] = SampleContent.activeVolunteers
 
+    func allVolunteers() -> AsyncStream<[Volunteer]> {
+        AsyncStream { continuation in
+            continuation.yield(volunteers.sortedForDirectory())
+            continuation.finish()
+        }
+    }
     func onlineVolunteers() -> AsyncStream<[Volunteer]> {
         AsyncStream { continuation in
             continuation.yield(volunteers)

@@ -27,6 +27,9 @@ struct RouteProgressTracker {
         case passedTurnConfirmation(step: Int)
         /// The user walked straight on past the step's vertex, which is `distanceBack` metres behind them.
         case missedTurn(step: Int, distanceBack: Double)
+        /// The crossing at `index` in the tracker's `crossings` is at most `crossingDistance` metres ahead. After any
+        /// turn cue from the same fix.
+        case crossing(index: Int)
         /// Moving away from the route at the start without making progress along it.
         case wrongWay
         case offRoute
@@ -42,6 +45,8 @@ struct RouteProgressTracker {
     }
 
     let route: NavigationRoute
+    /// Metres along the route of each street crossing on it, ascending.
+    let crossings: [Double]
 
     private let startedAt: Date
     /// Per step, the direction of travel arriving at its vertex, when the turn there is sharp enough that walking
@@ -60,10 +65,12 @@ struct RouteProgressTracker {
     private var prepareDone: [Bool]
     private var nowDone: [Bool]
     private var missedTurnDone: [Bool]
+    private var crossingDone: [Bool]
     /// The highest step a cue check has looked at, so a short leg's cue fires only on the first fix that sees it.
     private var sightedStep = -1
     private var missedTurnRun: (since: Date, misses: Int)?
     private var offRouteRun: (first: LocationSample, count: Int)?
+    private var walkingAwayRun: (since: Date, offset: Double, count: Int)?
     private var rejoinSince: Date?
     private var wrongWayOrigin: (coordinate: GeoCoordinate, progress: Double, offset: Double)?
     private var wrongWayDone = false
@@ -91,10 +98,14 @@ struct RouteProgressTracker {
     // past the vertex by more than GPS noise, so a fix near the corner doesn't count as the turn made
     private static let passedMargin: Double = 5
     /// Metres before a step that its `.prepare` falls due: about 30 s of walking, time to get ready without forgetting.
+    /// A stairs step always gets its `.prepare` once it is this close, however short its leg, whatever steps come
+    /// before it, and even inside `nowDistance`, where it comes just before the `.now`.
     static let prepareDistance: Double = 40
     /// Metres before a step that its `.now` falls due: about 6 s of walking, time to hear the cue and turn. Steps this
     /// close together are cued together.
     static let nowDistance: Double = 8
+    // about 15 s of walking: near enough to be the next street, far enough to slow down and find the curb
+    private static let crossingDistance: Double = 20
     // shorter legs follow the previous maneuver too closely for a warning at the usual distance, so they get the
     // short-leg one instead
     private static let minimumPrepareLeg: Double = 25
@@ -107,6 +118,15 @@ struct RouteProgressTracker {
     private static let offRouteFixes = 3
     private static let offRouteDuration: TimeInterval = 10
     private static let offRouteMovement: Double = 8
+    // nearer than the usual limit is safe only because the walking direction must also point away from the route:
+    // drift while standing at a crosswalk has no walking direction, and walking along a wide sidewalk agrees with it
+    private static let walkingAwayDistance: Double = 20
+    // more than a diagonal across a crossing, so cutting a corner or weaving round an obstacle doesn't count
+    private static let walkingAwayAngle: Double = 60
+    // several fixes of walking that way, so one stray course or position doesn't trigger it, however far apart
+    // the fixes arrive
+    private static let walkingAwayDuration: TimeInterval = 5
+    private static let walkingAwayFixes = 3
     // close enough to be on the path again
     private static let rejoinDistance: Double = 15
     // two fixes this far apart confirm a rejoin or a missed turn, so one stray fix can't
@@ -131,8 +151,9 @@ struct RouteProgressTracker {
     private static let rawArrivalAccuracy: Double = 15
     private static let rawArrivalWindow: Double = 50
 
-    init(route: NavigationRoute, startedAt: Date) {
+    init(route: NavigationRoute, startedAt: Date, crossings: [Double] = []) {
         self.route = route
+        self.crossings = crossings
         self.startedAt = startedAt
         straightOnBearings = route.steps.map { Self.straightOnBearing(at: $0.coordinateIndex, on: route) }
         progressTime = startedAt
@@ -140,8 +161,10 @@ struct RouteProgressTracker {
         prepareDone = Array(repeating: false, count: route.steps.count)
         nowDone = prepareDone
         missedTurnDone = prepareDone
-        // the start announcement speaks the first instruction, which covers a step this close
-        if distance(toStep: nextStepIndex) <= Self.prepareDistance {
+        crossingDone = Array(repeating: false, count: crossings.count)
+        // the start announcement speaks the first instruction, which covers a step this close; stairs still get
+        // their own warning on the first fix
+        if distance(toStep: nextStepIndex) <= Self.prepareDistance, route.steps[nextStepIndex].kind != .stairs {
             prepareDone[nextStepIndex] = true
         }
     }
@@ -170,8 +193,8 @@ struct RouteProgressTracker {
     /// 25 m.
     ///
     /// With `emitsCues` false, as while paused, progress and off-route state still update, but no `.prepare`, `.now`,
-    /// `.passedTurnConfirmation`, `.missedTurn` or `.wrongWay` is emitted or used up, so the right cue still fires
-    /// once cues resume. `.offRoute`, `.backOnRoute` and `.arrived` are always emitted.
+    /// `.passedTurnConfirmation`, `.missedTurn`, `.wrongWay` or `.crossing` is emitted or used up, so the right cue
+    /// still fires once cues resume. `.offRoute`, `.backOnRoute` and `.arrived` are always emitted.
     mutating func update(with sample: LocationSample, emitsCues: Bool = true) -> Update {
         guard !hasArrived, isAdmissible(sample) else { return Update(state: state, events: []) }
         guard sample.horizontalAccuracy <= Self.maximumUsableAccuracy else {
@@ -198,7 +221,12 @@ struct RouteProgressTracker {
             } else {
                 missedTurnRun = nil
             }
-            if leavesRoute(sample, at: projection) { events.append(.offRoute) }
+            // either rule; once one fires the other's run is cleared, so a fix gives one event
+            if leavesRoute(sample, at: projection) || walksAwayFromRoute(sample, at: projection) {
+                // off route says the same and more, and two warnings back to back would talk over the new route
+                events.removeAll { $0 == .wrongWay }
+                events.append(.offRoute)
+            }
         }
 
         let passed = passSteps()
@@ -209,6 +237,7 @@ struct RouteProgressTracker {
         }
         if emitsCues, !isOffRoute {
             events += turnCues(passed: passed)
+            events += crossingCues()
         }
         return Update(state: state, events: events)
     }
@@ -358,11 +387,44 @@ struct RouteProgressTracker {
               GeoMath.distance(from: run.first.coordinate, to: sample.coordinate) >= Self.offRouteMovement else {
             return false
         }
+        markOffRoute()
+        return true
+    }
+
+    /// Faster than `leavesRoute` when the walking direction points away from the route's direction of travel and the
+    /// user keeps getting no nearer to it. Standing still never counts, since it has no walking direction.
+    private mutating func walksAwayFromRoute(_ sample: LocationSample, at projection: RouteProjection) -> Bool {
+        let offset = abs(projection.sideOffset)
+        let limit = max(Self.walkingAwayDistance, Self.offRouteAccuracyFactor * sample.horizontalAccuracy)
+        let segment = projection.segmentIndex
+        // a segment under a metre gives a noisy bearing
+        guard offset > limit, let direction = HeadingEstimator.walkingDirection(of: sample),
+              route.cumulativeDistances[segment + 1] - route.cumulativeDistances[segment] >= 1 else {
+            walkingAwayRun = nil
+            return false
+        }
+        let routeBearing = GeoMath.bearing(from: route.coordinates[segment], to: route.coordinates[segment + 1])
+        let turn = GeoMath.normalizedBearing(direction - routeBearing)
+        // walking back toward the route at a steep angle is returning, not leaving
+        guard min(turn, 360 - turn) > Self.walkingAwayAngle, offset >= walkingAwayRun?.offset ?? offset else {
+            walkingAwayRun = nil
+            return false
+        }
+        var run = walkingAwayRun ?? (since: sample.timestamp, offset: offset, count: 0)
+        run.count += 1
+        walkingAwayRun = run
+        guard run.count >= Self.walkingAwayFixes,
+              sample.timestamp.timeIntervalSince(run.since) >= Self.walkingAwayDuration else { return false }
+        markOffRoute()
+        return true
+    }
+
+    private mutating func markOffRoute() {
         isOffRoute = true
         offRouteRun = nil
+        walkingAwayRun = nil
         rejoinSince = nil
         missedTurnRun = nil
-        return true
     }
 
     /// Accepts the rejoin point even behind progress, since the user may have walked back to the route.
@@ -386,6 +448,9 @@ struct RouteProgressTracker {
             prepareDone[index] = false
             nowDone[index] = false
             missedTurnDone[index] = false
+        }
+        for index in crossings.indices where crossings[index] >= progress {
+            crossingDone[index] = false
         }
         sightedStep = nextStepIndex - 1
         return true
@@ -424,9 +489,19 @@ struct RouteProgressTracker {
         let isDue = leg(before: index) >= Self.minimumPrepareLeg
             ? remaining <= Self.prepareDistance
             : isFirstSight && remaining <= Self.shortLegPrepareDistance
-        if !prepareDone[index], allowsPrepare(index), remaining > Self.nowDistance, isDue {
+        if !prepareDone[index], allowsPrepare(index), remaining > Self.nowDistance, isDue,
+           route.steps[index].kind != .stairs {
             prepareDone[index] = true
             events.append(.prepare(step: index, distance: remaining))
+        }
+        // a missed flight of stairs is a fall, so their warning is never skipped: not after a short leg, and not
+        // when a turn still comes first, where they would otherwise be cued together with it
+        for stairs in index..<route.steps.count - 1 where route.steps[stairs].kind == .stairs && !prepareDone[stairs] {
+            let ahead = distance(toStep: stairs)
+            guard ahead <= Self.prepareDistance else { break }
+            guard ahead >= 0 else { continue }
+            prepareDone[stairs] = true
+            events.append(.prepare(step: stairs, distance: ahead))
         }
         // the first step not yet cued: one cued with an earlier group may not be passed yet, and the step after it
         // can come up before it is
@@ -444,6 +519,19 @@ struct RouteProgressTracker {
         // when a cue for what comes next is already being given
         if events.isEmpty, let last = passed.last, passed.contains(where: { expectsNow($0) && !nowDone[$0] }) {
             events.append(.passedTurnConfirmation(step: last))
+        }
+        return events
+    }
+
+    /// Each crossing once, when it is within `crossingDistance` ahead. One already behind, as when first seen after a
+    /// jump or a pause, is passed over without a word.
+    private mutating func crossingCues() -> [GuidanceEvent] {
+        var events: [GuidanceEvent] = []
+        for index in crossings.indices where !crossingDone[index] {
+            let ahead = crossings[index] - progress
+            guard ahead <= Self.crossingDistance else { break }
+            crossingDone[index] = true
+            if ahead >= 0 { events.append(.crossing(index: index)) }
         }
         return events
     }

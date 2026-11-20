@@ -99,6 +99,7 @@ struct Destination: Codable, Hashable, Sendable {
 struct SearchSuggestion: Identifiable, Equatable, Sendable {
     let title: String
     let subtitle: String
+    var coordinate: GeoCoordinate? = nil
 
     var id: String { "\(title)\n\(subtitle)" }
 }
@@ -151,6 +152,18 @@ extension RouteStep {
         instruction = try container.decode(String.self, forKey: .instruction)
         spokenInstruction = try container.decode(String.self, forKey: .spokenInstruction)
         announcesNextStep = try container.decodeIfPresent(Bool.self, forKey: .announcesNextStep) ?? false
+    }
+
+    /// "stairs going up" or "stairs going down" when the instruction text says which way, otherwise "stairs". Only
+    /// wording about the stairs themselves counts: a wrong direction is worse than none, and "down" can be a street.
+    var stairsPhrase: String {
+        let text = (instruction + " " + spokenInstruction).lowercased()
+            .split(whereSeparator: { !$0.isLetter }).joined(separator: " ")
+        let padded = " \(text) "
+        func says(_ phrases: [String]) -> Bool { phrases.contains { padded.contains(" \($0) ") } }
+        if says(["stairs up", "up the stairs", "upstairs"]) { return "stairs going up" }
+        if says(["stairs down", "down the stairs", "downstairs"]) { return "stairs going down" }
+        return "stairs"
     }
 }
 

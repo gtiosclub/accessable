@@ -148,6 +148,11 @@ struct TripView: View {
 extension View {
     /// Says when a route arrives or fails.
     func announcesRoute(_ trip: TripViewModel) -> some View {
+        announcesRoute(trip) { trip.routeReadyAnnouncement }
+    }
+
+    /// Says when a route arrives or fails, saying `ready` when it arrives.
+    func announcesRoute(_ trip: TripViewModel, ready: @escaping () -> String?) -> some View {
         self
             // VoiceOver doesn't read changes outside the focused element, so say the failure out loud
             .onChange(of: trip.routeFailureCount) {
@@ -156,7 +161,7 @@ extension View {
             }
             // likewise when a route arrives, so the user knows Start is there
             .onChange(of: trip.route) { previous, route in
-                guard previous == nil, route != nil, let message = trip.routeReadyAnnouncement else { return }
+                guard previous == nil, route != nil, let message = ready() else { return }
                 AccessibilityNotification.Announcement(message).post()
             }
     }
@@ -262,6 +267,10 @@ private extension ManeuverKind {
         case .uTurn: "arrow.uturn.up"
         case .cross: "figure.walk"
         case .arrive: "mappin.and.ellipse"
+        case .stairs, .escalator: "figure.stairs"
+        case .elevator: "arrow.up.arrow.down"
+        case .enterBuilding: "door.left.hand.open"
+        case .exitBuilding: "door.right.hand.open"
         }
     }
 }

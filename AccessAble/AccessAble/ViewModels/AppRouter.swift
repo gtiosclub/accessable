@@ -13,6 +13,7 @@ enum AppRoute: Hashable {
     case trip(TripPlan)
     case settings
     case callHelp
+    case volunteers
     case chat(Volunteer)
     /// The pre-redesign feature screens: computer vision, maps, haptics, commands.
     case developerTools
