@@ -310,3 +310,25 @@ actor PlaceholderVideoCallSession: VideoCallSession {
         broadcaster.send(.ended(.hungUp))
     }
 }
+
+/// In-memory profiles for tests and previews, keyed by the shared auth UID.
+actor PlaceholderUserProfileStore: UserProfileStore {
+    private var profiles: [String: UserProfile]
+
+    init(profiles: [UserProfile] = []) {
+        self.profiles = Dictionary(uniqueKeysWithValues: profiles.map { ($0.userID, $0) })
+    }
+
+    func load(userID: String) async throws -> UserProfile? { profiles[userID] }
+
+    func save(userID: String, role: UserRole, displayName: String,
+              languages: [String]) async throws -> UserProfile {
+        guard UserProfileValidation.isValid(displayName: displayName, languages: languages) else {
+            throw UserProfileError.invalidProfile
+        }
+        let profile = UserProfile(userID: userID, role: role, displayName: displayName,
+                                  languages: languages, createdAt: profiles[userID]?.createdAt ?? .now)
+        profiles[userID] = profile
+        return profile
+    }
+}
