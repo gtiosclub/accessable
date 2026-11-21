@@ -2,6 +2,8 @@
 
 Shared decisions for the video-call feature. Every call task builds on these.
 
+Two-iPhone media test: [LiveKit Debug harness and acceptance checklist](MediaTest.md).
+
 Email/password accounts and role routing: [VOLUNTEER-2 setup and verification](SignIn.md).
 
 **Rule for the whole feature: nothing costs money.** Every service stays on a free plan that
