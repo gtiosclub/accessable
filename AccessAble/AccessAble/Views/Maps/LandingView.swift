@@ -14,6 +14,7 @@ struct LandingView: View {
         VStack(spacing: 12) {
             topBar
             Spacer()
+            volunteersButton
             searchButton
         }
         .padding(.horizontal, 24)
@@ -46,6 +47,16 @@ struct LandingView: View {
                 showsCommands = true
             }
         }
+    }
+    
+    private var volunteersButton: some View {
+        Button {
+            router.push(.volunteers)
+        } label: {
+            Label("Volunteers", systemImage: "person.2.fill")
+        }
+        .buttonStyle(.pill(.outline))
+        .accessibilityHint("See which volunteers are online")
     }
 
     private var searchButton: some View {

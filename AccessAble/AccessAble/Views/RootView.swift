@@ -34,7 +34,7 @@ private struct AccountGateView: View {
 
     init(services: AppServices) {
         _session = State(initialValue: AccountSessionViewModel(
-            auth: services.auth, profiles: services.userProfiles))
+            auth: services.auth, profiles: services.userProfiles, presence: services.presence))
     }
 
     var body: some View {
@@ -51,7 +51,7 @@ private struct AccountGateView: View {
                 .id(user.id)
             case .ready(let profile):
                 if profile.role == .volunteer {
-                    VolunteerHomeView(profile: profile, signOut: { try await session.signOut() })
+                    VolunteerHomeView(profile: profile, presence: app.services.presence, signOut: { try await session.signOut() })
                         .id(profile.userID)
                 } else if app.hasCompletedOnboarding {
                     MainFlowView().id(profile.userID)
@@ -120,6 +120,8 @@ struct MainFlowView: View {
             SettingsView(app: app)
         case .callHelp:
             CallHelpView()
+        case .volunteers:
+            VolunteerListView(services: app.services)
         case .chat(let volunteer):
             VolunteerChatView(volunteer: volunteer)
         case .developerTools:
