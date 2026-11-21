@@ -245,3 +245,68 @@ actor PlaceholderAuthService: AuthService {
         return newUser
     }
 }
+
+// MARK: - Calls
+
+/// Fixed sample volunteers so the Calls screen works with no backend. Replaced by MATCH-x.
+struct PlaceholderVolunteerDirectory: VolunteerDirectory {
+    var volunteers: [Volunteer] = SampleContent.activeVolunteers
+
+    func onlineVolunteers() -> AsyncStream<[Volunteer]> {
+        AsyncStream { continuation in
+            continuation.yield(volunteers)
+            continuation.finish()
+        }
+    }
+}
+
+/// Remembers the toggle in memory only. Replaced by MATCH-x.
+actor PlaceholderPresenceService: PresenceService {
+    private nonisolated let states = Broadcaster<Bool>(replaysLatest: true)
+
+    init() { states.send(false) }
+
+    nonisolated func onlineStates() -> AsyncStream<Bool> { states.stream() }
+
+    func setOnline(_ isOnline: Bool) async throws {
+        log.info("presence online=\(isOnline)")
+        states.send(isOnline)
+    }
+}
+
+/// Hands back a fake ticket and never rings anyone. Replaced by MATCH-x.
+struct PlaceholderCallSignaling: CallSignaling {
+    func incomingCalls() -> AsyncStream<CallTicket> {
+        AsyncStream { $0.finish() }
+    }
+
+    func startCall(to volunteerID: String) async throws -> CallTicket {
+        CallTicket(
+            callID: UUID().uuidString, roomName: "placeholder-room", token: "placeholder-token",
+            callerID: "placeholder-caller", volunteerID: volunteerID,
+            expiresAt: Date().addingTimeInterval(60)
+        )
+    }
+
+    func accept(_ ticket: CallTicket) async throws {}
+    func decline(_ ticket: CallTicket) async throws {}
+    func end(_ ticket: CallTicket) async {}
+}
+
+/// Walks through the states without touching LiveKit or the camera. Replaced by MATCH-x.
+actor PlaceholderVideoCallSession: VideoCallSession {
+    private nonisolated let broadcaster = Broadcaster<CallState>(replaysLatest: true)
+
+    init() { broadcaster.send(.idle) }
+
+    nonisolated func states() -> AsyncStream<CallState> { broadcaster.stream() }
+
+    func connect(with ticket: CallTicket) async throws {
+        broadcaster.send(.connecting)
+        broadcaster.send(.connected)
+    }
+
+    func disconnect() async {
+        broadcaster.send(.ended(.hungUp))
+    }
+}

@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		3960989530A8CB2200EE8EF3 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 3960989430A8CB2200EE8EF3 /* FirebaseAuth */; };
 		3960989730A8CB2200EE8EF3 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 3960989630A8CB2200EE8EF3 /* FirebaseFirestore */; };
+		A1C0FF04306C188100B311DF /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = A1C0FF03306C188100B311DF /* LiveKit */; };
 		7A1C000F306C188100B311DF /* AccessAbleWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7A1C0004306C188100B311DF /* AccessAbleWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -46,6 +47,7 @@
 /* Begin PBXFileReference section */
 		21101010306C188100B311DF /* AccessAble.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AccessAble.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4E5A1701306C188100B311DF /* AccessAbleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AccessAbleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1C0FF01306C188100B311DF /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
 		7A1C0004306C188100B311DF /* AccessAbleWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AccessAbleWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -90,6 +92,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1C0FF04306C188100B311DF /* LiveKit in Frameworks */,
 				3960989530A8CB2200EE8EF3 /* FirebaseAuth in Frameworks */,
 				3960989730A8CB2200EE8EF3 /* FirebaseFirestore in Frameworks */,
 			);
@@ -112,9 +115,18 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A1C0FF05306C188100B311DF /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A1C0FF01306C188100B311DF /* Shared.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
 		21101007306C188100B311DF = {
 			isa = PBXGroup;
 			children = (
+				A1C0FF05306C188100B311DF /* Config */,
 				21101012306C188100B311DF /* AccessAble */,
 				4E5A1702306C188100B311DF /* AccessAbleTests */,
 				7A1C0001306C188100B311DF /* TripActivity */,
@@ -156,6 +168,7 @@
 			);
 			name = AccessAble;
 			packageProductDependencies = (
+				A1C0FF03306C188100B311DF /* LiveKit */,
 				3960989430A8CB2200EE8EF3 /* FirebaseAuth */,
 				3960989630A8CB2200EE8EF3 /* FirebaseFirestore */,
 			);
@@ -241,6 +254,7 @@
 			mainGroup = 21101007306C188100B311DF;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				A1C0FF02306C188100B311DF /* XCRemoteSwiftPackageReference "client-sdk-swift" */,
 				3960989330A8CB2200EE8EF3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -438,6 +452,7 @@
 		};
 		2110101C306C188400B311DF /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A1C0FF01306C188100B311DF /* Shared.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -471,6 +486,7 @@
 		};
 		2110101D306C188400B311DF /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A1C0FF01306C188100B311DF /* Shared.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -654,6 +670,14 @@
 				minimumVersion = 13.2.0;
 			};
 		};
+		A1C0FF02306C188100B311DF /* XCRemoteSwiftPackageReference "client-sdk-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/livekit/client-sdk-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.0.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -666,6 +690,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 3960989330A8CB2200EE8EF3 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseFirestore;
+		};
+		A1C0FF03306C188100B311DF /* LiveKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A1C0FF02306C188100B311DF /* XCRemoteSwiftPackageReference "client-sdk-swift" */;
+			productName = LiveKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
