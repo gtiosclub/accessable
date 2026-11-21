@@ -15,6 +15,11 @@ struct LocationDebugView: View {
                 FieldRow(field: viewModel.permissionField)
             }
 
+            Section("Direction") {
+                FieldRow(field: viewModel.headingField)
+                    .accessibilityAddTraits(.updatesFrequently)
+            }
+
             Section("Latest reading") {
                 FieldRow(field: viewModel.countField)
                 if let sample = viewModel.latestSample {

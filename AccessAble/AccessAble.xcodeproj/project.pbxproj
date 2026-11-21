@@ -10,6 +10,7 @@
 		3960989530A8CB2200EE8EF3 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 3960989430A8CB2200EE8EF3 /* FirebaseAuth */; };
 		3960989730A8CB2200EE8EF3 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 3960989630A8CB2200EE8EF3 /* FirebaseFirestore */; };
 		A1C0FF04306C188100B311DF /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = A1C0FF03306C188100B311DF /* LiveKit */; };
+		7A1C000F306C188100B311DF /* AccessAbleWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7A1C0004306C188100B311DF /* AccessAbleWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -20,13 +21,45 @@
 			remoteGlobalIDString = 2110100F306C188100B311DF;
 			remoteInfo = AccessAble;
 		};
+		7A1C000C306C188100B311DF /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 21101008306C188100B311DF /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 7A1C0005306C188100B311DF;
+			remoteInfo = AccessAbleWidgets;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		7A1C000E306C188100B311DF /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				7A1C000F306C188100B311DF /* AccessAbleWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		21101010306C188100B311DF /* AccessAble.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AccessAble.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4E5A1701306C188100B311DF /* AccessAbleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AccessAbleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1C0FF01306C188100B311DF /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
+		7A1C0004306C188100B311DF /* AccessAbleWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AccessAbleWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		7A1C0003306C188100B311DF /* Exceptions for "AccessAbleWidgets" folder in "AccessAbleWidgets" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 7A1C0005306C188100B311DF /* AccessAbleWidgets */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		21101012306C188100B311DF /* AccessAble */ = {
@@ -37,6 +70,19 @@
 		4E5A1702306C188100B311DF /* AccessAbleTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = AccessAbleTests;
+			sourceTree = "<group>";
+		};
+		7A1C0001306C188100B311DF /* TripActivity */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = TripActivity;
+			sourceTree = "<group>";
+		};
+		7A1C0002306C188100B311DF /* AccessAbleWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				7A1C0003306C188100B311DF /* Exceptions for "AccessAbleWidgets" folder in "AccessAbleWidgets" target */,
+			);
+			path = AccessAbleWidgets;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -53,6 +99,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		4E5A1703306C188100B311DF /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7A1C0007306C188100B311DF /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -76,6 +129,8 @@
 				A1C0FF05306C188100B311DF /* Config */,
 				21101012306C188100B311DF /* AccessAble */,
 				4E5A1702306C188100B311DF /* AccessAbleTests */,
+				7A1C0001306C188100B311DF /* TripActivity */,
+				7A1C0002306C188100B311DF /* AccessAbleWidgets */,
 				21101011306C188100B311DF /* Products */,
 			);
 			sourceTree = "<group>";
@@ -85,6 +140,7 @@
 			children = (
 				21101010306C188100B311DF /* AccessAble.app */,
 				4E5A1701306C188100B311DF /* AccessAbleTests.xctest */,
+				7A1C0004306C188100B311DF /* AccessAbleWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -99,13 +155,16 @@
 				2110100C306C188100B311DF /* Sources */,
 				2110100D306C188100B311DF /* Frameworks */,
 				2110100E306C188100B311DF /* Resources */,
+				7A1C000E306C188100B311DF /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				7A1C000D306C188100B311DF /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				21101012306C188100B311DF /* AccessAble */,
+				7A1C0001306C188100B311DF /* TripActivity */,
 			);
 			name = AccessAble;
 			packageProductDependencies = (
@@ -140,6 +199,29 @@
 			productReference = 4E5A1701306C188100B311DF /* AccessAbleTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		7A1C0005306C188100B311DF /* AccessAbleWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7A1C0009306C188100B311DF /* Build configuration list for PBXNativeTarget "AccessAbleWidgets" */;
+			buildPhases = (
+				7A1C0006306C188100B311DF /* Sources */,
+				7A1C0007306C188100B311DF /* Frameworks */,
+				7A1C0008306C188100B311DF /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				7A1C0002306C188100B311DF /* AccessAbleWidgets */,
+				7A1C0001306C188100B311DF /* TripActivity */,
+			);
+			name = AccessAbleWidgets;
+			packageProductDependencies = (
+			);
+			productName = AccessAbleWidgets;
+			productReference = 7A1C0004306C188100B311DF /* AccessAbleWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -156,6 +238,9 @@
 					4E5A1706306C188100B311DF = {
 						CreatedOnToolsVersion = 26.3;
 						TestTargetID = 2110100F306C188100B311DF;
+					};
+					7A1C0005306C188100B311DF = {
+						CreatedOnToolsVersion = 26.3;
 					};
 				};
 			};
@@ -179,6 +264,7 @@
 			targets = (
 				2110100F306C188100B311DF /* AccessAble */,
 				4E5A1706306C188100B311DF /* AccessAbleTests */,
+				7A1C0005306C188100B311DF /* AccessAbleWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -192,6 +278,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		4E5A1705306C188100B311DF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7A1C0008306C188100B311DF /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -215,6 +308,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		7A1C0006306C188100B311DF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -222,6 +322,11 @@
 			isa = PBXTargetDependency;
 			target = 2110100F306C188100B311DF /* AccessAble */;
 			targetProxy = 4E5A1707306C188100B311DF /* PBXContainerItemProxy */;
+		};
+		7A1C000D306C188100B311DF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 7A1C0005306C188100B311DF /* AccessAbleWidgets */;
+			targetProxy = 7A1C000C306C188100B311DF /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -455,6 +560,66 @@
 			};
 			name = Release;
 		};
+		7A1C000A306C188100B311DF /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5XNQC3GD28;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = AccessAbleWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = AccessAble;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.artem.AccessAble.Widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		7A1C000B306C188100B311DF /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 5XNQC3GD28;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = AccessAbleWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = AccessAble;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.artem.AccessAble.Widgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -481,6 +646,15 @@
 			buildConfigurations = (
 				4E5A170A306C188100B311DF /* Debug */,
 				4E5A170B306C188100B311DF /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		7A1C0009306C188100B311DF /* Build configuration list for PBXNativeTarget "AccessAbleWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				7A1C000A306C188100B311DF /* Debug */,
+				7A1C000B306C188100B311DF /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

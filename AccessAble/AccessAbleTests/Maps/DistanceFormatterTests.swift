@@ -28,6 +28,14 @@ struct DistanceFormatterTests {
     }
 
     @Test
+    func wordsDropTheAbout() {
+        #expect(DistanceFormatter.imperial.words(40) == "125 feet")
+        #expect(DistanceFormatter.imperial.words(1_609.344) == "1 mile")
+        #expect(DistanceFormatter.metric.words(80) == "80 metres")
+        #expect(DistanceFormatter.metric.words(1_840) == "1.8 kilometres")
+    }
+
+    @Test
     func writtenUsesSymbols() {
         #expect(DistanceFormatter.imperial.written(40) == "125 ft")
         #expect(DistanceFormatter.imperial.written(2_414) == "1.5 mi")

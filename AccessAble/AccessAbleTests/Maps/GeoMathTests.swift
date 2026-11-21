@@ -340,3 +340,39 @@ struct GeoMathCumulativeDistanceTests {
         #expect(distances[2] == distances[1])
     }
 }
+
+struct GeoMathCoordinateAtDistanceTests {
+    static let path = GeoMathCumulativeDistanceTests.campusPath
+    static let distances = GeoMath.cumulativeDistances(along: path)
+
+    private func coordinate(at distance: Double) -> GeoCoordinate {
+        GeoMath.coordinate(atDistance: distance, along: Self.path, cumulativeDistances: Self.distances)
+    }
+
+    @Test
+    func isEachVertexAtItsDistance() {
+        // the duplicate point at index 2 is the same place as index 1
+        for (vertex, distance) in zip(Self.path, Self.distances) {
+            #expect(GeoMath.distance(from: coordinate(at: distance), to: vertex) < 1e-6)
+        }
+    }
+
+    @Test
+    func liesOnTheSegmentAtTheRightDistance() {
+        // 30 m into the segment from index 2 to index 3
+        let along = Self.distances[2] + 30
+        let point = coordinate(at: along)
+        #expect(isClose(GeoMath.distance(from: Self.path[2], to: point), 30, within: 1e-6))
+        #expect(isClose(GeoMath.distance(from: point, to: Self.path[3]), Self.distances[3] - along, within: 1e-6))
+    }
+
+    @Test(arguments: [-0.5, -10])
+    func clampsToTheStart(_ distance: Double) {
+        #expect(coordinate(at: distance) == Self.path[0])
+    }
+
+    @Test(arguments: [1.0, 50, .nan])
+    func clampsToTheEnd(_ beyond: Double) {
+        #expect(coordinate(at: Self.distances[Self.distances.count - 1] + beyond) == Self.path[Self.path.count - 1])
+    }
+}
