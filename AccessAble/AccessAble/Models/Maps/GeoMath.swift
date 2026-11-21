@@ -67,6 +67,25 @@ enum GeoMath {
         return distances
     }
 
+    /// The point `distance` metres along the path through `coordinates`, clamped to its ends. `coordinates` must not
+    /// be empty, and `cumulativeDistances` must be `cumulativeDistances(along: coordinates)`. A NaN distance gives
+    /// the last coordinate.
+    static func coordinate(
+        atDistance distance: Double,
+        along coordinates: [GeoCoordinate],
+        cumulativeDistances: [Double]
+    ) -> GeoCoordinate {
+        guard let end = cumulativeDistances.firstIndex(where: { $0 > distance }) else {
+            return coordinates[coordinates.count - 1]
+        }
+        guard end > 0 else { return coordinates[0] }
+        let start = end - 1
+        let fraction = (distance - cumulativeDistances[start]) / (cumulativeDistances[end] - cumulativeDistances[start])
+        // the normalized chord strays from even spacing along the arc by a part in a billion over a city block
+        let first = unitVector(coordinates[start])
+        return coordinate(from: normalize(first + fraction * (unitVector(coordinates[end]) - first)))
+    }
+
     /// Closest point to `point` on the path through `coordinates`, searching only `segments`. Segment `i` joins
     /// `coordinates[i]` to `coordinates[i + 1]`, and `cumulativeDistances` must be
     /// `cumulativeDistances(along: coordinates)`. `NavigationRoute.projection(of:segments:)` states the contract.

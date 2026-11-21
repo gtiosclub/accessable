@@ -152,6 +152,34 @@ extension RouteStep {
         spokenInstruction = try container.decode(String.self, forKey: .spokenInstruction)
         announcesNextStep = try container.decodeIfPresent(Bool.self, forKey: .announcesNextStep) ?? false
     }
+
+    /// "stairs going up" or "stairs going down" when the instruction text says which way, otherwise "stairs". Only
+    /// wording about the stairs themselves counts: a wrong direction is worse than none, and "down" can be a street.
+    var stairsPhrase: String {
+        let text = (instruction + " " + spokenInstruction).lowercased()
+            .split(whereSeparator: { !$0.isLetter }).joined(separator: " ")
+        let padded = " \(text) "
+        func says(_ phrases: [String]) -> Bool { phrases.contains { padded.contains(" \($0) ") } }
+        if says(["stairs up", "up the stairs", "upstairs"]) { return "stairs going up" }
+        if says(["stairs down", "down the stairs", "downstairs"]) { return "stairs going down" }
+        return "stairs"
+    }
+
+    /// The instruction without the compass direction Valhalla starts a route with, which a blind user can't act on:
+    /// "Walk north on Ferst Drive." becomes "Follow Ferst Drive.", and "Walk north for 50 meters." becomes "Follow the
+    /// path for 50 meters.". Any other instruction is returned as it is.
+    static func withoutCompassDirection(_ text: String) -> String {
+        // Valhalla's start phrases, "Head <direction>", "Walk <direction>" and the like, in its eight directions
+        let start = /(?i)(?:head|walk|drive|bike|go)\s+(?:(?:north|south)(?:east|west)?|east|west)\b/
+        guard let match = text.prefixMatch(of: start) else { return text }
+        let rest = text[match.range.upperBound...]
+        if let street = rest.prefixMatch(of: /\s+on\s+/) {
+            return "Follow " + rest[street.range.upperBound...]
+        }
+        // only where the direction ends the phrase, so "Walk North Avenue." is a street, not a direction
+        guard rest.isEmpty || rest.prefixMatch(of: /[.,;]|\s+(?:for|to|toward)\s/) != nil else { return text }
+        return "Follow the path" + rest
+    }
 }
 
 /// Always valid: created and decoded only through the validating init, which derives the distances.

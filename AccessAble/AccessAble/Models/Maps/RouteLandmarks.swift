@@ -77,8 +77,9 @@ enum RouteLandmarks {
         return nearest.0
     }
 
-    /// A latitude and longitude box around the route, so far buildings are skipped before any projection.
-    private struct Area {
+    /// A latitude and longitude box around the route, so far buildings and crossings are skipped before any
+    /// projection.
+    struct Area {
         let south: Double, north: Double, west: Double, east: Double
 
         init(around coordinates: [GeoCoordinate], margin: Double) {

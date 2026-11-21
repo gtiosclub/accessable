@@ -55,8 +55,11 @@ struct LandingView: View {
 }
 
 /// Satellite map of campus with the real route, the destination, and the user where they
-/// really are. It follows the user until they pan the map themselves. VoiceOver reads it as
-/// one element with `accessibilityLabel`; the spoken directions carry the details.
+/// really are. It follows the user, turned so the way they face is up, until they pan the map
+/// themselves, and again from the location button; the compass shows where north is whenever
+/// it is turned. The arrow points the way
+/// the user faces, and is a dot while that isn't known. VoiceOver reads it as one element with
+/// `accessibilityLabel`; the spoken directions carry the details.
 struct CampusMap: View {
     var routeLine: [CLLocationCoordinate2D]?
     var destination: Destination?
@@ -70,7 +73,9 @@ struct CampusMap: View {
         longitudinalMeters: 1200
     ))
 
-    @State private var position = MapCameraPosition.userLocation(fallback: campus)
+    @State private var position = MapCameraPosition.userLocation(followsHeading: true, fallback: campus)
+    /// Degrees clockwise from north that the map is turned, so the arrow can be turned back to where the user faces.
+    @State private var mapHeading: Double = 0
 
     var body: some View {
         Map(position: $position) {
@@ -85,18 +90,40 @@ struct CampusMap: View {
                 Marker(destination.name, systemImage: "flag.checkered", coordinate: destination.coordinate.clCoordinate)
             }
             // The real location, so it moves with each fix (and with a simulated GPX walk).
-            UserAnnotation {
-                Image(systemName: "location.north.fill")
-                    .font(.title)
-                    .foregroundStyle(Color(red: 0.2, green: 0.2, blue: 0.75))
-                    .padding(18)
-                    .background(.white.opacity(0.7), in: Circle())
+            UserAnnotation { user in
+                userMarker(heading: user.heading)
             }
         }
         .mapStyle(.imagery(elevation: .flat))
+        .mapControls {
+            MapCompass()
+            // following stops when the user pans; this brings it back
+            MapUserLocationButton()
+        }
+        .onMapCameraChange(frequency: .continuous) { context in
+            mapHeading = context.camera.heading
+        }
         .ignoresSafeArea()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
+    }
+
+    /// An arrow the way the user faces, turned back by however far the map is turned, or a dot while the compass
+    /// hasn't said: an arrow fixed to the screen would point the wrong way once the user pans.
+    private func userMarker(heading: CLHeading?) -> some View {
+        let facing = Self.facing(heading)
+        return Image(systemName: facing == nil ? "circle.fill" : "location.north.fill")
+            .font(.title)
+            .foregroundStyle(Color(red: 0.2, green: 0.2, blue: 0.75))
+            .padding(18)
+            .rotationEffect(.degrees((facing ?? mapHeading) - mapHeading))
+            .background(.white.opacity(0.7), in: Circle())
+    }
+
+    /// Degrees clockwise from north, true north when known; nil for an invalid reading.
+    private static func facing(_ heading: CLHeading?) -> Double? {
+        guard let heading, heading.headingAccuracy >= 0 else { return nil }
+        return heading.trueHeading >= 0 ? heading.trueHeading : heading.magneticHeading
     }
 
     /// Points; thicker when Increase Contrast is on.
