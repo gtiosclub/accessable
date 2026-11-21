@@ -148,6 +148,11 @@ struct TripView: View {
 extension View {
     /// Says when a route arrives or fails.
     func announcesRoute(_ trip: TripViewModel) -> some View {
+        announcesRoute(trip) { trip.routeReadyAnnouncement }
+    }
+
+    /// Says when a route arrives or fails, saying `ready` when it arrives.
+    func announcesRoute(_ trip: TripViewModel, ready: @escaping () -> String?) -> some View {
         self
             // VoiceOver doesn't read changes outside the focused element, so say the failure out loud
             .onChange(of: trip.routeFailureCount) {
@@ -156,7 +161,7 @@ extension View {
             }
             // likewise when a route arrives, so the user knows Start is there
             .onChange(of: trip.route) { previous, route in
-                guard previous == nil, route != nil, let message = trip.routeReadyAnnouncement else { return }
+                guard previous == nil, route != nil, let message = ready() else { return }
                 AccessibilityNotification.Announcement(message).post()
             }
     }
@@ -189,7 +194,7 @@ private struct TripMapView: View {
             // the destination marker already marks where the arrive maneuver is
             if let maneuver = tripState.nextManeuver, !(maneuver.kind == .arrive && destination != nil) {
                 Marker(maneuver.instruction,
-                       systemImage: maneuver.kind.mapSymbolName,
+                       systemImage: maneuver.kind.symbolName,
                        coordinate: maneuver.coordinate.clCoordinate)
             }
             if let destination {
@@ -249,20 +254,6 @@ private struct TripMapView: View {
 
     private func routeStroke(width: CGFloat) -> StrokeStyle {
         StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)
-    }
-}
-
-private extension ManeuverKind {
-    var mapSymbolName: String {
-        switch self {
-        case .depart: "figure.walk.departure"
-        case .straight: "arrow.up"
-        case .turnLeft, .slightLeft: "arrow.turn.up.left"
-        case .turnRight, .slightRight: "arrow.turn.up.right"
-        case .uTurn: "arrow.uturn.up"
-        case .cross: "figure.walk"
-        case .arrive: "mappin.and.ellipse"
-        }
     }
 }
 

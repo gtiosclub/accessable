@@ -13,10 +13,13 @@ struct AppServices: Sendable {
     var routing: any RoutingService
     var destinationSearch: any DestinationSearching
     var trip: any TripStateProviding
+    var tripActivity: any TripActivityClient
     var locationContext: any LocationContextProviding
     var commands: any CommandInterpreting
     var auth: any AuthService
     var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
+    /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
+    var accountsAvailable = false
     // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
     // TODO(MATCH-x): replace these four placeholders with the real call services.
@@ -33,6 +36,8 @@ struct AppServices: Sendable {
     /// Feet or metres for the trip, search and "where am I". AppViewModel keeps it in step with
     /// the profile.
     var distanceSettings = DistanceSettings()
+    /// Field-test recording of trips, off until turned on in Developer Tools.
+    var tripRecorder = TripRecorder()
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
@@ -61,6 +66,7 @@ struct AppServices: Sendable {
             routing: ValhallaRoutingService(),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
+            tripActivity: ActivityKitTripActivityClient(),
             locationContext: LocationDescriber(location: location, distances: distanceSettings),
             commands: FoundationModelCommandInterpreter(),
             auth: FirebaseApp.app() != nil ? FirebaseAuthService() : PlaceholderAuthService(signedIn: false),
@@ -70,12 +76,14 @@ struct AppServices: Sendable {
         )
         if FirebaseApp.app() != nil {
             services.userProfiles = FirestoreUserProfileStore()
+            services.accountsAvailable = true
         }
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
             landmarks: services.landmarks,
-            setBackgroundTracking: { await location.setBackgroundTracking($0) },
-            distances: distanceSettings
+            setTripTracking: { await location.setTripTracking($0) },
+            distances: distanceSettings,
+            recorder: services.tripRecorder
         )
         return services
     }
@@ -104,10 +112,15 @@ struct AppServices: Sendable {
     @MainActor
     static var preview: AppServices {
         var services = live(performance: PerformanceModeMonitor())
+        // Nor speak aloud: tests build many of these at once, and real speech from several of them has frozen
+        // the whole test run inside the system's speech framework.
+        services.announcements = PlaceholderAnnouncementEngine()
         // Previews and tests must not reach the network or spend the public server's fair-use budget.
         services.routing = PlaceholderRoutingService()
         // A real trip would start GPS tracking and background location from a preview or test.
         services.trip = PlaceholderTripProvider()
+        // Nor put a trip on the simulator's lock screen.
+        services.tripActivity = PlaceholderTripActivityClient()
         // Nor wait on GPS and Apple Maps for "where am I".
         services.locationContext = PlaceholderTripProvider()
         // Wording that doesn't change with the simulator's region.

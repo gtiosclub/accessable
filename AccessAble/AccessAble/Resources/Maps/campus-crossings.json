@@ -1,0 +1,4099 @@
+{
+  "crossings" : [
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.770013,
+      "longitude" : -84.4048344
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7700232,
+      "longitude" : -84.3962338
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7700296,
+      "longitude" : -84.3887872
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7700317,
+      "longitude" : -84.4077493
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.770041,
+      "longitude" : -84.3889578
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7700496,
+      "longitude" : -84.4045404
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7700561,
+      "longitude" : -84.4048345
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7700567,
+      "longitude" : -84.3882681
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7700774,
+      "longitude" : -84.4048345
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7700977,
+      "longitude" : -84.4045323
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7701669,
+      "longitude" : -84.4047598
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7701674,
+      "longitude" : -84.4046924
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7701679,
+      "longitude" : -84.404618
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7701785,
+      "longitude" : -84.4032482
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7701788,
+      "longitude" : -84.4032146
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7701791,
+      "longitude" : -84.4031862
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7702285,
+      "longitude" : -84.3887679
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.77027,
+      "longitude" : -84.396084
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.770272,
+      "longitude" : -84.3962342
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7702813,
+      "longitude" : -84.3887634
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.770332,
+      "longitude" : -84.4045508
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7704043,
+      "longitude" : -84.3889542
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7704088,
+      "longitude" : -84.3960871
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7704089,
+      "longitude" : -84.3961123
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.770419,
+      "longitude" : -84.4045922
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7704342,
+      "longitude" : -84.3887541
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7704442,
+      "longitude" : -84.3922599
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7704593,
+      "longitude" : -84.3922595
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7704929,
+      "longitude" : -84.4046344
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7706555,
+      "longitude" : -84.4047835
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7706698,
+      "longitude" : -84.4048085
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7707198,
+      "longitude" : -84.3959881
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7708372,
+      "longitude" : -84.3889498
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7708857,
+      "longitude" : -84.3959901
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7710095,
+      "longitude" : -84.3959846
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.771047,
+      "longitude" : -84.40594
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7711201,
+      "longitude" : -84.3888577
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7711209,
+      "longitude" : -84.3888414
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7711229,
+      "longitude" : -84.3894761
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7711257,
+      "longitude" : -84.3882683
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7711278,
+      "longitude" : -84.3989651
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7711345,
+      "longitude" : -84.3989596
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7711935,
+      "longitude" : -84.3921141
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7711939,
+      "longitude" : -84.3920817
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7711961,
+      "longitude" : -84.3929741
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7712326,
+      "longitude" : -84.3889547
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7712381,
+      "longitude" : -84.3887562
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7712388,
+      "longitude" : -84.3887558
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.771242,
+      "longitude" : -84.388954
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7712468,
+      "longitude" : -84.3989053
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7712495,
+      "longitude" : -84.3961124
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7712498,
+      "longitude" : -84.3960801
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7712535,
+      "longitude" : -84.3949192
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7712538,
+      "longitude" : -84.3949314
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7712651,
+      "longitude" : -84.3988974
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7712866,
+      "longitude" : -84.4063472
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7712874,
+      "longitude" : -84.3908443
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7712886,
+      "longitude" : -84.3922579
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7712929,
+      "longitude" : -84.3919071
+    },
+    {
+      "audibleSignal" : true,
+      "control" : "signals",
+      "latitude" : 33.7712941,
+      "longitude" : -84.3919079
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7712949,
+      "longitude" : -84.3922553
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7712991,
+      "longitude" : -84.3908435
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7713045,
+      "longitude" : -84.4059033
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.771315,
+      "longitude" : -84.3934241
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7713257,
+      "longitude" : -84.3934231
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7713312,
+      "longitude" : -84.3990104
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7713382,
+      "longitude" : -84.396009
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7713397,
+      "longitude" : -84.3960149
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.771341,
+      "longitude" : -84.3990012
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7713445,
+      "longitude" : -84.3963294
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7713505,
+      "longitude" : -84.3888532
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7713506,
+      "longitude" : -84.3888447
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7713514,
+      "longitude" : -84.3890817
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7713565,
+      "longitude" : -84.3895131
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7713571,
+      "longitude" : -84.396304
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7713577,
+      "longitude" : -84.3963362
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7713634,
+      "longitude" : -84.3897331
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.771399,
+      "longitude" : -84.3920342
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7713999,
+      "longitude" : -84.393713
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.771401,
+      "longitude" : -84.3932135
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7714011,
+      "longitude" : -84.3932226
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7714037,
+      "longitude" : -84.394896
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7714042,
+      "longitude" : -84.3949009
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7714069,
+      "longitude" : -84.3920568
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7714085,
+      "longitude" : -84.3955222
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7714088,
+      "longitude" : -84.3955146
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7714212,
+      "longitude" : -84.3906894
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7714241,
+      "longitude" : -84.3906915
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7714332,
+      "longitude" : -84.3961793
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7714358,
+      "longitude" : -84.3962266
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7714422,
+      "longitude" : -84.3963409
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7714966,
+      "longitude" : -84.397704
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7715625,
+      "longitude" : -84.4068418
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7717733,
+      "longitude" : -84.3955885
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7717742,
+      "longitude" : -84.3955883
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7718542,
+      "longitude" : -84.3889307
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7719044,
+      "longitude" : -84.3887686
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7719307,
+      "longitude" : -84.3919115
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7720054,
+      "longitude" : -84.3889294
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7722191,
+      "longitude" : -84.4014896
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.772222,
+      "longitude" : -84.4014884
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7722944,
+      "longitude" : -84.395501
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7723037,
+      "longitude" : -84.3955263
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7723062,
+      "longitude" : -84.3955008
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7723127,
+      "longitude" : -84.4014869
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7723144,
+      "longitude" : -84.3881116
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7723178,
+      "longitude" : -84.3990724
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7723181,
+      "longitude" : -84.4014885
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7723205,
+      "longitude" : -84.396241
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7723583,
+      "longitude" : -84.3955613
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7723585,
+      "longitude" : -84.3956074
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7723631,
+      "longitude" : -84.3960277
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7723652,
+      "longitude" : -84.3960276
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7723676,
+      "longitude" : -84.3888474
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7723678,
+      "longitude" : -84.3888415
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7723684,
+      "longitude" : -84.395607
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7723748,
+      "longitude" : -84.3965216
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7723841,
+      "longitude" : -84.4035401
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7723923,
+      "longitude" : -84.4035561
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7724057,
+      "longitude" : -84.4035775
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7724069,
+      "longitude" : -84.4018913
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7724159,
+      "longitude" : -84.3887522
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7724205,
+      "longitude" : -84.3889284
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7724259,
+      "longitude" : -84.3887506
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7724312,
+      "longitude" : -84.390739
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7724458,
+      "longitude" : -84.3880805
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7724461,
+      "longitude" : -84.4013478
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7724477,
+      "longitude" : -84.4013487
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7724515,
+      "longitude" : -84.3961118
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7724523,
+      "longitude" : -84.3960989
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7725069,
+      "longitude" : -84.3888409
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7725071,
+      "longitude" : -84.3888554
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7725368,
+      "longitude" : -84.4035375
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7725456,
+      "longitude" : -84.3972867
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.772581,
+      "longitude" : -84.3972551
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7725853,
+      "longitude" : -84.3889257
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7725861,
+      "longitude" : -84.403383
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.772588,
+      "longitude" : -84.401903
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7726049,
+      "longitude" : -84.4006953
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7726072,
+      "longitude" : -84.4009852
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7726272,
+      "longitude" : -84.3972128
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7726283,
+      "longitude" : -84.3990988
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7727414,
+      "longitude" : -84.3971131
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7727459,
+      "longitude" : -84.3889227
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7727578,
+      "longitude" : -84.3970951
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7727738,
+      "longitude" : -84.4034185
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7727932,
+      "longitude" : -84.4025249
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7727971,
+      "longitude" : -84.4022223
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.772799,
+      "longitude" : -84.4022255
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7728753,
+      "longitude" : -84.3971145
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7728776,
+      "longitude" : -84.3971194
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.772913,
+      "longitude" : -84.3889196
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.772927,
+      "longitude" : -84.3991791
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7729312,
+      "longitude" : -84.3992018
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7729572,
+      "longitude" : -84.3990836
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7729628,
+      "longitude" : -84.3887507
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7729632,
+      "longitude" : -84.4025401
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7729952,
+      "longitude" : -84.3919005
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7730123,
+      "longitude" : -84.399083
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7730392,
+      "longitude" : -84.3974175
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7730396,
+      "longitude" : -84.3974162
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7730502,
+      "longitude" : -84.3990832
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7730519,
+      "longitude" : -84.4032171
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7730521,
+      "longitude" : -84.4032161
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7730794,
+      "longitude" : -84.3889165
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7731004,
+      "longitude" : -84.4031153
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7731038,
+      "longitude" : -84.4002725
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7731049,
+      "longitude" : -84.4002794
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7731061,
+      "longitude" : -84.4031165
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7731222,
+      "longitude" : -84.3887501
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7731458,
+      "longitude" : -84.4002578
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7731482,
+      "longitude" : -84.4032636
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7731505,
+      "longitude" : -84.4032633
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7731541,
+      "longitude" : -84.4003598
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7731614,
+      "longitude" : -84.4003584
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7731679,
+      "longitude" : -84.4035407
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7732006,
+      "longitude" : -84.4031388
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7732019,
+      "longitude" : -84.4031413
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7732419,
+      "longitude" : -84.3889135
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.773256,
+      "longitude" : -84.4003403
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7732691,
+      "longitude" : -84.4003378
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7732906,
+      "longitude" : -84.4034916
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7733449,
+      "longitude" : -84.3984308
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7733787,
+      "longitude" : -84.3991688
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7733842,
+      "longitude" : -84.3991677
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7734001,
+      "longitude" : -84.4043314
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7734821,
+      "longitude" : -84.3992411
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7734915,
+      "longitude" : -84.3992876
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7734975,
+      "longitude" : -84.3993157
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7735244,
+      "longitude" : -84.4041869
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7735364,
+      "longitude" : -84.3995972
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7735527,
+      "longitude" : -84.4047404
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7735598,
+      "longitude" : -84.4047522
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7736664,
+      "longitude" : -84.3889203
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7737058,
+      "longitude" : -84.4050351
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7737164,
+      "longitude" : -84.4028696
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7737274,
+      "longitude" : -84.402896
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7737274,
+      "longitude" : -84.4027107
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7737839,
+      "longitude" : -84.4048693
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7737956,
+      "longitude" : -84.4011588
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7737973,
+      "longitude" : -84.4026907
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7737976,
+      "longitude" : -84.3888372
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7737985,
+      "longitude" : -84.3888324
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7738089,
+      "longitude" : -84.402677
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7738101,
+      "longitude" : -84.3883167
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7738161,
+      "longitude" : -84.4013315
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7738325,
+      "longitude" : -84.4029592
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7738483,
+      "longitude" : -84.4053755
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7738665,
+      "longitude" : -84.3949229
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7738672,
+      "longitude" : -84.4050688
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7738684,
+      "longitude" : -84.3949194
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7738707,
+      "longitude" : -84.3942131
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7738712,
+      "longitude" : -84.3942201
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7738714,
+      "longitude" : -84.3887328
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7738745,
+      "longitude" : -84.4029395
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.773882,
+      "longitude" : -84.388733
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7738837,
+      "longitude" : -84.3889454
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7738866,
+      "longitude" : -84.3909891
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.773892,
+      "longitude" : -84.3889452
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7738943,
+      "longitude" : -84.40548
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7738965,
+      "longitude" : -84.3909892
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7739019,
+      "longitude" : -84.3927991
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.773903,
+      "longitude" : -84.3918988
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7739036,
+      "longitude" : -84.3929145
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7739066,
+      "longitude" : -84.3920774
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7739088,
+      "longitude" : -84.3895898
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7739092,
+      "longitude" : -84.3918993
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7739151,
+      "longitude" : -84.3936776
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7739197,
+      "longitude" : -84.4064135
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7739201,
+      "longitude" : -84.4029181
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.773921,
+      "longitude" : -84.3927998
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7739238,
+      "longitude" : -84.3929159
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7739308,
+      "longitude" : -84.4064231
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7739311,
+      "longitude" : -84.3880965
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7739331,
+      "longitude" : -84.3882197
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7739545,
+      "longitude" : -84.3888323
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7739546,
+      "longitude" : -84.3888313
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7739574,
+      "longitude" : -84.3925697
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7739678,
+      "longitude" : -84.391994
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7739688,
+      "longitude" : -84.4027461
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.773969,
+      "longitude" : -84.3937244
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.773969,
+      "longitude" : -84.3919854
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7739695,
+      "longitude" : -84.3928607
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7739697,
+      "longitude" : -84.3937324
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7739699,
+      "longitude" : -84.3928536
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.774102,
+      "longitude" : -84.402665
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7742393,
+      "longitude" : -84.40602
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7742421,
+      "longitude" : -84.4060233
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7743477,
+      "longitude" : -84.4071787
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7744223,
+      "longitude" : -84.4071524
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7744246,
+      "longitude" : -84.4071487
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.774486,
+      "longitude" : -84.40617
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7744895,
+      "longitude" : -84.4061641
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7745985,
+      "longitude" : -84.4061654
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7746007,
+      "longitude" : -84.4061662
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7749068,
+      "longitude" : -84.402584
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7749072,
+      "longitude" : -84.402546
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7749087,
+      "longitude" : -84.4026336
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.774971,
+      "longitude" : -84.4066076
+    },
+    {
+      "audibleSignal" : true,
+      "control" : "signals",
+      "latitude" : 33.7750524,
+      "longitude" : -84.3888186
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7750524,
+      "longitude" : -84.3888182
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7750568,
+      "longitude" : -84.3895333
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7750587,
+      "longitude" : -84.3880848
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7750594,
+      "longitude" : -84.3881562
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7750628,
+      "longitude" : -84.3919741
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7750636,
+      "longitude" : -84.3919705
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7750743,
+      "longitude" : -84.3898996
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7751066,
+      "longitude" : -84.3887359
+    },
+    {
+      "audibleSignal" : true,
+      "control" : "signals",
+      "latitude" : 33.7751144,
+      "longitude" : -84.3887359
+    },
+    {
+      "audibleSignal" : true,
+      "control" : "signals",
+      "latitude" : 33.7751156,
+      "longitude" : -84.3889207
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7751201,
+      "longitude" : -84.38892
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7751449,
+      "longitude" : -84.3920831
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7751917,
+      "longitude" : -84.3888271
+    },
+    {
+      "audibleSignal" : true,
+      "control" : "signals",
+      "latitude" : 33.7751922,
+      "longitude" : -84.3888177
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7752123,
+      "longitude" : -84.3930911
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7752321,
+      "longitude" : -84.4065572
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7753077,
+      "longitude" : -84.3921774
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7753613,
+      "longitude" : -84.3941391
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.775368,
+      "longitude" : -84.3941292
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7753728,
+      "longitude" : -84.4066294
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7753744,
+      "longitude" : -84.3941973
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7753773,
+      "longitude" : -84.3941979
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7754224,
+      "longitude" : -84.4054215
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7754234,
+      "longitude" : -84.3940768
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7754344,
+      "longitude" : -84.4025655
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7754419,
+      "longitude" : -84.3918837
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7754628,
+      "longitude" : -84.3940892
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7754791,
+      "longitude" : -84.4068804
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7754828,
+      "longitude" : -84.4068827
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7755733,
+      "longitude" : -84.4052297
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7756069,
+      "longitude" : -84.3991444
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7756766,
+      "longitude" : -84.4050704
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7757431,
+      "longitude" : -84.4069245
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.775745,
+      "longitude" : -84.4069221
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7757517,
+      "longitude" : -84.3991438
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7757798,
+      "longitude" : -84.3928227
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7757936,
+      "longitude" : -84.4070861
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7757999,
+      "longitude" : -84.4070912
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7758141,
+      "longitude" : -84.3933172
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7758141,
+      "longitude" : -84.3933153
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.77582,
+      "longitude" : -84.3942729
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7758251,
+      "longitude" : -84.3901044
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7758277,
+      "longitude" : -84.3942388
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7758406,
+      "longitude" : -84.3888262
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7758412,
+      "longitude" : -84.3888086
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7758657,
+      "longitude" : -84.3901125
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7758768,
+      "longitude" : -84.3938234
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7758851,
+      "longitude" : -84.3887208
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7758958,
+      "longitude" : -84.3887221
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.775929,
+      "longitude" : -84.3937507
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7759348,
+      "longitude" : -84.3937493
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7759417,
+      "longitude" : -84.4068524
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7759541,
+      "longitude" : -84.3888054
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7759553,
+      "longitude" : -84.3888269
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7759912,
+      "longitude" : -84.4068605
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7759966,
+      "longitude" : -84.3901538
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7760149,
+      "longitude" : -84.3936477
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7760164,
+      "longitude" : -84.3936557
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7760361,
+      "longitude" : -84.4071545
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7760372,
+      "longitude" : -84.4071536
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7760532,
+      "longitude" : -84.4025013
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7760551,
+      "longitude" : -84.4025023
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7760648,
+      "longitude" : -84.4069917
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7760702,
+      "longitude" : -84.4070103
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7760778,
+      "longitude" : -84.4029698
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.776114,
+      "longitude" : -84.4020281
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7761142,
+      "longitude" : -84.4024023
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7761158,
+      "longitude" : -84.4025949
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7761162,
+      "longitude" : -84.402401
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7761175,
+      "longitude" : -84.402595
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7761481,
+      "longitude" : -84.4071168
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7761785,
+      "longitude" : -84.4024936
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7761793,
+      "longitude" : -84.4024927
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7763306,
+      "longitude" : -84.4057518
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7763493,
+      "longitude" : -84.4058644
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7763496,
+      "longitude" : -84.4058665
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7764428,
+      "longitude" : -84.3921573
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7765141,
+      "longitude" : -84.4074944
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7765745,
+      "longitude" : -84.3902541
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7767195,
+      "longitude" : -84.397815
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7767419,
+      "longitude" : -84.4071825
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.776748,
+      "longitude" : -84.3887943
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7767486,
+      "longitude" : -84.3888071
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7767806,
+      "longitude" : -84.3903755
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7767811,
+      "longitude" : -84.3903567
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768207,
+      "longitude" : -84.3921018
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768272,
+      "longitude" : -84.3887019
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768376,
+      "longitude" : -84.3889012
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768396,
+      "longitude" : -84.388703
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768441,
+      "longitude" : -84.3889004
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768458,
+      "longitude" : -84.3936361
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768597,
+      "longitude" : -84.3903059
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768694,
+      "longitude" : -84.3903096
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768712,
+      "longitude" : -84.3904567
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768738,
+      "longitude" : -84.3904572
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768894,
+      "longitude" : -84.3921079
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768922,
+      "longitude" : -84.3921836
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7768991,
+      "longitude" : -84.3920251
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7769027,
+      "longitude" : -84.3921785
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7769162,
+      "longitude" : -84.3887957
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7769165,
+      "longitude" : -84.3887928
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7769185,
+      "longitude" : -84.3936446
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7769273,
+      "longitude" : -84.3935664
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7769296,
+      "longitude" : -84.3937217
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7769498,
+      "longitude" : -84.3904058
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7769533,
+      "longitude" : -84.390424
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7769558,
+      "longitude" : -84.3920991
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7769897,
+      "longitude" : -84.3936341
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.776991,
+      "longitude" : -84.3936469
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.777229,
+      "longitude" : -84.4024148
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7772293,
+      "longitude" : -84.4024155
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7772685,
+      "longitude" : -84.3994271
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7772747,
+      "longitude" : -84.4042355
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7772774,
+      "longitude" : -84.4025158
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7772817,
+      "longitude" : -84.4025185
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.777292,
+      "longitude" : -84.4078254
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7773234,
+      "longitude" : -84.4042105
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7773276,
+      "longitude" : -84.4041954
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7773351,
+      "longitude" : -84.4024072
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7773352,
+      "longitude" : -84.4024039
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7773404,
+      "longitude" : -84.3997906
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7773856,
+      "longitude" : -84.3920241
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7774238,
+      "longitude" : -84.3935474
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7774395,
+      "longitude" : -84.3921654
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7774917,
+      "longitude" : -84.3999471
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7775364,
+      "longitude" : -84.4073457
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7775378,
+      "longitude" : -84.4073428
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7775409,
+      "longitude" : -84.3957045
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7775438,
+      "longitude" : -84.3956999
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7775626,
+      "longitude" : -84.3992134
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7775812,
+      "longitude" : -84.3958319
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7775891,
+      "longitude" : -84.3887072
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7775975,
+      "longitude" : -84.4074165
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7776038,
+      "longitude" : -84.3994051
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.777618,
+      "longitude" : -84.4074226
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7776761,
+      "longitude" : -84.4021584
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7776803,
+      "longitude" : -84.4019704
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.777689,
+      "longitude" : -84.3956676
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7776949,
+      "longitude" : -84.3956763
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7776966,
+      "longitude" : -84.3997876
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7777049,
+      "longitude" : -84.3999478
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7778149,
+      "longitude" : -84.3888726
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7778207,
+      "longitude" : -84.3904716
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7778279,
+      "longitude" : -84.3888727
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7779593,
+      "longitude" : -84.4019935
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7779656,
+      "longitude" : -84.4020022
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7780378,
+      "longitude" : -84.3886651
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7780446,
+      "longitude" : -84.3886967
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7780782,
+      "longitude" : -84.3920851
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7780782,
+      "longitude" : -84.3920795
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7780788,
+      "longitude" : -84.3991018
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7780831,
+      "longitude" : -84.3935991
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7780834,
+      "longitude" : -84.3936184
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7780842,
+      "longitude" : -84.3936585
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7780852,
+      "longitude" : -84.3887821
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.778086,
+      "longitude" : -84.3887864
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7780919,
+      "longitude" : -84.3964714
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7780938,
+      "longitude" : -84.396488
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7781211,
+      "longitude" : -84.3963753
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7781263,
+      "longitude" : -84.3963674
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7781496,
+      "longitude" : -84.39216
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7781537,
+      "longitude" : -84.3921617
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7781765,
+      "longitude" : -84.3935422
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7781795,
+      "longitude" : -84.39654
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7781815,
+      "longitude" : -84.3935438
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.778186,
+      "longitude" : -84.3977938
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7781869,
+      "longitude" : -84.3978075
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7781875,
+      "longitude" : -84.3965384
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7781993,
+      "longitude" : -84.399188
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7781993,
+      "longitude" : -84.399187
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7782492,
+      "longitude" : -84.3977201
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7782507,
+      "longitude" : -84.3977916
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7782521,
+      "longitude" : -84.3978653
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7782601,
+      "longitude" : -84.3978648
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.778262,
+      "longitude" : -84.3977199
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7782718,
+      "longitude" : -84.3990595
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7782755,
+      "longitude" : -84.3935977
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7782771,
+      "longitude" : -84.3936156
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7782776,
+      "longitude" : -84.3936445
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7782788,
+      "longitude" : -84.3992847
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7782984,
+      "longitude" : -84.3990597
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7782997,
+      "longitude" : -84.3904719
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7783033,
+      "longitude" : -84.3992849
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7783301,
+      "longitude" : -84.3977914
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7783302,
+      "longitude" : -84.3977898
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7783465,
+      "longitude" : -84.4013625
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7783526,
+      "longitude" : -84.401374
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7783774,
+      "longitude" : -84.3991277
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7783785,
+      "longitude" : -84.3991794
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7783792,
+      "longitude" : -84.3999171
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7783796,
+      "longitude" : -84.3992291
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7783983,
+      "longitude" : -84.400155
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7784078,
+      "longitude" : -84.3886817
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7784231,
+      "longitude" : -84.4012109
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7784301,
+      "longitude" : -84.4001446
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7784331,
+      "longitude" : -84.4012161
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7784531,
+      "longitude" : -84.4013521
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7784609,
+      "longitude" : -84.4001359
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7784621,
+      "longitude" : -84.4013422
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7785837,
+      "longitude" : -84.4047188
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.778634,
+      "longitude" : -84.4041874
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7786757,
+      "longitude" : -84.4042535
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7786791,
+      "longitude" : -84.4042009
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7786912,
+      "longitude" : -84.4060716
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7787093,
+      "longitude" : -84.4061217
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7787245,
+      "longitude" : -84.4042003
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7787248,
+      "longitude" : -84.4041852
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7787294,
+      "longitude" : -84.4046301
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.778732,
+      "longitude" : -84.4050987
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7789916,
+      "longitude" : -84.4017609
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7794231,
+      "longitude" : -84.4005092
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.779427,
+      "longitude" : -84.4005088
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7794476,
+      "longitude" : -84.4011484
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7794487,
+      "longitude" : -84.3992001
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7794553,
+      "longitude" : -84.4011497
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7794571,
+      "longitude" : -84.3991359
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7794621,
+      "longitude" : -84.3990938
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7794885,
+      "longitude" : -84.4000055
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7794886,
+      "longitude" : -84.3888342
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7794901,
+      "longitude" : -84.3888084
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7794951,
+      "longitude" : -84.4000059
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795008,
+      "longitude" : -84.3991967
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7795074,
+      "longitude" : -84.4022415
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795104,
+      "longitude" : -84.3990924
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7795569,
+      "longitude" : -84.3889379
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795623,
+      "longitude" : -84.3935774
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795626,
+      "longitude" : -84.3935975
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795626,
+      "longitude" : -84.3887413
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7795628,
+      "longitude" : -84.3889378
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795668,
+      "longitude" : -84.3904593
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7795677,
+      "longitude" : -84.3887433
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795679,
+      "longitude" : -84.3904593
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795798,
+      "longitude" : -84.3992619
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795818,
+      "longitude" : -84.399262
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795875,
+      "longitude" : -84.3935117
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795956,
+      "longitude" : -84.4041719
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795958,
+      "longitude" : -84.4041813
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795962,
+      "longitude" : -84.3935125
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795969,
+      "longitude" : -84.3930406
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795974,
+      "longitude" : -84.406254
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795976,
+      "longitude" : -84.3920591
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7795985,
+      "longitude" : -84.3920586
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796037,
+      "longitude" : -84.3930423
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7796088,
+      "longitude" : -84.4053558
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796092,
+      "longitude" : -84.4062541
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7796095,
+      "longitude" : -84.4052218
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.77961,
+      "longitude" : -84.4067151
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7796192,
+      "longitude" : -84.3888336
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796209,
+      "longitude" : -84.3888481
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796291,
+      "longitude" : -84.3935119
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.77963,
+      "longitude" : -84.3990256
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796311,
+      "longitude" : -84.406037
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7796348,
+      "longitude" : -84.3881431
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796425,
+      "longitude" : -84.4060391
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796434,
+      "longitude" : -84.4076396
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796441,
+      "longitude" : -84.4076385
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796451,
+      "longitude" : -84.4024665
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796482,
+      "longitude" : -84.4024714
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.779653,
+      "longitude" : -84.4050789
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.779654,
+      "longitude" : -84.4040931
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796545,
+      "longitude" : -84.4040931
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796547,
+      "longitude" : -84.4042723
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796549,
+      "longitude" : -84.4042721
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7796558,
+      "longitude" : -84.405068
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796565,
+      "longitude" : -84.3990242
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796574,
+      "longitude" : -84.4025961
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796586,
+      "longitude" : -84.4025944
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796648,
+      "longitude" : -84.3935787
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7796651,
+      "longitude" : -84.3935961
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7797028,
+      "longitude" : -84.4060802
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7797029,
+      "longitude" : -84.4061003
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.779737,
+      "longitude" : -84.4041698
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7797386,
+      "longitude" : -84.4041762
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7798678,
+      "longitude" : -84.4076282
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.77987,
+      "longitude" : -84.3999311
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7798737,
+      "longitude" : -84.39992
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7799104,
+      "longitude" : -84.3999961
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7800176,
+      "longitude" : -84.4076254
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7802556,
+      "longitude" : -84.4076225
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7803415,
+      "longitude" : -84.3935872
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7803418,
+      "longitude" : -84.3935964
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.780355,
+      "longitude" : -84.4072825
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7804266,
+      "longitude" : -84.3981008
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7804271,
+      "longitude" : -84.3980953
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7804341,
+      "longitude" : -84.3990891
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7804419,
+      "longitude" : -84.3991365
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7804505,
+      "longitude" : -84.3991891
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7804884,
+      "longitude" : -84.4076197
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.780499,
+      "longitude" : -84.3889983
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7804991,
+      "longitude" : -84.3889878
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7805036,
+      "longitude" : -84.4038359
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7805092,
+      "longitude" : -84.3990233
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7805116,
+      "longitude" : -84.404165
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7805119,
+      "longitude" : -84.3905122
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.780513,
+      "longitude" : -84.3990231
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7805131,
+      "longitude" : -84.4041587
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7805201,
+      "longitude" : -84.3905118
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7805279,
+      "longitude" : -84.4049609
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7805467,
+      "longitude" : -84.3885233
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7805485,
+      "longitude" : -84.4031916
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7805501,
+      "longitude" : -84.3890946
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.780559,
+      "longitude" : -84.3890968
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7805611,
+      "longitude" : -84.4032037
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7805637,
+      "longitude" : -84.4059453
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7805642,
+      "longitude" : -84.4034467
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7805643,
+      "longitude" : -84.4034436
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7805647,
+      "longitude" : -84.3901963
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7805773,
+      "longitude" : -84.3888913
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7805793,
+      "longitude" : -84.4059454
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7805813,
+      "longitude" : -84.3888916
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7806149,
+      "longitude" : -84.4044969
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.780642,
+      "longitude" : -84.399972
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7806427,
+      "longitude" : -84.3890224
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7806442,
+      "longitude" : -84.3890134
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7806537,
+      "longitude" : -84.3999738
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.780697,
+      "longitude" : -84.4076105
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.780971,
+      "longitude" : -84.4035937
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.780974,
+      "longitude" : -84.403597
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.780996,
+      "longitude" : -84.4027328
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.78108,
+      "longitude" : -84.3891836
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7811709,
+      "longitude" : -84.4051258
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7811709,
+      "longitude" : -84.4051171
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7812145,
+      "longitude" : -84.4027135
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7812489,
+      "longitude" : -84.389211
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7813866,
+      "longitude" : -84.3897884
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7813866,
+      "longitude" : -84.3891461
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7813866,
+      "longitude" : -84.3891377
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7813872,
+      "longitude" : -84.3896342
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7813881,
+      "longitude" : -84.3893807
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7813939,
+      "longitude" : -84.3905848
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7813944,
+      "longitude" : -84.3905905
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7813967,
+      "longitude" : -84.3919631
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814142,
+      "longitude" : -84.3935745
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7814164,
+      "longitude" : -84.3916127
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814168,
+      "longitude" : -84.3916479
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814282,
+      "longitude" : -84.4073092
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814291,
+      "longitude" : -84.4073103
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814344,
+      "longitude" : -84.3991452
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814362,
+      "longitude" : -84.4026522
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814367,
+      "longitude" : -84.4026474
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7814367,
+      "longitude" : -84.3967485
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7814369,
+      "longitude" : -84.3971522
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7814373,
+      "longitude" : -84.3964827
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814404,
+      "longitude" : -84.3999163
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814406,
+      "longitude" : -84.4008329
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814413,
+      "longitude" : -84.4008279
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814418,
+      "longitude" : -84.3999103
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.781446,
+      "longitude" : -84.4051136
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7814469,
+      "longitude" : -84.4021974
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7814705,
+      "longitude" : -84.4074254
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.781473,
+      "longitude" : -84.4063052
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7814746,
+      "longitude" : -84.4074928
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814754,
+      "longitude" : -84.4041371
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7814778,
+      "longitude" : -84.4075431
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7814781,
+      "longitude" : -84.4041436
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7814926,
+      "longitude" : -84.3890501
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.781506,
+      "longitude" : -84.3976327
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815064,
+      "longitude" : -84.3935589
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815065,
+      "longitude" : -84.3991387
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815065,
+      "longitude" : -84.3890519
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815066,
+      "longitude" : -84.3977838
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815066,
+      "longitude" : -84.3977837
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815068,
+      "longitude" : -84.3976327
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815071,
+      "longitude" : -84.3990537
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815071,
+      "longitude" : -84.3892842
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815074,
+      "longitude" : -84.3992327
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815076,
+      "longitude" : -84.3936667
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815077,
+      "longitude" : -84.3892833
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815103,
+      "longitude" : -84.399235
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815142,
+      "longitude" : -84.3934669
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815164,
+      "longitude" : -84.4008854
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815165,
+      "longitude" : -84.4008843
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815271,
+      "longitude" : -84.3904789
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815329,
+      "longitude" : -84.3904787
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815366,
+      "longitude" : -84.4040883
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.781539,
+      "longitude" : -84.4043046
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.78154,
+      "longitude" : -84.4041782
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815461,
+      "longitude" : -84.3917497
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815511,
+      "longitude" : -84.3917488
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815549,
+      "longitude" : -84.4073457
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815558,
+      "longitude" : -84.4076159
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815586,
+      "longitude" : -84.4076167
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815623,
+      "longitude" : -84.4073461
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.781577,
+      "longitude" : -84.3977051
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7815774,
+      "longitude" : -84.3977161
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815804,
+      "longitude" : -84.3991401
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.781582,
+      "longitude" : -84.398494
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7815839,
+      "longitude" : -84.3994481
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815865,
+      "longitude" : -84.4006025
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815872,
+      "longitude" : -84.4006047
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7815883,
+      "longitude" : -84.3960758
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.781589,
+      "longitude" : -84.3999712
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7815895,
+      "longitude" : -84.3998867
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7815962,
+      "longitude" : -84.4013069
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7815964,
+      "longitude" : -84.4013115
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7816007,
+      "longitude" : -84.4033681
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7816014,
+      "longitude" : -84.4023572
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7816025,
+      "longitude" : -84.3935694
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7816031,
+      "longitude" : -84.4027363
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7816033,
+      "longitude" : -84.4027344
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7816039,
+      "longitude" : -84.404238
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7816102,
+      "longitude" : -84.4053823
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7816128,
+      "longitude" : -84.4060866
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.781613,
+      "longitude" : -84.4060855
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7816143,
+      "longitude" : -84.3893024
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7816145,
+      "longitude" : -84.4068606
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unmarked",
+      "latitude" : 33.7816169,
+      "longitude" : -84.4068635
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7816288,
+      "longitude" : -84.3892167
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7816326,
+      "longitude" : -84.3892016
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7816565,
+      "longitude" : -84.4075449
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7816567,
+      "longitude" : -84.4074881
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7816569,
+      "longitude" : -84.4074291
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7816603,
+      "longitude" : -84.3916119
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7816614,
+      "longitude" : -84.3916313
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7816633,
+      "longitude" : -84.3905643
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "signals",
+      "latitude" : 33.7816641,
+      "longitude" : -84.3905848
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7816712,
+      "longitude" : -84.3919516
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "marked",
+      "latitude" : 33.7816715,
+      "longitude" : -84.3919458
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7817364,
+      "longitude" : -84.4044134
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7818987,
+      "longitude" : -84.3991991
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7819808,
+      "longitude" : -84.3990241
+    },
+    {
+      "audibleSignal" : false,
+      "control" : "unknown",
+      "latitude" : 33.7819887,
+      "longitude" : -84.3976379
+    }
+  ],
+  "exportDate" : "2026-10-16T22:36:45Z",
+  "license" : "ODbL (https:\/\/www.openstreetmap.org\/copyright)",
+  "source" : "OpenStreetMap contributors via Overpass API"
+}

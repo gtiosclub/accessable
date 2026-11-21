@@ -23,7 +23,7 @@ Official guide: https://docs.livekit.io/frontends/build/authentication/developme
 
 ## Configure and build on your Mac
 
-1. Copy the contents of this updated project folder into your existing clone. Keep your clone's `.git`, GoogleService-Info.plist, and Secrets.xcconfig. Do not nest the downloaded project folder inside the clone.
+1. Check out this branch with git (`gh pr checkout 302`). Keep your GoogleService-Info.plist and Secrets.xcconfig.
 2. Open `AccessAble/Config/Secrets.xcconfig`. If it does not exist, copy `Secrets.example.xcconfig` to `Secrets.xcconfig` in that folder. Keep the existing LIVEKIT_URL line and add:
 
    ```xcconfig

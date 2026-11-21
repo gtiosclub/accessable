@@ -56,6 +56,30 @@ private let plannedRoute = try! NavigationRoute(coordinates: [origin, clough.coo
     RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived at Clough."),
 ], estimatedDuration: 260)
 
+/// A crossing `fraction` of the way along `plannedRoute`.
+private func crossing(at fraction: Double) -> CampusCrossing {
+    let start = plannedRoute.coordinates[0], end = plannedRoute.coordinates[1]
+    return CampusCrossing(coordinate: GeoCoordinate(latitude: start.latitude + (end.latitude - start.latitude) * fraction,
+                                                    longitude: start.longitude + (end.longitude - start.longitude) * fraction),
+                          control: .marked, audibleSignal: false)
+}
+
+private final class ReadCounter: Sendable {
+    private let reads = Mutex(0)
+
+    func record() {
+        reads.withLock { $0 += 1 }
+    }
+
+    var count: Int { reads.withLock { $0 } }
+}
+
+/// Two crossings on the route and one a block away, which isn't.
+private let campusCrossings = [
+    crossing(at: 1.0 / 3), crossing(at: 2.0 / 3),
+    CampusCrossing(coordinate: GeoCoordinate(latitude: 33.776, longitude: -84.398), control: .signals, audibleSignal: true),
+]
+
 @MainActor
 struct PlaceDetailViewModelTests {
     private func details(
@@ -67,7 +91,7 @@ struct PlaceDetailViewModelTests {
         services.routing = routing
         // The placeholder's streams finish, so start() returns once the fix is used.
         services.trip = PlaceholderTripProvider()
-        return PlaceDetailViewModel(destination: clough, services: services)
+        return PlaceDetailViewModel(destination: clough, services: services, campusCrossings: { campusCrossings })
     }
 
     @Test
@@ -80,10 +104,10 @@ struct PlaceDetailViewModelTests {
 
         #expect(!details.isLoading)
         #expect(details.route == plannedRoute)
-        #expect(details.steps == ["Walk east on Ferst Drive.", "You have arrived at Clough."])
-        #expect(details.summary == PlaceDetailViewModel.summary(
-            metres: plannedRoute.totalDistance, seconds: plannedRoute.estimatedDuration, distances: .metric
-        ))
+        #expect(details.steps == ["Follow Ferst Drive.", "You have arrived at Clough."])
+        #expect(details.summary == "About 4 minutes, 240 metres. No turns, 2 crosswalks.")
+        // so the user knows Start is there
+        #expect(details.routeReadyAnnouncement == "Route ready. About 4 minutes, 240 metres. No turns, 2 crosswalks.")
     }
 
     @Test
@@ -129,7 +153,10 @@ struct PlaceDetailViewModelTests {
             return services
         }()
         let planned = PlannedRoute(destination: clough, route: plannedRoute, requestedAt: .now)
-        let details = PlaceDetailViewModel(destination: clough, services: services, planned: planned)
+        // as the route picker makes it from the route place details found
+        let details = PlaceDetailViewModel(destination: clough, services: services, planned: planned,
+                                           campusCrossings: { campusCrossings })
+        #expect(details.summary == "About 4 minutes, 240 metres. No turns, 2 crosswalks.")
 
         await details.start()
         await details.planner.routeTask?.value
@@ -140,15 +167,6 @@ struct PlaceDetailViewModelTests {
     }
 
     @Test
-    func summaryReadsAsAWalk() {
-        #expect(PlaceDetailViewModel.summary(metres: 352, seconds: 290, distances: .metric) == "350 m · about 5 min walk")
-        #expect(PlaceDetailViewModel.summary(metres: 1840, seconds: 1500, distances: .metric) == "1.8 km · about 25 min walk")
-        #expect(PlaceDetailViewModel.summary(metres: 3, seconds: 4, distances: .metric) == "10 m · about 1 min walk")
-        #expect(PlaceDetailViewModel.summary(metres: 100, seconds: 80, distances: .imperial) == "325 ft · about 1 min walk")
-        #expect(PlaceDetailViewModel.summary(metres: 352, seconds: 290, distances: .imperial) == "0.2 mi · about 5 min walk")
-    }
-
-    @Test
     func switchingUnitsChangesTheSummary() async {
         let distances = DistanceSettings(units: .metres)
         var services = AppServices.preview
@@ -156,13 +174,31 @@ struct PlaceDetailViewModelTests {
         services.routing = FlakyRouting(isOnline: true)
         services.trip = PlaceholderTripProvider()
         services.distanceSettings = distances
-        let details = PlaceDetailViewModel(destination: clough, services: services)
+        let details = PlaceDetailViewModel(destination: clough, services: services, campusCrossings: { [] })
         await details.start()
         await details.planner.routeTask?.value
-        let metres = plannedRoute.totalDistance, seconds = plannedRoute.estimatedDuration
-        #expect(details.summary == PlaceDetailViewModel.summary(metres: metres, seconds: seconds, distances: .metric))
+        #expect(details.summary == "About 4 minutes, 240 metres. No turns.")
 
         distances.units = .feet
-        #expect(details.summary == PlaceDetailViewModel.summary(metres: metres, seconds: seconds, distances: .imperial))
+        #expect(details.summary == "About 4 minutes, 0.2 miles. No turns.")
+    }
+
+    @Test
+    func crossingsAreCountedOncePerRoute() async {
+        let reads = ReadCounter()
+        var services = AppServices.preview
+        services.location = OneFixLocationProvider()
+        services.routing = FlakyRouting(isOnline: true)
+        services.trip = PlaceholderTripProvider()
+        let details = PlaceDetailViewModel(destination: clough, services: services, campusCrossings: {
+            reads.record()
+            return campusCrossings
+        })
+        await details.start()
+        await details.planner.routeTask?.value
+        for _ in 0..<3 {
+            #expect(details.summary == "About 4 minutes, 240 metres. No turns, 2 crosswalks.")
+        }
+        #expect(reads.count == 1)
     }
 }

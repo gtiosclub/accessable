@@ -5,23 +5,28 @@ import Testing
 struct CameraOwnershipStateTests {
     @Test func resumesAnExistingARClient() throws {
         var state = CameraOwnershipState()
-        #expect(state.requestARStart())
+        let started = state.requestARStart()
+        #expect(started)
         let owner = try state.acquireForCall()
-        #expect(state.releaseFromCall(owner) == true)
+        let released = state.releaseFromCall(owner)
+        #expect(released == true)
         #expect(state.callOwner == nil)
     }
 
     @Test func idleCameraDoesNotStartARAfterCall() throws {
         var state = CameraOwnershipState()
         let owner = try state.acquireForCall()
-        #expect(state.releaseFromCall(owner) == false)
+        let released = state.releaseFromCall(owner)
+        #expect(released == false)
     }
 
     @Test func newARClientWaitsForCallToEnd() throws {
         var state = CameraOwnershipState()
         let owner = try state.acquireForCall()
-        #expect(!state.requestARStart())
-        #expect(state.releaseFromCall(owner) == true)
+        let started = state.requestARStart()
+        #expect(!started)
+        let released = state.releaseFromCall(owner)
+        #expect(released == true)
     }
 
     @Test func lastARClientLeavingPreventsRestart() throws {
@@ -29,7 +34,8 @@ struct CameraOwnershipStateTests {
         _ = state.requestARStart()
         let owner = try state.acquireForCall()
         state.requestARStop()
-        #expect(state.releaseFromCall(owner) == false)
+        let released = state.releaseFromCall(owner)
+        #expect(released == false)
     }
 
     @Test func secondCallCannotTakeTheCamera() throws {
@@ -43,9 +49,12 @@ struct CameraOwnershipStateTests {
         var state = CameraOwnershipState()
         _ = state.requestARStart()
         let owner = try state.acquireForCall()
-        #expect(state.releaseFromCall(UUID()) == nil)
+        let staleRelease = state.releaseFromCall(UUID())
+        #expect(staleRelease == nil)
         #expect(state.callOwner == owner)
-        #expect(state.releaseFromCall(owner) == true)
-        #expect(state.releaseFromCall(owner) == nil)
+        let released = state.releaseFromCall(owner)
+        #expect(released == true)
+        let releasedAgain = state.releaseFromCall(owner)
+        #expect(releasedAgain == nil)
     }
 }

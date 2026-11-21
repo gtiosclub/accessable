@@ -99,6 +99,51 @@ struct NavigationRouteTests {
                                   spokenInstruction: "Turn left."))
     }
 
+    @Test(arguments: [
+        ("Take the stairs up.", "stairs going up"),
+        ("Take the stairs DOWN to the plaza.", "stairs going down"),
+        ("Walk upstairs.", "stairs going up"),
+        ("Head downstairs to Level 1.", "stairs going down"),
+        ("Take the stairs.", "stairs"),
+        ("Take the stairs by the support column to the underpass.", "stairs"),
+        ("Take the stairs onto Down Street.", "stairs"),
+        ("Take the stairs. Then turn up the ramp.", "stairs"),
+        ("Go up the stairs.", "stairs going up"),
+    ])
+    func stairsPhraseSaysWhichWayWhenTheTextDoes(_ text: String, _ phrase: String) {
+        let step = RouteStep(kind: .stairs, coordinateIndex: 1, instruction: text, spokenInstruction: text)
+        #expect(step.stairsPhrase == phrase)
+    }
+
+    @Test
+    func stairsPhraseReadsTheSpokenInstructionToo() {
+        let step = RouteStep(kind: .stairs, coordinateIndex: 1, instruction: "Take the stairs.",
+                             spokenInstruction: "Take the stairs down.")
+        #expect(step.stairsPhrase == "stairs going down")
+    }
+
+    @Test(arguments: [
+        // Valhalla's start phrases, displayed and spoken
+        ("Walk north on Ferst Drive.", "Follow Ferst Drive."),
+        ("Walk southwest on the walkway. Continue on Tech Walkway.", "Follow the walkway. Continue on Tech Walkway."),
+        ("Head East on North Avenue.", "Follow North Avenue."),
+        ("Walk northeast.", "Follow the path."),
+        ("Walk south for 50 meters. Then Turn right onto Ferst Drive.",
+         "Follow the path for 50 meters. Then Turn right onto Ferst Drive."),
+        ("Head north", "Follow the path"),
+        // anything else is left alone, street names and all
+        ("Turn left onto North Avenue.", "Turn left onto North Avenue."),
+        ("Walk to Westside Hall.", "Walk to Westside Hall."),
+        ("Head northbound.", "Head northbound."),
+        // a compass word that starts a street name, not a direction
+        ("Walk North Ave.", "Walk North Ave."),
+        ("Walk east Ferst Dr", "Walk east Ferst Dr"),
+        ("Walk north toward the plaza.", "Follow the path toward the plaza."),
+    ])
+    func withoutCompassDirectionDropsTheStartsDirection(_ text: String, _ expected: String) {
+        #expect(RouteStep.withoutCompassDirection(text) == expected)
+    }
+
     @Test
     func buildsTheSampleRoute() {
         let route = MapsSamples.route

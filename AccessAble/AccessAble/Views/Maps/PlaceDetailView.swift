@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Owner: Maps (2.x). A chosen place: name, address, the real walking route to it (distance,
-/// time and steps), and how to start.
+/// Owner: Maps (2.x). A chosen place: name, address, the real walking route to it (summary
+/// and steps), and how to start.
 struct PlaceDetailView: View {
     @Environment(AppRouter.self) private var router
     /// What the route and trip screens take. For a place from search, made from the destination.
@@ -76,13 +76,13 @@ struct PlaceDetailView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
-        // Route ready and route failed, spoken as on the Trip screen.
-        .announcesRoute(details.planner)
+        // route failed is spoken as on the Trip screen; route ready adds the summary
+        .announcesRoute(details.planner) { details.routeReadyAnnouncement }
         .task { await details.start() }
     }
 }
 
-/// The walking route to a place: distance, time and the first few steps, or why it isn't
+/// The walking route to a place: its summary and the first few steps, or why it isn't
 /// here yet (finding it, failed with Try again, location off). On place details and the
 /// route picker.
 struct RoutePreview: View {
@@ -98,7 +98,6 @@ struct RoutePreview: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label(summary, systemImage: "figure.walk")
                     .font(.headline)
-                    .accessibilityLabel(summary.replacingOccurrences(of: " · ", with: ", "))
                 if origin != nil {
                     Text("Walking directions start where you are.")
                         .font(.footnote)
