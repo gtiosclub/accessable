@@ -33,19 +33,22 @@ struct SignInView: View {
                     Button(model.isCreatingAccount ? "Create account" : "Sign in") {
                         Task { await model.submit() }
                     }
-                    .frame(minHeight: 44)
+                    .minimumTapTarget()
                     .accessibilityHint("Uses your email and password")
                     Button(model.isCreatingAccount ? "Already have an account? Sign in" : "New here? Sign up") {
                         model.isCreatingAccount.toggle()
                         model.password = ""
                         model.confirmation = ""
                     }
-                    .frame(minHeight: 44)
+                    .minimumTapTarget()
                     if model.isBusy { ProgressView("Signing in") }
                 }
             }
             .disabled(model.isBusy)
             .navigationTitle(model.isCreatingAccount ? "Sign up" : "Sign in")
+        }
+        .onChange(of: model.errorMessage) { _, message in
+            if let message { AccessibilityNotification.Announcement(message).post() }
         }
     }
 }

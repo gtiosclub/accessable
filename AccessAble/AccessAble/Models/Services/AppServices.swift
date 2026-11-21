@@ -18,6 +18,8 @@ struct AppServices: Sendable {
     var commands: any CommandInterpreting
     var auth: any AuthService
     var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
+    /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
+    var accountsAvailable = false
     // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
     // TODO(MATCH-x): replace these four placeholders with the real call services.
@@ -74,6 +76,7 @@ struct AppServices: Sendable {
         )
         if FirebaseApp.app() != nil {
             services.userProfiles = FirestoreUserProfileStore()
+            services.accountsAvailable = true
         }
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,

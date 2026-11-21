@@ -1,9 +1,26 @@
 import FirebaseFirestore
 import Foundation
+import OSLog
+
+private let logger = Logger(subsystem: "AccessAble", category: "UserProfiles")
+
+/// Turns Firestore's permission error into a clear one, and logs the real cause.
+private func mapped(_ error: Error) -> Error {
+    logger.error("Profile request failed: \(error.localizedDescription, privacy: .public)")
+    let nsError = error as NSError
+    if nsError.domain == FirestoreErrorDomain,
+       nsError.code == FirestoreErrorCode.permissionDenied.rawValue {
+        return UserProfileError.permissionDenied
+    }
+    return error
+}
 
 struct FirestoreUserProfileStore: UserProfileStore {
     func load(userID: String) async throws -> UserProfile? {
-        let snapshot = try await Firestore.firestore().collection("users").document(userID).getDocument()
+        let snapshot: DocumentSnapshot
+        do {
+            snapshot = try await Firestore.firestore().collection("users").document(userID).getDocument()
+        } catch { throw mapped(error) }
         guard snapshot.exists else { return nil }
         guard let data = snapshot.data(),
               let rawRole = data["role"] as? String, let role = UserRole(rawValue: rawRole),
@@ -25,15 +42,18 @@ struct FirestoreUserProfileStore: UserProfileStore {
         let document = Firestore.firestore().collection("users").document(userID)
         // Confirm whether this is a new profile with the server before writing. Never
         // replace createdAt with the phone's time or overwrite it during an update.
-        let existing = try await document.getDocument(source: .server)
+        let existing: DocumentSnapshot
+        do {
+            existing = try await document.getDocument(source: .server)
+        } catch { throw mapped(error) }
         var values: [String: Any] = [
             "role": role.rawValue, "displayName": displayName, "languages": languages
         ]
         if existing.exists {
-            try await document.updateData(values)
+            do { try await document.updateData(values) } catch { throw mapped(error) }
         } else {
             values["createdAt"] = FieldValue.serverTimestamp()
-            try await document.setData(values)
+            do { try await document.setData(values) } catch { throw mapped(error) }
         }
         guard let profile = try await load(userID: userID) else { throw UserProfileError.invalidProfile }
         return profile

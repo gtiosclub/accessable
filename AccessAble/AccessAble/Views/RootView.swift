@@ -5,9 +5,15 @@ struct RootView: View {
     @Environment(AppViewModel.self) private var app
 
     var body: some View {
-        AccountGateView(services: app.services)
+        appContent
         // The redesign is dark throughout; this also keeps the status bar light.
         .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder private var appContent: some View {
+        if app.services.accountsAvailable { AccountGateView(services: app.services) }
+        else if app.hasCompletedOnboarding { MainFlowView() }
+        else { OnboardingView(includesAccount: false) }
     }
 }
 
@@ -37,19 +43,10 @@ private struct AccountGateView: View {
                 if profile.role == .volunteer {
                     VolunteerHomeView(profile: profile, signOut: { try await session.signOut() })
                         .id(profile.userID)
+                } else if app.hasCompletedOnboarding {
+                    MainFlowView().id(profile.userID)
                 } else {
-                    MainFlowView()
-                        .id(profile.userID)
-                        .safeAreaInset(edge: .bottom) {
-                            Button("Sign out") {
-                                Task {
-                                    do { try await session.signOut() }
-                                    catch { signOutError = "Couldn't sign out. Please try again." }
-                                }
-                            }
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .background(.black)
-                        }
+                    OnboardingView(includesAccount: false).id(profile.userID)
                 }
             case .failed(let message):
                 VStack(spacing: 20) {

@@ -3,11 +3,19 @@ import SwiftUI
 /// Signed-in profile setup: account role → details → guidance → VoiceOver → tutorial.
 struct OnboardingView: View {
     @Environment(AppViewModel.self) private var app
-    @State private var viewModel = OnboardingViewModel()
-    var onSave: ((UserRole, String, [String]) async throws -> Void)? = nil
-    var onSignOut: (() async throws -> Void)? = nil
+    @State private var viewModel: OnboardingViewModel
+    let onSave: ((UserRole, String, [String]) async throws -> Void)?
+    let onSignOut: (() async throws -> Void)?
     @State private var isSaving = false
     @State private var errorMessage: String?
+
+    init(includesAccount: Bool = true,
+         onSave: ((UserRole, String, [String]) async throws -> Void)? = nil,
+         onSignOut: (() async throws -> Void)? = nil) {
+        _viewModel = State(initialValue: OnboardingViewModel(includesAccount: includesAccount))
+        self.onSave = onSave
+        self.onSignOut = onSignOut
+    }
 
     var body: some View {
         Group {
@@ -60,8 +68,15 @@ struct OnboardingView: View {
                 TextField("Display name", text: $model.displayName).textContentType(.name)
                 TextField("Languages, separated by commas", text: $model.languageText)
                     .accessibilityHint("For example, English, Korean")
-                Button("Continue") { model.finishAccountDetails() }
+                Button("Continue") {
+                    if model.accountRole == .volunteer { finish() } else { model.finishAccountDetails() }
+                }
                     .disabled(!model.canContinueDetails).frame(minHeight: 44)
+                if !model.canContinueDetails {
+                    Text("Enter your name and at least one language to continue.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
                 Button("Change account role") { model.returnToAccountRole() }
                     .frame(minHeight: 44)
             }.navigationTitle("Your profile")
@@ -79,10 +94,13 @@ struct OnboardingView: View {
                         viewModel.displayName.trimmingCharacters(in: .whitespacesAndNewlines),
                         viewModel.languages)
                 }
-                app.preferences.usesSystemScreenReader = viewModel.usesVoiceOver
-                app.completeOnboarding(with: viewModel.profile)
+                if viewModel.accountRole == .caller {
+                    app.preferences.usesSystemScreenReader = viewModel.usesVoiceOver
+                    app.completeOnboarding(with: viewModel.profile)
+                }
             } catch {
-                errorMessage = "Couldn't save your profile. Check your connection and try again."
+                errorMessage = (error as? UserProfileError)?.localizedDescription
+                    ?? "Couldn't save your profile. Check your connection and try again."
             }
         }
     }
