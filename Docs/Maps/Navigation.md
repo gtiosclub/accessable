@@ -24,6 +24,10 @@ reroute replaces the tracker, since every window and flag refers to one route's 
    - its accuracy is worse than 25 m.
 2. **Project ahead first.**
    - The search starts at the segment holding accepted progress and covers at least 100 m and 10 segments.
+   - A segment ahead counts only when the fix's nearest point on it is no further along the route than the straight
+     line to it from accepted progress, plus 40 m (twice the lateral gate, for the inside of a corner). Where the
+     route doubles back, as round a block, its far side is much nearer in a straight line. A user walking across to
+     it is measured from the route they left, so they go off route instead of skipping the turns between unheard.
    - It looks up to 3 segments back only when the fix is more than 25 m from everything ahead.
    - While off route, it searches the whole route.
    - On identical geometry, such as an out-and-back leg, the leg ahead wins a tie only once it is in walking reach. That reach counts at most 10 s of standing, so waiting on the way out can't jump onto the way back.
@@ -48,7 +52,7 @@ reroute replaces the tracker, since every window and flag refers to one route's 
 | Stairs prepare | always, once the stairs are within 40 m, even with other steps before them |
 | Crosswalk callout | 20 m before the crossing |
 | Off route | over `max(30 m, 1.5 × accuracy)` from the route on 3 fixes spanning 10 s, having moved 8 m |
-| Off route, walking away | over `max(20 m, 1.5 × accuracy)` from the route on 3 fixes spanning 5 s, with a walking direction more than 60° from the route's and no nearer the route than when the 5 s began |
+| Off route, walking away | over `max(20 m, 1.5 × accuracy)` from the route on 3 fixes with a walking direction, spanning 5 s, each walking more than 60° from the route's direction and not 30° or more back toward it, and ending no nearer the route than the first |
 | Back on route | within 15 m on 2 fixes at least 2 s apart |
 | Missed turn | turns of 60° or more only; at least 15 m beyond the vertex along the straight-on line and 15 m from the route, on 2 fixes at least 2 s apart |
 | Wrong way | in the first 40 m: moved 10 m from a fix accurate to 10 m, 5 m further from the route, progress under 3 m, current fix accurate to 10 m |
@@ -76,6 +80,8 @@ The events are `prepare`, `now`, `passedTurnConfirmation`, `missedTurn`, `crossi
   - The slow one needs no direction: far from the route for 10 s while moving.
   - A `wrongWay` due on the same fix is dropped, since off route says the same and more.
   - The fast one needs a walking direction, so standing at a crosswalk while GPS drifts can never trigger it. Walking the opposite way along a parallel path 20 m or more from the route does count.
+  - Outdoors a fix is several metres off and one course in a few is too rough to use, so the fast rule is decided by what each fix can tell. A fix without a usable walking direction neither counts nor ends the run. One fix short of the distance doesn't end it; two in a row do. Walking back toward the route is told from the course, since noise alone often puts one fix nearer than another.
+  - The route's direction is the leg being walked. A segment behind progress, found by the search behind, can run another way, as the leg before a corner does for someone on its inside.
 - **`arrived`** is always alone and last.
 - **While paused** (`emitsCues: false`), progress and off-route state still update. Turn cues and crosswalk callouts aren't emitted or used up, so the right one fires on resume. `offRoute`, `backOnRoute` and `arrived` are still emitted.
 
@@ -98,6 +104,19 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 - Core Location sends every compass reading (`kCLHeadingFilterNone`), not only changes, so a phone held still keeps a reading under 3 s old.
 - The system's calibration screen is turned off, because it is a visual prompt. A compass that needs calibrating reports poor accuracy and reads as unknown.
 - The debug screen shows the heading and where it came from.
+- The 25° compass limit holds for the start too. Directions are 45° sectors, so a reading 25° out names the wrong one only for a path within 25° of a sector's edge; at 45° out any reading can, so a path dead ahead could be called "slightly right", and a user setting off 45° wide is about 30 m off the route before it is noticed. With the heading unknown, the start names the street to follow instead.
+
+## Trip map
+
+`CampusMap` on the trip screen follows the user with the way they face at the top, until they pan it; the location button follows again. The compass appears whenever the map is turned, so north can still be found. The user's arrow points the way they face, turned back by however far the map is turned, and is a dot while MapKit has no compass reading. VoiceOver still reads the map as one element.
+
+## Field-test recorder
+
+Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at every launch. While it is on, each trip writes one CSV file to `Documents/TripRecordings/`, which is excluded from backups, so recordings stay on the phone until shared from that screen. The screen can also delete them all.
+
+- A `fix` row for every location fix: time, position, accuracy, speed, course and its accuracy, the heading used and where it came from, the compass accuracy, progress along the route, the tracker's side offset, the next step, whether off route, and the tracker's events.
+- An `announcement` row for everything submitted to the announcement engine, whether or not it was then spoken.
+- `TripManager` builds no fix row unless the recorder is recording, so it costs nothing while off. Rows are written as they happen, under the recorder's lock. A file that can't be written is logged, stops, and its error shows on the recorder screen; the trip carries on.
 
 ## Crosswalks
 
@@ -125,13 +144,14 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
   - Each task and handler carries the generation it started for. It checks the generation before changing state or speaking after an `await`, so an ended or replaced trip can't act.
   - Reroutes bump a separate route version, which drops answers and cue checks for a replaced route.
 - **Rerouting.**
-  - On `offRoute` or `missedTurn`, the next fix accurate to 20 m asks for a new route, unless that fix brings the user back.
+  - On `offRoute` or `missedTurn`, the first fix accurate to 20 m asks for a new route, starting with the fix that found it, since the public server is slow enough without waiting a second more. A later fix doesn't ask if it brings the user back.
   - Requests are at least 30 s apart until one succeeds, then 15 s. There are at most 5 per trip.
   - A failure allows a retry after the same wait.
   - The user can also ask for one ("find another way"). It starts from the latest fix accurate to 20 m and is refused while the signal is weak.
   - There is no rerouting while paused. An answer that lands during a pause is applied without being announced.
   - An answer is dropped if, by the time it lands, the user is back on the route, has arrived, or the trip has ended or been replaced.
-- **Off-route state.** While off route, `TripState.nextManeuver` keeps the next step's kind and coordinate, but its instruction is status text ("Off route. Finding a new route." or "Off route. Head back toward the path."). `distanceToNextManeuver` is nil.
+- **Next step.** `TripState.nextManeuver` is the next step after departing, with its instruction as `RouteStep.withoutCompassDirection` gives it, so the screen, and anything else that shows the state, never says "north".
+- **Off-route state.** While off route, `TripState.isOffRoute` is true and `TripState.nextManeuver` keeps the next step's kind and coordinate, but its instruction is status text ("Off route. Finding a new route." or "Off route. Head back toward the path."). `distanceToNextManeuver` is nil.
 - **Turn cues.**
   - `now` cues expire after `clamp((d + 5) / 1.3, 4, 15)` s.
   - A cue that was actually submitted, but not delivered by then, is resubmitted once. That needs the turn still ahead, no missed turn there, and the same route.
@@ -146,11 +166,13 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
   - Within 8 m of the step, or with a missed turn pending, resuming says nothing more than "Trip resumed.". The user may already be past the turn, so the next fix's turn cue, confirmation or missed turn says the right thing.
   - Resume speech is dropped if a reroute lands while "Trip resumed." is being said.
   - A turn cue that a pause stopped before it was submitted is given again by the tracker after resuming.
-  - An arrival while paused stays paused and is announced on resume.
+  - An arrival while paused stays paused, with `TripState.hasArrived` true, and is announced on resume.
 
 ### Wording
 
 Distances are spoken by `DistanceFormatter` in the user's units: feet rounded to 25 ft, then tenths of a mile from 500 ft; or metres rounded to 10 m, then tenths of a kilometre from 1 km. `{d}` below is that phrase, such as "about 150 feet".
+
+Valhalla starts every route with a compass direction ("Walk north on Ferst Drive."), which a blind user can't act on, so its first instruction is never said or shown as it is. `RouteStep.withoutCompassDirection` turns it into "Follow Ferst Drive.", or "Follow the path." when it names no street; place details lists the steps that way too.
 
 Where two texts are given for one event, the first is used when the heading is known and the second when it isn't. `{direction}` is one of eight: "ahead", "slightly right", "on your right", "behind you on your right", "behind you", "behind you on your left", "on your left", "slightly left". It comes from the bearing to the target relative to the heading, in 45° sectors centred on straight ahead.
 
@@ -160,7 +182,7 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 
 | Event | Text | Priority | Expiry |
 | --- | --- | --- | --- |
-| start | "Starting directions to {name}, {d}. {path sentence}", then "In {d}, {instruction}" for a first step within 40 m (not stairs, which the first fix warns of, nor the arrive step). Heading unknown: "Starting directions to {name}, {d}. {first instruction}" | high | 15 s |
+| start | "Starting directions to {name}, {d}. {setting off}". Setting off is "{path sentence}", or with the heading unknown "Follow {street}. You'll be warned if it's the wrong way.", where the tracker's wrong-way and off-route rules keep that promise. Then "In {d}, {instruction}" for a first step within 40 m (not stairs, which the first fix warns of, nor the arrive step) | high | 15 s |
 | prepare | "In {d}, {instruction}". For stairs: "In {d}, stairs going up.", "…stairs going down.", or "…stairs." when the instruction doesn't say which way | normal; high for stairs, so "Important only" still says them | 8 s; 15 s for stairs, to outlast a long start sentence |
 | now | "{instruction}", with the maneuver's haptic | high | dynamic |
 | passed turn | "Continue for {d}." | normal | 6 s |
@@ -169,17 +191,28 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 | wrong way | "You're walking away from the route. {path sentence}". Heading unknown: "You seem to be walking away from the route. Turn around." | high | 10 s |
 | off route | "You're off the route. Finding a new route.", or "…Head back toward the path." once no reroutes are left or in flight | high | 10 s |
 | back on route | "Back on the route." | normal | 6 s |
-| new route | "New route. {first instruction}" | high | 15 s |
+| new route | "New route. {setting off}", as at the start | high | 15 s |
 | reroute asked for | "Finding a new route from here.", or "Couldn't find where you are precisely enough for a new route. Try again in a moment." | high | 10 s |
 | reroute failed | "Couldn't get a new route. Walk back the way you came."; after the fifth: "Off route. End the trip and choose your destination again."; asked for while still on the route: "Couldn't get a new route. Keep following the current one." | high | 10 s |
 | arrived | "Arriving at {name}. {name} is {direction}.", when the latest fix is at least `max(5 m, 2 × accuracy)` from the destination. Otherwise, or with the heading unknown: "Arriving at {name}. {arrive instruction}" | high | 15 s |
 | weak / back | "GPS signal is weak. Directions may be delayed." / "GPS signal is back." (system category) | high / normal | 10 s / 6 s |
 | pause, resume, end | "Trip paused." / "Trip resumed." / "Trip ended.", with no dedup key, so the engine merges them with the voice command's | high | none |
 
+## Live Activity
+
+`TripActivityController` puts the trip on the lock screen and in the Dynamic Island, through `TripActivityPlanner`'s rules. It's updated locally, never by push.
+
+- **Start.** The first active or paused state with a next maneuver starts one. A trip to a new destination starts a new one.
+- **Update.** An update is pushed at a new step or status, when the written distance changes and the user has moved 25 ft since the last push, and when the arrival time moves by a minute. Until arrival, one is also pushed at least once a minute, standing still or paused included.
+- **Stale.** Until arrival, each start and update sets a stale date 3 minutes on. If the app stops updating it, because it was closed or has had no location fix for that long, the widget says "Guidance not updating. Open AccessAble." instead of a turn that may be long past. An arrived activity never goes stale.
+- **Paused.** "Paused" with the turn below it and no distance; off route has no distance either.
+- **End.** Arrival, including during a pause, ends it with an arrived card that stays 5 minutes. Ending the trip removes it, or the arrived card, at once. At launch, any activity left by a launch that ended mid-trip is removed.
+- **Failed start.** A Live Activity can only start while the app is in the foreground, and not at all when the user has turned Live Activities off. A failed start is tried again at the next step or status, and when the app comes to the foreground.
+
 ## Known limits
 
 - **The compass says where the phone points, not where the user faces.** Standing still with the phone in a pocket or a bag, a compass reading that looks accurate can still give the wrong "ahead". Once the user is walking, the walking direction takes over.
-- **Not checked on a device yet:** navigation-grade accuracy, the compass, the faster off-route rule and the crosswalk callouts have only run in tests and the simulator, which has no compass.
+- **Not checked on a device yet:** navigation-grade accuracy, the compass, the heading-up trip map, the faster off-route rule and the crosswalk callouts have only run in tests and the simulator, which has no compass.
 - **Crosswalk callouts only exist on campus,** inside the area the bundled export covers, and are as good as OpenStreetMap's tagging there. Only 5 crossings are tagged with an audible signal.
 - **A crossing near the destination can go unannounced.** A fix accurate to 15 m near the last vertex arrives once progress is within 50 m of the end, so progress can still be short of the callout point, 20 m before the crossing, of one up to about 30 m before the destination.
 - **Crossings are matched by distance only.** On a road without mapped sidewalks the route runs along the road itself, so crossing nodes on that road, for side streets or driveways, are within 3 m and can be announced.
@@ -190,6 +223,8 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 - **Wrong way is strict.**
   - It needs a fix accurate to 10 m at both ends of the movement.
   - With none in the first 40 m, there is no warning, which beats a false "turn around".
+- **Off route is slower with rough fixes.** With fixes accurate to 15 to 20 m, the limits grow to 22.5 to 30 m and GPS noise near them ends runs, so walking straight off the route takes 15 to 38 s in simulated walks, against 16 to 24 s with fixes accurate to 5 to 10 m. Walking beside the route 12 to 18 m out with fixes accurate to 10 to 25 m can still be called off route now and then.
+- **Cutting across near the end of a U is within GPS error.** Crossing a U or switchback within about 20 m of its end gains no more along the route, beyond the straight line, than cutting the inside of a corner does, so it counts as walking it: its turns go unsaid, with only "Continue for …" or the next step's warning. Crossing further from its end is off route.
 - **Missed-turn detection covers turns of 60° or more only.**
   - Walking straight past a gentler bend relies on off-route detection.
   - At 30°, that can take about 60 m.

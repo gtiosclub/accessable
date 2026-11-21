@@ -99,7 +99,6 @@ struct Destination: Codable, Hashable, Sendable {
 struct SearchSuggestion: Identifiable, Equatable, Sendable {
     let title: String
     let subtitle: String
-    var coordinate: GeoCoordinate? = nil
 
     var id: String { "\(title)\n\(subtitle)" }
 }
@@ -164,6 +163,22 @@ extension RouteStep {
         if says(["stairs up", "up the stairs", "upstairs"]) { return "stairs going up" }
         if says(["stairs down", "down the stairs", "downstairs"]) { return "stairs going down" }
         return "stairs"
+    }
+
+    /// The instruction without the compass direction Valhalla starts a route with, which a blind user can't act on:
+    /// "Walk north on Ferst Drive." becomes "Follow Ferst Drive.", and "Walk north for 50 meters." becomes "Follow the
+    /// path for 50 meters.". Any other instruction is returned as it is.
+    static func withoutCompassDirection(_ text: String) -> String {
+        // Valhalla's start phrases, "Head <direction>", "Walk <direction>" and the like, in its eight directions
+        let start = /(?i)(?:head|walk|drive|bike|go)\s+(?:(?:north|south)(?:east|west)?|east|west)\b/
+        guard let match = text.prefixMatch(of: start) else { return text }
+        let rest = text[match.range.upperBound...]
+        if let street = rest.prefixMatch(of: /\s+on\s+/) {
+            return "Follow " + rest[street.range.upperBound...]
+        }
+        // only where the direction ends the phrase, so "Walk North Avenue." is a street, not a direction
+        guard rest.isEmpty || rest.prefixMatch(of: /[.,;]|\s+(?:for|to|toward)\s/) != nil else { return text }
+        return "Follow the path" + rest
     }
 }
 

@@ -122,6 +122,28 @@ struct NavigationRouteTests {
         #expect(step.stairsPhrase == "stairs going down")
     }
 
+    @Test(arguments: [
+        // Valhalla's start phrases, displayed and spoken
+        ("Walk north on Ferst Drive.", "Follow Ferst Drive."),
+        ("Walk southwest on the walkway. Continue on Tech Walkway.", "Follow the walkway. Continue on Tech Walkway."),
+        ("Head East on North Avenue.", "Follow North Avenue."),
+        ("Walk northeast.", "Follow the path."),
+        ("Walk south for 50 meters. Then Turn right onto Ferst Drive.",
+         "Follow the path for 50 meters. Then Turn right onto Ferst Drive."),
+        ("Head north", "Follow the path"),
+        // anything else is left alone, street names and all
+        ("Turn left onto North Avenue.", "Turn left onto North Avenue."),
+        ("Walk to Westside Hall.", "Walk to Westside Hall."),
+        ("Head northbound.", "Head northbound."),
+        // a compass word that starts a street name, not a direction
+        ("Walk North Ave.", "Walk North Ave."),
+        ("Walk east Ferst Dr", "Walk east Ferst Dr"),
+        ("Walk north toward the plaza.", "Follow the path toward the plaza."),
+    ])
+    func withoutCompassDirectionDropsTheStartsDirection(_ text: String, _ expected: String) {
+        #expect(RouteStep.withoutCompassDirection(text) == expected)
+    }
+
     @Test
     func buildsTheSampleRoute() {
         let route = MapsSamples.route

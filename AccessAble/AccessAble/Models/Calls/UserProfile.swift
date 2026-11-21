@@ -19,11 +19,13 @@ struct UserProfile: Equatable, Sendable {
 enum UserProfileError: Error, LocalizedError, Sendable {
     case invalidProfile
     case notConfigured
+    case permissionDenied
 
     var errorDescription: String? {
         switch self {
         case .invalidProfile: "Enter a name (up to 80 characters) and 1–10 languages (up to 40 characters each)."
         case .notConfigured: "Firebase is not configured. Add REPORT-1's local Firebase configuration."
+        case .permissionDenied: "Your account couldn't be accessed. Please try again later."
         }
     }
 }

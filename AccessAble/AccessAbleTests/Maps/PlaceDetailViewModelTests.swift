@@ -104,7 +104,7 @@ struct PlaceDetailViewModelTests {
 
         #expect(!details.isLoading)
         #expect(details.route == plannedRoute)
-        #expect(details.steps == ["Walk east on Ferst Drive.", "You have arrived at Clough."])
+        #expect(details.steps == ["Follow Ferst Drive.", "You have arrived at Clough."])
         #expect(details.summary == "About 4 minutes, 240 metres. No turns, 2 crosswalks.")
         // so the user knows Start is there
         #expect(details.routeReadyAnnouncement == "Route ready. About 4 minutes, 240 metres. No turns, 2 crosswalks.")

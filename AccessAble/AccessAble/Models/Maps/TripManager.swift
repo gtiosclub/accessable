@@ -22,6 +22,8 @@ actor TripManager: TripStateProviding {
     private let campusCrossings: @Sendable () -> [CampusCrossing]
     private let setTripTracking: @Sendable (Bool) async -> Void
     private let distances: DistanceSettings
+    /// Writes nothing unless recording is on, and fix rows aren't even built then.
+    private let recorder: TripRecorder?
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
 
@@ -106,6 +108,7 @@ actor TripManager: TripStateProviding {
         campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all },
         setTripTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
         distances: DistanceSettings = DistanceSettings(units: .metres),
+        recorder: TripRecorder? = nil,
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
@@ -117,6 +120,7 @@ actor TripManager: TripStateProviding {
         self.campusCrossings = campusCrossings
         self.setTripTracking = setTripTracking
         self.distances = distances
+        self.recorder = recorder
         self.now = now
         self.sleep = sleep
         states.send(TripState(phase: .planning, updatedAt: now()))
@@ -163,6 +167,7 @@ actor TripManager: TripStateProviding {
         isSignalWeak = false
         routes.send(route)
         publish(at: now())
+        recorder?.tripStarted(at: now())
 
         // subscribed before any await, so a fix or delivery can't slip past while this trip is set up
         let samples = location.locationSamples()
@@ -233,9 +238,10 @@ actor TripManager: TripStateProviding {
         routes.send(nil)
         states.send(TripState(phase: .planning, updatedAt: now()))
         await setTripTracking(false)
-        // a trip started meanwhile shouldn't hear that it ended
+        // a trip started meanwhile shouldn't hear that it ended, and has its own recording
         guard self.generation == generation else { return }
         await submit(confirmation("Trip ended."))
+        recorder?.tripEnded()
     }
 
     private func cancelTasks() {
@@ -276,13 +282,11 @@ actor TripManager: TripStateProviding {
             lastFix = sample
         }
         headingEstimator.update(with: sample)
-        // decided from the fixes before this one, so a reroute starts from the fix after the cue
-        let rerouteOrigin = wantsReroute && sample.horizontalAccuracy <= Self.rerouteAccuracy
-            ? sample.coordinate : nil
 
         let update = tracker.update(with: sample, emitsCues: phase == .active)
         self.tracker = tracker
         progress = update.state
+        record(sample, update, on: tracker.route)
         if update.events.contains(.arrived) {
             await arrive(at: sample.timestamp, generation: generation)
             return
@@ -291,8 +295,11 @@ actor TripManager: TripStateProviding {
         for case let .missedTurn(step, _) in update.events { missedTurnStep = step }
         if update.events.contains(.backOnRoute) { missedTurnStep = nil }
         publish(at: sample.timestamp)
-        // this fix may have brought the user back
-        if let rerouteOrigin, needsReroute { requestReroute(from: rerouteOrigin, generation: generation) }
+        // from this fix when it is precise enough, even the one that found the user off the route: the public server
+        // is slow, so waiting for the next fix only adds to it
+        if wantsReroute, sample.horizontalAccuracy <= Self.rerouteAccuracy {
+            requestReroute(from: sample.coordinate, generation: generation)
+        }
 
         guard phase == .active else { return }
         pending += update.events.compactMap { event in
@@ -345,6 +352,7 @@ actor TripManager: TripStateProviding {
             if let arrival = arrivalAnnouncement() { await submit(arrival) }
         }
         guard self.generation == generation else { return }
+        recorder?.tripEnded()
         // last, since this runs inside the tracking task
         trackingTask?.cancel()
         trackingTask = nil
@@ -359,7 +367,8 @@ actor TripManager: TripStateProviding {
     private func publish(at time: Date) {
         guard let route, let progress else { return }
         let step = route.steps[progress.nextStepIndex]
-        let instruction = progress.isOffRoute ? offRouteInstruction : step.instruction
+        let instruction = progress.isOffRoute
+            ? offRouteInstruction : RouteStep.withoutCompassDirection(step.instruction)
         states.send(TripState(
             phase: phase,
             destinationName: destination?.name,
@@ -367,6 +376,8 @@ actor TripManager: TripStateProviding {
                                    coordinate: route.coordinates[step.coordinateIndex]),
             distanceToNextManeuver: progress.isOffRoute ? nil : progress.distanceToNextStep,
             distanceRemaining: progress.distanceRemaining,
+            isOffRoute: progress.isOffRoute,
+            hasArrived: phase == .arrived || arrivedWhilePaused,
             updatedAt: time
         ))
     }
@@ -511,8 +522,8 @@ actor TripManager: TripStateProviding {
             )
             routes.send(newRoute)
             publish(at: now())
-            guard phase == .active, let first = newRoute.steps.first else { return }
-            await submit(maneuver("New route. \(first.spokenInstruction)", .high, expiresIn: 15, key: "reroute"))
+            guard phase == .active else { return }
+            await submit(maneuver("New route. " + departure(on: newRoute), .high, expiresIn: 15, key: "reroute"))
         case .failure(let error):
             guard !(error is CancellationError), phase == .active else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
@@ -532,10 +543,9 @@ actor TripManager: TripStateProviding {
 
     private func announceStart(generation: Int) async {
         do { try await sleep(Self.startDelay) } catch { return }
-        guard self.generation == generation, phase == .active, let route, let destination,
-              let first = route.steps.first else { return }
+        guard self.generation == generation, phase == .active, let route, let destination else { return }
         let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
-            + (pathSentence().map { $0 + firstTurnPrepare(on: route) } ?? first.spokenInstruction)
+            + departure(on: route)
         await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
     }
 
@@ -683,8 +693,21 @@ actor TripManager: TripStateProviding {
         return direction == .behind ? "Turn around, the path is behind you." : "The path is \(direction.phrase)."
     }
 
-    /// The prepare for the step after departing, said with the path sentence: that replaces the first instruction,
-    /// which often names this step, and the tracker counts a step this close as already prepared.
+    /// How to set off, at the start and on a new route: which way the path is, then the first turn when it is near.
+    ///
+    /// Never Valhalla's first instruction, whose compass direction ("Walk north on Ferst Drive.") a blind user can't
+    /// act on. With the heading unknown it names the street to follow instead, and says that the wrong way would be
+    /// caught: the tracker warns of walking away from the start, and off route covers the rest.
+    private func departure(on route: NavigationRoute) -> String {
+        let setOff = pathSentence() ?? {
+            let follow = RouteStep.withoutCompassDirection(route.steps[0].instruction)
+            return (follow.hasSuffix(".") ? follow : follow + ".") + " You'll be warned if it's the wrong way."
+        }()
+        return setOff + firstTurnPrepare(on: route)
+    }
+
+    /// The prepare for the step after departing, said after setting off: that replaces the first instruction, which
+    /// often names this step, and the tracker counts a step this close as already prepared.
     private func firstTurnPrepare(on route: NavigationRoute) -> String {
         guard route.steps.count > 1 else { return "" }
         let step = route.steps[1]
@@ -745,7 +768,18 @@ actor TripManager: TripStateProviding {
     }
 
     private func submit(_ event: AnnouncementEvent) async {
+        recorder?.record(announcement: event.text, at: event.createdAt)
         await announcements.submit(event)
+    }
+
+    private func record(_ sample: LocationSample, _ update: RouteProgressTracker.Update, on route: NavigationRoute) {
+        guard let recorder, recorder.isRecording else { return }
+        recorder.record(TripRecorder.Fix(
+            sample: sample, heading: headingEstimator.heading(at: now()),
+            compassAccuracy: headingEstimator.compassAccuracy,
+            progress: route.totalDistance - update.state.distanceRemaining, sideOffset: update.sideOffset,
+            nextStepIndex: update.state.nextStepIndex, isOffRoute: update.state.isOffRoute, events: update.events
+        ))
     }
 
     /// Long enough to reach the turn at a slow walk, so a cue stuck behind other speech still arrives in time.

@@ -113,10 +113,12 @@ final class FirestorePresenceService: PresenceService {
             "isOnline": true,
             "lastSeen": FieldValue.serverTimestamp(),
         ]
-        do {
+        // Updating a missing document is refused by the rules as permission-denied, not notFound,
+        // so check existence on the server first.
+        let existing = try await document(userID).getDocument(source: .server)
+        if existing.exists {
             try await document(userID).updateData(fields)
-        } catch let error as NSError
-            where error.domain == FirestoreErrorDomain && error.code == FirestoreErrorCode.notFound.rawValue {
+        } else {
             fields["bio"] = ""
             fields["inCall"] = false
             try await document(userID).setData(fields)
@@ -124,13 +126,12 @@ final class FirestorePresenceService: PresenceService {
     }
 
     private nonisolated func writeOffline(userID: String) async throws {
-        do {
-            try await document(userID).updateData([
-                "isOnline": false, "lastSeen": FieldValue.serverTimestamp(),
-            ])
-        } catch let error as NSError
-            where error.domain == FirestoreErrorDomain && error.code == FirestoreErrorCode.notFound.rawValue {
-        }
+        // No document means this volunteer never went online, so there's nothing to turn off.
+        let existing = try await document(userID).getDocument(source: .server)
+        guard existing.exists else { return }
+        try await document(userID).updateData([
+            "isOnline": false, "lastSeen": FieldValue.serverTimestamp(),
+        ])
     }
 
     private nonisolated func writeHeartbeat(userID: String) async throws {

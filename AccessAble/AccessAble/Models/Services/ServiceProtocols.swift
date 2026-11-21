@@ -112,6 +112,29 @@ protocol TripStateProviding: Sendable {
     func reroute() async
 }
 
+/// The trip's Live Activity on the lock screen and in the Dynamic Island; one at a time.
+protocol TripActivityClient: Sendable {
+    /// Throws `TripActivityStartError.activitiesDisabled` when the user has turned Live Activities off,
+    /// `.notInForeground` when the app isn't on screen, or the system's error when it refuses one.
+    /// After `staleDate`, unless an update comes first, the widget says guidance isn't updating; nil never goes stale.
+    func start(
+        _ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState, staleDate: Date?
+    ) async throws
+    func update(_ state: TripActivityAttributes.ContentState, staleDate: Date?) async
+    /// `immediately` removes it from the lock screen now; otherwise it stays a few minutes so the final
+    /// state can be read, until an immediate end.
+    func end(_ state: TripActivityAttributes.ContentState, immediately: Bool) async
+    /// Removes every trip activity, including any left by an earlier launch that ended mid-trip.
+    func endAll() async
+}
+
+/// Caught by name and logged, never shown to the user.
+enum TripActivityStartError: Error {
+    case activitiesDisabled
+    /// A Live Activity can only be started while the app is on screen.
+    case notInForeground
+}
+
 /// Short spoken description of where the user is, e.g. "on Ferst Drive facing north".
 /// Used by "Where am I" and added to Ask AI prompts.
 protocol LocationContextProviding: Sendable {

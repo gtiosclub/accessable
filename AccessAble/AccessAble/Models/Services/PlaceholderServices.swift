@@ -139,21 +139,9 @@ struct PlaceholderRoutingService: RoutingService {
 /// Hardcoded campus places so previews don't call MapKit.
 struct PlaceholderDestinationSearch: DestinationSearching {
     static let samples = [
-        SearchSuggestion(
-            title: "Georgia Tech Library",
-            subtitle: "260 Fourth St NW, Atlanta, GA",
-            coordinate: GeoCoordinate(latitude: 33.774217, longitude: -84.395561)
-        ),
-        SearchSuggestion(
-            title: "John Lewis Student Center",
-            subtitle: "351 Ferst Dr NW, Atlanta, GA",
-            coordinate: GeoCoordinate(latitude: 33.773913, longitude: -84.398587)
-        ),
-        SearchSuggestion(
-            title: "Campus Recreation Center",
-            subtitle: "750 Ferst Dr NW, Atlanta, GA",
-            coordinate: GeoCoordinate(latitude: 33.775662, longitude: -84.404041)
-        ),
+        SearchSuggestion(title: "Georgia Tech Library", subtitle: "260 Fourth St NW, Atlanta, GA"),
+        SearchSuggestion(title: "John Lewis Student Center", subtitle: "351 Ferst Dr NW, Atlanta, GA"),
+        SearchSuggestion(title: "Campus Recreation Center", subtitle: "750 Ferst Dr NW, Atlanta, GA"),
     ]
 
     /// Replays the latest results, so a listener that subscribes after a query still gets them.
@@ -192,6 +180,16 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
     func reroute() async {}
 
     func currentLocationDescription() async -> String? { nil }
+}
+
+/// Shows nothing, so previews and tests never put an activity on the lock screen.
+struct PlaceholderTripActivityClient: TripActivityClient {
+    func start(
+        _ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState, staleDate: Date?
+    ) async throws {}
+    func update(_ state: TripActivityAttributes.ContentState, staleDate: Date?) async {}
+    func end(_ state: TripActivityAttributes.ContentState, immediately: Bool) async {}
+    func endAll() async {}
 }
 
 /// Publishes one fixed state, so previews can show a trip in progress or arrived.

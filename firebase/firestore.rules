@@ -99,7 +99,7 @@ service cloud.firestore {
 
     match /volunteers/{uid} {
       allow get: if signedIn();
-      allow list: if signedIn() && request.query.limit <= 100
+      allow list: if signedIn() && request.query.limit <= 100;
       allow create: if signedIn() && request.auth.uid == uid
         && isValidVolunteer(request.resource.data)
         && request.resource.data.lastSeen == request.time
@@ -111,7 +111,7 @@ service cloud.firestore {
             || request.time >= resource.data.lastSeen + duration.value(20, 's'));
 
       allow delete: if signedIn() && request.auth.uid == uid;
-}
+    }
 
     match /reports/{reportId} {
       allow get: if signedIn();

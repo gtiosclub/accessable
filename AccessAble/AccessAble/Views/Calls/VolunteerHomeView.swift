@@ -28,7 +28,7 @@ struct VolunteerHomeView: View {
                         set: { newValue in Task { await availability.setOnline(newValue) } }
                     ))
                     .disabled(availability.isUpdating)
-                    .frame(minHeight: 44)
+                    .minimumTapTarget()
                     .accessibilityHint("When on, callers can see and call you while AccessAble is open on screen")
                     if let message = availability.errorMessage {
                         Text(message).foregroundStyle(.red)
@@ -52,6 +52,9 @@ struct VolunteerHomeView: View {
             }
             .navigationTitle("Volunteer home")
             .task { await availability.start() }
+        }
+        .onChange(of: availability.errorMessage) { _, message in
+            if let message { AccessibilityNotification.Announcement(message).post() }
         }
     }
 }

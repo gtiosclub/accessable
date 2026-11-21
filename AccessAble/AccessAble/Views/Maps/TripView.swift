@@ -194,7 +194,7 @@ private struct TripMapView: View {
             // the destination marker already marks where the arrive maneuver is
             if let maneuver = tripState.nextManeuver, !(maneuver.kind == .arrive && destination != nil) {
                 Marker(maneuver.instruction,
-                       systemImage: maneuver.kind.mapSymbolName,
+                       systemImage: maneuver.kind.symbolName,
                        coordinate: maneuver.coordinate.clCoordinate)
             }
             if let destination {
@@ -254,24 +254,6 @@ private struct TripMapView: View {
 
     private func routeStroke(width: CGFloat) -> StrokeStyle {
         StrokeStyle(lineWidth: width, lineCap: .round, lineJoin: .round)
-    }
-}
-
-private extension ManeuverKind {
-    var mapSymbolName: String {
-        switch self {
-        case .depart: "figure.walk.departure"
-        case .straight: "arrow.up"
-        case .turnLeft, .slightLeft: "arrow.turn.up.left"
-        case .turnRight, .slightRight: "arrow.turn.up.right"
-        case .uTurn: "arrow.uturn.up"
-        case .cross: "figure.walk"
-        case .arrive: "mappin.and.ellipse"
-        case .stairs, .escalator: "figure.stairs"
-        case .elevator: "arrow.up.arrow.down"
-        case .enterBuilding: "door.left.hand.open"
-        case .exitBuilding: "door.right.hand.open"
-        }
     }
 }
 

@@ -14,7 +14,7 @@ final class OnboardingViewModel {
         case complete
     }
 
-    private(set) var step: Step = .accountRole
+    private(set) var step: Step
     private(set) var visionLevel: VisionLevel = .blind
     private(set) var usesVoiceOver = true
 
@@ -30,6 +30,8 @@ final class OnboardingViewModel {
         UserProfileValidation.isValid(
             displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines), languages: languages)
     }
+
+    init(includesAccount: Bool = true) { step = includesAccount ? .accountRole : .role }
 
     func chooseAccountRole(_ role: UserRole) {
         accountRole = role
