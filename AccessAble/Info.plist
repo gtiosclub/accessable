@@ -2,10 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>LiveKitURL</key>
-	<string>$(LIVEKIT_URL)</string>
 	<key>NSCameraUsageDescription</key>
-	<string>AccessAble uses your camera to detect obstacles, read signs, describe your surroundings, and share live video with a volunteer during calls. Call video is transmitted to the other participants through LiveKit.</string>
+	<string>AccessAble uses the camera to detect obstacles, read signs, and describe your surroundings. Images stay on your device unless you choose to ask AI.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>AccessAble uses your location to give walking directions and announce nearby crossings and landmarks.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
@@ -16,11 +14,13 @@
 		<string>Precise location is needed to announce turns at the right moment during your trip.</string>
 	</dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>AccessAble uses your microphone for voice commands, questions, and speaking with volunteers during live calls. Call audio is transmitted to the other participants through LiveKit.</string>
+	<string>AccessAble listens when you hold the talk button so you can give voice commands and ask questions.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>AccessAble turns your voice commands into actions like "start trip" or "describe my surroundings".</string>
 	<key>NSMotionUsageDescription</key>
 	<string>AccessAble uses motion data to track your steps between GPS updates for more accurate directions.</string>
+	<key>StadiaAPIKey</key>
+	<string>$(STADIA_API_KEY)</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIBackgroundModes</key>
