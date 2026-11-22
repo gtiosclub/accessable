@@ -1,0 +1,10 @@
+// Build settings for the AccessAble app target. Tracked in git; holds no secrets.
+//
+// The Stadia Maps API key lives in Secrets.xcconfig next to this file, which is in .gitignore. Copy
+// Secrets.xcconfig.example to Secrets.xcconfig and paste the key there. Without it the app builds and routes
+// through the free public Valhalla demo server instead.
+
+STADIA_API_KEY =
+
+// `#include?` skips the file quietly when it isn't there, so a fresh clone still builds.
+#include? "Secrets.xcconfig"
