@@ -64,10 +64,17 @@
          </BuildableReference>
       </BuildableProductRunnable>
       <CommandLineArguments>
-         <CommandLineArgument argument = "-LiveKitMediaTest" isEnabled = "YES"/>
+         <CommandLineArgument
+            argument = "-LiveKitMediaTest"
+            isEnabled = "YES">
+         </CommandLineArgument>
       </CommandLineArguments>
       <EnvironmentVariables>
-         <EnvironmentVariable key = "LIVEKIT_DEV_TOKEN_SERVER_ID" value = "$(LIVEKIT_DEV_TOKEN_SERVER_ID)" isEnabled = "YES"/>
+         <EnvironmentVariable
+            key = "LIVEKIT_DEV_TOKEN_SERVER_ID"
+            value = "$(LIVEKIT_DEV_TOKEN_SERVER_ID)"
+            isEnabled = "YES">
+         </EnvironmentVariable>
       </EnvironmentVariables>
    </LaunchAction>
    <ProfileAction

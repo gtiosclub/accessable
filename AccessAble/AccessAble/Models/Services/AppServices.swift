@@ -76,6 +76,8 @@ struct AppServices: Sendable {
         )
         if FirebaseApp.app() != nil {
             services.userProfiles = FirestoreUserProfileStore()
+            services.volunteers = FirestoreVolunteerDirectory()
+            services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
         }
         services.trip = TripManager(
@@ -131,6 +133,8 @@ struct AppServices: Sendable {
             UserProfile(userID: PlaceholderAuthService.sampleUser.id, role: .caller,
                         displayName: "Preview caller", languages: ["English"], createdAt: .now)
         ])
+        services.volunteers = PlaceholderVolunteerDirectory()
+        services.presence = PlaceholderPresenceService()
         return services
     }
 }
