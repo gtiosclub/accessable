@@ -113,7 +113,7 @@ struct ValhallaRoutingService: RoutingService {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
 
-        var request = URLRequest(url: endpoint.baseURL.appending(path: "route"), timeoutInterval: 15)
+        var request = URLRequest(url: endpoint.routeURL, timeoutInterval: 15)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(endpoint.userAgent, forHTTPHeaderField: "User-Agent")
