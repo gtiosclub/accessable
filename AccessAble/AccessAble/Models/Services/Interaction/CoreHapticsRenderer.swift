@@ -24,7 +24,9 @@ actor CoreHapticsRenderer: HapticRendering {
             await Haptics.render(system, intensity: intensity)
             return
         }
-        guard supportsHaptics, intensity > 0, let pattern = pattern(for: id) else { return }
+        guard intensity > 0 else { return }
+        await HapticSounds.shared.play(taps(for: id), intensity: intensity)
+        guard supportsHaptics, let pattern = pattern(for: id) else { return }
         do {
             let engine = try runningEngine()
             try? player?.stop(atTime: CHHapticTimeImmediate)
@@ -60,6 +62,15 @@ actor CoreHapticsRenderer: HapticRendering {
         player = nil
     }
  
+    private var tapsCache: [HapticID: [HapticTap]] = [:]
+
+    private func taps(for id: HapticID) -> [HapticTap] {
+        if let cached = tapsCache[id] { return cached }
+        let taps = id.ahapTaps
+        tapsCache[id] = taps
+        return taps
+    }
+
     /// Loads and caches the AHAP file. Missing files (e.g. not designed yet) are skipped.
     private func pattern(for id: HapticID) -> CHHapticPattern? {
         if let cached = patterns[id] { return cached }

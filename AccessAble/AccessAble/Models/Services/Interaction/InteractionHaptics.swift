@@ -32,6 +32,7 @@ enum Haptics {
     /// like the announcement engine.
     static func render(_ haptic: InteractionHaptic, intensity: Float) {
         guard intensity > 0 else { return }
+        HapticSounds.shared.play(haptic.taps, intensity: intensity)
         switch haptic {
         case .selection: selection.selectionChanged()
         case .light: impact(.light, intensity)

@@ -51,6 +51,8 @@ final class SpeechDictation {
             // and installTap raises an Objective-C exception on that, which crashes the app
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
+            // iOS mutes haptics while recording unless told otherwise; trip haptics have to keep working.
+            try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
             try session.setActive(true, options: .notifyOthersOnDeactivation)
 
             let input = audioEngine.inputNode
