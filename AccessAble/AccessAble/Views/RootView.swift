@@ -6,14 +6,78 @@ struct RootView: View {
 
     var body: some View {
         Group {
-            if app.hasCompletedOnboarding {
-                MainFlowView()
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-LiveKitMediaTest") {
+                LiveKitMediaTestView(services: app.services)
             } else {
-                OnboardingView()
+                appContent
             }
+            #else
+            appContent
+            #endif
         }
         // The redesign is dark throughout; this also keeps the status bar light.
         .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder private var appContent: some View {
+        if app.services.accountsAvailable { AccountGateView(services: app.services) }
+        else if app.hasCompletedOnboarding { MainFlowView() }
+        else { OnboardingView(includesAccount: false) }
+    }
+}
+
+private struct AccountGateView: View {
+    @Environment(AppViewModel.self) private var app
+    @State private var session: AccountSessionViewModel
+    @State private var signOutError: String?
+
+    init(services: AppServices) {
+        _session = State(initialValue: AccountSessionViewModel(
+            auth: services.auth, profiles: services.userProfiles, presence: services.presence))
+    }
+
+    var body: some View {
+        Group {
+            switch session.state {
+            case .loading:
+                ProgressView("Loading your account")
+            case .signedOut:
+                SignInView(auth: app.services.auth)
+            case .needsProfile(let user):
+                OnboardingView(onSave: { role, name, languages in
+                    try await session.saveProfile(role: role, displayName: name, languages: languages)
+                }, onSignOut: { try await session.signOut() })
+                .id(user.id)
+            case .ready(let profile):
+                if profile.role == .volunteer {
+                    VolunteerHomeView(profile: profile, presence: app.services.presence, signOut: { try await session.signOut() })
+                        .id(profile.userID)
+                } else if app.hasCompletedOnboarding {
+                    MainFlowView().id(profile.userID)
+                } else {
+                    OnboardingView(includesAccount: false).id(profile.userID)
+                }
+            case .failed(let message):
+                VStack(spacing: 20) {
+                    Text(message).multilineTextAlignment(.center)
+                    Button("Retry") { Task { await session.retry() } }
+                        .frame(minHeight: 44)
+                    Button("Sign out") {
+                        Task {
+                            do { try await session.signOut() }
+                            catch { signOutError = "Couldn't sign out. Please try again." }
+                        }
+                    }.frame(minHeight: 44)
+                }.padding()
+            }
+        }
+        .task { await session.listen() }
+        .alert("Account", isPresented: Binding(
+            get: { signOutError != nil }, set: { if !$0 { signOutError = nil } }
+        )) { Button("OK") { signOutError = nil } } message: {
+            Text(signOutError ?? "")
+        }
     }
 }
 
@@ -56,6 +120,8 @@ struct MainFlowView: View {
             SettingsView(app: app)
         case .callHelp:
             CallHelpView()
+        case .volunteers:
+            VolunteerListView(services: app.services)
         case .chat(let volunteer):
             VolunteerChatView(volunteer: volunteer)
         case .developerTools:

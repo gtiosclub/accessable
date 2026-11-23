@@ -61,6 +61,13 @@ struct DeveloperToolsView: View {
                 }
             }
 
+            Section("Calls") {
+                link("Calls (stub)", systemImage: "video",
+                     hint: "Lists placeholder volunteers until the calling backend exists") {
+                    CallsView(services: app.services)
+                }
+            }
+
             Section("Interaction") {
                 link("Commands", systemImage: "text.bubble",
                      hint: "Type a command or ask a question") {

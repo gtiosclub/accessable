@@ -148,3 +148,53 @@ protocol AuthService: Sendable {
     func createAccount(email: String, password: String) async throws -> AuthUser
     func signOut() async throws
 }
+
+// MARK: - Calls (MATCH-x)
+// See Docs/Calls/Overview.md for what "online" means and who owns the camera during a call.
+// Sign-in comes from `AuthService` (shared with REPORT, defined above); the call services reuse it
+// rather than defining their own.
+
+/// Who can be called right now.
+protocol VolunteerDirectory: Sendable {
+    /// Volunteers that are reachable now (Online toggle on and a recent `lastSeen`), replaced on each change.
+    func allVolunteers() -> AsyncStream<[Volunteer]>
+    func onlineVolunteers() -> AsyncStream<[Volunteer]>
+}
+
+/// The signed-in volunteer's own availability.
+protocol PresenceService: Sendable {
+    /// Emits the current value immediately, then every change.
+    func onlineStates() -> AsyncStream<Bool>
+    /// Turns the Online toggle on or off. While on and the app is on screen, the implementation
+    /// refreshes `lastSeen` about every 30 seconds.
+    func setOnline(_ isOnline: Bool) async throws
+}
+
+/// Ringing: asking a volunteer for a call and answering one.
+protocol CallSignaling: Sendable {
+    /// Calls for the signed-in volunteer. Silent while the app is off screen (no push, no CallKit).
+    func incomingCalls() -> AsyncStream<CallTicket>
+    /// Asks `getCallToken` for a ticket and rings the volunteer.
+    func startCall(to volunteerID: String) async throws -> CallTicket
+    func accept(_ ticket: CallTicket) async throws
+    func decline(_ ticket: CallTicket) async throws
+    func end(_ ticket: CallTicket) async
+}
+
+/// The live video call. While connected it owns the camera: `ARSessionManager` pauses, CV and AR
+/// geo-tracking pause with it, and all resume when the call ends.
+protocol VideoCallSession: Sendable {
+    func states() -> AsyncStream<CallState>
+    func connect(with ticket: CallTicket) async throws
+    func disconnect() async
+}
+
+// MARK: - Signed-in account profiles (VOLUNTEER-2)
+
+/// Uses the same AuthUser.id as REPORT. A missing document means onboarding is needed;
+/// a failed read must throw, so a network/permission error never resets a user's role.
+protocol UserProfileStore: Sendable {
+    func load(userID: String) async throws -> UserProfile?
+    func save(userID: String, role: UserRole, displayName: String,
+              languages: [String]) async throws -> UserProfile
+}
