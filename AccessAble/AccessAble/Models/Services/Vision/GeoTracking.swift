@@ -39,9 +39,10 @@ protocol GeoTrackingProviding: Sendable {
 enum SessionTracking: Equatable, Sendable {
     case world, geo
 
-    /// Geo-tracking can't build the classified mesh, so finding doors wins over a sharper position.
-    static func choose(geoWanted: Bool, meshWanted: Bool) -> SessionTracking {
-        geoWanted && !meshWanted ? .geo : .world
+    /// Geo-tracking can't build the classified mesh, so finding doors wins over a sharper position, but only on a
+    /// device that can build the mesh at all.
+    static func choose(geoWanted: Bool, meshWanted: Bool, meshSupported: Bool) -> SessionTracking {
+        geoWanted && !(meshWanted && meshSupported) ? .geo : .world
     }
 }
 

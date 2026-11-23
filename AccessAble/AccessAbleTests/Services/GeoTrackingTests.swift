@@ -29,9 +29,15 @@ private struct NoImageryHere: Error {}
 struct GeoTrackingTests {
     @Test
     func geoTrackingOnlyWhenWantedAndTheMeshIsNot() {
-        #expect(SessionTracking.choose(geoWanted: true, meshWanted: false) == .geo)
-        #expect(SessionTracking.choose(geoWanted: true, meshWanted: true) == .world)
-        #expect(SessionTracking.choose(geoWanted: false, meshWanted: false) == .world)
+        #expect(SessionTracking.choose(geoWanted: true, meshWanted: false, meshSupported: true) == .geo)
+        #expect(SessionTracking.choose(geoWanted: true, meshWanted: true, meshSupported: true) == .world)
+        #expect(SessionTracking.choose(geoWanted: false, meshWanted: false, meshSupported: true) == .world)
+    }
+
+    @Test
+    func aDeviceWithoutTheMeshKeepsGeoTracking() {
+        #expect(SessionTracking.choose(geoWanted: true, meshWanted: true, meshSupported: false) == .geo)
+        #expect(SessionTracking.choose(geoWanted: false, meshWanted: true, meshSupported: false) == .world)
     }
 
     // turning left (counterclockwise) from north faces west

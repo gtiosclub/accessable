@@ -39,6 +39,9 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// True on devices with a LiDAR scanner, where frames carry `sceneDepth`.
     let isDepthSupported = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
 
+    /// True on devices that can build the classified mesh (T36), which need LiDAR too.
+    let isMeshSupported = ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification)
+
     private let frameQueue = DispatchQueue(label: "AccessAble.ARSessionManager.frames", qos: .userInteractive)
     private let handlers = Mutex<[UUID: FrameHandler]>([:])
     private let health = Mutex(FrameHealthCheck())
@@ -84,7 +87,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
 
         let wantsMesh = wantsMesh.withLock { $0 }
         let geoWanted = geoTrackingRequests.withLock { $0 > 0 } && Self.isGeoTrackingSupported
-        let tracking = SessionTracking.choose(geoWanted: geoWanted, meshWanted: wantsMesh)
+        let tracking = SessionTracking.choose(geoWanted: geoWanted, meshWanted: wantsMesh, meshSupported: isMeshSupported)
         let configuration: ARConfiguration = switch tracking {
         case .world: worldTrackingConfiguration(mesh: wantsMesh)
         case .geo: geoTrackingConfiguration()
@@ -131,7 +134,8 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// next `start()` when the session isn't running.
     ///
     /// - Returns: true when tracking had to restart from scratch: the mesh was wanted while
-    ///   geo-tracking, which can't build one, so the session went back to world tracking.
+    ///   geo-tracking, which can't build one, on a device that can, so the session went back
+    ///   to world tracking.
     @MainActor
     @discardableResult
     func setMeshReconstruction(_ enabled: Bool) -> Bool {
@@ -140,7 +144,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             return wanted != enabled
         }
         guard cameraOwnership.callOwner == nil, changed else { return false }
-        if enabled, runningTracking.withLock({ $0 }) == .geo {
+        if enabled, isMeshSupported, runningTracking.withLock({ $0 }) == .geo {
             log.notice("mesh wanted while geo-tracking; switching to world tracking")
             try? start()
             return true
@@ -259,8 +263,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     }
 
     private func meshReconstruction(wanted: Bool) -> ARConfiguration.SceneReconstruction {
-        wanted && ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification)
-            ? .meshWithClassification : []
+        wanted && isMeshSupported ? .meshWithClassification : []
     }
 
     /// Pauses the session. Subscribers stay registered and get frames again after `start()`.
