@@ -13,6 +13,8 @@ struct TripCameraCoordinator: Sendable {
     func run() async {
         var holdsCamera = false
         for await state in trip.tripStates() {
+            // the availability answer is in by the time the walk starts, so the camera never waits on it
+            if state.phase == .planning { await geoTracking?.prepareGeoTracking() }
             let wantsCamera = state.phase == .active
             guard wantsCamera != holdsCamera else { continue }
             if wantsCamera {

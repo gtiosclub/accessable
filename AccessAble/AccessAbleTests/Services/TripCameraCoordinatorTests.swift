@@ -46,6 +46,7 @@ private actor GeoScene: SceneObservationProviding, GeoTrackingProviding {
 
     func start() async throws { calls.append("start") }
     func stop() async { calls.append("stop") }
+    func prepareGeoTracking() async { calls.append("prepare") }
     func setGeoTrackingWanted(_ wanted: Bool) async { calls.append(wanted ? "geo" : "no geo") }
 }
 
@@ -77,6 +78,14 @@ struct TripCameraCoordinatorTests {
         await TripCameraCoordinator(trip: ScriptedTrip(phases: [.active, .paused, .active]), scene: scene).run()
 
         #expect(await scene.calls == ["geo", "start", "stop", "no geo", "geo", "start", "stop", "no geo"])
+    }
+
+    @Test
+    func planningAsksAboutGeoTrackingBeforeTheWalk() async {
+        let scene = GeoScene()
+        await TripCameraCoordinator(trip: ScriptedTrip(phases: [.planning, .active, .arrived]), scene: scene).run()
+
+        #expect(await scene.calls == ["prepare", "geo", "start", "stop", "no geo"])
     }
 
     @Test

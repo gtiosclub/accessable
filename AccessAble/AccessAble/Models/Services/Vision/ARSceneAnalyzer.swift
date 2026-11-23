@@ -41,6 +41,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         var lastAskedImage: Data?
         /// Whether a "take me to…" request is active, which needs the mesh in any mode.
         var isNavigating = false
+        /// The pending mesh change, debounced so quick mode taps re-run the session once.
+        var meshTask: Task<Void, Never>?
     }
 
     private let state = Mutex(State())
@@ -351,19 +353,34 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     }
 
     /// Doors come from the mesh, which is only built in Find or during a "take me to…".
+    /// Turning the mesh on or off re-runs the session, which makes the preview hitch, and while
+    /// geo-tracking turning it on restarts tracking from scratch. So the change waits a moment
+    /// and only the latest one is applied: tapping through Find to another mode does nothing.
     private func updateMesh() {
-        let wanted = perception.mode.usesMesh || state.withLock { $0.isNavigating }
-        Task { @MainActor [sessionManager, perception] in
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.meshDebounce)
+            guard !Task.isCancelled, let self else { return }
+            let wanted = self.perception.mode.usesMesh || self.state.withLock { $0.isNavigating }
             // leaving geo-tracking for the mesh restarts the world, so nothing remembered holds
-            if sessionManager.setMeshReconstruction(wanted) { perception.reset() }
+            if self.sessionManager.setMeshReconstruction(wanted) { self.perception.reset() }
         }
+        let previous = state.withLock { state in
+            defer { state.meshTask = task }
+            return state.meshTask
+        }
+        previous?.cancel()
     }
+
+    private static let meshDebounce: Duration = .milliseconds(300)
 
     // MARK: - GeoTrackingProviding (AR-2)
 
+    func prepareGeoTracking() async {
+        sessionManager.refreshGeoAvailability()
+    }
+
     func setGeoTrackingWanted(_ wanted: Bool) async {
-        let available = wanted ? await ARSessionManager.isGeoTrackingAvailableHere() : false
-        await MainActor.run { sessionManager.setGeoTracking(available) }
+        await MainActor.run { sessionManager.setGeoTracking(wanted) }
     }
 
     func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> {

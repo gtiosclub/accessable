@@ -27,8 +27,13 @@ struct GeoTrackingUpdate: Equatable, Sendable {
 
 /// Lets a trip ask the shared camera session for geo-tracking (AR-2).
 protocol GeoTrackingProviding: Sendable {
-    /// Whether the session should geo-track from its next start, where Apple supports it here. A session already
-    /// running keeps its tracking, so the world CV has mapped isn't reset under it.
+    /// Starts finding out, in the background, whether Apple has geo-tracking imagery here, and returns at once.
+    /// Call it while a trip is being planned, so the answer is in before the camera starts.
+    func prepareGeoTracking() async
+    /// Whether the session should geo-track from its next start, where Apple supports it here. Returns at once:
+    /// if the answer from `prepareGeoTracking()` isn't in yet, the session starts with world tracking rather
+    /// than hold obstacle warnings up. A session already running keeps its tracking, so the world CV has mapped
+    /// isn't reset under it.
     func setGeoTrackingWanted(_ wanted: Bool) async
     func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate>
 }
@@ -37,10 +42,22 @@ protocol GeoTrackingProviding: Sendable {
 enum SessionTracking: Equatable, Sendable {
     case world, geo
 
-    /// Geo-tracking can't build the classified mesh, so finding doors wins over a sharper position.
-    static func choose(geoWanted: Bool, meshWanted: Bool) -> SessionTracking {
-        geoWanted && !meshWanted ? .geo : .world
+    /// Geo-tracking only where Apple is known to have imagery (`geoAvailable` is true, not unknown), and never
+    /// while the mesh is wanted: geo-tracking can't build it, and finding doors wins over a sharper position.
+    static func choose(geoWanted: Bool, geoAvailable: Bool?, meshWanted: Bool) -> SessionTracking {
+        geoWanted && geoAvailable == true && !meshWanted ? .geo : .world
     }
+}
+
+/// Apple's answer to "is there geo-tracking imagery here", kept so the camera never waits on it.
+struct GeoAvailability: Equatable, Sendable {
+    var isAvailable: Bool
+    var checkedAt: Date
+
+    /// Coverage is by city, so an answer holds for a walk; past this it is checked again.
+    static let lifetime: TimeInterval = 10 * 60
+
+    func isFresh(at now: Date) -> Bool { now.timeIntervalSince(checkedAt) < Self.lifetime }
 }
 
 extension GeoTrackingUpdate {

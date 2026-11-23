@@ -13,9 +13,25 @@ private func camera(yaw: Float, pitch: Float = 0) -> simd_float4x4 {
 struct GeoTrackingTests {
     @Test
     func geoTrackingOnlyWhenWantedAndTheMeshIsNot() {
-        #expect(SessionTracking.choose(geoWanted: true, meshWanted: false) == .geo)
-        #expect(SessionTracking.choose(geoWanted: true, meshWanted: true) == .world)
-        #expect(SessionTracking.choose(geoWanted: false, meshWanted: false) == .world)
+        #expect(SessionTracking.choose(geoWanted: true, geoAvailable: true, meshWanted: false) == .geo)
+        #expect(SessionTracking.choose(geoWanted: true, geoAvailable: true, meshWanted: true) == .world)
+        #expect(SessionTracking.choose(geoWanted: false, geoAvailable: true, meshWanted: false) == .world)
+    }
+
+    // the camera starts at once rather than wait for Apple's answer
+    @Test
+    func worldTrackingUntilAvailabilityIsKnown() {
+        #expect(SessionTracking.choose(geoWanted: true, geoAvailable: nil, meshWanted: false) == .world)
+        #expect(SessionTracking.choose(geoWanted: true, geoAvailable: false, meshWanted: false) == .world)
+    }
+
+    @Test
+    func anAvailabilityAnswerIsKeptForAWalk() {
+        let checked = Date(timeIntervalSince1970: 1_000_000)
+        let answer = GeoAvailability(isAvailable: true, checkedAt: checked)
+
+        #expect(answer.isFresh(at: checked.addingTimeInterval(5 * 60)))
+        #expect(!answer.isFresh(at: checked.addingTimeInterval(GeoAvailability.lifetime + 1)))
     }
 
     // turning left (counterclockwise) from north faces west
