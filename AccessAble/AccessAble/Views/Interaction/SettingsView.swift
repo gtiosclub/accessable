@@ -1,14 +1,19 @@
 import SwiftUI
 
-/// Owner: User Interaction (3.3 / 3.4). Every GuidanceProfile field is editable here,
-/// along with the settings-page preferences in `SettingsPreferences`.
 struct SettingsView: View {
     @State private var viewModel: SettingsViewModel
     @State private var isConfirmingReset = false
     @Environment(\.dismiss) private var dismiss
 
-    init(app: AppViewModel) {
+    private let onDone: (() -> Void)?
+
+    init(app: AppViewModel, onDone: (() -> Void)? = nil) {
         _viewModel = State(initialValue: SettingsViewModel(app: app))
+        self.onDone = onDone
+    }
+
+    private func done() {
+        if let onDone { onDone() } else { dismiss() }
     }
 
     var body: some View {
@@ -91,7 +96,7 @@ struct SettingsView: View {
         .environment(\.colorScheme, .dark)
         .toolbar(.hidden, for: .navigationBar)
         // VoiceOver two-finger scrub, since the back button is replaced by the Done button.
-        .accessibilityAction(.escape) { dismiss() }
+        .accessibilityAction(.escape) { done() }
         .confirmationDialog(
             "Reset all settings to their defaults?",
             isPresented: $isConfirmingReset,
@@ -105,7 +110,6 @@ struct SettingsView: View {
         }
     }
 
-    // MARK: - Sections
 
     private var header: some View {
         HStack(alignment: .center) {
@@ -115,7 +119,7 @@ struct SettingsView: View {
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 12)
             Button {
-                dismiss()
+                done()
             } label: {
                 Image(systemName: "checkmark")
                     .font(.title2.weight(.semibold))
