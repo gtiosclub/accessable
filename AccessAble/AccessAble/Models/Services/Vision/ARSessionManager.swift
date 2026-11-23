@@ -9,8 +9,9 @@ import os
 /// iOS gives the camera to one session at a time, so every module that needs camera frames
 /// or the device pose subscribes here rather than running its own `ARSession`.
 ///
-/// The session runs gravity-aligned world tracking (world +Y is up, which the floor fit and
-/// walking corridor assume) and, on LiDAR devices, `sceneDepth` (T2). Smoothed scene depth
+/// The session runs gravity-aligned world tracking, or during a trip geo-tracking (AR-2), whose
+/// east-up-south world keeps +Y up too; the floor fit and walking corridor assume it. On LiDAR
+/// devices it adds `sceneDepth` (T2). Smoothed scene depth
 /// is deliberately not requested: it averages several frames, so it lags behind anything
 /// moving toward the user, and nothing in the pipeline needs it.
 ///
