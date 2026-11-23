@@ -14,10 +14,12 @@ actor PlaceholderAnnouncementEngine: AnnouncementEngineProtocol {
     private nonisolated let delivered = Broadcaster<AnnouncementEvent>()
     private var profile: GuidanceProfile = .default
     private var isPaused = false
+    private var isInCall = false
     private var last: AnnouncementEvent?
 
     func submit(_ event: AnnouncementEvent) async {
-        guard !isPaused, profile.allows(event), !event.isExpired() else { return }
+        guard !isPaused, profile.allows(event), !event.isExpired(),
+              !isInCall || event.category == .maneuver || event.priority == .critical else { return }
         log.info("[\(event.category.rawValue)/\(event.priority.rawValue)] \(event.text)")
         last = event
         delivered.send(event)
@@ -34,6 +36,7 @@ actor PlaceholderAnnouncementEngine: AnnouncementEngineProtocol {
     func pause() async { isPaused = true }
     func resume() async { isPaused = false }
     func updateProfile(_ profile: GuidanceProfile) async { self.profile = profile }
+    func setInCall(_ inCall: Bool) async { isInCall = inCall }
 }
 
 struct PlaceholderHaptics: HapticRendering {
@@ -315,6 +318,18 @@ actor PlaceholderVideoCallSession: VideoCallSession {
     func disconnect() async {
         broadcaster.send(.ended(.hungUp))
     }
+    
+    func setMicrophoneMuted(_ muted: Bool) async throws {
+            log.info("call muted=\(muted)")
+        }
+
+        func flipCamera() async throws {
+            log.info("call flip camera")
+        }
+
+        func setFlashlight(_ on: Bool) async throws {
+            log.info("call flashlight=\(on)")
+        }
 }
 
 /// In-memory profiles for tests and previews, keyed by the shared auth UID.

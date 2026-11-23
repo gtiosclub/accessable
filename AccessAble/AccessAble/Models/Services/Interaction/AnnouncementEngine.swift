@@ -7,6 +7,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
  
     private var profile: GuidanceProfile = .default
     private var isPaused = false
+    private var isInCall = false
     private var queue: [AnnouncementEvent] = []
     private var isDraining = false
     private var current: AnnouncementEvent?
@@ -24,7 +25,8 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
     // AnnouncementEngineProtocol
 
     func submit(_ event: AnnouncementEvent) async {
-        guard !isPaused, profile.allows(event), !event.isExpired(), !isDuplicate(event) else { return }
+        guard !isPaused, profile.allows(event), !event.isExpired(), !isDuplicate(event),
+                      !isInCall || Self.allowedDuringCall(event) else { return }
         await enqueue(event)
     }
  
@@ -52,6 +54,14 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
  
     func updateProfile(_ profile: GuidanceProfile) async { self.profile = profile }
  
+    func setInCall(_ inCall: Bool) async {
+        isInCall = inCall
+        if inCall { queue.removeAll { !Self.allowedDuringCall($0) } }
+    }
+
+    private static func allowedDuringCall(_ event: AnnouncementEvent) -> Bool {
+        event.category == .maneuver || event.priority == .critical
+    }
     // Queue
  
     private func enqueue(_ event: AnnouncementEvent) async {

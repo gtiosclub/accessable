@@ -4,6 +4,7 @@ import SwiftUI
 /// Calls and messages use sample volunteers until the calling backend exists.
 struct CallHelpView: View {
     @Environment(AppRouter.self) private var router
+    @Environment(AppViewModel.self) private var app
     @State private var tab: Tab = .live
     @State private var calling: Volunteer?
 
@@ -32,7 +33,9 @@ struct CallHelpView: View {
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
         .fullScreenCover(item: $calling) { volunteer in
-            CallingView(volunteer: volunteer) { calling = nil }
+            CallView(services: app.services, partnerID: volunteer.id, partnerName: volunteer.name) {
+                calling = nil
+            }
         }
     }
 

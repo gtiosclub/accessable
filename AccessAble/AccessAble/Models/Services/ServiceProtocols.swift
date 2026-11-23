@@ -28,6 +28,7 @@ protocol AnnouncementEngineProtocol: AnnouncementSink {
     func pause() async
     func resume() async
     func updateProfile(_ profile: GuidanceProfile) async
+    func setInCall(_ inCall: Bool) async
 }
 
 /// Renders a haptic from the shared vocabulary (3.2).
@@ -185,8 +186,14 @@ protocol CallSignaling: Sendable {
 /// geo-tracking pause with it, and all resume when the call ends.
 protocol VideoCallSession: Sendable {
     func states() -> AsyncStream<CallState>
-    func connect(with ticket: CallTicket) async throws
-    func disconnect() async
+       func connect(with ticket: CallTicket) async throws
+       func disconnect() async
+       /// Mutes or unmutes this phone's microphone.
+       func setMicrophoneMuted(_ muted: Bool) async throws
+       /// Switches between the back and front camera. Calls start on the back camera.
+       func flipCamera() async throws
+       /// Turns the back camera's light on or off. Throws when the current camera has no light.
+       func setFlashlight(_ on: Bool) async throws
 }
 
 // MARK: - Signed-in account profiles (VOLUNTEER-2)
