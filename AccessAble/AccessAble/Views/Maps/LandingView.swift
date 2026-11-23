@@ -8,7 +8,9 @@ import SwiftUI
 /// trip screen, where the switch is, and from Dev Tools.
 struct LandingView: View {
     @Environment(AppRouter.self) private var router
+    @Environment(AppViewModel.self) private var app
     @State private var showsCommands = false
+    @State private var showsQuickSettings = false
 
     var body: some View {
         VStack(spacing: 12) {
@@ -24,12 +26,22 @@ struct LandingView: View {
         .sheet(isPresented: $showsCommands) {
             VoiceCommandsSheet()
         }
+        .sheet(isPresented: $showsQuickSettings) {
+            QuickSettingsSheet(app: app)
+        }
     }
 
     private var topBar: some View {
         HStack {
-            CircleIconButton(systemImage: "gearshape", label: "Settings") {
-                router.push(.settings)
+            HStack(spacing: 8) {
+                CircleIconButton(systemImage: "gearshape", label: "Settings") {
+                    router.push(.settings)
+                }
+                if app.preferences.quickSettingsEnabled {
+                    CircleIconButton(systemImage: "slider.horizontal.3", label: "Quick Settings", hint: "Frequently used preferences") {
+                        showsQuickSettings = true
+                    }
+                }
             }
             Spacer()
             Button {
@@ -89,5 +101,6 @@ struct CampusMap: View {
         LandingView()
     }
     .environment(AppRouter())
+    .environment(AppViewModel.preview)
     .preferredColorScheme(.dark)
 }

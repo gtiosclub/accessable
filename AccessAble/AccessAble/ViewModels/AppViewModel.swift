@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 /// App-wide state: the user's GuidanceProfile, onboarding status, performance mode, and the service container.
 /// Injected into the view hierarchy with `.environment(appViewModel)`.
@@ -31,6 +32,9 @@ final class AppViewModel {
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var tripCameraTask: Task<Void, Never>?
+    /// So `preferences.usesSystemScreenReader` keeps matching the OS instead of freezing at
+    /// whatever onboarding last recorded (task T51).
+    @ObservationIgnored private var voiceOverObserver: NSObjectProtocol?
 
     private enum Keys {
         static let profile = "guidanceProfile"
@@ -56,11 +60,32 @@ final class AppViewModel {
 
         let tripCamera = TripCameraCoordinator(trip: self.services.trip, scene: self.services.scene)
         tripCameraTask = Task { await tripCamera.run() }
+        observeVoiceOverStatus()
+    }
+
+    isolated deinit {
+        if let voiceOverObserver { NotificationCenter.default.removeObserver(voiceOverObserver) }
     }
 
     func completeOnboarding(with profile: GuidanceProfile) {
         self.profile = profile
+        // Live system truth replaces onboarding's one-time self-report the moment onboarding
+        // finishes; observeVoiceOverStatus() keeps it accurate for the rest of the app's life.
+        preferences.usesSystemScreenReader = UIAccessibility.isVoiceOverRunning
         hasCompletedOnboarding = true
+    }
+
+    /// Keeps `preferences.usesSystemScreenReader` live instead of frozen at onboarding time
+    /// (task T51): VoiceOver can be turned on or off from iOS Settings at any point while
+    /// AccessAble is running, and the app should notice without needing a relaunch.
+    private func observeVoiceOverStatus() {
+        voiceOverObserver = NotificationCenter.default.addObserver(
+            forName: UIAccessibility.voiceOverStatusDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.preferences.usesSystemScreenReader = UIAccessibility.isVoiceOverRunning
+            }
+        }
     }
 
     // MARK: - Persistence

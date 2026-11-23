@@ -25,7 +25,8 @@ struct OnboardingView: View {
     }
 
     private func finish() {
-        app.preferences.usesSystemScreenReader = viewModel.usesVoiceOver
+        // usesSystemScreenReader is set from live system truth inside completeOnboarding,
+        // not from this self-report — see AppViewModel (task T51).
         app.completeOnboarding(with: viewModel.profile)
     }
 }
