@@ -41,22 +41,15 @@ private actor RecordingScene: SceneObservationProviding {
 
 private actor GeoScene: SceneObservationProviding, GeoTrackingProviding {
     private(set) var calls: [String] = []
-    /// One element per `start()`, so a test can wait for the camera without a clock.
-    nonisolated let starts: AsyncStream<Void>
-    private let started: AsyncStream<Void>.Continuation
     private let startFails: Bool
 
-    init(startFails: Bool = false) {
-        self.startFails = startFails
-        (starts, started) = AsyncStream.makeStream()
-    }
+    init(startFails: Bool = false) { self.startFails = startFails }
 
     nonisolated func observations() -> AsyncStream<SceneObservation> { AsyncStream { $0.finish() } }
     nonisolated func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> { AsyncStream { $0.finish() } }
 
     func start() async throws {
         calls.append("start")
-        started.yield()
         if startFails { throw RecordingScene.Unavailable() }
     }
 
@@ -147,25 +140,56 @@ struct TripCameraCoordinatorTests {
     }
 }
 
+/// The trip screen's camera, opened and closed as `TripSessionViewModel.run()` does around the trip.
 @MainActor
 struct TripScreenCameraTests {
-    @Test(.timeLimit(.minutes(1)))
+    private let plan = TripPlan(place: SampleContent.places[0], route: nil, isRecording: false)
+
+    private func camera(_ scene: GeoScene, isGeoTrackingAvailableHere: @escaping @Sendable () async -> Bool) -> TripCamera {
+        TripCamera(scene: scene, geoTracking: scene, isGeoTrackingAvailableHere: isGeoTrackingAvailableHere)
+    }
+
+    @Test
     func theTripScreenAsksForGeoTrackingBeforeItStartsTheCamera() async {
         let scene = GeoScene()
-        var services = AppServices.preview
-        services.scene = scene
-        services.geoTracking = scene
-        services.isGeoTrackingAvailableHere = { true }
-        services.location = PlaceholderLocationProvider()
-        let session = TripSessionViewModel(
-            plan: TripPlan(place: SampleContent.places[0], route: nil, isRecording: false), services: services
-        )
+        let camera = camera(scene) { true }
+        let session = TripSessionViewModel(plan: plan)
 
-        let running = Task { await session.run() }
-        for await _ in scene.starts { break }
-        running.cancel()
-        await running.value
+        await session.openCamera(camera)
+        await session.closeCamera(camera)
 
         #expect(await scene.calls == ["geo", "start", "stop", "no geo"])
+    }
+
+    @Test
+    func theTripScreenAsksAboutGeoTrackingOncePerTrip() async {
+        let scene = GeoScene()
+        let availability = AvailabilityCheck(available: true)
+        let camera = camera(scene, isGeoTrackingAvailableHere: availability.check)
+        let session = TripSessionViewModel(plan: plan)
+
+        await session.openCamera(camera)
+        await session.closeCamera(camera)
+        await session.openCamera(camera)
+        await session.closeCamera(camera)
+
+        #expect(availability.timesAsked == 1)
+        #expect(await scene.calls == ["geo", "start", "stop", "no geo", "geo", "start", "stop", "no geo"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func closingTheScreenWhileAskingNeverStartsTheCamera() async throws {
+        let scene = GeoScene()
+        let clock = ManualClock()
+        let camera = camera(scene) { await ARSessionManager.isGeoTrackingAvailableHere(clock: clock, check: { _ in }) }
+        let session = TripSessionViewModel(plan: plan)
+
+        let opening = Task { await session.openCamera(camera) }
+        try await clock.waitForSleepers(1)
+        opening.cancel()
+        await opening.value
+        await session.closeCamera(camera)
+
+        #expect(await scene.calls.isEmpty)
     }
 }

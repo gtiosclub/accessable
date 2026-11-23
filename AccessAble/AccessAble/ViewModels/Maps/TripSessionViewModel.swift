@@ -60,6 +60,9 @@ final class TripSessionViewModel {
     @ObservationIgnored private var voiceTask: Task<Void, Never>?
     /// Whether geo-tracking was asked for with the camera the screen holds; nil while it holds none.
     @ObservationIgnored private var heldCamera: Bool?
+    /// Whether this trip can geo-track, asked once: the view model lives for one trip, so the
+    /// screen coming back doesn't wait on Apple again.
+    @ObservationIgnored private var canGeoTrack: Bool?
 
     /// - Parameters:
     ///   - services: The app's services, for a real trip; nil for front end only.
@@ -148,23 +151,38 @@ final class TripSessionViewModel {
             group.addTask { await self.watchForBlockedPath(services.scene) }
         }
         stopListening()
-        if let geoTracking = heldCamera {
-            await camera.stop(geoTracking: geoTracking)
-            heldCamera = nil
-        }
+        await closeCamera(camera)
     }
 
     /// Opens the camera beside the route request rather than before it, since asking Apple about
     /// geo-tracking can take a few seconds. The screen usually opens it before the trip goes active,
     /// so it decides the tracking.
-    private func openCamera(_ camera: TripCamera) async {
-        let geoTracking = await camera.canGeoTrack()
+    func openCamera(_ camera: TripCamera) async {
+        let geoTracking: Bool
+        if let canGeoTrack {
+            geoTracking = canGeoTrack
+        } else {
+            geoTracking = await camera.canGeoTrack()
+            // a cancelled check says no without Apple's answer, so it isn't kept
+            guard !Task.isCancelled else { return }
+            canGeoTrack = geoTracking
+        }
+        // the screen closed while Apple was asked
+        guard !Task.isCancelled else { return }
         do {
             try await camera.start(geoTracking: geoTracking)
             heldCamera = geoTracking
         } catch {
             log.error("No obstacle detection on the trip screen: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    /// Gives back the camera the screen holds, if any.
+    func closeCamera(_ camera: TripCamera) async {
+        guard let geoTracking = heldCamera else { return }
+        // cleared first, so a run() that starts meanwhile keeps its own hold
+        heldCamera = nil
+        await camera.stop(geoTracking: geoTracking)
     }
 
     /// Starts walking as soon as a route is ready, and again after a re-route.
