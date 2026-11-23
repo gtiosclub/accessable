@@ -49,6 +49,15 @@ struct GeoTrackingTests {
         #expect(!SessionTracking.endsGeoTracking(from: nil, to: .world))
     }
 
+    @Test
+    func updatesAreStampedWithTheFrameTime() {
+        let now = Date(timeIntervalSince1970: 1_700_000_000)
+
+        let captured = GeoTrackingUpdate.date(ofFrameTimestamp: 98.5, uptime: 100, now: now)
+
+        #expect(captured == now.addingTimeInterval(-1.5))
+    }
+
     // turning left (counterclockwise) from north faces west
     @Test(arguments: [(0 as Float, 0.0), (-90, 90), (180, 180), (90, 270), (-30, 30)])
     func headingIsWhereTheCameraFaces(yaw: Float, heading: Double) throws {

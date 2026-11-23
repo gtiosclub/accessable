@@ -33,6 +33,8 @@ struct GeoTrackingUpdate: Equatable, Sendable {
     /// Degrees clockwise from true north that the camera faces, 0..<360. Only once localized, and nil while the
     /// camera points almost straight up or down.
     var heading: Double?
+    /// When the camera captured the frame this describes, not when the update was sent: the coordinate comes back
+    /// from ARKit a little later. For `.stopped`, when tracking stopped.
     var timestamp: Date
     /// nil when ARKit gives none, and for `.stopped`.
     var stateReason: StateReason?
@@ -65,6 +67,16 @@ enum SessionTracking: Equatable, Sendable {
 }
 
 extension GeoTrackingUpdate {
+    /// The moment an `ARFrame` was captured. Its `timestamp` counts seconds of system uptime, as
+    /// `ProcessInfo.systemUptime` does, so it is placed that far before or after `now`.
+    static func date(
+        ofFrameTimestamp timestamp: TimeInterval,
+        uptime: TimeInterval = ProcessInfo.processInfo.systemUptime,
+        now: Date = .now
+    ) -> Date {
+        now.addingTimeInterval(timestamp - uptime)
+    }
+
     /// Degrees clockwise from true north of the camera's view. Geo-tracking's world is east-up-south, so north is
     /// -z; the camera looks down its own -z.
     static func heading(cameraTransform transform: simd_float4x4) -> Double? {
