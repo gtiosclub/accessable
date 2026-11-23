@@ -9,8 +9,8 @@ after(() => env.cleanup());
 
 test('a collection with no rules can be neither read nor written', async () => {
   const db = env.authenticatedContext('alice').firestore();
-  await assertFails(getDoc(doc(db, 'users', 'alice')));
-  await assertFails(setDoc(doc(db, 'users', 'alice'), { name: 'Alice' }));
+  await assertFails(getDoc(doc(db, 'unconfiguredCollection', 'alice')));
+  await assertFails(setDoc(doc(db, 'unconfiguredCollection', 'alice'), { name: 'Alice' }));
 });
 
 test('a signed-out user cannot read reports', async () => {

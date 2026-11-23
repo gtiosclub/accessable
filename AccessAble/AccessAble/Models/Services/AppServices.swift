@@ -17,8 +17,16 @@ struct AppServices: Sendable {
     var locationContext: any LocationContextProviding
     var commands: any CommandInterpreting
     var auth: any AuthService
+    var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
+    /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
+    var accountsAvailable = false
     // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
+    // TODO(MATCH-x): replace these four placeholders with the real call services.
+    var volunteers: any VolunteerDirectory = PlaceholderVolunteerDirectory()
+    var presence: any PresenceService = PlaceholderPresenceService()
+    var callSignaling: any CallSignaling = PlaceholderCallSignaling()
+    var videoCall: any VideoCallSession = PlaceholderVideoCallSession()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
     var askAISettings = AskAISettings()
@@ -68,6 +76,12 @@ struct AppServices: Sendable {
             alertSettings: alertSettings,
             distanceSettings: distanceSettings
         )
+        if FirebaseApp.app() != nil {
+            services.userProfiles = FirestoreUserProfileStore()
+            services.volunteers = FirestoreVolunteerDirectory()
+            services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
+            services.accountsAvailable = true
+        }
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
             landmarks: services.landmarks,
@@ -117,6 +131,12 @@ struct AppServices: Sendable {
         services.distanceSettings = DistanceSettings(units: .metres)
         // Nor sign in to the real Firebase project.
         services.auth = PlaceholderAuthService()
+        services.userProfiles = PlaceholderUserProfileStore(profiles: [
+            UserProfile(userID: PlaceholderAuthService.sampleUser.id, role: .caller,
+                        displayName: "Preview caller", languages: ["English"], createdAt: .now)
+        ])
+        services.volunteers = PlaceholderVolunteerDirectory()
+        services.presence = PlaceholderPresenceService()
         return services
     }
 }

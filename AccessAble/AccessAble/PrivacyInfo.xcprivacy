@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- LiveKit 2.19.0 bundles its own PrivacyInfo.xcprivacy for SystemBootTime
+	     (35F9.1, 8FFB.1); do not duplicate SDK reasons in the app manifest.
+	     The Debug media harness streams audio/video in real time and does not record
+	     or persist them. Permission descriptions are in AccessAble/Info.plist.
+	     See Docs/Calls/MediaTest.md for the SDK review and remaining device checks. -->
 	<key>NSPrivacyTracking</key>
 	<false/>
 	<key>NSPrivacyTrackingDomains</key>
