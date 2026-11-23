@@ -87,6 +87,23 @@ struct AppServices: Sendable {
             distances: distanceSettings,
             recorder: services.tripRecorder
         )
+        
+        if LiveKitConfig.serverURL != nil {
+            let analyzer = scene as? ARSceneAnalyzer
+            services.videoCall = LiveKitVideoCallSession(
+                auth: services.auth,
+                pauseCamera: { try analyzer?.pauseForCall() },
+                resumeCamera: { try analyzer?.resumeAfterCall($0) }
+            )
+        }
+        
+        #if DEBUG
+        // Until MATCH-1's Worker exists, test calls use LiveKit's development token server.
+        if let id = ProcessInfo.processInfo.environment["LIVEKIT_DEV_TOKEN_SERVER_ID"],
+           !id.isEmpty, !id.contains("$(") {
+            services.callSignaling = DevelopmentCallSignaling(serverID: id, auth: services.auth)
+        }
+        #endif
         return services
     }
 
@@ -135,6 +152,7 @@ struct AppServices: Sendable {
         ])
         services.volunteers = PlaceholderVolunteerDirectory()
         services.presence = PlaceholderPresenceService()
+        services.videoCall = PlaceholderVideoCallSession()
         return services
     }
 }
