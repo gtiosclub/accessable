@@ -74,3 +74,12 @@ AccessAble/AccessAble/Resources/DETRResnet50SemanticSegmentationF16.mlpackage/
 
 # Firebase config: shared privately, never committed
 GoogleService-Info.plist
+
+# Calls: per-member secrets (LiveKit URL). Copy AccessAble/Config/Secrets.example.xcconfig to make yours.
+Secrets.xcconfig
+*.xcconfig.local
+
+# Cloudflare Worker local files
+Workers/**/node_modules/
+Workers/**/.wrangler/
+Workers/**/.dev.vars

@@ -51,6 +51,9 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// camera from 60 to about 34 fps and slow every analyzed frame, and only "take me to…"
     /// uses it (to find doors), so it runs only while that is active.
     private let wantsMesh = Mutex(false)
+    @MainActor private var cameraOwnership = CameraOwnershipState()
+    private let pausedForCall = Mutex(false)
+    var isPausedForCall: Bool { pausedForCall.withLock { $0 } }
     /// Whether the next `start()` geo-tracks (AR-2): set for trips, only where geo-tracking is available.
     private let wantsGeoTracking = Mutex(false)
     /// What the running session uses; nil while stopped.
@@ -75,6 +78,8 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             setStatus(.unavailable)
             throw ARSessionManagerError.worldTrackingUnsupported
         }
+        // New AR clients can register during a call, but must not take LiveKit's camera.
+        guard cameraOwnership.requestARStart() else { return }
 
         let wantsMesh = wantsMesh.withLock { $0 }
         let tracking = SessionTracking.choose(geoWanted: wantsGeoTracking.withLock { $0 }, meshWanted: wantsMesh)
@@ -132,7 +137,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             defer { wanted = enabled }
             return wanted != enabled
         }
-        guard changed else { return false }
+        guard cameraOwnership.callOwner == nil, changed else { return false }
         if enabled, runningTracking.withLock({ $0 }) == .geo {
             log.notice("mesh wanted while geo-tracking; switching to world tracking")
             try? start()
@@ -226,10 +231,38 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// Pauses the session. Subscribers stay registered and get frames again after `start()`.
     @MainActor
     func stop() {
+        cameraOwnership.requestARStop()
         cancelRecoveryTimeout()
         session.pause()
         runningTracking.withLock { $0 = nil }
         setStatus(.idle)
+    }
+
+    /// Pauses this exact shared session without changing the analyzer's client count.
+    @MainActor
+    func beginCallCameraOwnership() throws -> UUID {
+        let token = try cameraOwnership.acquireForCall()
+        pausedForCall.withLock { $0 = true }
+        cancelRecoveryTimeout()
+        session.pause()
+        setStatus(.interrupted)
+        return token
+    }
+
+    /// Call only after LiveKit has stopped its tracks. Restart only if AR still has clients.
+    @MainActor
+    func endCallCameraOwnership(_ token: UUID) throws {
+        guard let shouldRestart = cameraOwnership.releaseFromCall(token) else { return }
+        pausedForCall.withLock { $0 = false }
+        if shouldRestart {
+            do { try start() }
+            catch {
+                setStatus(.stopped(reason: error.localizedDescription))
+                throw error
+            }
+        } else {
+            setStatus(.idle)
+        }
     }
 
     // MARK: - Subscribing to frames
@@ -313,6 +346,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
 
 extension ARSessionManager: ARSessionDelegate {
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        guard !pausedForCall.withLock({ $0 }) else { return }
         let image = frame.capturedImage
         health.withLock {
             $0.record(
@@ -332,6 +366,7 @@ extension ARSessionManager: ARSessionDelegate {
     }
 
     func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
+        guard !pausedForCall.withLock({ $0 }) else { return }
         let description = switch camera.trackingState {
         case .normal: "normal"
         case .notAvailable: "not available"
@@ -356,12 +391,14 @@ extension ARSessionManager: ARSessionDelegate {
     }
 
     func session(_ session: ARSession, didFailWithError error: Error) {
+        guard !pausedForCall.withLock({ $0 }) else { return }
         log.error("ARKit session failed: \(error.localizedDescription, privacy: .public)")
         cancelRecoveryTimeout()
         setStatus(.stopped(reason: error.localizedDescription))
     }
 
     func sessionWasInterrupted(_ session: ARSession) {
+        guard !pausedForCall.withLock({ $0 }) else { return }
         log.notice("ARKit session interrupted")
         cancelRecoveryTimeout()
         setStatus(.interrupted)
@@ -369,6 +406,7 @@ extension ARSessionManager: ARSessionDelegate {
     }
 
     func sessionInterruptionEnded(_ session: ARSession) {
+        guard !pausedForCall.withLock({ $0 }) else { return }
         log.notice("ARKit session interruption ended")
         // Not the same as "tracking works again": ARKit now has to recognize where it is,
         // and until it does, world coordinates mean nothing.

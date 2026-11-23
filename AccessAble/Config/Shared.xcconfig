@@ -1,0 +1,3 @@
+// Tracked. Pulls in the untracked Secrets.xcconfig if it exists.
+// Copy Secrets.example.xcconfig to Secrets.xcconfig (same folder) and fill it in.
+#include? "Secrets.xcconfig"
