@@ -63,6 +63,9 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// What the running session uses; nil while stopped or a call has the camera.
     private let runningTracking = Mutex<SessionTracking?>(nil)
     private let geoBroadcaster = Broadcaster<GeoTrackingUpdate>()
+    /// Bumped whenever the session starts, stops or goes to a call. Geo updates are sent under
+    /// it, so one from an earlier session never lands after the `.stopped` that ended it.
+    private let generation = Mutex(0)
     /// Frame timestamp of the last geo update sent.
     private let lastGeoUpdate = Mutex<TimeInterval>(-.infinity)
     private let log = Logger(subsystem: "AccessAble", category: "ARSessionManager")
@@ -190,8 +193,41 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             defer { running = tracking }
             return running
         }
-        guard SessionTracking.endsGeoTracking(from: previous, to: tracking) else { return }
-        geoBroadcaster.send(GeoTrackingUpdate(state: .stopped, accuracy: .undetermined, timestamp: .now))
+        generation.withLock { generation in
+            generation += 1
+            guard SessionTracking.endsGeoTracking(from: previous, to: tracking) else { return }
+            geoBroadcaster.send(GeoTrackingUpdate(state: .stopped, accuracy: .undetermined, timestamp: .now))
+        }
+    }
+
+    /// Which session geo updates belong to; see `deliverGeoLocation`.
+    var sessionGeneration: Int { generation.withLock { $0 } }
+
+    /// Sends `update` unless the session it came from has since stopped, restarted or gone to a call.
+    private func sendGeoUpdate(_ update: GeoTrackingUpdate, fromSession session: Int) {
+        generation.withLock { current in
+            guard current == session else { return }
+            geoBroadcaster.send(update)
+        }
+    }
+
+    /// ARKit's answer to `getGeoLocation`, which lands later on a queue of its choosing, maybe
+    /// after the session stopped or a call took the camera.
+    func deliverGeoLocation(
+        _ update: GeoTrackingUpdate,
+        coordinate: CLLocationCoordinate2D,
+        altitude: CLLocationDistance,
+        error: (any Error)?,
+        fromSession session: Int
+    ) {
+        if let error {
+            log.error("getGeoLocation failed: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        var located = update
+        located.coordinate = GeoCoordinate(coordinate)
+        located.altitude = altitude
+        sendGeoUpdate(located, fromSession: session)
     }
 
     /// Asks whether geo-tracking is available where the phone is, and calls back once with the
@@ -242,8 +278,9 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     }
 
     /// Runs on the frame queue. Copies what it needs, so the frame isn't kept.
-    private func publishGeoUpdate(from frame: ARFrame, in session: ARSession) {
+    private func publishGeoUpdate(from frame: ARFrame, in arSession: ARSession) {
         guard let status = frame.geoTrackingStatus else { return }
+        let session = sessionGeneration
         let due = lastGeoUpdate.withLock { last in
             guard frame.timestamp - last >= 1 else { return false }
             last = frame.timestamp
@@ -259,17 +296,13 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             stateReason: GeoTrackingUpdate.StateReason(status.stateReason)
         )
         guard update.state == .localized else {
-            geoBroadcaster.send(update)
+            sendGeoUpdate(update, fromSession: session)
             return
         }
         update.heading = GeoTrackingUpdate.heading(cameraTransform: transform)
         let position = SIMD3(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
-        session.getGeoLocation(forPoint: position) { [geoBroadcaster, update] coordinate, altitude, error in
-            guard error == nil else { return }
-            var located = update
-            located.coordinate = GeoCoordinate(coordinate)
-            located.altitude = altitude
-            geoBroadcaster.send(located)
+        arSession.getGeoLocation(forPoint: position) { [weak self, update] coordinate, altitude, error in
+            self?.deliverGeoLocation(update, coordinate: coordinate, altitude: altitude, error: error, fromSession: session)
         }
     }
 

@@ -58,6 +58,34 @@ struct GeoTrackingTests {
         #expect(captured == now.addingTimeInterval(-1.5))
     }
 
+    @MainActor
+    @Test(.timeLimit(.minutes(1)))
+    func geoFixesFromAnEndedSessionAreDropped() async {
+        let manager = ARSessionManager()
+        let updates = manager.geoTrackingUpdates()
+        let fix = GeoTrackingUpdate(state: .localized, accuracy: .high, timestamp: .now)
+        let ended = manager.sessionGeneration
+        manager.stop()
+
+        manager.deliverGeoLocation(
+            fix, coordinate: CLLocationCoordinate2D(latitude: 1, longitude: 1), altitude: 1, error: nil,
+            fromSession: ended
+        )
+        manager.deliverGeoLocation(
+            fix, coordinate: CLLocationCoordinate2D(latitude: 2, longitude: 2), altitude: 2, error: NoImageryHere(),
+            fromSession: manager.sessionGeneration
+        )
+        manager.deliverGeoLocation(
+            fix, coordinate: CLLocationCoordinate2D(latitude: 3, longitude: 3), altitude: 3, error: nil,
+            fromSession: manager.sessionGeneration
+        )
+
+        for await update in updates {
+            #expect(update.coordinate?.latitude == 3)
+            break
+        }
+    }
+
     // turning left (counterclockwise) from north faces west
     @Test(arguments: [(0 as Float, 0.0), (-90, 90), (180, 180), (90, 270), (-30, 30)])
     func headingIsWhereTheCameraFaces(yaw: Float, heading: Double) throws {
