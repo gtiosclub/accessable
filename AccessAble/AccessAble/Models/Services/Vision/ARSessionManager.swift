@@ -255,7 +255,8 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         var update = GeoTrackingUpdate(
             state: GeoTrackingUpdate.State(status.state),
             accuracy: GeoTrackingUpdate.Accuracy(status.accuracy),
-            timestamp: .now
+            timestamp: .now,
+            stateReason: GeoTrackingUpdate.StateReason(status.stateReason)
         )
         guard update.state == .localized else {
             geoBroadcaster.send(update)

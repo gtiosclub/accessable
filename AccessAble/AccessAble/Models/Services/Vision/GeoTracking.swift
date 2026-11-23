@@ -11,6 +11,14 @@ struct GeoTrackingUpdate: Equatable, Sendable {
         case stopped
     }
 
+    /// Why ARKit is in its state, e.g. why it isn't localized yet.
+    enum StateReason: Equatable, Sendable {
+        case notAvailableAtLocation, needLocationPermissions, worldTrackingUnstable, waitingForLocation
+        case waitingForAvailabilityCheck, geoDataNotLoaded, devicePointedTooLow, visualLocalizationFailed
+        /// A reason this version of the app doesn't know.
+        case other
+    }
+
     /// In increasing order, so `>= .medium` reads as "medium or better".
     enum Accuracy: Comparable, Sendable {
         case undetermined, low, medium, high
@@ -26,6 +34,8 @@ struct GeoTrackingUpdate: Equatable, Sendable {
     /// camera points almost straight up or down.
     var heading: Double?
     var timestamp: Date
+    /// nil when ARKit gives none, and for `.stopped`.
+    var stateReason: StateReason?
 }
 
 /// Lets a trip ask the shared camera session for geo-tracking (AR-2).
@@ -74,6 +84,24 @@ extension GeoTrackingUpdate.State {
         case .localized: .localized
         case .notAvailable: .notAvailable
         @unknown default: .notAvailable
+        }
+    }
+}
+
+extension GeoTrackingUpdate.StateReason {
+    /// nil for ARKit's `.none`.
+    init?(_ reason: ARGeoTrackingStatus.StateReason) {
+        switch reason {
+        case .none: return nil
+        case .notAvailableAtLocation: self = .notAvailableAtLocation
+        case .needLocationPermissions: self = .needLocationPermissions
+        case .worldTrackingUnstable: self = .worldTrackingUnstable
+        case .waitingForLocation: self = .waitingForLocation
+        case .waitingForAvailabilityCheck: self = .waitingForAvailabilityCheck
+        case .geoDataNotLoaded: self = .geoDataNotLoaded
+        case .devicePointedTooLow: self = .devicePointedTooLow
+        case .visualLocalizationFailed: self = .visualLocalizationFailed
+        @unknown default: self = .other
         }
     }
 }

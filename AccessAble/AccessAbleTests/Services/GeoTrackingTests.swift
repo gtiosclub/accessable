@@ -74,6 +74,9 @@ struct GeoTrackingTests {
         #expect(GeoTrackingUpdate.Accuracy(.high) == .high)
         #expect(GeoTrackingUpdate.Accuracy(.undetermined) == .undetermined)
         #expect(GeoTrackingUpdate.Accuracy.low < .medium && GeoTrackingUpdate.Accuracy.medium < .high)
+        #expect(GeoTrackingUpdate.StateReason(.none) == nil)
+        #expect(GeoTrackingUpdate.StateReason(.devicePointedTooLow) == .devicePointedTooLow)
+        #expect(GeoTrackingUpdate.StateReason(.waitingForLocation) == .waitingForLocation)
     }
 
     @Test
