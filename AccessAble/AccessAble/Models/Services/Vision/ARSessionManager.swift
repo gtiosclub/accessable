@@ -167,25 +167,47 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// What the running session uses; nil while stopped.
     var tracking: SessionTracking? { runningTracking.withLock { $0 } }
 
+    /// Asks whether geo-tracking is available where the phone is, and calls back once with the
+    /// answer and any error.
+    typealias GeoAvailabilityCheck = @Sendable (_ completion: @escaping @Sendable (Bool, (any Error)?) -> Void) -> Void
+
     /// Whether Apple has geo-tracking imagery where the phone is. Gives up after `timeout`,
-    /// since the camera waits on it and obstacle warnings shouldn't.
-    static func isGeoTrackingAvailableHere(timeout: Duration = .seconds(3)) async -> Bool {
-        guard isGeoTrackingSupported else { return false }
-        return await withTaskGroup(of: Bool.self) { group in
-            group.addTask {
-                await withCheckedContinuation { continuation in
-                    ARGeoTrackingConfiguration.checkAvailability { available, _ in continuation.resume(returning: available) }
+    /// since the camera waits on it and obstacle warnings shouldn't; false if the task is
+    /// cancelled first. An answer that comes after that is dropped.
+    static func isGeoTrackingAvailableHere(
+        timeout: Duration = .seconds(3),
+        clock: any Clock<Duration> = ContinuousClock(),
+        check: @escaping GeoAvailabilityCheck = checkGeoAvailabilityWithARKit
+    ) async -> Bool {
+        let answer = FirstAnswer()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                answer.wait(continuation)
+                // Not structured: the check can't be cancelled, and nothing should wait on it.
+                answer.setTimer(Task {
+                    do { try await clock.sleep(for: timeout) } catch { return }
+                    availabilityLog.notice("geo-tracking availability check timed out")
+                    answer.send(false)
+                })
+                check { available, error in
+                    if let error {
+                        availabilityLog.error("geo-tracking availability check failed: \(error.localizedDescription, privacy: .public)")
+                    }
+                    answer.send(available)
                 }
             }
-            group.addTask {
-                try? await Task.sleep(for: timeout)
-                return false
-            }
-            let first = await group.next() ?? false
-            group.cancelAll()
-            return first
+        } onCancel: {
+            answer.send(false)
         }
     }
+
+    /// ARKit's check, where the device can geo-track at all.
+    static func checkGeoAvailabilityWithARKit(_ completion: @escaping @Sendable (Bool, (any Error)?) -> Void) {
+        guard isGeoTrackingSupported else { return completion(false, nil) }
+        ARGeoTrackingConfiguration.checkAvailability(completionHandler: completion)
+    }
+
+    private static let availabilityLog = Logger(subsystem: "AccessAble", category: "ARSessionManager")
 
     /// Position and heading about once a second while geo-tracking; nothing otherwise.
     func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> {
@@ -498,5 +520,48 @@ extension GuidanceStatus {
         case .running, .interrupted, .recovering: true
         case .idle, .stopped, .unavailable: false
         }
+    }
+}
+
+/// Resumes one continuation with whichever answer arrives first: ARKit's, the timeout or
+/// cancellation. Later answers are dropped, so the continuation is never resumed twice.
+private final class FirstAnswer: Sendable {
+    private struct State {
+        var continuation: CheckedContinuation<Bool, Never>?
+        var answer: Bool?
+        var timer: Task<Void, Never>?
+    }
+
+    private let state = Mutex(State())
+
+    func wait(_ continuation: CheckedContinuation<Bool, Never>) {
+        let answer = state.withLock { state in
+            if state.answer == nil { state.continuation = continuation }
+            return state.answer
+        }
+        if let answer { continuation.resume(returning: answer) }
+    }
+
+    func setTimer(_ timer: Task<Void, Never>) {
+        let answered = state.withLock { state in
+            if state.answer == nil { state.timer = timer }
+            return state.answer != nil
+        }
+        if answered { timer.cancel() }
+    }
+
+    func send(_ answer: Bool) {
+        let pending = state.withLock { state -> (CheckedContinuation<Bool, Never>?, Task<Void, Never>?)? in
+            guard state.answer == nil else { return nil }
+            state.answer = answer
+            defer {
+                state.continuation = nil
+                state.timer = nil
+            }
+            return (state.continuation, state.timer)
+        }
+        guard let (continuation, timer) = pending else { return }
+        timer?.cancel()
+        continuation?.resume(returning: answer)
     }
 }

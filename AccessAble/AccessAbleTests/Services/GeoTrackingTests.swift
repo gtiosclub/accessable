@@ -1,5 +1,6 @@
 import ARKit
 import Foundation
+import Synchronization
 import Testing
 @testable import AccessAble
 
@@ -9,6 +10,21 @@ private func camera(yaw: Float, pitch: Float = 0) -> simd_float4x4 {
     let tilt = simd_quatf(angle: pitch * .pi / 180, axis: SIMD3(1, 0, 0))
     return simd_float4x4(turn * tilt)
 }
+
+/// Keeps ARKit's callback, so the test answers when it likes, or never.
+private final class HeldAvailabilityCheck: Sendable {
+    private let completion = Mutex<(@Sendable (Bool, (any Error)?) -> Void)?>(nil)
+
+    func check(_ completion: @escaping @Sendable (Bool, (any Error)?) -> Void) {
+        self.completion.withLock { $0 = completion }
+    }
+
+    func answer(_ available: Bool) {
+        completion.withLock { $0 }?(available, nil)
+    }
+}
+
+private struct NoImageryHere: Error {}
 
 struct GeoTrackingTests {
     @Test
@@ -46,7 +62,69 @@ struct GeoTrackingTests {
     }
 
     @Test
-    func noGeoTrackingInTheSimulator() async {
-        #expect(await ARSessionManager.isGeoTrackingAvailableHere() == false)
+    func unavailableWhenARKitSaysSo() async {
+        let available = await ARSessionManager.isGeoTrackingAvailableHere(check: { $0(false, NoImageryHere()) })
+        #expect(available == false)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func anUnansweredCheckGivesUpExactlyAtTheCap() async throws {
+        let clock = ManualClock()
+        let held = HeldAvailabilityCheck()
+        let available = Task {
+            await ARSessionManager.isGeoTrackingAvailableHere(timeout: .seconds(3), clock: clock, check: held.check)
+        }
+        try await clock.waitForSleepers(1)
+
+        clock.advance(by: .milliseconds(2999))
+        // still waiting just short of the cap
+        try await clock.waitForSleepers(1)
+        clock.advance(by: .milliseconds(1))
+
+        #expect(await available.value == false)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func anAnswerBeforeTheCapWins() async throws {
+        let clock = ManualClock()
+        let held = HeldAvailabilityCheck()
+        let available = Task {
+            await ARSessionManager.isGeoTrackingAvailableHere(timeout: .seconds(3), clock: clock, check: held.check)
+        }
+        try await clock.waitForSleepers(1)
+
+        held.answer(true)
+
+        #expect(await available.value == true)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func anAnswerAfterTheCapIsDropped() async throws {
+        let clock = ManualClock()
+        let held = HeldAvailabilityCheck()
+        let available = Task {
+            await ARSessionManager.isGeoTrackingAvailableHere(timeout: .seconds(3), clock: clock, check: held.check)
+        }
+        try await clock.waitForSleepers(1)
+        clock.advance(by: .seconds(3))
+        #expect(await available.value == false)
+
+        // resuming the continuation a second time would trap
+        held.answer(true)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingTheCheckGivesNo() async throws {
+        let clock = ManualClock()
+        let held = HeldAvailabilityCheck()
+        let available = Task {
+            await ARSessionManager.isGeoTrackingAvailableHere(timeout: .seconds(3), clock: clock, check: held.check)
+        }
+        try await clock.waitForSleepers(1)
+
+        available.cancel()
+
+        #expect(await available.value == false)
+        held.answer(true)
     }
 }
