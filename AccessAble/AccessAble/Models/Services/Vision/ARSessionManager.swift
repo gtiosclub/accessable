@@ -90,7 +90,13 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         }
         // New AR clients can register during a call, but must not take LiveKit's camera.
         guard cameraOwnership.requestARStart() else { return }
+        runSession()
+    }
 
+    /// Runs tracking from scratch, choosing it afresh. Only where world tracking is supported
+    /// and no call has the camera.
+    @MainActor
+    private func runSession() {
         let wantsMesh = wantsMesh.withLock { $0 }
         let geoWanted = geoTrackingRequests.withLock { $0 > 0 } && Self.isGeoTrackingSupported
         let tracking = SessionTracking.choose(geoWanted: geoWanted, meshWanted: wantsMesh, meshSupported: isMeshSupported)
@@ -152,16 +158,8 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         guard cameraOwnership.callOwner == nil, changed else { return false }
         if enabled, isMeshSupported, runningTracking.withLock({ $0 }) == .geo {
             log.notice("mesh wanted while geo-tracking; switching to world tracking")
-            do {
-                try start()
-            } catch {
-                // Stopped rather than left geo-tracking with the mesh wanted and nothing said.
-                log.error("could not restart for the mesh: \(error.localizedDescription, privacy: .public)")
-                cancelRecoveryTimeout()
-                session.pause()
-                setRunningTracking(nil)
-                setStatus(.stopped(reason: error.localizedDescription))
-            }
+            // Geo-tracking was running, so world tracking is supported, and no call has the camera.
+            runSession()
             return true
         }
         guard let configuration = session.configuration?.copy() as? ARWorldTrackingConfiguration else { return false }
