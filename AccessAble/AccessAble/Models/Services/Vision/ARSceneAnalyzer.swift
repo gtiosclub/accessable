@@ -41,6 +41,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         var lastAskedImage: Data?
         /// Whether a "take me to…" request is active, which needs the mesh in any mode.
         var isNavigating = false
+        /// The pending mesh change, debounced so quick mode taps re-run the session once.
+        var meshTask: Task<Void, Never>?
     }
 
     private let state = Mutex(State())
@@ -330,10 +332,24 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     }
 
     /// Doors come from the mesh, which is only built in Find or during a "take me to…".
+    /// Turning the mesh on or off re-runs the session, which makes the preview hitch, so the
+    /// change waits a moment and only the latest one is applied. A no-op change (Walk, Read
+    /// and Describe all go without the mesh) never touches the session.
     private func updateMesh() {
-        let wanted = perception.mode.usesMesh || state.withLock { $0.isNavigating }
-        Task { @MainActor [sessionManager] in sessionManager.setMeshReconstruction(wanted) }
+        let task = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.meshDebounce)
+            guard !Task.isCancelled, let self else { return }
+            let wanted = self.perception.mode.usesMesh || self.state.withLock { $0.isNavigating }
+            self.sessionManager.setMeshReconstruction(wanted)
+        }
+        let previous = state.withLock { state in
+            defer { state.meshTask = task }
+            return state.meshTask
+        }
+        previous?.cancel()
     }
+
+    private static let meshDebounce: Duration = .milliseconds(300)
 
     var navigationStatus: NavigationStatus? { perception.navigationStatus }
 
