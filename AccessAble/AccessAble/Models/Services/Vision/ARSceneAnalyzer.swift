@@ -362,8 +362,7 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     // MARK: - GeoTrackingProviding (AR-2)
 
     func setGeoTrackingWanted(_ wanted: Bool) async {
-        let available = wanted ? await ARSessionManager.isGeoTrackingAvailableHere() : false
-        await MainActor.run { sessionManager.setGeoTracking(available) }
+        await MainActor.run { sessionManager.setGeoTracking(wanted) }
     }
 
     func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> {

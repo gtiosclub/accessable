@@ -54,8 +54,9 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     @MainActor private var cameraOwnership = CameraOwnershipState()
     private let pausedForCall = Mutex(false)
     var isPausedForCall: Bool { pausedForCall.withLock { $0 } }
-    /// Whether the next `start()` geo-tracks (AR-2): set for trips, only where geo-tracking is available.
-    private let wantsGeoTracking = Mutex(false)
+    /// How many trip holders want the next `start()` to geo-track (AR-2); each asks only where
+    /// geo-tracking is available.
+    private let geoTrackingRequests = Mutex(0)
     /// What the running session uses; nil while stopped.
     private let runningTracking = Mutex<SessionTracking?>(nil)
     private let geoBroadcaster = Broadcaster<GeoTrackingUpdate>()
@@ -82,7 +83,8 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         guard cameraOwnership.requestARStart() else { return }
 
         let wantsMesh = wantsMesh.withLock { $0 }
-        let tracking = SessionTracking.choose(geoWanted: wantsGeoTracking.withLock { $0 }, meshWanted: wantsMesh)
+        let geoWanted = geoTrackingRequests.withLock { $0 > 0 } && Self.isGeoTrackingSupported
+        let tracking = SessionTracking.choose(geoWanted: geoWanted, meshWanted: wantsMesh)
         let configuration: ARConfiguration = switch tracking {
         case .world: worldTrackingConfiguration(mesh: wantsMesh)
         case .geo: geoTrackingConfiguration()
@@ -156,12 +158,23 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// False in the Simulator and on devices without an A12 or later chip and GPS.
     static var isGeoTrackingSupported: Bool { ARGeoTrackingConfiguration.isSupported }
 
-    /// Whether the next `start()` should geo-track. It doesn't restart a running session:
-    /// that would reset the world CV has mapped. A call pauses and restarts the session, so
-    /// the choice carries over the call.
+    /// Asks for, or gives back, geo-tracking from the next `start()`. Calls nest like the
+    /// analyzer's `start()`/`stop()`: the session geo-tracks while any `true` hasn't had its
+    /// `false`. It doesn't restart a running session: that would reset the world CV has
+    /// mapped. A call pauses the session and `endCallCameraOwnership` restarts it, so the
+    /// choice carries over the call.
     @MainActor
     func setGeoTracking(_ wanted: Bool) {
-        wantsGeoTracking.withLock { $0 = wanted }
+        let balanced = geoTrackingRequests.withLock { requests in
+            if wanted {
+                requests += 1
+                return true
+            }
+            guard requests > 0 else { return false }
+            requests -= 1
+            return true
+        }
+        if !balanced { log.fault("geo-tracking given back more often than it was asked for") }
     }
 
     /// What the running session uses; nil while stopped.

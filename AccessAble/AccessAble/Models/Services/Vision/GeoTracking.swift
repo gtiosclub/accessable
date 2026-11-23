@@ -27,8 +27,10 @@ struct GeoTrackingUpdate: Equatable, Sendable {
 
 /// Lets a trip ask the shared camera session for geo-tracking (AR-2).
 protocol GeoTrackingProviding: Sendable {
-    /// Whether the session should geo-track from its next start, where Apple supports it here. A session already
-    /// running keeps its tracking, so the world CV has mapped isn't reset under it.
+    /// Asks for geo-tracking from the session's next start (true), or gives it back (false). Calls nest like the
+    /// scene's `start()`/`stop()`. Ask only where `ARSessionManager.isGeoTrackingAvailableHere` said yes; the
+    /// session doesn't check again. A session already running keeps its tracking, so the world CV has mapped isn't
+    /// reset under it.
     func setGeoTrackingWanted(_ wanted: Bool) async
     func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate>
 }

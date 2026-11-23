@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+import os
+
+private let log = Logger(subsystem: "AccessAble", category: "TripSession")
 
 /// Owner: Maps (2.x) + Interaction (3.x). State for the redesigned trip screen.
 ///
@@ -55,6 +58,8 @@ final class TripSessionViewModel {
     @ObservationIgnored private var lastSaid: String?
     @ObservationIgnored private var silenceTask: Task<Void, Never>?
     @ObservationIgnored private var voiceTask: Task<Void, Never>?
+    /// Whether geo-tracking was asked for with the camera the screen holds; nil while it holds none.
+    @ObservationIgnored private var heldCamera: Bool?
 
     /// - Parameters:
     ///   - services: The app's services, for a real trip; nil for front end only.
@@ -134,15 +139,32 @@ final class TripSessionViewModel {
                 await say("Directions start from where you are now, not from \(origin.name).", category: .system)
             }
         }
-        let holdsCamera = (try? await services.scene.start()) != nil
+        let camera = services.tripCamera
         await withDiscardingTaskGroup { group in
+            group.addTask { await self.openCamera(camera) }
             group.addTask { await directions.start() }
             group.addTask { await self.startWhenRouteIsReady() }
             group.addTask { await self.showAnnouncements(from: services.announcements) }
             group.addTask { await self.watchForBlockedPath(services.scene) }
         }
         stopListening()
-        if holdsCamera { await services.scene.stop() }
+        if let geoTracking = heldCamera {
+            await camera.stop(geoTracking: geoTracking)
+            heldCamera = nil
+        }
+    }
+
+    /// Opens the camera beside the route request rather than before it, since asking Apple about
+    /// geo-tracking can take a few seconds. The screen usually opens it before the trip goes active,
+    /// so it decides the tracking.
+    private func openCamera(_ camera: TripCamera) async {
+        let geoTracking = await camera.canGeoTrack()
+        do {
+            try await camera.start(geoTracking: geoTracking)
+            heldCamera = geoTracking
+        } catch {
+            log.error("No obstacle detection on the trip screen: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     /// Starts walking as soon as a route is ready, and again after a re-route.
