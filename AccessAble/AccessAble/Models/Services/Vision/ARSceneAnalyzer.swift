@@ -27,6 +27,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     private let steering: SteeringTones?
     private let broadcaster = Broadcaster<SceneObservation>(replaysLatest: true)
     private let processor: LatestOnlyProcessor<CapturedFrame>
+    /// Returns whether tracking had to restart; see `ARSessionManager.setMeshReconstruction`.
+    private let setMeshReconstruction: @MainActor @Sendable (Bool) -> Bool
     /// Announcements go through a stream drained by one task, so they reach the sink in
     /// order without the analysis queue ever waiting on it.
     private let announcementQueue: AsyncStream<AnnouncementEvent>.Continuation
@@ -39,8 +41,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         var modeTask: Task<Void, Never>?
         /// The still the latest Ask AI question was answered from.
         var lastAskedImage: Data?
-        /// Whether a "take me to…" request is active, which needs the mesh in any mode.
-        var isNavigating = false
+        /// The active "take me to…" request, which needs the mesh in any mode.
+        var navigationQuery: String?
     }
 
     private let state = Mutex(State())
@@ -58,9 +60,11 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         performance: any PerformanceModeProviding,
         announcements: any AnnouncementSink,
         askAI: AskAI = AskAI(),
-        steering: SteeringTones? = nil
+        steering: SteeringTones? = nil,
+        setMeshReconstruction: (@MainActor @Sendable (Bool) -> Bool)? = nil
     ) {
         self.sessionManager = sessionManager
+        self.setMeshReconstruction = setMeshReconstruction ?? { sessionManager.setMeshReconstruction($0) }
         self.perception = perception
         self.performance = performance
         self.askAI = askAI
@@ -142,7 +146,7 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
             return
         }
         // A new session starts with no "take me to…" request; the mode decides the mesh.
-        state.withLock { $0.isNavigating = false }
+        state.withLock { $0.navigationQuery = nil }
         sessionManager.setMeshReconstruction(perception.mode.usesMesh)
         try sessionManager.start()
         clientCount = 1
@@ -339,8 +343,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     // MARK: - SceneNavigating
 
     func navigate(to query: String?) {
+        state.withLock { $0.navigationQuery = query }
         perception.navigate(to: query)
-        state.withLock { $0.isNavigating = query != nil }
         updateMesh()
     }
 
@@ -352,10 +356,14 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     /// Doors come from the mesh, which is only built in Find or during a "take me to…".
     private func updateMesh() {
-        let wanted = perception.mode.usesMesh || state.withLock { $0.isNavigating }
-        Task { @MainActor [sessionManager, perception] in
-            // leaving geo-tracking for the mesh restarts the world, so nothing remembered holds
-            if sessionManager.setMeshReconstruction(wanted) { perception.reset() }
+        let wanted = perception.mode.usesMesh || state.withLock { $0.navigationQuery != nil }
+        Task { @MainActor [self] in
+            // Leaving geo-tracking for the mesh restarts the world, so nothing remembered holds
+            // except the "take me to…" request, which is what wanted the mesh. The latest one is
+            // put back, so a request made meanwhile isn't undone.
+            guard setMeshReconstruction(wanted) else { return }
+            perception.reset()
+            if let query = state.withLock({ $0.navigationQuery }) { perception.navigate(to: query) }
         }
     }
 

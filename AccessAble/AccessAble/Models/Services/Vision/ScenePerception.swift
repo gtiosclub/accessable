@@ -184,6 +184,12 @@ final class ScenePerception: Sendable {
         pendingNavigationQuery.withLock { $0 = .some(query) }
     }
 
+    /// The "take me to…" request in effect: one waiting for the next frame, else the one being steered to.
+    var navigationQuery: String? {
+        if let pending = pendingNavigationQuery.withLock({ $0 }) { return pending }
+        return navigation.withLock { $0?.query }
+    }
+
     /// The current "take me to…" status, if any.
     var navigationStatus: NavigationStatus? { diagnostics.navigation }
 
