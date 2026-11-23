@@ -4,34 +4,37 @@ import CoreVideo
 import Foundation
 import Vision
 
-// Object detection with D-FINE-nano through Vision (1.1 / task T31 — replacing YOLO11, which
-// is AGPL-3.0, with a permissively licensed model while keeping ObjectDetector's interface).
+// Object detection with a DETR-style model through Vision (1.1 / tasks T13, T31).
 //
-// D-FINE (Peterande/D-FINE, Apache-2.0: https://github.com/Peterande/D-FINE/blob/master/LICENSE)
-// is a DETR-style detector: it always predicts a fixed set of 300 candidate boxes and is
-// trained so they don't duplicate the same object the way a YOLO-style grid detector's raw
-// output does, so — unlike ObjectDetector's model — it has no non-max-suppression stage
-// baked in. That means Vision can't turn its output into `VNRecognizedObjectObservation`s
-// automatically; this type reads the model's two raw outputs itself. `nonMaxSuppressed`
-// below is a cheap safety net reusing `CGRect.intersectionOverUnion`, kept because testing
-// so far (manual + `DFineObjectDetectorTests`) hasn't produced a single duplicate box.
+// DETR-style detectors (RF-DETR, D-FINE) predict a fixed set of candidate boxes and are
+// trained not to duplicate one object, so they ship without a non-max-suppression stage and
+// Vision can't turn their output into `VNRecognizedObjectObservation`s. This type reads the
+// two raw outputs itself. Every bundled model has the same contract:
 //
-// Bundled model: `dfine_n_coco.mlpackage`, the nano checkpoint converted to Core ML by
-// john-rocky/peaceofcake (https://github.com/john-rocky/peaceofcake, MIT tool, Apache-2.0
-// weights carried over from the original project — the license that matters is the
-// weights', not the converter's). COCO 80 classes, same vocabulary `hazardLabels` already
-// uses, so no change needed there.
+// - input `image` (Vision scales the frame to the model's square input, `.scaleFill`);
+// - `confidence`: `[queries, classes]` per-class scores, already through a sigmoid;
+// - `coordinates`: `[queries, 4]` normalised centre-x, centre-y, width, height, top-left origin.
 //
-// Evaluated against the bundled yolo11n model headlessly (coremltools, three real COCO
-// images, not just this project's one text-reading test photo) before replacing it: D-FINE
-// matched or beat yolo11n on every detection in that comparison (e.g. couch 0.85 vs 0.33,
-// both cats at >0.9 vs 0.86/0.79) at roughly 2x the inference time (~8ms vs ~3-4ms on the
-// same Mac) and 13MB vs 5.2MB on disk — well inside this pipeline's latency budget (T20
-// targets p95 < 100ms) for a real accuracy gain, which is why this replaced yolo11n rather
-// than just sitting beside it as an untested option.
+// The class list comes from the model's own metadata (`classes`, comma-separated), so a model
+// fine-tuned on our outdoor classes drops in without code changes; models without it (the
+// D-FINE package) are COCO-80.
+//
+// Bundled models, best first (`DETRObjectDetector.bundled()` picks the first present):
+//
+// | Package            | What                                     | Threshold |
+// |--------------------|------------------------------------------|-----------|
+// | `rfdetr_s_outdoor` | RF-DETR Small fine-tuned on street scenes | 0.45      |
+// | `rfdetr_s_coco`    | RF-DETR Small, COCO weights, 512 px      | 0.45      |
+// | `dfine_n_coco`     | D-FINE nano, COCO weights, 640 px        | 0.6       |
+//
+// On 300 COCO street images (`Scripts/models/benchmark_detectors.py`, decoded exactly as
+// below) RF-DETR Small at 0.45 found 60% of the people, vehicles and street furniture the app
+// warns about at 85% precision; D-FINE nano at 0.6 found 48% at 84%. AP 47.4 vs 38.8. It costs
+// about twice the time per frame (33 vs 18 ms on an M4 Mac). The RF-DETR packages are built
+// by `Scripts/models/export_rfdetr_coreml.py` and are not in git; without them the app runs
+// D-FINE as before.
 
-/// Standard COCO 80-class order, matching D-FINE's `confidence` output columns (and the
-/// same class vocabulary `hazardLabels`/the old YOLO11 model used).
+/// Standard COCO 80-class order: the columns of a COCO model's `confidence` output.
 let coco80ClassLabels: [String] = [
     "person", "bicycle", "car", "motorcycle", "airplane", "bus", "train", "truck", "boat",
     "traffic light", "fire hydrant", "stop sign", "parking meter", "bench", "bird", "cat",
@@ -45,17 +48,15 @@ let coco80ClassLabels: [String] = [
     "book", "clock", "vase", "scissors", "teddy bear", "hair drier", "toothbrush",
 ]
 
-/// Decodes D-FINE's two raw outputs into `Detection`s. Pulled out of the class so it can be
-/// unit-tested with synthetic `MLMultiArray`s, the same way `objectDetections` is tested
-/// with `FakeObservation` rather than a real model.
+/// Decodes a DETR-style model's two raw outputs into `Detection`s. Pulled out of the class so
+/// it can be unit-tested with synthetic `MLMultiArray`s.
 ///
 /// - Parameters:
-///   - confidence: `[queries, 80]` (or `[1, queries, 80]`; the leading batch dim, when
-///     present, is dropped) — one sigmoid score per COCO class for each candidate box.
-///   - coordinates: `[queries, 4]` (same batch handling) — normalized (0...1) centre-x,
-///     centre-y, width, height, already top-left-origin upright (verified against Vision's
-///     own output for the same images, not assumed).
-func dfineDetections(
+///   - confidence: `[queries, classes]` (or `[1, queries, classes]`; a leading batch dim is
+///     ignored) sigmoid scores, one column per entry of `classLabels`.
+///   - coordinates: `[queries, 4]` (same batch handling): normalised centre-x, centre-y,
+///     width, height, top-left origin, upright.
+func detrDetections(
     confidence: MLMultiArray,
     coordinates: MLMultiArray,
     confidencePolicy: DetectionConfidencePolicy,
@@ -69,9 +70,9 @@ func dfineDetections(
 
     let confidenceBase = confidence.shape.count - 2
     let coordinateBase = coordinates.shape.count - 2
-
     var detections: [Detection] = []
     detections.reserveCapacity(queries)
+
     for row in 0 ..< queries {
         var bestClass = 0
         var bestScore: Float = -.greatestFiniteMagnitude
@@ -89,6 +90,8 @@ func dfineDetections(
         let width = CGFloat(coordinates[index(coordinateBase, row, 2)].floatValue)
         let height = CGFloat(coordinates[index(coordinateBase, row, 3)].floatValue)
         let box = CGRect(x: cx - width / 2, y: cy - height / 2, width: width, height: height)
+            .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
+        guard !box.isNull, box.width > 0, box.height > 0 else { continue }
 
         detections.append(Detection(
             label: label, confidence: bestScore, boundingBox: box,
@@ -99,14 +102,14 @@ func dfineDetections(
 }
 
 /// One threshold for every class; see the `confidencePolicy` overload.
-func dfineDetections(
+func detrDetections(
     confidence: MLMultiArray,
     coordinates: MLMultiArray,
     minimumConfidence: Float,
     ignoredLabels: Set<String> = [],
     classLabels: [String] = coco80ClassLabels
 ) -> [Detection] {
-    dfineDetections(
+    detrDetections(
         confidence: confidence, coordinates: coordinates,
         confidencePolicy: DetectionConfidencePolicy(defaultThreshold: minimumConfidence),
         ignoredLabels: ignoredLabels, classLabels: classLabels
@@ -114,11 +117,8 @@ func dfineDetections(
 }
 
 /// The last two dimensions of a multi-array's shape, ignoring a leading batch dimension if
-/// one is present. This genuinely varies by call path for this exact model, confirmed by
-/// running both: `coremltools` (Python, used to evaluate this model before bundling it)
-/// returns `[1, 300, 80]`; `VNCoreMLRequest` against the compiled `.mlmodelc` in the app
-/// (verified by loading the real build output) returns `[300, 80]`, no batch dimension.
-/// Indexing from the end rather than assuming one shape is why both work.
+/// one is present. `coremltools` returns `[1, 300, 80]` for D-FINE, `VNCoreMLRequest` against
+/// the compiled model returns `[300, 80]`; indexing from the end handles both.
 private func lastTwoDimensions(of array: MLMultiArray) -> (Int, Int)? {
     guard array.shape.count >= 2 else { return nil }
     return (array.shape[array.shape.count - 2].intValue, array.shape[array.shape.count - 1].intValue)
@@ -130,7 +130,7 @@ private func index(_ leadingZeros: Int, _ row: Int, _ column: Int) -> [NSNumber]
 
 /// Greedy same-label suppression: drops a box that overlaps a higher-confidence box of the
 /// same label by more than `iouThreshold`. `detections` must already be sorted by
-/// confidence, highest first.
+/// confidence, highest first. A safety net: DETR models rarely emit duplicates.
 private func nonMaxSuppressed(_ detections: [Detection], iouThreshold: CGFloat = 0.5) -> [Detection] {
     var kept: [Detection] = []
     for detection in detections {
@@ -142,25 +142,55 @@ private func nonMaxSuppressed(_ detections: [Detection], iouThreshold: CGFloat =
     return kept
 }
 
-/// Runs the bundled D-FINE model on camera frames or still images. Mirrors `ObjectDetector`'s
-/// shape (same lazy, locked model load) so the two are interchangeable from `ScenePerception`'s
-/// point of view; see `ObjectDetecting`.
+/// The class list stored in a model's metadata by `export_rfdetr_coreml.py`, or nil.
+func detectorClassLabels(in description: MLModelDescription) -> [String]? {
+    let metadata = description.metadata[.creatorDefinedKey] as? [String: String]
+    guard let listed = metadata?["classes"], !listed.isEmpty else { return nil }
+    return listed.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+}
+
+/// Runs a bundled DETR-style model on camera frames or still images.
 ///
-/// `@unchecked Sendable` because `VNCoreMLModel` is not `Sendable`. Safe for the same reason
-/// as `ObjectDetector`: the model is created once under `lock` and never mutated after.
-final class DFineObjectDetector: ObjectDetecting, @unchecked Sendable {
-    /// Per-class thresholds (T39): 0.6, chairs at 0.55. Tuned on YOLO11n and carried over
-    /// to D-FINE untuned; re-check them against this model on real data.
+/// `@unchecked Sendable` because `VNCoreMLModel` is not `Sendable`. Safe because the model is
+/// created once under `lock` and never mutated after; Vision lets one model serve concurrent
+/// requests.
+final class DETRObjectDetector: ObjectDetecting, @unchecked Sendable {
+    /// A bundled model and the thresholds tuned for it.
+    struct BundledModel: Sendable {
+        let name: String
+        let confidencePolicy: DetectionConfidencePolicy
+    }
+
+    /// Best first. RF-DETR's scores run lower than D-FINE's for the same precision, so it
+    /// gets its own thresholds (see the table at the top of this file).
+    static let preferredModels: [BundledModel] = [
+        BundledModel(name: "rfdetr_s_outdoor", confidencePolicy: .rfdetr),
+        BundledModel(name: "rfdetr_s_coco", confidencePolicy: .rfdetr),
+        BundledModel(name: "dfine_n_coco", confidencePolicy: .standard),
+    ]
+
+    /// The best model in `bundle`, or nil when none is there.
+    static func bundled(in bundle: Bundle = .main) -> DETRObjectDetector? {
+        for candidate in preferredModels {
+            if let detector = DETRObjectDetector(modelName: candidate.name, bundle: bundle, confidencePolicy: candidate.confidencePolicy) {
+                return detector
+            }
+        }
+        return nil
+    }
+
     let confidencePolicy: DetectionConfidencePolicy
     /// People come from T14's dedicated detector; reporting them here too would double them.
     let ignoredLabels: Set<String> = ["person"]
+    /// The package's name without extension, for the developer readout.
+    let modelName: String
 
     private let modelURL: URL
     private let lock = NSLock()
-    private var model: Result<VNCoreMLModel, any Error>?
+    private var model: Result<(model: VNCoreMLModel, labels: [String]), any Error>?
 
     /// Returns nil when the compiled model is not in `bundle`.
-    convenience init?(modelName: String = "dfine_n_coco", bundle: Bundle = .main, confidencePolicy: DetectionConfidencePolicy = .standard) {
+    convenience init?(modelName: String, bundle: Bundle = .main, confidencePolicy: DetectionConfidencePolicy) {
         guard let url = bundle.url(forResource: modelName, withExtension: "mlmodelc") else { return nil }
         self.init(compiledModelURL: url, confidencePolicy: confidencePolicy)
     }
@@ -169,8 +199,12 @@ final class DFineObjectDetector: ObjectDetecting, @unchecked Sendable {
     /// T20 test-set run, where the model isn't in a bundle.
     init(compiledModelURL: URL, confidencePolicy: DetectionConfidencePolicy = .standard) {
         modelURL = compiledModelURL
+        modelName = compiledModelURL.deletingPathExtension().lastPathComponent
         self.confidencePolicy = confidencePolicy
     }
+
+    /// The model's class names, loading it if needed.
+    func classLabels() throws -> [String] { try loadedModel().labels }
 
     func detect(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) throws -> [Detection] {
         try run(VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: orientation))
@@ -182,10 +216,10 @@ final class DFineObjectDetector: ObjectDetecting, @unchecked Sendable {
     }
 
     private func run(_ handler: VNImageRequestHandler) throws -> [Detection] {
-        let request = VNCoreMLRequest(model: try loadedModel())
-        // Same as ObjectDetector: fill rather than crop, and verified (not assumed) against
-        // the model's own training preprocessing by comparing boxes to Vision's for the same
-        // images before this model was bundled.
+        let loaded = try loadedModel()
+        let request = VNCoreMLRequest(model: loaded.model)
+        // Fill rather than crop: what both models were exported for, and objects at the
+        // frame's edges are still seen.
         request.imageCropAndScaleOption = .scaleFill
         try handler.perform([request])
 
@@ -200,13 +234,20 @@ final class DFineObjectDetector: ObjectDetecting, @unchecked Sendable {
             }
         }
         guard let confidence, let coordinates else { return [] }
-        return dfineDetections(confidence: confidence, coordinates: coordinates, confidencePolicy: confidencePolicy, ignoredLabels: ignoredLabels)
+        return detrDetections(
+            confidence: confidence, coordinates: coordinates, confidencePolicy: confidencePolicy,
+            ignoredLabels: ignoredLabels, classLabels: loaded.labels
+        )
     }
 
-    private func loadedModel() throws -> VNCoreMLModel {
+    private func loadedModel() throws -> (model: VNCoreMLModel, labels: [String]) {
         try lock.withLock {
             if model == nil {
-                model = Result { try VNCoreMLModel(for: MLModel(contentsOf: modelURL)) }
+                model = Result {
+                    let mlModel = try MLModel(contentsOf: modelURL)
+                    let labels = detectorClassLabels(in: mlModel.modelDescription) ?? coco80ClassLabels
+                    return (try VNCoreMLModel(for: mlModel), labels)
+                }
             }
             return try model!.get()
         }

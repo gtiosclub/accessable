@@ -74,7 +74,7 @@ struct ApproachTuning: Sendable {
     /// Labels worth warning about: people and anything on wheels. A moving chair is being
     /// carried by someone who can see; a moving car is not.
     var watchedLabels: Set<String> = [
-        "person", "bicycle", "motorcycle", "car", "bus", "truck", "train",
+        "person", "bicycle", "motorcycle", "car", "bus", "truck", "train", "scooter",
     ]
     /// Least ground speed, in metres per second, that counts as moving rather than as
     /// something standing still being walked toward. A standing person sways and depth
@@ -89,6 +89,12 @@ struct ApproachTuning: Sendable {
     /// Ignore anything further away than this. Distances at that range are too uncertain,
     /// and the approach is too far off to be worth saying.
     var maximumDistance: Float = 15
+    /// The same for vehicles. A car at 30 mph covers 15 m in about a second, under the
+    /// 1.5 s "Stop" bar; seen from 25 m there are two seconds to act. Beyond LiDAR's reach the
+    /// distance is the camera-only estimate (T33), good to roughly a fifth at that range.
+    var vehicleMaximumDistance: Float = 25
+    /// Labels `vehicleMaximumDistance` applies to.
+    var vehicleLabels: Set<String> = ["bicycle", "motorcycle", "car", "bus", "truck", "train", "scooter"]
 
     static let `default` = ApproachTuning()
 
@@ -124,7 +130,8 @@ func approachThreats(
 
         let relativePosition = motion.position - corridor.origin
         let distance = simd_length(relativePosition)
-        guard distance.isFinite, distance <= tuning.maximumDistance else { continue }
+        let range = tuning.vehicleLabels.contains(detection.label.lowercased()) ? tuning.vehicleMaximumDistance : tuning.maximumDistance
+        guard distance.isFinite, distance <= range else { continue }
 
         guard let approach = closestApproach(
             relativePosition: relativePosition,

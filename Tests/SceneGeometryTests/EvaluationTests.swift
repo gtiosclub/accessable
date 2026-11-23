@@ -29,7 +29,7 @@ private func loadImage(at url: URL) throws -> CGImage {
 
 private func chairDetections(
     in image: CGImage,
-    using detector: DFineObjectDetector
+    using detector: DETRObjectDetector
 ) throws -> [Detection] {
     try detector.detect(cgImage: image, orientation: .up)
         .filter { $0.label == "chair" }
@@ -231,7 +231,7 @@ struct EvaluationTests {
         )
         
         let compiledModel = try MLModel.compileModel(at: modelPackage)
-        let detector = DFineObjectDetector(
+        let detector = DETRObjectDetector(
             compiledModelURL: compiledModel,
             confidencePolicy: DetectionConfidencePolicy(defaultThreshold: 0.6)
         )

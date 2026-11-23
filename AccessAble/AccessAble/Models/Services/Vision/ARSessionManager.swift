@@ -51,12 +51,28 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// camera from 60 to about 34 fps and slow every analyzed frame, and only "take me to…"
     /// uses it (to find doors), so it runs only while that is active.
     private let wantsMesh = Mutex(false)
+    /// Whether the session is running (between `start()` and `stop()`). A paused session
+    /// still has a configuration, so `session.configuration` can't tell.
+    private let isRunning = Mutex(false)
     private let log = Logger(subsystem: "AccessAble", category: "ARSessionManager")
 
     /// How long ARKit is given to relocalize after an interruption before guidance is
     /// declared stopped (T27). Relocalization normally lands in a second or two; past this
     /// the user is standing still waiting for guidance that is not coming back.
     private static let relocalizationTimeout: Duration = .seconds(5)
+
+    /// The back wide-angle camera's format, pinned so the preview never changes lens.
+    /// ARKit's default is usually this camera already; pinning it makes that a guarantee,
+    /// and the wide camera is the one LiDAR depth is registered to. Prefers ARKit's default
+    /// format when it is on that camera, so resolution and frame rate stay the same.
+    static var primaryVideoFormat: ARConfiguration.VideoFormat? {
+        let formats = ARWorldTrackingConfiguration.supportedVideoFormats
+        let isWideBack = { (format: ARConfiguration.VideoFormat) in
+            format.captureDeviceType == .builtInWideAngleCamera && format.captureDevicePosition == .back
+        }
+        if let first = formats.first, isWideBack(first) { return first }
+        return formats.first(where: isWideBack)
+    }
 
     // MARK: - Lifecycle
 
@@ -71,6 +87,10 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         let configuration = ARWorldTrackingConfiguration()
         configuration.worldAlignment = .gravity
         configuration.planeDetection = []
+        if let format = Self.primaryVideoFormat {
+            configuration.videoFormat = format
+            log.notice("camera: back wide-angle, \(Int(format.imageResolution.width), privacy: .public)x\(Int(format.imageResolution.height), privacy: .public) at \(format.framesPerSecond, privacy: .public) fps")
+        }
         if isDepthSupported {
             configuration.frameSemantics.insert(.sceneDepth)
         } else {
@@ -84,18 +104,20 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         session.delegate = self
         session.delegateQueue = frameQueue
         session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+        isRunning.withLock { $0 = true }
         setStatus(.running)
     }
 
-    /// Turns the classified mesh on or off without restarting tracking. Takes effect at the
-    /// next `start()` when the session isn't running.
+    /// Turns the classified mesh on or off without restarting tracking. While the session
+    /// isn't running it only records the wish, and the next `start()` applies it: re-running
+    /// a paused session here and again in `start()` made the preview visibly jump.
     @MainActor
     func setMeshReconstruction(_ enabled: Bool) {
         let changed = wantsMesh.withLock { wanted in
             defer { wanted = enabled }
             return wanted != enabled
         }
-        guard changed,
+        guard changed, isRunning.withLock({ $0 }),
               let configuration = session.configuration?.copy() as? ARWorldTrackingConfiguration
         else { return }
         configuration.sceneReconstruction = meshReconstruction(wanted: enabled)
@@ -113,6 +135,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     @MainActor
     func stop() {
         cancelRecoveryTimeout()
+        isRunning.withLock { $0 = false }
         session.pause()
         setStatus(.idle)
     }
