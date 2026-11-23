@@ -30,16 +30,17 @@ struct RoutePickerView: View {
                         .padding(.top, 4)
                     VStack(spacing: 14) {
                         Button("Pick Route") {
+                            Haptics.play(.success)
                             router.push(.trip(TripPlan(place: place, route: route, isRecording: false, origin: origin)))
                         }
                         .buttonStyle(.pill(.primary))
                         .accessibilityHint("Starts walking this route")
 
                         HStack(spacing: 16) {
-                            Button("Last Route") { index -= 1 }
+                            Button("Last Route") { pick(index - 1) }
                                 .buttonStyle(.pill(.outline))
                                 .disabled(index == 0)
-                            Button("Next Route") { index += 1 }
+                            Button("Next Route") { pick(index + 1) }
                                 .buttonStyle(.pill(.primary))
                                 .disabled(index == routes.count - 1)
                         }
@@ -63,6 +64,11 @@ struct RoutePickerView: View {
     }
 
     private var route: SampleRoute { routes[index] }
+
+    private func pick(_ newIndex: Int) {
+        Haptics.play(.selection)
+        index = newIndex
+    }
 
     private var routeTitle: String {
         route.isRecorded ? "Recorded Route: \(route.title)" : route.title

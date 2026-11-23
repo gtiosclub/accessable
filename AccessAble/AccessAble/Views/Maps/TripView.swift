@@ -68,6 +68,8 @@ struct TripView: View {
                         systemImage: viewModel.tripState.phase == .paused ? "play.fill" : "pause.fill",
                         hint: "Pauses or resumes navigation announcements"
                     ) {
+                        // Continue Walking → Success, Trip Paused → Medium
+                        Haptics.play(viewModel.tripState.phase == .paused ? .success : .medium)
                         Task { await viewModel.togglePause() }
                     }
 
@@ -88,6 +90,7 @@ struct TripView: View {
                             systemImage: "figure.walk",
                             hint: "Starts spoken turn-by-turn directions to \(name)"
                         ) {
+                            Haptics.play(.success)
                             Task {
                                 // the button is gone, so put VoiceOver on what to do first
                                 if await viewModel.startTrip() { isInstructionFocused = true }
@@ -129,6 +132,13 @@ struct TripView: View {
             .padding()
         }
         .navigationTitle("Trip")
+        // Trip information loaded / missing or invalid (no route, no Precise Location).
+        .onChange(of: viewModel.route != nil) { _, hasRoute in
+            if hasRoute { Haptics.play(.success) }
+        }
+        .onChange(of: viewModel.routeErrorMessage != nil || viewModel.needsLocationAccess) { _, failed in
+            if failed { Haptics.play(.error) }
+        }
         #if DEBUG
         .toolbar {
             ToolbarItem {

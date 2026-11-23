@@ -2,12 +2,12 @@ import SwiftUI
 
 /// Owner: User Interaction (3.4). Walks through where the main buttons are.
 /// Buttons other than the one being explained are dimmed and do nothing; tapping the
-/// highlighted one plays a success haptic and moves on.
+/// highlighted one ticks and moves on. Start plays success, Next a light tap, Skip a tick, and
+/// finishing the tutorial a success.
 struct TutorialView: View {
     let onFinish: () -> Void
 
     @State private var step: TutorialStep = .intro
-    @State private var successCount = 0
     @AccessibilityFocusState private var isMessageFocused: Bool
 
     var body: some View {
@@ -37,7 +37,6 @@ struct TutorialView: View {
                 bottomControls
             }
         }
-        .sensoryFeedback(.success, trigger: successCount)
         .onAppear { isMessageFocused = true }
         .onChange(of: step) { isMessageFocused = true }
     }
@@ -54,15 +53,15 @@ struct TutorialView: View {
 
             HStack(spacing: 16) {
                 if step == .intro {
-                    Button("Skip", action: onFinish)
+                    Button("Skip", action: skip)
                         .buttonStyle(.pill(.outline, size: .compact))
                         .accessibilityHint("Skips the tutorial")
-                    Button("Start", action: advance)
+                    Button("Start") { advance(haptic: .success) }
                         .buttonStyle(.pill(.primary, size: .compact))
                 } else {
                     Button("Back", action: goBack)
                         .buttonStyle(.pill(.outline, size: .compact))
-                    Button(step == TutorialStep.allCases.last ? "Done" : "Next", action: advance)
+                    Button(step == TutorialStep.allCases.last ? "Done" : "Next") { advance(haptic: .light) }
                         .buttonStyle(.pill(.primary, size: .compact))
                 }
             }
@@ -101,20 +100,32 @@ struct TutorialView: View {
 
     private func tapped(_ target: TutorialTarget) {
         guard target == step.target else { return }
-        successCount += 1
-        advance()
+        advance(haptic: .selection)
     }
 
-    private func advance() {
+    /// Plays `haptic` for the tap and moves on. After the last step, the tutorial is complete:
+    /// a success follows the tap's haptic, a moment later so the two can be told apart.
+    private func advance(haptic: InteractionHaptic) {
+        Haptics.play(haptic)
         if let next = TutorialStep(rawValue: step.rawValue + 1) {
             step = next
         } else {
             onFinish()
+            Task {
+                try? await Task.sleep(for: .milliseconds(350))
+                Haptics.play(.success)
+            }
         }
+    }
+
+    private func skip() {
+        Haptics.play(.selection)
+        onFinish()
     }
 
     private func goBack() {
         if let previous = TutorialStep(rawValue: step.rawValue - 1) {
+            Haptics.play(.light)
             step = previous
         }
     }
