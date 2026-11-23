@@ -149,7 +149,16 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         guard cameraOwnership.callOwner == nil, changed else { return false }
         if enabled, isMeshSupported, runningTracking.withLock({ $0 }) == .geo {
             log.notice("mesh wanted while geo-tracking; switching to world tracking")
-            try? start()
+            do {
+                try start()
+            } catch {
+                // Stopped rather than left geo-tracking with the mesh wanted and nothing said.
+                log.error("could not restart for the mesh: \(error.localizedDescription, privacy: .public)")
+                cancelRecoveryTimeout()
+                session.pause()
+                setRunningTracking(nil)
+                setStatus(.stopped(reason: error.localizedDescription))
+            }
             return true
         }
         guard let configuration = session.configuration?.copy() as? ARWorldTrackingConfiguration else { return false }
