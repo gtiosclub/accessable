@@ -40,6 +40,15 @@ struct GeoTrackingTests {
         #expect(SessionTracking.choose(geoWanted: false, meshWanted: true, meshSupported: false) == .world)
     }
 
+    @Test
+    func listenersHearWhenGeoTrackingEnds() {
+        #expect(SessionTracking.endsGeoTracking(from: .geo, to: nil))
+        #expect(SessionTracking.endsGeoTracking(from: .geo, to: .world))
+        #expect(!SessionTracking.endsGeoTracking(from: .geo, to: .geo))
+        #expect(!SessionTracking.endsGeoTracking(from: .world, to: nil))
+        #expect(!SessionTracking.endsGeoTracking(from: nil, to: .world))
+    }
+
     // turning left (counterclockwise) from north faces west
     @Test(arguments: [(0 as Float, 0.0), (-90, 90), (180, 180), (90, 270), (-30, 30)])
     func headingIsWhereTheCameraFaces(yaw: Float, heading: Double) throws {

@@ -60,7 +60,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// How many trip holders want the next `start()` to geo-track (AR-2); each asks only where
     /// geo-tracking is available.
     private let geoTrackingRequests = Mutex(0)
-    /// What the running session uses; nil while stopped.
+    /// What the running session uses; nil while stopped or a call has the camera.
     private let runningTracking = Mutex<SessionTracking?>(nil)
     private let geoBroadcaster = Broadcaster<GeoTrackingUpdate>()
     /// Frame timestamp of the last geo update sent.
@@ -95,7 +95,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
 
         health.withLock { $0.reset() }
         cancelRecoveryTimeout()
-        runningTracking.withLock { $0 = tracking }
+        setRunningTracking(tracking)
         lastGeoUpdate.withLock { $0 = -.infinity }
         session.delegate = self
         session.delegateQueue = frameQueue
@@ -181,8 +181,18 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         if !balanced { log.fault("geo-tracking given back more often than it was asked for") }
     }
 
-    /// What the running session uses; nil while stopped.
+    /// What the running session uses; nil while stopped or a call has the camera.
     var tracking: SessionTracking? { runningTracking.withLock { $0 } }
+
+    /// Records what the session runs now (nil: nothing), telling geo listeners when geo-tracking ends.
+    private func setRunningTracking(_ tracking: SessionTracking?) {
+        let previous = runningTracking.withLock { running in
+            defer { running = tracking }
+            return running
+        }
+        guard SessionTracking.endsGeoTracking(from: previous, to: tracking) else { return }
+        geoBroadcaster.send(GeoTrackingUpdate(state: .stopped, accuracy: .undetermined, timestamp: .now))
+    }
 
     /// Asks whether geo-tracking is available where the phone is, and calls back once with the
     /// answer and any error.
@@ -226,7 +236,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
 
     private static let availabilityLog = Logger(subsystem: "AccessAble", category: "ARSessionManager")
 
-    /// Position and heading about once a second while geo-tracking; nothing otherwise.
+    /// Position and heading about once a second while geo-tracking, then `.stopped` when it ends.
     func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> {
         geoBroadcaster.stream(bufferingPolicy: .bufferingNewest(4))
     }
@@ -272,7 +282,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         cameraOwnership.requestARStop()
         cancelRecoveryTimeout()
         session.pause()
-        runningTracking.withLock { $0 = nil }
+        setRunningTracking(nil)
         setStatus(.idle)
     }
 
@@ -283,6 +293,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         pausedForCall.withLock { $0 = true }
         cancelRecoveryTimeout()
         session.pause()
+        setRunningTracking(nil)
         setStatus(.interrupted)
         return token
     }

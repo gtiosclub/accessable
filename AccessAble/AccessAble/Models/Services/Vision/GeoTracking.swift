@@ -6,6 +6,9 @@ import Foundation
 struct GeoTrackingUpdate: Equatable, Sendable {
     enum State: Equatable, Sendable {
         case initializing, localizing, localized, notAvailable
+        /// The session stopped geo-tracking: it paused, went back to world tracking, or a call took the camera.
+        /// Nothing more comes until it geo-tracks again.
+        case stopped
     }
 
     /// In increasing order, so `>= .medium` reads as "medium or better".
@@ -43,6 +46,11 @@ enum SessionTracking: Equatable, Sendable {
     /// device that can build the mesh at all.
     static func choose(geoWanted: Bool, meshWanted: Bool, meshSupported: Bool) -> SessionTracking {
         geoWanted && !(meshWanted && meshSupported) ? .geo : .world
+    }
+
+    /// Whether going from `previous` to `next` (nil: not running) ends geo-tracking, which geo listeners are told.
+    static func endsGeoTracking(from previous: SessionTracking?, to next: SessionTracking?) -> Bool {
+        previous == .geo && next != .geo
     }
 }
 
