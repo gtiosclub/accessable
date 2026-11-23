@@ -66,6 +66,28 @@ enum SessionTracking: Equatable, Sendable {
     }
 }
 
+/// Which run of the shared session geo updates may come from (AR-2).
+struct GeoSession: Equatable, Sendable {
+    /// Bumped on every start, stop and call.
+    private(set) var generation = 0
+    private(set) var isGeoTracking = false
+    /// System uptime, as `ARFrame.timestamp` counts it, when the session last started.
+    private(set) var startedAt: TimeInterval = .infinity
+
+    /// Records a start at `uptime` with `tracking`, or a stop (nil).
+    mutating func begin(_ tracking: SessionTracking?, at uptime: TimeInterval) {
+        generation += 1
+        isGeoTracking = tracking == .geo
+        startedAt = tracking == nil ? .infinity : uptime
+    }
+
+    /// Whether a frame captured at `frameTimestamp` belongs to this run's geo-tracking. ARKit can hand over a frame
+    /// it queued before a pause or restart; that frame was captured before this run started.
+    func accepts(frameTimestamp: TimeInterval) -> Bool {
+        isGeoTracking && frameTimestamp >= startedAt
+    }
+}
+
 extension GeoTrackingUpdate {
     /// The moment an `ARFrame` was captured. Its `timestamp` counts seconds of system uptime, as
     /// `ProcessInfo.systemUptime` does, so it is placed that far before or after `now`.

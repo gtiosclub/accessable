@@ -64,9 +64,11 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// What the running session uses; nil while stopped or a call has the camera.
     private let runningTracking = Mutex<SessionTracking?>(nil)
     private let geoBroadcaster = Broadcaster<GeoTrackingUpdate>()
-    /// Bumped whenever the session starts, stops or goes to a call. Geo updates are sent under
-    /// it, so one from an earlier session never lands after the `.stopped` that ended it.
-    private let generation = Mutex(0)
+    /// Which run geo updates may come from. A geo update is sent only from a frame captured
+    /// during the current geo-tracking run, and only if no start, stop or call has happened
+    /// since: checked under this lock, which `.stopped` is also sent under, so no update lands
+    /// after the `.stopped` that ended its run.
+    private let geoSession = Mutex(GeoSession())
     /// Frame timestamp of the last geo update sent.
     private let lastGeoUpdate = Mutex<TimeInterval>(-.infinity)
     private let log = Logger(subsystem: "AccessAble", category: "ARSessionManager")
@@ -203,20 +205,20 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             defer { running = tracking }
             return running
         }
-        generation.withLock { generation in
-            generation += 1
+        geoSession.withLock { geoSession in
+            geoSession.begin(tracking, at: ProcessInfo.processInfo.systemUptime)
             guard SessionTracking.endsGeoTracking(from: previous, to: tracking) else { return }
             geoBroadcaster.send(GeoTrackingUpdate(state: .stopped, accuracy: .undetermined, timestamp: .now))
         }
     }
 
     /// Which session geo updates belong to; see `deliverGeoLocation`.
-    var sessionGeneration: Int { generation.withLock { $0 } }
+    var sessionGeneration: Int { geoSession.withLock { $0.generation } }
 
     /// Sends `update` unless the session it came from has since stopped, restarted or gone to a call.
     private func sendGeoUpdate(_ update: GeoTrackingUpdate, fromSession session: Int) {
-        generation.withLock { current in
-            guard current == session else { return }
+        geoSession.withLock { current in
+            guard current.generation == session else { return }
             geoBroadcaster.send(update)
         }
     }
@@ -287,32 +289,55 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         geoBroadcaster.stream(bufferingPolicy: .bufferingNewest(4))
     }
 
+    /// Asks ARKit for the coordinate of a point in the session's world, calling back later.
+    typealias GeoLocate = (
+        _ point: SIMD3<Float>,
+        _ completion: @escaping @Sendable (CLLocationCoordinate2D, CLLocationDistance, (any Error)?) -> Void
+    ) -> Void
+
     /// Runs on the frame queue. Copies what it needs, so the frame isn't kept.
     private func publishGeoUpdate(from frame: ARFrame, in arSession: ARSession) {
         guard let status = frame.geoTrackingStatus else { return }
-        let session = sessionGeneration
-        let due = lastGeoUpdate.withLock { last in
-            guard frame.timestamp - last >= 1 else { return false }
-            last = frame.timestamp
-            return true
-        }
-        guard due else { return }
-
-        let transform = frame.camera.transform
-        var update = GeoTrackingUpdate(
+        let update = GeoTrackingUpdate(
             state: GeoTrackingUpdate.State(status.state),
             accuracy: GeoTrackingUpdate.Accuracy(status.accuracy),
             timestamp: GeoTrackingUpdate.date(ofFrameTimestamp: frame.timestamp),
             stateReason: GeoTrackingUpdate.StateReason(status.stateReason)
         )
+        publishGeoUpdate(update, frameTimestamp: frame.timestamp, cameraTransform: frame.camera.transform) { point, completion in
+            arSession.getGeoLocation(forPoint: point, completionHandler: completion)
+        }
+    }
+
+    /// Sends `update`, from a frame captured at `frameTimestamp`, about once a second and only
+    /// if the frame belongs to the current geo-tracking run. Once localized, `locate` finds its
+    /// coordinate first. Takes no `ARFrame`, so it can be tested.
+    func publishGeoUpdate(
+        _ update: GeoTrackingUpdate,
+        frameTimestamp: TimeInterval,
+        cameraTransform transform: simd_float4x4,
+        locate: GeoLocate
+    ) {
+        let session = geoSession.withLock { $0 }
+        guard session.accepts(frameTimestamp: frameTimestamp) else { return }
+        let due = lastGeoUpdate.withLock { last in
+            guard frameTimestamp - last >= 1 else { return false }
+            last = frameTimestamp
+            return true
+        }
+        guard due else { return }
+
         guard update.state == .localized else {
-            sendGeoUpdate(update, fromSession: session)
+            sendGeoUpdate(update, fromSession: session.generation)
             return
         }
+        var update = update
         update.heading = GeoTrackingUpdate.heading(cameraTransform: transform)
         let position = SIMD3(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
-        arSession.getGeoLocation(forPoint: position) { [weak self, update] coordinate, altitude, error in
-            self?.deliverGeoLocation(update, coordinate: coordinate, altitude: altitude, error: error, fromSession: session)
+        locate(position) { [weak self, update] coordinate, altitude, error in
+            self?.deliverGeoLocation(
+                update, coordinate: coordinate, altitude: altitude, error: error, fromSession: session.generation
+            )
         }
     }
 

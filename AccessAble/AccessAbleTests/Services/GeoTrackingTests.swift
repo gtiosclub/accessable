@@ -86,6 +86,54 @@ struct GeoTrackingTests {
         }
     }
 
+    @Test
+    func onlyFramesFromTheCurrentGeoRunCount() {
+        var session = GeoSession()
+        #expect(!session.accepts(frameTimestamp: 5))
+
+        session.begin(.geo, at: 10)
+        #expect(session.accepts(frameTimestamp: 10) && session.accepts(frameTimestamp: 11))
+        // queued before the run started
+        #expect(!session.accepts(frameTimestamp: 9.9))
+
+        let geoRun = session.generation
+        session.begin(.geo, at: 20)
+        #expect(session.generation != geoRun)
+        #expect(!session.accepts(frameTimestamp: 15))
+
+        session.begin(.world, at: 30)
+        #expect(!session.accepts(frameTimestamp: 31))
+        session.begin(nil, at: 40)
+        #expect(!session.accepts(frameTimestamp: 41))
+    }
+
+    @MainActor
+    @Test(.timeLimit(.minutes(1)))
+    func framesAfterTheSessionStoppedPublishNothing() async {
+        let manager = ARSessionManager()
+        let updates = manager.geoTrackingUpdates()
+        manager.stop()
+        let located = Mutex(false)
+
+        let localized = GeoTrackingUpdate(state: .localized, accuracy: .high, timestamp: .now)
+        manager.publishGeoUpdate(localized, frameTimestamp: .greatestFiniteMagnitude, cameraTransform: matrix_identity_float4x4) { _, _ in
+            located.withLock { $0 = true }
+        }
+        let localizing = GeoTrackingUpdate(state: .localizing, accuracy: .low, timestamp: .now)
+        manager.publishGeoUpdate(localizing, frameTimestamp: .greatestFiniteMagnitude, cameraTransform: matrix_identity_float4x4) { _, _ in }
+        // the first thing listeners hear is this, not the frames above
+        manager.deliverGeoLocation(
+            localized, coordinate: CLLocationCoordinate2D(latitude: 3, longitude: 3), altitude: 3, error: nil,
+            fromSession: manager.sessionGeneration
+        )
+
+        #expect(!located.withLock { $0 })
+        for await update in updates {
+            #expect(update.coordinate?.latitude == 3)
+            break
+        }
+    }
+
     // turning left (counterclockwise) from north faces west
     @Test(arguments: [(0 as Float, 0.0), (-90, 90), (180, 180), (90, 270), (-30, 30)])
     func headingIsWhereTheCameraFaces(yaw: Float, heading: Double) throws {
