@@ -26,16 +26,17 @@ struct PlaceDetailView: View {
                     }
                     VStack(spacing: 14) {
                         Button("Start & Record New Route") {
+                            Haptics.play(.success)
                             router.push(.trip(TripPlan(place: place, route: nil, isRecording: true, origin: origin)))
                         }
                         .buttonStyle(.pill(.destructive))
                         .accessibilityHint("Starts walking and saves the route you take")
 
                         if place.recordedRouteCount > 0 {
-                            Button("Start Recorded Route") { router.push(.routes(place, .recorded, origin: origin)) }
+                            Button("Start Recorded Route") { chooseRoutes(.recorded) }
                                 .buttonStyle(.pill(.primary))
                         }
-                        Button("Start New Route") { router.push(.routes(place, .new, origin: origin)) }
+                        Button("Start New Route") { chooseRoutes(.new) }
                             .buttonStyle(.pill(.primary))
                         Button("Back") { router.pop() }
                             .buttonStyle(.pill(.outline))
@@ -49,6 +50,12 @@ struct PlaceDetailView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
+    }
+
+    /// Start Route → Success, as for every Start button.
+    private func chooseRoutes(_ mode: RoutePlanMode) {
+        Haptics.play(.success)
+        router.push(.routes(place, mode, origin: origin))
     }
 }
 

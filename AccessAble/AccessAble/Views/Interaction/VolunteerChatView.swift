@@ -70,6 +70,7 @@ struct VolunteerChatView: View {
                 foreground: .white,
                 diameter: 54
             ) {
+                Haptics.play(.medium)
                 isCalling = true
             }
         }
@@ -122,6 +123,7 @@ struct VolunteerChatView: View {
 
     private func send() {
         guard !trimmedDraft.isEmpty else { return }
+        Haptics.play(.light)
         messages.append(ChatMessage(text: trimmedDraft, isFromMe: true))
         draft = ""
     }

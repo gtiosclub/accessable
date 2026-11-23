@@ -168,7 +168,7 @@ final class TripSessionViewModel {
             }
             if blockDetector.update(analyzer.perception.diagnostics.path, at: time) {
                 isRouteBlocked = true
-                await say("Route blocked ahead. Something is in the way with no way round.", category: .hazard)
+                await sayRouteBlocked()
             }
         }
     }
@@ -214,13 +214,13 @@ final class TripSessionViewModel {
         await say(text, category: .ambient)
     }
 
-    private func say(_ text: String, category: AnnouncementCategory) async {
+    private func say(_ text: String, category: AnnouncementCategory, haptic: HapticID? = nil) async {
         guard let services else {
             add(TripAnnouncement(text: text, kind: category == .hazard ? .warning : .info))
             return
         }
         await services.announcements.submit(AnnouncementEvent(
-            category: category, priority: .high, text: text, source: .userInteraction
+            category: category, priority: .high, text: text, haptic: haptic, source: .userInteraction
         ))
     }
 
@@ -406,6 +406,13 @@ final class TripSessionViewModel {
     func simulateBlockedRoute() {
         isPaused = false
         isRouteBlocked = true
+        // Said with its warning haptic, like a real block, so it can be felt when testing.
+        guard services != nil else { return }
+        Task { await sayRouteBlocked() }
+    }
+
+    private func sayRouteBlocked() async {
+        await say("Route blocked ahead. Something is in the way with no way round.", category: .hazard, haptic: .routeBlocked)
     }
 
     /// Asks for a new route from where the user is now. The route service doesn't know about

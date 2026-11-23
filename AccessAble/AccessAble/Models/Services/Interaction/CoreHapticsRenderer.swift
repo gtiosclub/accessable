@@ -4,7 +4,8 @@ import os
  
 private let log = Logger(subsystem: "AccessAble", category: "Haptics")
  
-/// Owner: Haptics (3.2). Plays the AHAP files named by `HapticID`, one at a time.
+/// Owner: Haptics (3.2). Plays the AHAP files named by `HapticID`, one at a time, or the
+/// system haptic for IDs that have one.
 /// `intensity` (the user's Haptic intensity setting, 0...1) scales the whole pattern.
 /// Patterns with a `loopPeriod` repeat for at most `maxLoopDuration`, so a warning can't keep
 /// buzzing after whatever caused it has gone; nothing reports that a hazard has passed.
@@ -17,7 +18,15 @@ actor CoreHapticsRenderer: HapticRendering {
     private static let maxLoopDuration: Duration = .seconds(3)
  
     func play(_ id: HapticID, intensity: Float) async {
-        guard supportsHaptics, intensity > 0, let pattern = pattern(for: id) else { return }
+        if let system = id.systemHaptic {
+            // Replaces whatever is playing, like an AHAP pattern would.
+            await stop()
+            await Haptics.render(system, intensity: intensity)
+            return
+        }
+        guard intensity > 0 else { return }
+        await HapticSounds.shared.play(taps(for: id), intensity: intensity)
+        guard supportsHaptics, let pattern = pattern(for: id) else { return }
         do {
             let engine = try runningEngine()
             try? player?.stop(atTime: CHHapticTimeImmediate)
@@ -53,6 +62,15 @@ actor CoreHapticsRenderer: HapticRendering {
         player = nil
     }
  
+    private var tapsCache: [HapticID: [HapticTap]] = [:]
+
+    private func taps(for id: HapticID) -> [HapticTap] {
+        if let cached = tapsCache[id] { return cached }
+        let taps = id.ahapTaps
+        tapsCache[id] = taps
+        return taps
+    }
+
     /// Loads and caches the AHAP file. Missing files (e.g. not designed yet) are skipped.
     private func pattern(for id: HapticID) -> CHHapticPattern? {
         if let cached = patterns[id] { return cached }

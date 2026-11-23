@@ -351,14 +351,15 @@ actor TripManager: TripStateProviding {
             routes.send(newRoute)
             publish(at: now())
             guard phase == .active, let first = newRoute.steps.first else { return }
-            await submit(maneuver("New route. \(first.spokenInstruction)", .high, expiresIn: 15, key: "reroute"))
+            await submit(maneuver("New route. \(first.spokenInstruction)", .high, haptic: .routeReady, expiresIn: 15,
+                                  key: "reroute"))
         case .failure(let error):
             guard !(error is CancellationError), phase == .active else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
             let text = rerouteCount < Self.maximumReroutes
                 ? "Couldn't get a new route. Walk back the way you came."
                 : "Off route. End the trip and choose your destination again."
-            await submit(maneuver(text, .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
+            await submit(maneuver(text, .high, haptic: .wrongDirection, expiresIn: 10, key: "reroute-failed"))
         }
     }
 
@@ -430,12 +431,12 @@ actor TripManager: TripStateProviding {
                 ? "You may have passed the turn. Finding a new route."
                 : "You may have passed the turn. Turn around and walk back \(Self.metres(distanceBack)), then "
                     + Self.midSentence(route.steps[step].spokenInstruction)
-            return maneuver(text, .high, haptic: .attention, expiresIn: 12, key: "step-\(step)-missed")
+            return maneuver(text, .high, haptic: .wrongDirection, expiresIn: 12, key: "step-\(step)-missed")
         case .wrongWay:
-            return maneuver("You seem to be walking away from the route. Turn around.", .high, haptic: .attention,
+            return maneuver("You seem to be walking away from the route. Turn around.", .high, haptic: .wrongDirection,
                             expiresIn: 10, key: "wrong-way")
         case .offRoute:
-            return maneuver(offRouteSpeech, .high, haptic: .attention, expiresIn: 10, key: "off-route")
+            return maneuver(offRouteSpeech, .high, haptic: .wrongDirection, expiresIn: 10, key: "off-route")
         case .backOnRoute:
             return maneuver("Back on the route.", .normal, expiresIn: 6, key: "back-on-route")
         case .arrived:
@@ -460,7 +461,7 @@ actor TripManager: TripStateProviding {
     private func resumeAnnouncement() -> AnnouncementEvent? {
         guard let route, let progress, var tracker else { return nil }
         if progress.isOffRoute {
-            return maneuver(offRouteSpeech, .high, haptic: .attention, expiresIn: 10, key: nil)
+            return maneuver(offRouteSpeech, .high, haptic: .wrongDirection, expiresIn: 10, key: nil)
         }
         let index = progress.nextStepIndex
         let distance = progress.distanceToNextStep

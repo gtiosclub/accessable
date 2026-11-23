@@ -173,7 +173,7 @@ struct SurfaceAnnouncer: Sendable {
             category: .hazard,
             priority: .high,
             text: text,
-            haptic: .attention,
+            haptic: .obstacleNear, // Obstruction Ahead → Warning
             bearing: .ahead,
             source: .obstacleDetection,
             createdAt: now,
