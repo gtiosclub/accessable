@@ -12,6 +12,7 @@ struct ActiveTripView: View {
     @Environment(AppRouter.self) private var router
     @State private var session: TripSessionViewModel
     @State private var showsCommands = false
+    @State private var showsReportOptions = false
     private let services: AppServices?
 
     init(plan: TripPlan, services: AppServices? = nil) {
@@ -38,6 +39,12 @@ struct ActiveTripView: View {
                         .accessibilityAddTraits(.updatesFrequently)
                 }
 
+                Button("Report a problem here") {
+                    showsReportOptions = true
+                }
+                .buttonStyle(.pill(.outline, size: .compact))
+                .accessibilityHint("Choose the problem at your current location")
+
                 Spacer()
 
                 AnnouncementStack(announcements: session.announcements)
@@ -62,7 +69,8 @@ struct ActiveTripView: View {
                     onCallHelp: { router.push(.callHelp) },
                     onReroute: { session.reroute() },
                     onPause: { session.pause() },
-                    onContinue: { session.resume() }
+                    onContinue: { session.resume() },
+                    onReport: { showsReportOptions = true }
                 )
                 .transition(.opacity)
             }
@@ -104,6 +112,25 @@ struct ActiveTripView: View {
             // when that is on; posting it again would read it twice.
             guard let announcement, !session.isSpokenByEngine else { return }
             AccessibilityNotification.Announcement(announcement.text).post()
+        }
+        .confirmationDialog(
+            "What kind of problem?",
+            isPresented: $showsReportOptions,
+            titleVisibility: .visible
+        ) {
+            ForEach(ReportKind.allCases) { kind in
+                Button(kind.title) {
+                    Task {
+                        await session.submitReport(
+                            kind: kind,
+                            useRouteAhead: session.isRouteBlocked
+                        )
+                    }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Choose the problem at this location.")
         }
         .sheet(isPresented: $showsCommands) {
             VoiceCommandsSheet(
@@ -226,6 +253,7 @@ struct RouteBlockedScreen: View {
     let onReroute: () -> Void
     let onPause: () -> Void
     let onContinue: () -> Void
+    var onReport: () -> Void = {}
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -244,7 +272,8 @@ struct RouteBlockedScreen: View {
                     onCallHelp: onCallHelp,
                     onReroute: onReroute,
                     onPause: onPause,
-                    onContinue: onContinue
+                    onContinue: onContinue,
+                    onReport: onReport
                 )
             }
         }
@@ -305,6 +334,7 @@ struct RouteBlockedCard: View {
     let onReroute: () -> Void
     let onPause: () -> Void
     let onContinue: () -> Void
+    var onReport: () -> Void = {}
 
     @AccessibilityFocusState private var isTitleFocused: Bool
 
@@ -319,6 +349,8 @@ struct RouteBlockedCard: View {
                     .font(.subheadline)
                     .multilineTextAlignment(.center)
                 Button("Call Help", action: onCallHelp)
+                    .buttonStyle(.pill(.outline))
+                Button("Report a problem here", action: onReport)
                     .buttonStyle(.pill(.outline))
                 Button("Re-Route", action: onReroute)
                     .buttonStyle(.pill(.destructive))

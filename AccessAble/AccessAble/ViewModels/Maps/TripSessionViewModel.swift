@@ -317,6 +317,87 @@ final class TripSessionViewModel {
         voiceTask = Task { await self.respond(to: text) }
     }
 
+    /// Maps a short spoken report command to one of the supported report categories.
+    static func reportKind(for command: String) -> ReportKind? {
+        let normalized = command.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard normalized.hasPrefix("report ") else { return nil }
+        let problem = String(normalized.dropFirst("report ".count))
+
+        if problem.contains("construction") || problem.contains("work zone") {
+            return .construction
+        }
+        if problem.contains("blocked path")
+            || problem.contains("blocked route")
+            || problem.contains("path blocked") {
+            return .blockedPath
+        }
+        if problem.contains("closed entrance") || problem.contains("entrance closed") {
+            return .closedEntrance
+        }
+        if problem.contains("elevator") {
+            return .elevatorOut
+        }
+        if problem == "other" || problem.contains("other problem") {
+            return .other
+        }
+        return nil
+    }
+
+    /// Submits a report at the user's location or a short distance ahead on the active route.
+    func submitReport(kind: ReportKind, useRouteAhead: Bool = false) async {
+        guard let services else { return }
+
+        guard let user = await services.auth.currentUser() else {
+            await say("Sign in to report a problem.", category: .system)
+            return
+        }
+
+        guard let location = directions?.lastLocation else {
+            await say(
+                "I couldn't determine your location. Try again when location is available.",
+                category: .system
+            )
+            return
+        }
+
+        let coordinate: GeoCoordinate
+        if useRouteAhead, let route = directions?.route {
+            let projection = route.projection(of: location)
+            if projection.distanceAlongRoute.isFinite {
+                coordinate = GeoMath.coordinate(
+                    atDistance: min(projection.distanceAlongRoute + 12, route.totalDistance),
+                    along: route.coordinates,
+                    cumulativeDistances: route.cumulativeDistances
+                )
+            } else {
+                coordinate = location
+            }
+        } else {
+            coordinate = location
+        }
+
+        let now = Date.now
+        let report = Report(
+            id: UUID().uuidString,
+            kind: kind,
+            coordinate: coordinate,
+            createdAt: now,
+            expiresAt: now.addingTimeInterval(kind.lifetime),
+            reporterID: user.id
+        )
+
+        do {
+            try await services.reports.submit(report)
+            await say("Reported \(kind.title.lowercased()). Thank you.", category: .system)
+        } catch {
+            await say(
+                "I couldn't send that report. Check your connection and try again.",
+                category: .system
+            )
+        }
+    }
+
     private func armSilenceTimer() {
         silenceTask?.cancel()
         silenceTask = Task { [weak self] in
@@ -340,6 +421,10 @@ final class TripSessionViewModel {
     private func respond(to text: String) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let services, !text.isEmpty else { return }
+        if let kind = Self.reportKind(for: text) {
+            await submitReport(kind: kind)
+            return
+        }
         if Self.asksForHelp(text) {
             onCallHelp?()
             return

@@ -21,6 +21,7 @@ struct AppServices: Sendable {
     var locationContext: any LocationContextProviding
     var commands: any CommandInterpreting
     var auth: any AuthService
+    var reports: any ReportService = PlaceholderReportService()
     var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
     /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
     var accountsAvailable = false
