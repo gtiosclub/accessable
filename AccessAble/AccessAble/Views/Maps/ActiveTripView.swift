@@ -178,7 +178,7 @@ struct ActiveTripView: View {
                 accessibilityLabel: session.directions?.mapAccessibilityLabel
                     ?? "Map showing walking directions to \(session.destinationName)."
             )
-        } else if let services {
+        } else if let services, session.isCameraReady {
             LiveSceneView(services: services, mode: .walk, chrome: .cameraOnly)
         } else {
             CameraBackdrop()

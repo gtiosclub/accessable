@@ -63,6 +63,9 @@ final class TripSessionViewModel {
     /// Whether this trip can geo-track, asked once: the view model lives for one trip, so the
     /// screen coming back doesn't wait on Apple again.
     @ObservationIgnored private var canGeoTrack: Bool?
+    /// The camera picture waits for this. Its view takes its own hold on the camera, and a hold taken before the
+    /// geo-tracking ask starts the session on world tracking, which a running session keeps for the whole trip.
+    private(set) var isCameraReady = false
 
     /// - Parameters:
     ///   - services: The app's services, for a real trip; nil for front end only.
@@ -175,10 +178,13 @@ final class TripSessionViewModel {
         } catch {
             log.error("No obstacle detection on the trip screen: \(error.localizedDescription, privacy: .public)")
         }
+        // also after a failed start, so the camera view can say what went wrong
+        isCameraReady = true
     }
 
     /// Gives back the camera the screen holds, if any.
     func closeCamera(_ camera: TripCamera) async {
+        isCameraReady = false
         guard let geoTracking = heldCamera else { return }
         // cleared first, so a run() that starts meanwhile keeps its own hold
         heldCamera = nil
