@@ -40,7 +40,10 @@ struct ARGeoLocationProvider: Sendable {
                              timestamp: update.timestamp, source: .ar)
     }
 
-    /// Degrees. A guess from the grade, like `horizontalAccuracy`; low is past what `HeadingEstimator` trusts.
+    /// Degrees. Unmeasured guesses until the AR-6 walk: ARKit grades the position, not the heading, so these only
+    /// assume a heading is as good as the position it came with. Fusion never trusts a low position, so low seldom
+    /// reaches `HeadingEstimator`; it can while an earlier reading's trust lasts, and is past the 25° it accepts, a
+    /// second guard.
     static func headingAccuracy(_ accuracy: GeoTrackingUpdate.Accuracy) -> Double? {
         switch accuracy {
         case .high: 5
