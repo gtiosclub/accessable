@@ -27,6 +27,9 @@ struct HeadingEstimator {
     static let maximumSampleAge: TimeInterval = 3
     // as long as `LocationFusion` trusts a reading, so one dropped reading doesn't flip the source
     private static let maximumARAge = LocationFusion.arLifetime
+    // Degrees. Walking, the camera's heading is used only this near the course: geo-tracking needs façades in view, so
+    // the camera often points to the side of the way the user walks. A guess, unmeasured until the AR-6 walk.
+    private static let maximumARCourseDisagreement: Double = 30
 
     mutating func update(with sample: LocationSample) {
         guard [sample.speed, sample.course, sample.courseAccuracy].allSatisfy({ $0?.isFinite ?? true }) else { return }
@@ -53,13 +56,19 @@ struct HeadingEstimator {
 
     /// nil means unknown: better no direction than a wrong one.
     func heading(at time: Date) -> UserHeading? {
-        // where the camera faces, matched to street imagery: sharper than a course or the compass (AR-4)
-        if let ar = trustedARHeading(at: time) { return ar }
+        let ar = trustedARHeading(at: time)
         if let location, isFresh(location.timestamp, at: time), Self.isWalking(location) {
-            // a phone swinging in a pocket gives a compass reading that isn't where the user faces
+            // a phone swinging in a pocket, or a camera pointed at a building to the side for geo-tracking, faces
+            // somewhere other than where the user walks
             guard let course = Self.walkingDirection(of: location) else { return nil }
+            // the camera, matched to street imagery, sharpens a course it agrees with; it never overrules one
+            if let ar, abs(RelativeBearing(degrees: ar.degrees - course).degrees) <= Self.maximumARCourseDisagreement {
+                return ar
+            }
             return UserHeading(degrees: course, source: .walkingDirection, timestamp: location.timestamp)
         }
+        // standing still, the phone is all there is to go by, and the camera's heading is sharper than the compass
+        if let ar { return ar }
         guard let compass, compass.accuracy <= Self.maximumCompassError, isFresh(compass.timestamp, at: time) else {
             return nil
         }

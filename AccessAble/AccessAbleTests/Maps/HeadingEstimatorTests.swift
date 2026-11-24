@@ -38,6 +38,25 @@ struct HeadingEstimatorTests {
         #expect(estimate([fix(speed: 0, source: .ar)], [arHeading(), compass(at: 0.5)], at: 0.5)?.source == .ar)
     }
 
+    @Test func walkingCourseWinsOverACameraPointedToTheSide() {
+        // walking north, the camera pointed at a building on the right for geo-tracking
+        #expect(estimate([fix(speed: 1.4, course: 0, source: .ar)], [arHeading(90)])
+            == UserHeading(degrees: 0, source: .walkingDirection, timestamp: start))
+        #expect(estimate([fix(speed: 1.4, course: 350, source: .ar)], [arHeading(21)])?.source == .walkingDirection)
+    }
+
+    @Test func arHeadingRefinesACourseItAgreesWith() {
+        #expect(estimate([fix(speed: 1.4, course: 0, source: .ar)], [arHeading(20)])
+            == UserHeading(degrees: 20, source: .ar, timestamp: start))
+        // across north, and exactly at the limit
+        #expect(estimate([fix(speed: 1.4, course: 350, source: .ar)], [arHeading(20)])?.source == .ar)
+    }
+
+    @Test func walkingWithNoUsableCourseIsUnknownEvenWithAnARHeading() {
+        // the camera faces where the phone does, which walking may not be
+        #expect(estimate([fix(speed: 1.4, course: nil, source: .ar)], [arHeading()]) == nil)
+    }
+
     @Test func staleOrRoughARHeadingFallsBack() {
         // trusted as long as the fusion trusts an AR reading, not just one geo-tracking interval
         #expect(estimate([fix(speed: 0, at: 1, source: .ar)], [compass(at: 3), arHeading()],
