@@ -12,7 +12,8 @@ struct ActiveTripView: View {
     @Environment(AppRouter.self) private var router
     @State private var session: TripSessionViewModel
     @State private var showsCommands = false
-    @State private var showsReportOptions = false
+    /// Where a report goes, set by the button that opens the choices, so it is what that button said.
+    @State private var reportSource: ReportSource?
     /// Report was tried from Voice Commands: its choices open once the sheet has closed, since a
     /// dialog can't open while the sheet is still going.
     @State private var reportsAfterCommands = false
@@ -44,10 +45,10 @@ struct ActiveTripView: View {
 
                 if session.isReportingAvailable {
                     Button("Report a problem here") {
-                        showsReportOptions = true
+                        reportSource = .here
                     }
                     .buttonStyle(.pill(.outline, size: .compact))
-                    .accessibilityHint("Choose the problem at your current location")
+                    .accessibilityHint("Choose the problem at your location")
                 }
 
                 Spacer()
@@ -80,7 +81,7 @@ struct ActiveTripView: View {
                     onReroute: { session.reroute() },
                     onPause: { session.pause() },
                     onContinue: { session.resume() },
-                    onReport: session.isReportingAvailable ? { showsReportOptions = true } : nil
+                    onReport: session.isReportingAvailable ? { reportSource = .routeAhead } : nil
                 )
                 .transition(.opacity)
             }
@@ -125,27 +126,25 @@ struct ActiveTripView: View {
         }
         .confirmationDialog(
             "What kind of problem?",
-            isPresented: $showsReportOptions,
-            titleVisibility: .visible
-        ) {
+            isPresented: Binding(get: { reportSource != nil }, set: { if !$0 { reportSource = nil } }),
+            titleVisibility: .visible,
+            presenting: reportSource
+        ) { source in
             ForEach(ReportKind.allCases) { kind in
                 Button(kind.title) {
-                    Task {
-                        await session.submitReport(
-                            kind: kind,
-                            useRouteAhead: session.isRouteBlocked
-                        )
-                    }
+                    Task { await session.submitReport(kind: kind, useRouteAhead: source == .routeAhead) }
                 }
             }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Choose the problem at this location.")
+        } message: { source in
+            Text(source == .routeAhead
+                 ? "Choose the problem just ahead on your route."
+                 : "Choose the problem at your location.")
         }
         .sheet(isPresented: $showsCommands, onDismiss: {
             guard reportsAfterCommands else { return }
             reportsAfterCommands = false
-            showsReportOptions = true
+            reportSource = .here
         }) {
             VoiceCommandsSheet(
                 onTry: { command in
@@ -164,6 +163,12 @@ struct ActiveTripView: View {
                 listsReport: session.isReportingAvailable
             )
         }
+    }
+
+    /// Where the person is, or just ahead on the route (from Route Blocked Ahead).
+    private enum ReportSource {
+        case here
+        case routeAhead
     }
 
     private enum VoiceState: Equatable {
@@ -371,8 +376,9 @@ struct RouteBlockedCard: View {
                 Button("Call Help", action: onCallHelp)
                     .buttonStyle(.pill(.outline))
                 if let onReport {
-                    Button("Report a problem here", action: onReport)
+                    Button("Report the blockage", action: onReport)
                         .buttonStyle(.pill(.outline))
+                        .accessibilityHint("Reports the problem just ahead on your route")
                 }
                 Button("Re-Route", action: onReroute)
                     .buttonStyle(.pill(.destructive))
