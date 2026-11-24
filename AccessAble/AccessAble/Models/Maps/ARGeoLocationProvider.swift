@@ -4,18 +4,22 @@ import Foundation
 struct ARGeoLocationProvider: Sendable {
     let geoTracking: any GeoTrackingProviding
 
-    /// Readings at every accuracy, low included; `FusedLocationProvider` decides which to trust.
-    func locationSamples() -> AsyncStream<LocationSample> {
+    /// Readings at every accuracy, low included, and each loss of the lock; `LocationFusion` decides which to trust.
+    func readings() -> AsyncStream<LocationFusion.Reading> {
         let updates = geoTracking.geoTrackingUpdates()
         return AsyncStream { continuation in
             let task = Task {
-                for await update in updates {
-                    if let sample = Self.sample(from: update) { continuation.yield(sample) }
-                }
+                for await update in updates { continuation.yield(Self.reading(from: update)) }
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// `.arLost` for any update without a usable position: geo-tracking stopped, is still localizing or lost its
+    /// lock, so AR mustn't be trusted until it localizes again.
+    static func reading(from update: GeoTrackingUpdate) -> LocationFusion.Reading {
+        sample(from: update).map { .ar($0) } ?? .arLost
     }
 
     /// Nil until geo-tracking has localized with a known accuracy.
@@ -46,11 +50,13 @@ struct ARGeoLocationProvider: Sendable {
         }
     }
 
-    /// Metres. ARKit gives only a grade, so these are cautious guesses until the AR-6 walk measures them.
+    /// Metres. ARKit gives only a grade, so these are cautious guesses until the AR-6 walk measures them. They are
+    /// no sharper than a good GPS fix, so a guess doesn't make AR pass gates tuned on GPS that GPS itself would not,
+    /// such as the tracker's 10 m for a wrong-way warning or the 20 m trip rerouting wants.
     static func horizontalAccuracy(_ accuracy: GeoTrackingUpdate.Accuracy) -> Double? {
         switch accuracy {
-        case .high: 3
-        case .medium: 8
+        case .high: 5
+        case .medium: 10
         case .low: 20
         case .undetermined: nil
         }

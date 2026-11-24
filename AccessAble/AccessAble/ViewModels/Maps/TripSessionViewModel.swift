@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+import os
+
+private let log = Logger(subsystem: "AccessAble", category: "TripSession")
 
 /// Owner: Maps (2.x) + Interaction (3.x). State for the redesigned trip screen.
 ///
@@ -55,6 +58,11 @@ final class TripSessionViewModel {
     @ObservationIgnored private var lastSaid: String?
     @ObservationIgnored private var silenceTask: Task<Void, Never>?
     @ObservationIgnored private var voiceTask: Task<Void, Never>?
+    /// Whether geo-tracking was asked for with the camera the screen holds; nil while it holds none.
+    @ObservationIgnored private var heldCamera: Bool?
+    /// Whether this trip can geo-track, asked once: the view model lives for one trip, so the
+    /// screen coming back doesn't wait on Apple again.
+    @ObservationIgnored private var canGeoTrack: Bool?
 
     /// - Parameters:
     ///   - services: The app's services, for a real trip; nil for front end only.
@@ -134,22 +142,60 @@ final class TripSessionViewModel {
                 await say("Directions start from where you are now, not from \(origin.name).", category: .system)
             }
         }
-        let holdsCamera = (try? await services.scene.start()) != nil
+        let camera = services.tripCamera
         await withDiscardingTaskGroup { group in
+            group.addTask { await self.openCamera(camera) }
             group.addTask { await directions.start() }
             group.addTask { await self.startWhenRouteIsReady() }
             group.addTask { await self.showAnnouncements(from: services.announcements) }
             group.addTask { await self.watchForBlockedPath(services.scene) }
         }
         stopListening()
-        if holdsCamera { await services.scene.stop() }
+        await closeCamera(camera)
     }
 
-    /// Starts walking as soon as a route is ready, and again after a re-route.
+    /// Opens the camera beside the route request rather than before it, since asking Apple about
+    /// geo-tracking can take a few seconds. The screen usually opens it before the trip goes active,
+    /// so it decides the tracking.
+    func openCamera(_ camera: TripCamera) async {
+        let geoTracking: Bool
+        if let canGeoTrack {
+            geoTracking = canGeoTrack
+        } else {
+            geoTracking = await camera.canGeoTrack()
+            // a cancelled check says no without Apple's answer, so it isn't kept
+            guard !Task.isCancelled else { return }
+            canGeoTrack = geoTracking
+        }
+        // the screen closed while Apple was asked
+        guard !Task.isCancelled else { return }
+        do {
+            try await camera.start(geoTracking: geoTracking)
+            heldCamera = geoTracking
+        } catch {
+            log.error("No obstacle detection on the trip screen: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Gives back the camera the screen holds, if any.
+    func closeCamera(_ camera: TripCamera) async {
+        guard let geoTracking = heldCamera else { return }
+        // cleared first, so a run() that starts meanwhile keeps its own hold
+        heldCamera = nil
+        await camera.stop(geoTracking: geoTracking)
+    }
+
+    /// Starts walking as soon as a route is ready, and again after a re-route. Each route is tried
+    /// once: a start that doesn't take (the refresh failed, or the trip stayed in planning) would
+    /// otherwise make `canStartTrip` true again at once and retry forever on the main actor.
     private func startWhenRouteIsReady() async {
         guard let directions else { return }
-        for await canStart in Observations({ directions.canStartTrip }) where canStart {
+        var tried: NavigationRoute?
+        for await ready in Observations({ directions.canStartTrip ? directions.route : nil }) {
+            guard let ready, ready != tried else { continue }
             await directions.startTrip()
+            // the route the start ended with: a refresh inside it may have replaced this one
+            tried = directions.route
         }
     }
 

@@ -23,8 +23,8 @@ struct HeadingEstimator {
     private static let maximumCourseError: Double = 45
     // close enough to tell one street from the next; worse means interference or a compass needing calibration
     private static let maximumCompassError: Double = 25
-    // an older reading may be from before the user turned
-    private static let maximumSampleAge: TimeInterval = 3
+    /// Seconds a reading counts for; an older one may be from before the user turned.
+    static let maximumSampleAge: TimeInterval = 3
     // geo-tracking sends one a second, so a longer gap means the camera stopped or lost its lock
     private static let maximumARAge: TimeInterval = 2
 

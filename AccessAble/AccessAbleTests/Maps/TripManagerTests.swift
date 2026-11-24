@@ -643,7 +643,7 @@ struct TripManagerTests {
             harness.clock.advance(by: 5)
         }
         await harness.engine.waitForCount(2)
-        await harness.engine.hold(text: "GPS signal is back.")
+        await harness.engine.hold(text: "Location signal is back.")
         let first = Task { await harness.fix(harness.point(60.2)) }
         await harness.engine.waitUntilHeld()
 
@@ -658,7 +658,7 @@ struct TripManagerTests {
         let texts = await harness.engine.texts
         #expect(!texts.contains("In about 40 metres, turn right onto Ferst Drive."))
         let ended = try #require(texts.firstIndex(of: "Trip ended."))
-        #expect(texts[..<ended].last == "GPS signal is back.")
+        #expect(texts[..<ended].last == "Location signal is back.")
     }
 
     @Test
@@ -781,7 +781,7 @@ struct TripManagerTests {
         await harness.fix(harness.point(1.4), accuracy: 40, then: 5)
         await harness.waitForSleepers(1)
         harness.clock.advance(by: 5)
-        await waitUntil { await harness.engine.texts.contains("GPS signal is weak. Directions may be delayed.") }
+        await waitUntil { await harness.engine.texts.contains("Location signal is weak. Directions may be delayed.") }
 
         await harness.manager.reroute()
         #expect(await harness.router.requests.isEmpty)
@@ -910,12 +910,12 @@ struct TripManagerTests {
         harness.clock.advance(by: 5)
         let warned = await harness.engine.waitForCount(2)
         let weak = try #require(warned.last)
-        #expect(weak.text == "GPS signal is weak. Directions may be delayed.")
+        #expect(weak.text == "Location signal is weak. Directions may be delayed.")
         #expect(weak.category == .system)
 
         await harness.fix(harness.point(2.8))
         let back = try #require(await harness.engine.waitForCount(3).last)
-        #expect(back.text == "GPS signal is back.")
+        #expect(back.text == "Location signal is back.")
         #expect(back.category == .system)
     }
 
@@ -1061,7 +1061,7 @@ struct TripManagerTests {
             harness.clock.advance(by: 5)
         }
         await harness.engine.waitForCount(2)
-        await harness.engine.hold(text: "GPS signal is back.")
+        await harness.engine.hold(text: "Location signal is back.")
         let turnFix = Task { await harness.fix(harness.point(92.4)) }
         await harness.engine.waitUntilHeld()
         await harness.manager.pauseTrip()
