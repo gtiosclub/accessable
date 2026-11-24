@@ -20,6 +20,9 @@ struct AppServices: Sendable {
     /// What the camera warns about, read by the pipeline every frame. AppViewModel keeps it
     /// in step with the profile.
     var alertSettings = AlertSettings()
+    /// What an answer the user asked for includes (T50). AppViewModel keeps it in step with
+    /// the profile.
+    var descriptionSettings = DescriptionSettings()
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
@@ -29,9 +32,11 @@ struct AppServices: Sendable {
         let announcements = AnnouncementEngine(speech: SpeechOutput(), haptics: haptics)
         let askAISettings = AskAISettings()
         let alertSettings = AlertSettings()
+        let descriptionSettings = DescriptionSettings()
         let scene = liveScene(
             performance: performance, announcements: announcements,
-            askAISettings: askAISettings, alertSettings: alertSettings
+            askAISettings: askAISettings, alertSettings: alertSettings,
+            descriptionSettings: descriptionSettings
         )
         let trip = PlaceholderTripProvider()        // TODO(Maps 2.2): TripManager / RouteProgressTracker
         let location = CoreLocationProvider()
@@ -66,7 +71,8 @@ struct AppServices: Sendable {
         performance: PerformanceModeMonitor,
         announcements: any AnnouncementSink,
         askAISettings: AskAISettings,
-        alertSettings: AlertSettings
+        alertSettings: AlertSettings,
+        descriptionSettings: DescriptionSettings
     ) -> any SceneObservationProviding & SceneDescribing {
         guard ARSessionManager.isSupported else { return PlaceholderSceneProvider() }
         return ARSceneAnalyzer(
@@ -75,7 +81,8 @@ struct AppServices: Sendable {
             performance: performance,
             announcements: announcements,
             askAI: AskAI(responder: RuledAskAIResponder(settings: askAISettings)), // T23 order, T24 rules
-            steering: SteeringTones()
+            steering: SteeringTones(),
+            descriptionSettings: descriptionSettings
         )
     }
 

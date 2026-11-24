@@ -64,6 +64,7 @@ struct CrowdAnnouncer: Sendable {
             distance: crowd.nearestDistance,
             bearing: crowd.bearing,
             source: .sceneDescription,
+            topic: .trafficAndCrowds,
             createdAt: now,
             expiresAt: now.addingTimeInterval(announcementLifetime),
             dedupKey: "crowd"

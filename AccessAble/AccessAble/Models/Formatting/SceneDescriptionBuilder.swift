@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import Synchronization
 
 /// The instant, offline answer to "Describe my surroundings" (Tier A).
 /// Owner: Computer Vision (1.3 / task T18).
@@ -14,6 +15,10 @@ import Foundation
 struct SceneDescriptionBuilder: Sendable {
     var maxItems = 4
     var crowdTuning = CrowdTuning.default
+    /// The user's `promptedTopics` decide which optional parts of the answer are included
+    /// (T50). Hazards are not optional: this is the answer to "what is around me", and
+    /// leaving out the thing that could hurt the user would not be a preference.
+    var profile = GuidanceProfile.default
 
     func describe(_ observation: SceneObservation) -> String {
         let grouped = detectCrowds(
@@ -23,12 +28,18 @@ struct SceneDescriptionBuilder: Sendable {
         let groupedIDs = grouped.groupedIDs
         let remaining = observation.prioritizedDetections.filter { !groupedIDs.contains($0.id) }
 
+        let crowds = profile.answerIncludes(.trafficAndCrowds) ? grouped.crowds : []
+        let objects = profile.answerIncludes(.structureBasics)
+            ? remaining.filter { !$0.isHazard && isWorthDescribing($0) }
+            : []
+        let text = profile.answerIncludes(.signsAndText) ? observation.recognizedText : []
+
         // Hazards keep their place at the front; a crowd outranks the rest of the scene.
         let sentences = observation.elevationHazards.map(SpokenPhrasing.describe)
             + remaining.filter(\.isHazard).map(SpokenPhrasing.describe)
-            + grouped.crowds.map(SpokenPhrasing.describe)
-            + remaining.filter { !$0.isHazard && isWorthDescribing($0) }.map(SpokenPhrasing.describe)
-            + observation.recognizedText.map { "\($0.string) is visible \(direction(of: $0.boundingBox.midX))." }
+            + crowds.map(SpokenPhrasing.describe)
+            + objects.map(SpokenPhrasing.describe)
+            + text.map { "\($0.string) is visible \(direction(of: $0.boundingBox.midX))." }
         guard !sentences.isEmpty else { return "Nothing detected nearby." }
         return sentences.prefix(maxItems).joined(separator: " ")
     }
@@ -45,5 +56,25 @@ struct SceneDescriptionBuilder: Sendable {
         case ..<0.66: "ahead"
         default: "on your right"
         }
+    }
+}
+
+
+/// The answer-shaping preferences the description path reads. AppViewModel keeps it in step
+/// with the profile, the way `AlertSettings` follows the alert filter (T50).
+///
+/// A holder rather than a parameter because `SceneDescribing.describeCurrentScene()` takes
+/// none, and widening that protocol would be a cross-subteam contract change for a setting
+/// only this side reads.
+final class DescriptionSettings: Sendable {
+    private let state = Mutex(GuidanceProfile.default)
+
+    init(profile: GuidanceProfile = .default) {
+        state.withLock { $0 = profile }
+    }
+
+    var profile: GuidanceProfile {
+        get { state.withLock { $0 } }
+        set { state.withLock { $0 = newValue } }
     }
 }

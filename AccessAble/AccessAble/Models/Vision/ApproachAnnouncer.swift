@@ -115,6 +115,7 @@ struct ApproachAnnouncer: Sendable {
                 distance: Double(threat.distance),
                 bearing: threat.bearing,
                 source: .obstacleDetection,
+                topic: .trafficAndCrowds,
                 createdAt: now,
                 expiresAt: now.addingTimeInterval(announcementLifetime),
                 dedupKey: "approach-\(threat.label)-\(confirmed)"

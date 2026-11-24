@@ -7,7 +7,9 @@ enum InfoTopicList: CaseIterable, Sendable {
     case unprompted
     case prompted
 
-    var keyPath: WritableKeyPath<SettingsPreferences, Set<InfoTopic>> {
+    /// These live on the `GuidanceProfile` rather than in `SettingsPreferences`, because the
+    /// announcement engine reads the profile (T50).
+    var keyPath: WritableKeyPath<GuidanceProfile, Set<InfoTopic>> {
         switch self {
         case .prioritized: \.prioritizedTopics
         case .unprompted: \.unpromptedTopics
@@ -61,15 +63,20 @@ final class SettingsViewModel {
     }
 
     func isSelected(_ topic: InfoTopic, in list: InfoTopicList) -> Bool {
-        preferences[keyPath: list.keyPath].contains(topic)
+        profile[keyPath: list.keyPath].contains(topic)
     }
 
     func toggle(_ topic: InfoTopic, in list: InfoTopicList) {
         if isSelected(topic, in: list) {
-            preferences[keyPath: list.keyPath].remove(topic)
+            profile[keyPath: list.keyPath].remove(topic)
         } else {
-            preferences[keyPath: list.keyPath].insert(topic)
+            profile[keyPath: list.keyPath].insert(topic)
         }
+    }
+
+    var autoRepeat: AutoRepeat {
+        get { profile.autoRepeat }
+        set { profile.autoRepeat = newValue }
     }
 
     func applyPreset(_ level: VisionLevel) {

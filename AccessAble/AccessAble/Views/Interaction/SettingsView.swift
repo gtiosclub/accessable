@@ -31,9 +31,9 @@ struct SettingsView: View {
                     ForEach(AutoRepeat.allCases, id: \.self) { option in
                         SettingsOptionRow(
                             option.displayName,
-                            isSelected: viewModel.preferences.autoRepeat == option
+                            isSelected: viewModel.autoRepeat == option
                         ) {
-                            viewModel.preferences.autoRepeat = option
+                            viewModel.autoRepeat = option
                         }
                     }
                 }

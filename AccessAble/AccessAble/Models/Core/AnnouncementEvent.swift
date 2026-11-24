@@ -47,6 +47,11 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
     /// Where the thing is relative to the user's facing direction, if known. Drives spatial audio.
     var bearing: RelativeBearing?
     var source: AnnouncementSource
+    /// Which kind of information this is, for the user's announcement preferences (T50).
+    /// nil means the preferences do not apply to it — a system message, say. It cannot be
+    /// worked out from `category` and `source`, which obstacles (T16) and approaches (T34)
+    /// share while belonging to different topics.
+    var topic: InfoTopic?
     var createdAt: Date
     /// After this time the event is stale and the engine may drop it without speaking.
     var expiresAt: Date?
@@ -66,6 +71,7 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
         distance: Double? = nil,
         bearing: RelativeBearing? = nil,
         source: AnnouncementSource,
+        topic: InfoTopic? = nil,
         createdAt: Date = .now,
         expiresAt: Date? = nil,
         dedupKey: String? = nil,
@@ -79,6 +85,7 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
         self.distance = distance
         self.bearing = bearing
         self.source = source
+        self.topic = topic
         self.createdAt = createdAt
         self.expiresAt = expiresAt
         self.dedupKey = dedupKey

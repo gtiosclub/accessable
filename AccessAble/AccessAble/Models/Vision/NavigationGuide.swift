@@ -274,6 +274,7 @@ struct NavigationGuide: Sendable {
             haptic: haptic,
             bearing: bearing,
             source: .navigation,
+            topic: .directions,
             createdAt: now,
             expiresAt: now.addingTimeInterval(tuning.announcementLifetime),
             dedupKey: "navigate-\(text)"

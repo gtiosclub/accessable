@@ -46,16 +46,71 @@ struct GuidanceProfile: Codable, Hashable, Sendable {
     /// What the camera warns about: the danger bar and warning distance, set on the Live
     /// detection screen.
     var alertFilter: AlertFilter = .default
+    /// Kinds of information that go first when several things could be announced at once (T50).
+    var prioritizedTopics: Set<InfoTopic> = [.detailedDescription, .trafficAndCrowds]
+    /// Kinds of information the app may volunteer, without being asked.
+    var unpromptedTopics: Set<InfoTopic> = [.directions, .trafficAndCrowds, .openingsAndObstacles]
+    /// Kinds of information an answer includes when the user does ask.
+    var promptedTopics: Set<InfoTopic> = [
+        .trafficAndCrowds, .signsAndText, .partiallyVisibleObjects, .structureBasics,
+    ]
+    /// How often an unprompted announcement may repeat itself.
+    var autoRepeat: AutoRepeat = .onlyWhenAsked
 
-    /// Whether this profile wants to hear an event at all. Critical events and replies to
-    /// something the user just asked for always pass.
+    /// Whether this profile wants to hear an event at all.
+    ///
+    /// Three things pass whatever the settings say: a `.critical` event, a reply to
+    /// something the user just asked for, and a hazard at `.high` or above.
+    ///
+    /// That last exemption applies to the topic lists only, not to `enabledCategories`.
+    /// Topics say how much detail the user wants, so letting one silence a warning would be
+    /// a safety setting disguised as a preference about information. Switching a whole
+    /// category off in Settings is a different matter: that is deliberate, and it is honoured.
     func allows(_ event: AnnouncementEvent) -> Bool {
         if event.priority == .critical || event.source == .userInteraction { return true }
         guard enabledCategories.contains(event.category) else { return false }
+        if !isSafetyWarning(event), let topic = event.topic, !unpromptedTopics.contains(topic) {
+            return false
+        }
         switch verbosity {
         case .passive: return event.priority >= .high
         case .active: return true
         }
+    }
+
+    /// Whether the user asked to hear this kind of thing first.
+    ///
+    /// Used only to order events that are already equally urgent. A preference never
+    /// outranks a more urgent announcement, which matters here: `.detailedDescription` is in
+    /// the default prioritized set, and promoting it over an obstacle warning would be
+    /// exactly the wrong trade.
+    func prefersFirst(_ event: AnnouncementEvent) -> Bool {
+        guard let topic = event.topic else { return false }
+        return prioritizedTopics.contains(topic)
+    }
+
+    /// How many times this announcement may repeat after the first time it is spoken; nil
+    /// for no limit.
+    ///
+    /// Safety warnings and answers the user asked for are never capped — a "Stop" that
+    /// cannot repeat itself is worse than useless.
+    func repeatLimit(for event: AnnouncementEvent) -> Int? {
+        if event.source == .userInteraction || isSafetyWarning(event) { return nil }
+        if event.priority == .critical { return nil }
+        return autoRepeat.allowedRepeats
+    }
+
+    /// Whether an answer the user asked for should include this kind of information.
+    ///
+    /// Deliberately separate from `unpromptedTopics`: one decides whether the app volunteers
+    /// something, the other decides what goes into a reply. Making them one filter would let
+    /// a preference silence the answer to a direct question.
+    func answerIncludes(_ topic: InfoTopic) -> Bool {
+        promptedTopics.contains(topic)
+    }
+
+    private func isSafetyWarning(_ event: AnnouncementEvent) -> Bool {
+        event.category == .hazard && event.priority >= .high
     }
 }
 
@@ -106,6 +161,7 @@ extension GuidanceProfile {
 extension GuidanceProfile {
     private enum CodingKeys: String, CodingKey {
         case visionLevel, channels, verbosity, speechRate, hapticIntensity, enabledCategories, aiPriorities, alertFilter
+        case prioritizedTopics, unpromptedTopics, promptedTopics, autoRepeat
     }
 
     init(from decoder: any Decoder) throws {
@@ -120,5 +176,15 @@ extension GuidanceProfile {
             aiPriorities: try container.decodeIfPresent(AIPriorities.self, forKey: .aiPriorities) ?? .default,
             alertFilter: try container.decodeIfPresent(AlertFilter.self, forKey: .alertFilter) ?? .default
         )
+        // Saved before T50: fall back to the defaults rather than to empty sets, which would
+        // read as "the user wants to hear nothing".
+        let fallback = GuidanceProfile.default
+        prioritizedTopics = try container.decodeIfPresent(Set<InfoTopic>.self, forKey: .prioritizedTopics)
+            ?? fallback.prioritizedTopics
+        unpromptedTopics = try container.decodeIfPresent(Set<InfoTopic>.self, forKey: .unpromptedTopics)
+            ?? fallback.unpromptedTopics
+        promptedTopics = try container.decodeIfPresent(Set<InfoTopic>.self, forKey: .promptedTopics)
+            ?? fallback.promptedTopics
+        autoRepeat = try container.decodeIfPresent(AutoRepeat.self, forKey: .autoRepeat) ?? fallback.autoRepeat
     }
 }

@@ -63,6 +63,7 @@ struct SignAnnouncer: Sendable {
                 distance: position.flatMap { position in heading.map { Double($0.distance(to: position)) } },
                 bearing: position.flatMap { position in heading.map { $0.bearing(to: position) } },
                 source: .textRecognition,
+                topic: .signsAndText,
                 createdAt: now,
                 expiresAt: now.addingTimeInterval(announcementLifetime),
                 dedupKey: "sign-\(key)"

@@ -12,9 +12,25 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
     private var current: AnnouncementEvent?
     private var last: AnnouncementEvent?
     private var recentKeys: [String: Date] = [:]
+    /// How many times each announcement has already been spoken in its current episode, for
+    /// the profile's `autoRepeat` limit (T50). Cleared per key once it goes quiet.
+    private var repeatCounts: [String: (count: Int, lastSpoken: Date)] = [:]
+    /// When the last thing was spoken, for the gap between announcements (T50).
+    private var lastSpokenAt: Date?
  
     private let dedupWindow: TimeInterval = 4
     private let defaultStaleness: TimeInterval = 5
+    /// Shortest gap between two spoken announcements, across every producer. The camera's
+    /// `SpeechBudget` paces its own announcers, but nothing paced the camera against the
+    /// maps side, so a turn instruction and an obstacle warning could run together with no
+    /// breath between them (T50).
+    ///
+    /// An event held by this gap is delayed rather than dropped: losing a turn cue because
+    /// an obstacle was announced a moment earlier is worse than hearing it a second late,
+    /// and `isStale` already discards anything that waited too long.
+    private let minimumGap: TimeInterval = 2.5
+    /// A key unheard for this long starts a new episode, so its repeat count resets.
+    private let repeatEpisodeGap: TimeInterval = 20
  
     init(speech: SpeechOutput, haptics: any HapticRendering) {
         self.speech = speech
@@ -24,7 +40,9 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
     // AnnouncementEngineProtocol
 
     func submit(_ event: AnnouncementEvent) async {
-        guard !isPaused, profile.allows(event), !event.isExpired(), !isDuplicate(event) else { return }
+        guard !isPaused, profile.allows(event), !event.isExpired(), !isDuplicate(event),
+              !hasRepeatedEnough(event)
+        else { return }
         await enqueue(event)
     }
  
@@ -58,7 +76,13 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
         if event.priority == .critical {
             queue.removeAll { $0.priority <= .normal }
         }
-        let index = queue.firstIndex { $0.priority < event.priority } ?? queue.endIndex
+        // Ordering is by urgency first. Among events of equal urgency, a topic the user asked
+        // to hear first goes ahead of one they did not — which is all a preference may do.
+        let preferred = profile.prefersFirst(event)
+        let index = queue.firstIndex { queued in
+            queued.priority < event.priority
+                || (queued.priority == event.priority && preferred && !profile.prefersFirst(queued))
+        } ?? queue.endIndex
         queue.insert(event, at: index)
  
         if event.priority == .critical, let current, current.priority < .critical {
@@ -72,6 +96,13 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
  
     private func drain() async {
         while let event = nextFreshEvent() {
+            await waitForGap(before: event)
+            // Waiting yields the actor, so a more urgent event may have arrived meanwhile.
+            // Put this one back and take the queue's view again rather than speaking it now.
+            if let queued = queue.first, queued.priority > event.priority {
+                queue.insert(event, at: 0)
+                continue
+            }
             current = event
             last = event
             delivered.send(event)
@@ -84,6 +115,8 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
             }
             if profile.channels.contains(.speech), !(event.hapticOnly && buzzes) {
                 await speech.speak(event.text, rate: profile.speechRate, interrupting: event.priority == .critical)
+                lastSpokenAt = .now
+                recordSpoken(event)
             }
             current = nil
         }
@@ -100,6 +133,34 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
         return Float(0.45 + proximity * 0.55)
     }
  
+    /// Holds a non-urgent announcement back until `minimumGap` has passed since the last
+    /// one. Critical events never wait.
+    private func waitForGap(before event: AnnouncementEvent) async {
+        guard event.priority != .critical, profile.channels.contains(.speech),
+              !event.hapticOnly, let lastSpokenAt
+        else { return }
+        let remaining = minimumGap - Date.now.timeIntervalSince(lastSpokenAt)
+        guard remaining > 0 else { return }
+        try? await Task.sleep(for: .seconds(remaining))
+    }
+
+    /// Whether this announcement has already repeated as often as the profile allows.
+    private func hasRepeatedEnough(_ event: AnnouncementEvent, now: Date = .now) -> Bool {
+        guard let limit = profile.repeatLimit(for: event) else { return false }
+        let key = event.dedupKey ?? event.text
+        guard let seen = repeatCounts[key], now.timeIntervalSince(seen.lastSpoken) < repeatEpisodeGap
+        else { return false }
+        return seen.count > limit
+    }
+
+    private func recordSpoken(_ event: AnnouncementEvent, now: Date = .now) {
+        let key = event.dedupKey ?? event.text
+        let previous = repeatCounts[key]
+        let continuing = previous.map { now.timeIntervalSince($0.lastSpoken) < repeatEpisodeGap } ?? false
+        repeatCounts[key] = (count: continuing ? (previous?.count ?? 0) + 1 : 1, lastSpoken: now)
+        repeatCounts = repeatCounts.filter { now.timeIntervalSince($0.value.lastSpoken) < repeatEpisodeGap }
+    }
+
     private func nextFreshEvent() -> AnnouncementEvent? {
         while !queue.isEmpty {
             let event = queue.removeFirst()

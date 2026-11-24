@@ -379,6 +379,7 @@ struct ObstacleAnnouncer: Sendable {
                     text: SpokenPhrasing.straightAhead,
                     bearing: .ahead,
                     source: .obstacleDetection,
+                    topic: .openingsAndObstacles,
                     createdAt: now,
                     expiresAt: now.addingTimeInterval(announcementLifetime),
                     dedupKey: Self.straightAheadKey
@@ -396,6 +397,7 @@ struct ObstacleAnnouncer: Sendable {
                 text: SpokenPhrasing.pathClear,
                 bearing: .ahead,
                 source: .obstacleDetection,
+                topic: .openingsAndObstacles,
                 createdAt: now,
                 expiresAt: now.addingTimeInterval(announcementLifetime),
                 dedupKey: "path-clear"
@@ -453,6 +455,7 @@ struct ObstacleAnnouncer: Sendable {
             distance: subject.distance,
             bearing: subject.bearing,
             source: .obstacleDetection,
+            topic: .openingsAndObstacles,
             createdAt: now,
             expiresAt: now.addingTimeInterval(announcementLifetime),
             // Not keyed by direction: "go left" then "go right" is the same warning to the engine.
@@ -518,6 +521,7 @@ struct ObstacleAnnouncer: Sendable {
                 distance: Double(hazard.distance),
                 bearing: .ahead,
                 source: .obstacleDetection,
+                topic: .openingsAndObstacles,
                 createdAt: now,
                 expiresAt: now.addingTimeInterval(announcementLifetime),
                 dedupKey: "surface-\(hazard.type.rawValue)-\(band)"

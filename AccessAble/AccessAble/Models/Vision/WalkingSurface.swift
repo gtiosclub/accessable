@@ -180,6 +180,7 @@ struct SurfaceAnnouncer: Sendable {
             haptic: .attention,
             bearing: .ahead,
             source: .obstacleDetection,
+            topic: .openingsAndObstacles,
             createdAt: now,
             expiresAt: now.addingTimeInterval(announcementLifetime),
             dedupKey: "surface-ahead-\(kind.rawValue)"
