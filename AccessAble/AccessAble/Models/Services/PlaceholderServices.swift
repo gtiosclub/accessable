@@ -283,23 +283,27 @@ actor PlaceholderPresenceService: PresenceService {
     }
 }
 
-/// Hands back a fake ticket and never rings anyone. Replaced by MATCH-x.
+
 struct PlaceholderCallSignaling: CallSignaling {
-    func incomingCalls() -> AsyncStream<CallTicket> {
-        AsyncStream { $0.finish() }
+    func requestCall(preferring volunteerID: String?) async throws -> CallTicket {
+        sampleTicket(volunteerID: volunteerID ?? "placeholder-volunteer")
     }
 
-    func startCall(to volunteerID: String) async throws -> CallTicket {
+    func accept(callID: String) async throws -> CallTicket {
+        sampleTicket(volunteerID: "placeholder-volunteer")
+    }
+
+    func decline(callID: String) async throws {}
+    func skip(callID: String) async throws {}
+    func endCall(callID: String) async {}
+
+    private func sampleTicket(volunteerID: String) -> CallTicket {
         CallTicket(
             callID: UUID().uuidString, roomName: "placeholder-room", token: "placeholder-token",
             callerID: "placeholder-caller", volunteerID: volunteerID,
             expiresAt: Date().addingTimeInterval(60)
         )
     }
-
-    func accept(_ ticket: CallTicket) async throws {}
-    func decline(_ ticket: CallTicket) async throws {}
-    func end(_ ticket: CallTicket) async {}
 }
 
 /// Walks through the states without touching LiveKit or the camera. Replaced by MATCH-x.

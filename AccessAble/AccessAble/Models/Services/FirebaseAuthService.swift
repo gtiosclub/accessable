@@ -45,6 +45,15 @@ final class FirebaseAuthService: AuthService {
             throw AuthError(firebaseError: error)
         }
     }
+    
+    nonisolated func idToken() async throws -> String {
+        guard let user = Auth.auth().currentUser else { throw AuthError.unknown }
+        do {
+            return try await user.getIDToken()
+        } catch {
+            throw AuthError(firebaseError: error)
+        }
+    }
 }
 
 private extension AuthError {

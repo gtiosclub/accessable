@@ -111,6 +111,7 @@ final class FirestorePresenceService: PresenceService {
             "displayName": profile.displayName,
             "languages": profile.languages,
             "isOnline": true,
+            "inCall": false,
             "lastSeen": FieldValue.serverTimestamp(),
         ]
         // Updating a missing document is refused by the rules as permission-denied, not notFound,

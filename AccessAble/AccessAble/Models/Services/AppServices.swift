@@ -79,6 +79,9 @@ struct AppServices: Sendable {
             services.volunteers = FirestoreVolunteerDirectory()
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
+            if let tokenURL = LiveKitConfig.callTokenURL {
+                services.callSignaling = FirestoreCallSignaling(auth: services.auth, tokenURL: tokenURL)
+            }
         }
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
@@ -97,13 +100,6 @@ struct AppServices: Sendable {
             )
         }
         
-        #if DEBUG
-        // Until MATCH-1's Worker exists, test calls use LiveKit's development token server.
-        if let id = ProcessInfo.processInfo.environment["LIVEKIT_DEV_TOKEN_SERVER_ID"],
-           !id.isEmpty, !id.contains("$(") {
-            services.callSignaling = DevelopmentCallSignaling(serverID: id, auth: services.auth)
-        }
-        #endif
         return services
     }
 
@@ -153,6 +149,7 @@ struct AppServices: Sendable {
         services.volunteers = PlaceholderVolunteerDirectory()
         services.presence = PlaceholderPresenceService()
         services.videoCall = PlaceholderVideoCallSession()
+        services.callSignaling = PlaceholderCallSignaling()
         return services
     }
 }
