@@ -52,7 +52,8 @@ private struct ScriptedGPS: LocationProvider {
 struct ARGeoLocationProviderTests {
     @Test
     func readingOnlyOnceLocalizedWithAKnownAccuracy() {
-        #expect(ARGeoLocationProvider.sample(from: update(0))?.horizontalAccuracy == 3)
+        #expect(ARGeoLocationProvider.sample(from: update(0))?.horizontalAccuracy == 5)
+        #expect(ARGeoLocationProvider.sample(from: update(0, accuracy: .medium))?.horizontalAccuracy == 10)
         #expect(ARGeoLocationProvider.sample(from: update(0))?.source == .ar)
         #expect(ARGeoLocationProvider.sample(from: update(0, accuracy: .low))?.horizontalAccuracy == 20)
         #expect(ARGeoLocationProvider.sample(from: update(0, accuracy: .undetermined)) == nil)
