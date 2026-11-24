@@ -29,6 +29,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     private let processor: LatestOnlyProcessor<CapturedFrame>
     /// Returns whether tracking had to restart; see `ARSessionManager.setMeshReconstruction`.
     private let setMeshReconstruction: @MainActor @Sendable (Bool) -> Bool
+    /// `ARSessionManager.start()`.
+    private let startSession: @MainActor @Sendable () throws -> Void
     /// Announcements go through a stream drained by one task, so they reach the sink in
     /// order without the analysis queue ever waiting on it.
     private let announcementQueue: AsyncStream<AnnouncementEvent>.Continuation
@@ -61,10 +63,12 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         announcements: any AnnouncementSink,
         askAI: AskAI = AskAI(),
         steering: SteeringTones? = nil,
-        setMeshReconstruction: (@MainActor @Sendable (Bool) -> Bool)? = nil
+        setMeshReconstruction: (@MainActor @Sendable (Bool) -> Bool)? = nil,
+        startSession: (@MainActor @Sendable () throws -> Void)? = nil
     ) {
         self.sessionManager = sessionManager
         self.setMeshReconstruction = setMeshReconstruction ?? { sessionManager.setMeshReconstruction($0) }
+        self.startSession = startSession ?? { try sessionManager.start() }
         self.perception = perception
         self.performance = performance
         self.askAI = askAI
@@ -147,8 +151,9 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         }
         // A new session starts with no "take me to…" request; the mode decides the mesh.
         state.withLock { $0.navigationQuery = nil }
-        sessionManager.setMeshReconstruction(perception.mode.usesMesh)
-        try sessionManager.start()
+        // the session isn't running yet, so this never restarts it
+        _ = setMeshReconstruction(perception.mode.usesMesh)
+        try startSession()
         clientCount = 1
         // Tracking restarts from scratch, so nothing remembered about the old world holds.
         perception.reset()
@@ -215,8 +220,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     /// A session that could not relocalize comes back as a different world, so tracking is
     /// re-run from scratch and the remembered floor and occupancy map, anchored in
-    /// coordinates that no longer mean anything, are cleared. It doesn't go through
-    /// `start()`: that would add a camera hold nobody releases.
+    /// coordinates that no longer mean anything, are cleared; an active "take me to…" request
+    /// is kept. It doesn't go through `start()`: that would add a camera hold nobody releases.
     func restartGuidance() async throws {
         try await restartTracking()
     }
@@ -224,8 +229,16 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     @MainActor
     private func restartTracking() throws {
         guard clientCount > 0 else { return }
-        try sessionManager.start()
+        try startSession()
+        resetPerceptionKeepingNavigation()
+    }
+
+    /// Forgets the old world after tracking restarted, but not the "take me to…" request: the
+    /// user still wants it. The latest one is put back, so a request made meanwhile isn't undone.
+    @MainActor
+    private func resetPerceptionKeepingNavigation() {
         perception.reset()
+        if let query = state.withLock({ $0.navigationQuery }) { perception.navigate(to: query) }
     }
 
     /// Tells the analyzer how the device is held, so Vision gets the right image
@@ -358,12 +371,9 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     private func updateMesh() {
         let wanted = perception.mode.usesMesh || state.withLock { $0.navigationQuery != nil }
         Task { @MainActor [self] in
-            // Leaving geo-tracking for the mesh restarts the world, so nothing remembered holds
-            // except the "take me to…" request, which is what wanted the mesh. The latest one is
-            // put back, so a request made meanwhile isn't undone.
+            // leaving geo-tracking for the mesh restarts the world
             guard setMeshReconstruction(wanted) else { return }
-            perception.reset()
-            if let query = state.withLock({ $0.navigationQuery }) { perception.navigate(to: query) }
+            resetPerceptionKeepingNavigation()
         }
     }
 

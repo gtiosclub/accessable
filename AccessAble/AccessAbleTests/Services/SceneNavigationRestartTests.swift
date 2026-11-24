@@ -63,4 +63,24 @@ struct SceneNavigationRestartTests {
 
         #expect(perception.navigationQuery == nil)
     }
+
+    @Test(.timeLimit(.minutes(1)))
+    func takeMeToSurvivesRestartingGuidance() async throws {
+        let perception = ScenePerception()
+        let analyzer = ARSceneAnalyzer(
+            sessionManager: ARSessionManager(),
+            perception: perception,
+            performance: PerformanceModeMonitor(),
+            announcements: PlaceholderAnnouncementEngine(),
+            setMeshReconstruction: { _ in false },
+            startSession: {}
+        )
+        try await analyzer.start()
+        analyzer.navigate(to: "the door")
+
+        try await analyzer.restartGuidance()
+
+        #expect(perception.navigationQuery == "the door")
+        await analyzer.stop()
+    }
 }
