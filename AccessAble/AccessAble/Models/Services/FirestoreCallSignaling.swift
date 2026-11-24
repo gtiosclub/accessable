@@ -13,7 +13,7 @@ struct FirestoreCallSignaling: CallSignaling {
     static let staleRingAfter: TimeInterval = 45
 
     let auth: any AuthService
-    let tokenURL: URL
+    let tokenURL: URL?
 
     // MARK: - Caller
 
@@ -21,6 +21,7 @@ struct FirestoreCallSignaling: CallSignaling {
         preferring preferredID: String?,
         progress: @Sendable (CallRequestProgress) -> Void
     ) async throws -> CallTicket {
+        guard tokenURL != nil else { throw CallSignalingError.notConfigured }
         do {
             return try await ringUntilAnswered(preferring: preferredID, progress: progress)
         } catch let error where Self.isOffline(error) {
@@ -115,6 +116,7 @@ struct FirestoreCallSignaling: CallSignaling {
     // MARK: - Volunteer
 
     func accept(callID: String) async throws -> CallTicket {
+        guard tokenURL != nil else { throw CallSignalingError.notConfigured }
         guard let me = await auth.currentUser()?.id else { throw CallSignalingError.signedOut }
         let db = Firestore.firestore()
         let callRef = db.collection("calls").document(callID)
@@ -334,6 +336,7 @@ struct FirestoreCallSignaling: CallSignaling {
     /// Asks getCallToken for this call's LiveKit token. The Worker checks the Firebase sign-in and
     /// reads the call with it, so the rules decide; it only answers once the call is accepted.
     private func ticket(for callID: String) async throws -> CallTicket {
+        guard let tokenURL else { throw CallSignalingError.notConfigured }
         let idToken = try await auth.idToken()
         var request = URLRequest(url: tokenURL)
         request.httpMethod = "POST"
@@ -386,6 +389,7 @@ struct FirestoreCallSignaling: CallSignaling {
 }
 
 enum CallSignalingError: LocalizedError, Equatable, Sendable {
+    case notConfigured
     case signedOut
     /// Nobody is online, or everyone online is already in a call or being rung.
     case noVolunteers
@@ -401,6 +405,7 @@ enum CallSignalingError: LocalizedError, Equatable, Sendable {
 
     var errorDescription: String? {
         switch self {
+        case .notConfigured: "Calls aren't configured. Set CALL_TOKEN_URL to the deployed token Worker."
         case .signedOut: "Sign in to make or answer calls."
         case .noVolunteers: "No volunteers are online right now."
         case .nobodyAnswered: "No volunteer could take the call right now."

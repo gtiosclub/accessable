@@ -102,6 +102,9 @@ service cloud.firestore {
       allow list: if signedIn() && request.query.limit <= 100;
       allow create: if signedIn() && request.auth.uid == uid
         && isValidVolunteer(request.resource.data)
+        && request.resource.data.inCall == false
+        && request.resource.data.get('ringingCallId', null) == null
+        && request.resource.data.get('ringingSince', null) == null
         && request.resource.data.lastSeen == request.time
         && get(/databases/$(database)/documents/users/$(uid)).data.role == 'volunteer';
             allow update: if signedIn() && isValidVolunteer(request.resource.data)
@@ -110,8 +113,22 @@ service cloud.firestore {
       function isOwnUpdate() {
         return request.auth.uid == uid
           && request.resource.data.lastSeen == request.time
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['inCall'])
+              || request.resource.data.inCall == false || isOwnAnswerClear())
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['ringingCallId', 'ringingSince'])
+              || isOwnAnswerClear())
           && (!request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeen'])
               || request.time >= resource.data.lastSeen + duration.value(20, 's'));
+      }
+
+      // An owner's profile/availability write must not forge, replace or silently erase a ring.
+      function isOwnAnswerClear() {
+        let id = resource.data.get('ringingCallId', null);
+        return id is string
+          && request.resource.data.get('ringingCallId', null) == null
+          && request.resource.data.get('ringingSince', null) == null
+          && getAfter(/databases/$(database)/documents/calls/$(id)).data.volunteerId == uid
+          && getAfter(/databases/$(database)/documents/calls/$(id)).data.status in ['accepted', 'declined', 'ended'];
       }
 
       function isRing() {
@@ -131,7 +148,8 @@ service cloud.firestore {
 
       function isNewRingFromMe(callId) {
         let call = getAfter(/databases/$(database)/documents/calls/$(callId)).data;
-        return call.callerId == request.auth.uid && call.volunteerId == uid && call.status == 'ringing';
+        return !exists(/databases/$(database)/documents/calls/$(callId))
+          && call.callerId == request.auth.uid && call.volunteerId == uid && call.status == 'ringing';
       }
 
       function isCallerClear() {
@@ -179,6 +197,17 @@ service cloud.firestore {
             .data.displayName.replace('^\\s+', '').split('\\s+')[0]);
       }
 
+      // Require a new paired reservation, not a pointer left behind by an earlier write.
+      // Rules enforce atomic invariants, whether a client uses a transaction or write batch.
+      function hasFreshReservation() {
+        let path = /databases/$(database)/documents/volunteers/$(request.resource.data.volunteerId);
+        let before = get(path).data;
+        let after = getAfter(path).data;
+        return before.get('ringingCallId', null) != callId
+          && after.get('ringingCallId', null) == callId
+          && after.get('ringingSince', null) == request.time;
+      }
+
       allow get: if signedIn() && isParty();
 
       allow create: if signedIn()
@@ -193,8 +222,7 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time
         // The same write must ring the volunteer; the volunteers rules check they were free.
-        && getAfter(/databases/$(database)/documents/volunteers/$(request.resource.data.volunteerId))
-             .data.get('ringingCallId', null) == callId;
+        && hasFreshReservation();
 
       allow update: if signedIn()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])

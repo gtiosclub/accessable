@@ -20,6 +20,9 @@ final class LiveKitVideoCallSession: VideoCallSession {
     private var monitor: Task<Void, Never>?
     /// Whether the other person has joined, so their leaving can be noticed.
     private var sawPartner = false
+    private var isJoining = false
+    private var connectionGeneration = UUID()
+    private var partnerDeadline: Date?
 
     /// Main-actor read access for the volunteer's renderer; never exposes tokens or the Room.
     var remoteVideoTrack: VideoTrack? {
@@ -50,37 +53,58 @@ final class LiveKitVideoCallSession: VideoCallSession {
     // MARK: - Joining and leaving
 
     private func join(_ ticket: CallTicket) async throws {
-        guard room == nil else { throw CallSessionError.alreadyInCall }
+        guard room == nil, !isJoining else { throw CallSessionError.alreadyInCall }
         guard let url = LiveKitConfig.serverURL else { throw CallSessionError.notConfigured }
         guard !ticket.isExpired() else { throw CallSessionError.expiredTicket }
+        isJoining = true
+        defer { isJoining = false }
+        let generation = UUID()
+        connectionGeneration = generation
+        var attemptedRoom: Room?
         broadcaster.send(.connecting)
         do {
             // The caller sends their back camera; the volunteer sends only their voice.
-            let isCaller = await auth.currentUser()?.id == ticket.callerID
+            let uid = await auth.currentUser()?.id
+            try checkJoin(generation)
+            guard uid == ticket.callerID || uid == ticket.volunteerID else { throw CallSessionError.notParticipant }
+            let isCaller = uid == ticket.callerID
             try await requestPermission(.audio)
+            try checkJoin(generation)
             if isCaller { try await requestPermission(.video) }
+            try checkJoin(generation)
             configureAudio()
             // Camera rule: AR lets go of the camera before LiveKit takes it.
             if isCaller { cameraToken = try pauseCamera() }
 
             let room = Room()
+            attemptedRoom = room
             self.room = room
             try await room.connect(url: url.absoluteString, token: ticket.token)
+            try checkJoin(generation)
             try await room.localParticipant.setMicrophone(enabled: true)
+            try checkJoin(generation)
             if isCaller { try await publishCamera(position: .back) }
+            try checkJoin(generation)
 
             sawPartner = !room.remoteParticipants.isEmpty
+            partnerDeadline = Date().addingTimeInterval(30)
             broadcaster.send(.connected)
             startMonitoring()
         } catch {
+            // An in-flight room.connect may complete after disconnect invalidated this join.
+            // Stop that local Room even if it was already removed from self.room.
+            if let attemptedRoom { await attemptedRoom.disconnect() }
             await cleanUp()
-            broadcaster.send(.failed((error as? LocalizedError)?.errorDescription ?? "Couldn't connect the call."))
+            if connectionGeneration == generation, !Task.isCancelled {
+                broadcaster.send(.failed((error as? LocalizedError)?.errorDescription ?? "Couldn't connect the call."))
+            }
             throw error
         }
     }
 
     private func leave(_ reason: CallState.EndReason) async {
-        guard room != nil || cameraToken != nil else { return }
+        guard room != nil || cameraToken != nil || isJoining else { return }
+        connectionGeneration = UUID()
         await cleanUp()
         broadcaster.send(.ended(reason))
     }
@@ -95,6 +119,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
         cameraTrack = nil
         cameraPosition = .back
         sawPartner = false
+        partnerDeadline = nil
         // Camera rule: AR (and CV with it) resumes only after LiveKit has let go.
         if let token = cameraToken {
             cameraToken = nil
@@ -121,7 +146,15 @@ final class LiveKitVideoCallSession: VideoCallSession {
             sawPartner = true
         } else if sawPartner {
             await leave(.remoteLeft)
+        } else if let partnerDeadline, Date() >= partnerDeadline {
+            // The other side failed before joining: don't strand a volunteer inCall forever.
+            await leave(.unanswered)
         }
+    }
+
+    private func checkJoin(_ generation: UUID) throws {
+        try Task.checkCancellation()
+        guard connectionGeneration == generation else { throw CancellationError() }
     }
 
     // MARK: - Audio
@@ -192,11 +225,13 @@ final class LiveKitVideoCallSession: VideoCallSession {
 }
 
 enum CallSessionError: LocalizedError, Sendable {
+    case notParticipant
     case notConfigured, alreadyInCall, expiredTicket, notConnected, noCamera, noFlashlight
     case permissionDenied(String)
 
     var errorDescription: String? {
         switch self {
+        case .notParticipant: "Sign in to the account that belongs to this call."
         case .notConfigured: "Calls aren't set up on this phone. Add LIVEKIT_URL to Secrets.xcconfig."
         case .alreadyInCall: "A call is already in progress."
         case .expiredTicket: "This call request expired. Try calling again."
