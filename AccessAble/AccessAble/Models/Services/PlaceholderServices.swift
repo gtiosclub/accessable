@@ -285,8 +285,12 @@ actor PlaceholderPresenceService: PresenceService {
 
 
 struct PlaceholderCallSignaling: CallSignaling {
-    func requestCall(preferring volunteerID: String?) async throws -> CallTicket {
-        sampleTicket(volunteerID: volunteerID ?? "placeholder-volunteer")
+    func requestCall(
+        preferring volunteerID: String?,
+        progress: @Sendable (CallRequestProgress) -> Void
+    ) async throws -> CallTicket {
+        progress(.ringing(attempt: 1))
+        return sampleTicket(volunteerID: volunteerID ?? "placeholder-volunteer")
     }
 
     func accept(callID: String) async throws -> CallTicket {

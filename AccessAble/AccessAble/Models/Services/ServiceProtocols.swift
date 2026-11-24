@@ -177,14 +177,26 @@ protocol PresenceService: Sendable {
     func setOnline(_ isOnline: Bool) async throws
 }
 
+/// What a caller hears while `requestCall` works (VOLUNTEER-7).
+enum CallRequestProgress: Equatable, Sendable {
+    enum Miss: Equatable, Sendable { case noAnswer, declined }
+    /// Ringing a volunteer; `attempt` counts from 1.
+    case ringing(attempt: Int)
+    /// The last volunteer declined or didn't answer in 30 seconds; the next one is about to ring.
+    case tryingNext(after: Miss)
+}
 
 /// Matching (VOLUNTEER-6): the caller's app rings one volunteer at a time as Firestore transactions,
 /// and firestore.rules enforce every step. Tickets come only from the getCallToken Worker.
 protocol CallSignaling: Sendable {
     /// Caller: rings online volunteers one at a time (`volunteerID` first, if given) until one accepts,
     /// then returns the ticket. A decline or 30 seconds moves on to the next volunteer.
-    func requestCall(preferring volunteerID: String?) async throws -> CallTicket
-    /// Volunteer: answers a call that's ringing them. Throws if it was taken or ended.
+    /// Caller: rings online volunteers one at a time (`volunteerID` first, if given) until one accepts,
+    /// then returns the ticket. A decline or 30 seconds moves on to the next volunteer, reported on `progress`.
+    func requestCall(
+        preferring volunteerID: String?,
+        progress: @Sendable (CallRequestProgress) -> Void
+    ) async throws -> CallTicket    /// Volunteer: answers a call that's ringing them. Throws if it was taken or ended.
     func accept(callID: String) async throws -> CallTicket
     /// Volunteer: turns down a call that's ringing them.
     func decline(callID: String) async throws

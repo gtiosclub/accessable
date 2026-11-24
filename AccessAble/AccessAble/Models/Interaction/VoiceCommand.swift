@@ -8,6 +8,7 @@ enum VoiceCommand: Equatable, Sendable {
     case pauseTrip
     case resumeTrip
     case endTrip
+    case callVolunteer
     /// A general question to answer in words.
     case ask(String)
     /// Nothing matched. Carries the original text for logging.

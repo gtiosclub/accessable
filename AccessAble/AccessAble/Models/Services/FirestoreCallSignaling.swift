@@ -1,9 +1,10 @@
 import FirebaseFirestore
 import Foundation
 
-/// Owner: Calls (VOLUNTEER-6). Matching with no Cloud Functions: each step is a Firestore
-/// transaction in the app, and firebase/firestore.rules enforce every step (see the race tests in
-/// firebase/tests/calls.test.js, whose helpers write exactly what this file writes).
+/// Owner: Calls (VOLUNTEER-6; progress and failure kinds from VOLUNTEER-7).
+/// Matching with no Cloud Functions: each step is a Firestore transaction in the app, and
+/// firebase/firestore.rules enforce every step (see the race tests in firebase/tests/calls.test.js,
+/// whose helpers write exactly what this file writes).
 /// LiveKit tokens come only from the getCallToken Worker.
 struct FirestoreCallSignaling: CallSignaling {
     /// How long one volunteer rings before the caller skips to the next.
@@ -16,14 +17,33 @@ struct FirestoreCallSignaling: CallSignaling {
 
     // MARK: - Caller
 
-    func requestCall(preferring preferredID: String?) async throws -> CallTicket {
+    func requestCall(
+        preferring preferredID: String?,
+        progress: @Sendable (CallRequestProgress) -> Void
+    ) async throws -> CallTicket {
+        do {
+            return try await ringUntilAnswered(preferring: preferredID, progress: progress)
+        } catch let error where Self.isOffline(error) {
+            throw CallSignalingError.offline
+        }
+    }
+
+    private func ringUntilAnswered(
+        preferring preferredID: String?,
+        progress: @Sendable (CallRequestProgress) -> Void
+    ) async throws -> CallTicket {
         guard let me = await auth.currentUser()?.id else { throw CallSignalingError.signedOut }
         var tried: Set<String> = [me]
+        var attempts = 0
+        var lastMiss: CallRequestProgress.Miss?
 
         while true {
             try Task.checkCancellation()
             let candidates = try await freeVolunteers(excluding: tried, preferring: preferredID)
-            guard !candidates.isEmpty else { throw CallSignalingError.noVolunteers }
+            guard !candidates.isEmpty else {
+                // Nobody online at all, or everyone we rang declined or didn't answer.
+                throw attempts == 0 ? CallSignalingError.noVolunteers : CallSignalingError.nobodyAnswered
+            }
 
             // Ring the first one who is still free; someone else may have rung them a moment ago.
             var ringing: String?
@@ -35,6 +55,9 @@ struct FirestoreCallSignaling: CallSignaling {
                 }
             }
             guard let callID = ringing else { continue }
+            attempts += 1
+            if let lastMiss { progress(.tryingNext(after: lastMiss)) }
+            progress(.ringing(attempt: attempts))
 
             let answer: Answer
             do {
@@ -49,7 +72,7 @@ struct FirestoreCallSignaling: CallSignaling {
             case .accepted:
                 return try await ticket(for: callID)
             case .notAnswered:
-                continue
+                lastMiss = .declined
             case .timedOut:
                 do {
                     try await skip(callID: callID)
@@ -57,6 +80,7 @@ struct FirestoreCallSignaling: CallSignaling {
                     // They picked up just as the 30 seconds ran out: join instead of skipping.
                     return try await ticket(for: callID)
                 }
+                lastMiss = .noAnswer
             }
         }
     }
@@ -200,10 +224,11 @@ struct FirestoreCallSignaling: CallSignaling {
     /// Online volunteers who can be rung now, `preferredID` first, then the most recently seen.
     private func freeVolunteers(excluding tried: Set<String>, preferring preferredID: String?) async throws -> [String] {
         // The rules require a limit of at most 100. One equality filter needs no index.
+        // From the server, so being offline fails here instead of returning an old cached list.
         let snapshot = try await Firestore.firestore().collection("volunteers")
             .whereField("isOnline", isEqualTo: true)
             .limit(to: 100)
-            .getDocuments()
+            .getDocuments(source: .server)
         let now = Date()
         return snapshot.documents
             .compactMap { Volunteer(id: $0.documentID, firestoreData: $0.data()) }
@@ -248,6 +273,7 @@ struct FirestoreCallSignaling: CallSignaling {
             } as? String
             return outcome == "rang" ? callID : nil
         } catch {
+            if Self.isOffline(error) { throw error }
             // The rules refused (they're ringing or went offline a moment ago): try the next one.
             return nil
         }
@@ -281,6 +307,21 @@ struct FirestoreCallSignaling: CallSignaling {
         }
     }
 
+    /// No connection: Firestore can't reach its server, or the request to the Worker couldn't get through.
+    private static func isOffline(_ error: Error) -> Bool {
+        let error = error as NSError
+        if error.domain == FirestoreErrorDomain {
+            return error.code == FirestoreErrorCode.unavailable.rawValue
+        }
+        if error.domain == NSURLErrorDomain {
+            return [
+                NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorTimedOut,
+                NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost, NSURLErrorDataNotAllowed,
+            ].contains(error.code)
+        }
+        return false
+    }
+
     // MARK: - Token Worker
 
     /// Asks getCallToken for this call's LiveKit token. The Worker checks the Firebase sign-in and
@@ -293,7 +334,13 @@ struct FirestoreCallSignaling: CallSignaling {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONEncoder().encode(["callId": callID])
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch let error where Self.isOffline(error) {
+            throw CallSignalingError.offline
+        }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             let message = (try? JSONDecoder().decode(WorkerError.self, from: data))?.error
             throw CallSignalingError.tokenRefused(message ?? "Couldn't get a call token. Try again.")
@@ -333,7 +380,12 @@ struct FirestoreCallSignaling: CallSignaling {
 
 enum CallSignalingError: LocalizedError, Equatable, Sendable {
     case signedOut
+    /// Nobody is online, or everyone online is already in a call or being rung.
     case noVolunteers
+    /// Volunteers were rung, but every one declined or didn't answer.
+    case nobodyAnswered
+    /// No internet connection.
+    case offline
     /// The volunteer picked up before the caller's skip went through.
     case callAccepted
     /// Shown to a volunteer whose accept lost the race.
@@ -343,7 +395,9 @@ enum CallSignalingError: LocalizedError, Equatable, Sendable {
     var errorDescription: String? {
         switch self {
         case .signedOut: "Sign in to make or answer calls."
-        case .noVolunteers: "No volunteers are available right now. Try again in a few minutes."
+        case .noVolunteers: "No volunteers are online right now."
+        case .nobodyAnswered: "No volunteer could take the call right now."
+        case .offline: "You're offline. Check your internet connection."
         case .callAccepted: "The volunteer already answered."
         case .callTaken: "This call was taken or ended."
         case .tokenRefused(let message): message

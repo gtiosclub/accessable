@@ -14,6 +14,7 @@ struct LandingView: View {
         VStack(spacing: 12) {
             topBar
             Spacer()
+            callButton
             volunteersButton
             searchButton
         }
@@ -57,6 +58,16 @@ struct LandingView: View {
         }
         .buttonStyle(.pill(.outline))
         .accessibilityHint("See which volunteers are online")
+    }
+    
+    private var callButton: some View {
+        Button {
+            router.push(.call(nil))
+        } label: {
+            Label("Call a volunteer", systemImage: "video.fill")
+        }
+        .buttonStyle(.pill(.outline))
+        .accessibilityHint("Starts a video call with the next available volunteer")
     }
 
     private var searchButton: some View {
