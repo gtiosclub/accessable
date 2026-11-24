@@ -368,6 +368,45 @@ struct RouteProgressTrackerTests {
         #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 26, .backOnRoute)])
     }
 
+    // fusion switches within 4 s of the last fix it passed on, so a longer gap holds walking and the runs start over
+    @Test(arguments: zip([4.0, 4.1], [4, 10]))
+    func aSwitchShiftsTheRunsUpToFourSecondsAfterTheLastFix(gap: TimeInterval, firesAfter: Int) throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        // walking off on GPS, past 30 m from detour fix 22, then nothing for `gap`, then AR 20 m further out
+        walk.feed((1...24).map { (along: 99.4, lateral: -1.4 * Double($0)) })
+        let arStart = walk.fixCount
+        let resumed = walk.nextTime.addingTimeInterval(gap - 1)
+        let path = (0..<12).map { (along: 99.4, lateral: -1.4 * (24 + gap + Double($0)) - 20) }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: path, start: resumed)) { _ in .ar })
+
+        // shifted, the GPS run goes on and has 8.4 m of walking 4 fixes later; restarted, it needs 10 s from the
+        // first AR fix
+        #expect(Array(walk.logged.drop { $0.fix < arStart }) == [Logged(arStart + firesAfter, .offRoute)])
+    }
+
+    @Test
+    func aShortFixForgivenOnOneSourceCantBeConfirmedByTheOther() throws {
+        let route = try turnRoute(61)
+        let vertex = route.coordinates[1]
+        let past = { (distance: Double) in TripWalk.destination(from: vertex, bearing: 0, distance: distance) }
+        // past the turn, short of it, then past it again 2 s after the first
+        let fixes = TripWalk.fixes(at: [past(21), TripWalk.point(on: route, along: 99), past(22)],
+                                   start: TripWalk.start.addingTimeInterval(80))
+
+        var gpsOnly = Walk(route)
+        gpsOnly.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = gpsOnly.fixCount
+        gpsOnly.feed(fixes)
+        #expect(gpsOnly.logged.drop { $0.fix < start }.map(\.fix) == [start + 2])
+
+        var switching = Walk(route)
+        switching.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        switching.feed(sourced(fixes) { $0 == 2 ? .ar : .gps })
+        #expect(!switching.logged.contains(where: isMovement))
+    }
+
     @Test
     func walkingOffAfterAGapAndASwitchStartsTheRunsOver() throws {
         let route = try cornerRoute()

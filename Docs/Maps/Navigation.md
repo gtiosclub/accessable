@@ -49,9 +49,9 @@ reroute replaces the tracker, since every window and flag refers to one route's 
      counts, so a source that keeps switching can't hold off a warning.
    - After a longer gap the step holds walking too, which shifting would erase, so those runs start over from the
      new fix and take their usual time from it.
-   - A missed turn's run carries on across a switch, since each of its fixes is judged on where it is, but a fix
-     from the other source that places the user short of the turn ends it: one source alone saying the user is
-     past the turn isn't enough.
+   - A missed turn's run carries on across a switch, since each of its fixes is judged on where it is. One fix
+     short of the turn is forgiven as noise only from the run's own source: a fix from the other source placing the
+     user short ends the run, and once a short fix has been forgiven, only the run's own source can confirm it.
    - Progress and a rejoin carry on too; progress's gate already holds off a jump.
 
 ### Thresholds

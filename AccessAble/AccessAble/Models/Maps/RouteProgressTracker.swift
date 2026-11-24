@@ -391,8 +391,8 @@ struct RouteProgressTracker {
         return (along, distance)
     }
 
-    /// Needs the user clearly off the route as well as past the vertex. A single fix that falls short doesn't reset
-    /// the confirmation, since noise around the line is expected.
+    /// Needs the user clearly off the route as well as past the vertex. A single fix from the run's source that falls
+    /// short doesn't reset the confirmation, since noise around the line is expected; one from the other source does.
     private mutating func missedTurn(_ sample: LocationSample, at projection: RouteProjection) -> GuidanceEvent? {
         guard !missedTurnDone[nextStepIndex], let overshoot = straightOnOvershoot(of: sample, at: projection),
               overshoot.along >= Self.missedTurnDistance,
@@ -403,7 +403,8 @@ struct RouteProgressTracker {
             }
             return nil
         }
-        guard let run = missedTurnRun else {
+        // the noise a short fix was forgiven as is the run's source's; the other source can't confirm past it
+        guard let run = missedTurnRun, run.misses == 0 || sample.source == run.source else {
             missedTurnRun = (sample.timestamp, 0, sample.source)
             return nil
         }
