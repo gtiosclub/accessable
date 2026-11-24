@@ -656,6 +656,9 @@ actor TripManager: TripStateProviding {
                           >= Self.arrivalDirectionMinimum,
                       let direction = direction(to: destination.coordinate) {
             "Arriving at \(name). \(name) is \(direction.phrase)."
+        } else if arrival.spokenInstruction.hasPrefix("You have arrived") {
+            // Valhalla's generic arrival, which would say arriving twice
+            "You have arrived at \(name)."
         } else {
             "Arriving at \(name). \(arrival.spokenInstruction)"
         }
@@ -741,7 +744,12 @@ actor TripManager: TripStateProviding {
     /// "In about 30 feet, turn left onto Ferst Drive." Stairs say which way they go instead of Valhalla's "Take the
     /// stairs", so the warning names the change of level.
     private func prepareText(_ step: RouteStep, in distance: Double) -> String {
-        let action = step.kind == .stairs ? step.stairsPhrase + "." : Self.midSentence(step.spokenInstruction)
+        let action = switch step.kind {
+        case .stairs: step.stairsPhrase + "."
+        // Valhalla's generic arrival is past tense; its "on the left" kind is kept, since it says where to look
+        case .arrive where step.spokenInstruction.hasPrefix("You have arrived"): "you'll reach \(destination?.name ?? "your destination")."
+        default: Self.midSentence(step.spokenInstruction)
+        }
         return "In \(spoken(distance)), \(action)"
     }
 

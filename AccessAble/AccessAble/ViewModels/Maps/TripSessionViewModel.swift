@@ -95,6 +95,8 @@ final class TripSessionViewModel {
 
     var destinationName: String { plan.place.name }
 
+    var hasArrived: Bool { directions?.tripState.phase == .arrived }
+
     /// One line on where directions stand, or nil while walking normally.
     var directionsStatus: String? {
         guard let directions else { return nil }

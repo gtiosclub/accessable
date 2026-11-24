@@ -51,7 +51,12 @@ struct ActiveTripView: View {
                     isMicMuted: session.isMicOff,
                     onCallHelp: { router.push(.callHelp) },
                     onMicrophone: { Task { await session.toggleMicrophone() } },
-                    onPauseTrip: { session.pause() }
+                    onPauseTrip: { session.pause() },
+                    hasArrived: session.hasArrived,
+                    onEndTrip: {
+                        session.exit()
+                        router.popToRoot()
+                    }
                 )
             }
             .accessibilityHidden(session.isRouteBlocked || session.isPaused)
