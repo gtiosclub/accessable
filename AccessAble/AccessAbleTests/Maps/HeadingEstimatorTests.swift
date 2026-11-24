@@ -4,11 +4,11 @@ import Testing
 
 private let start = Date(timeIntervalSinceReferenceDate: 800_000_000)
 
-private func fix(speed: Double?, course: Double? = 212, courseAccuracy: Double? = 10, at seconds: Double = 0)
-    -> LocationSample {
+private func fix(speed: Double?, course: Double? = 212, courseAccuracy: Double? = 10, at seconds: Double = 0,
+                 source: LocationSource = .gps) -> LocationSample {
     LocationSample(coordinate: GeoCoordinate(latitude: 33.775, longitude: -84.399), horizontalAccuracy: 5,
                    timestamp: start.addingTimeInterval(seconds), speed: speed, course: course,
-                   courseAccuracy: courseAccuracy)
+                   courseAccuracy: courseAccuracy, source: source)
 }
 
 private func compass(_ trueHeading: Double? = 87, magnetic: Double = 92, accuracy: Double = 15, at seconds: Double = 0)
@@ -31,17 +31,29 @@ private func arHeading(_ degrees: Double = 140, accuracy: Double = 5, at seconds
 }
 
 struct HeadingEstimatorTests {
-    @Test func arHeadingWinsOverWalkingAndTheCompass() {
-        #expect(estimate([fix(speed: 1.4)], [compass(), arHeading()])
+    @Test func arHeadingWinsOverTheCompassStandingStill() {
+        #expect(estimate([fix(speed: 0, source: .ar)], [compass(), arHeading()])
             == UserHeading(degrees: 140, source: .ar, timestamp: start))
         // a compass reading after it doesn't replace it
-        #expect(estimate([], [arHeading(), compass(at: 0.5)], at: 0.5)?.source == .ar)
+        #expect(estimate([fix(speed: 0, source: .ar)], [arHeading(), compass(at: 0.5)], at: 0.5)?.source == .ar)
     }
 
     @Test func staleOrRoughARHeadingFallsBack() {
-        #expect(estimate([fix(speed: 1.4, at: 2)], [arHeading()], at: 2)?.source == .ar)
-        #expect(estimate([fix(speed: 1.4, at: 2.1)], [arHeading()], at: 2.1)?.source == .walkingDirection)
-        #expect(estimate([], [compass(), arHeading(accuracy: 30)])?.source == .compass)
+        // trusted as long as the fusion trusts an AR reading, not just one geo-tracking interval
+        #expect(estimate([fix(speed: 0, at: 1, source: .ar)], [compass(at: 3), arHeading()],
+                         at: LocationFusion.arLifetime)?.source == .ar)
+        #expect(estimate([fix(speed: 0, at: 1, source: .ar)], [compass(at: 3), arHeading()],
+                         at: LocationFusion.arLifetime + 0.1)?.source == .compass)
+        #expect(estimate([fix(speed: 0, source: .ar)], [compass(), arHeading(accuracy: 30)])?.source == .compass)
+    }
+
+    @Test func arHeadingNeedsTheTripOnAR() {
+        // the trip's fusion has gone back to GPS
+        #expect(estimate([fix(speed: 0)], [compass(), arHeading()])?.source == .compass)
+        #expect(estimate([], [compass(), arHeading()])?.source == .compass)
+        // the AR fix is too old to say the lock still holds
+        #expect(estimate([fix(speed: 0, source: .ar)], [compass(at: 3.5), arHeading(at: 3.5)], at: 3.5)?.source
+            == .compass)
     }
 
     @Test func arHeadingIsNotTheCompassAccuracy() {

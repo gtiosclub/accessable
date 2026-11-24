@@ -438,10 +438,10 @@ private struct Harness {
     /// with a walking speed, so the fix gives the heading. A `timestamp` stands for a fix that arrives late.
     @discardableResult
     func fix(_ coordinate: GeoCoordinate, accuracy: Double = 5, course: Double? = nil, timestamp: Date? = nil,
-             then seconds: TimeInterval = 1) async -> TripState {
+             source: LocationSource = .gps, then seconds: TimeInterval = 1) async -> TripState {
         let time = timestamp ?? clock.now().addingTimeInterval(0.25)
         location.yield(LocationSample(coordinate: coordinate, horizontalAccuracy: accuracy, timestamp: time,
-                                      speed: course.map { _ in 1.4 }, course: course),
+                                      speed: course.map { _ in 1.4 }, course: course, source: source),
                        toStream: location.streamCount - 1)
         let state = await states.waitFor { $0.updatedAt == time || $0.phase == .arrived }
         clock.advance(by: seconds)
@@ -1437,7 +1437,7 @@ struct TripManagerDirectionTests {
     }
 
     @Test
-    func startUsesTheARHeadingOverTheCompass() async throws {
+    func startUsesTheARHeadingOverTheCompassStandingStill() async throws {
         let harness = try Harness()
         await harness.start()
         await harness.waitForSleepers(2)
@@ -1447,7 +1447,8 @@ struct TripManagerDirectionTests {
         harness.location.headings.yield(HeadingSample(trueHeading: 180, magneticHeading: 180, accuracy: 5,
                                                       timestamp: harness.clock.now(), source: .ar))
         await harness.location.headings.waitUntilHandled()
-        harness.clock.advance(by: 0.75)
+        // standing at the start, with the trip's position from AR
+        await harness.fix(harness.point(0), source: .ar)
         let start = try #require(await harness.engine.waitForCount(1).first)
         #expect(start.text == "Starting directions to Library, about 160 metres. Turn around, the path is behind you.")
     }

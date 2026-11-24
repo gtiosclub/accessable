@@ -91,6 +91,27 @@ private struct HandFedGPS: LocationProvider {
     func requestAuthorization() async {}
 }
 
+/// A compass that sends whatever the test yields to `input`, and no locations.
+private struct HandFedCompass: LocationProvider {
+    let input: AsyncStream<HeadingSample>.Continuation
+    private let headings: AsyncStream<HeadingSample>
+
+    /// `onEnd` is called when the compass stream ends, however it ends.
+    init(onEnd: @escaping @Sendable () -> Void = {}) {
+        (headings, input) = AsyncStream.makeStream(of: HeadingSample.self)
+        input.onTermination = { _ in onEnd() }
+    }
+
+    func locationSamples() -> AsyncStream<LocationSample> { AsyncStream { _ in } }
+    func headingSamples() -> AsyncStream<HeadingSample> { headings }
+    func authorizationStates() -> AsyncStream<LocationAuthorization> { AsyncStream { _ in } }
+    func requestAuthorization() async {}
+}
+
+private func compass(_ seconds: TimeInterval) -> HeadingSample {
+    HeadingSample(trueHeading: 90, magneticHeading: 94, accuracy: 10, timestamp: start + seconds)
+}
+
 struct ARGeoLocationProviderTests {
     @Test
     func readingOnlyOnceLocalizedWithAKnownAccuracy() {
@@ -446,11 +467,12 @@ struct FusedLocationProviderTests {
         }
     }
 
-    @Test
-    func geoTrackingHeadingComesThroughOnceTrusted() async {
+    @Test(.timeLimit(.minutes(1)))
+    func geoTrackingHeadingsComeThroughMarkedAR() async {
+        // not waiting on the fusion's trust: HeadingEstimator checks that against the trip's own fixes
         let fused = FusedLocationProvider(
-            gps: ScriptedGPS(samples: []),
-            geoTracking: ScriptedGeoTracking(updates: [update(0, accuracy: .low), update(1, accuracy: .medium)])
+            gps: HandFedCompass(),
+            geoTracking: ScriptedGeoTracking(updates: [update(0, state: .localizing), update(1, accuracy: .medium)])
         )
 
         for await heading in fused.headingSamples() {
@@ -458,6 +480,69 @@ struct FusedLocationProviderTests {
                                              timestamp: start + 1, source: .ar))
             break
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func geoTrackingEndingLeavesCompassHeadingsComing() async {
+        let (ended, end) = AsyncStream.makeStream(of: String.self)
+        let compassSource = HandFedCompass()
+        let fused = FusedLocationProvider(
+            gps: compassSource,
+            geoTracking: ScriptedGeoTracking(updates: [], finishes: true, onEnd: { end.yield("ar") })
+        )
+        let headings = fused.headingSamples()
+
+        for await _ in ended { break }
+        // one at a time, as for locations: a stream that ended with AR would drop one long before the last
+        let readings = (0..<50).map { compass(Double($0)) }
+        var received: [HeadingSample] = []
+        var iterator = headings.makeAsyncIterator()
+        for reading in readings {
+            compassSource.input.yield(reading)
+            guard let sample = await iterator.next() else { break }
+            received.append(sample)
+        }
+        #expect(received == readings)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func compassEndingEndsTheHeadingStreamAndGeoTracking() async {
+        let (ended, end) = AsyncStream.makeStream(of: String.self)
+        let compassSource = HandFedCompass()
+        let fused = FusedLocationProvider(
+            gps: compassSource, geoTracking: ScriptedGeoTracking(updates: [], onEnd: { end.yield("ar") })
+        )
+        let headings = fused.headingSamples()
+
+        compassSource.input.yield(compass(0))
+        compassSource.input.finish()
+        var received: [HeadingSample] = []
+        for await heading in headings { received.append(heading) }
+        #expect(received == [compass(0)])
+        for await name in ended {
+            #expect(name == "ar")
+            break
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingTheHeadingSubscriberEndsBothSources() async {
+        let (ended, end) = AsyncStream.makeStream(of: String.self)
+        let fused = FusedLocationProvider(
+            gps: HandFedCompass(onEnd: { end.yield("compass") }),
+            geoTracking: ScriptedGeoTracking(updates: [], onEnd: { end.yield("ar") })
+        )
+        let headings = fused.headingSamples()
+
+        let subscriber = Task { for await _ in headings {} }
+        subscriber.cancel()
+
+        var names: Set<String> = []
+        for await name in ended {
+            names.insert(name)
+            if names.count == 2 { break }
+        }
+        #expect(names == ["compass", "ar"])
     }
 
     @Test(.timeLimit(.minutes(1)))
