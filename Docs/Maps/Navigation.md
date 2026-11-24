@@ -118,7 +118,7 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 
 Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at every launch. While it is on, each trip writes one CSV file to `Documents/TripRecordings/`, which is excluded from backups, so recordings stay on the phone until shared from that screen. The screen can also delete them all.
 
-- A `fix` row for every location fix: time, position, accuracy, speed, course and its accuracy, the heading used and where it came from, the compass accuracy, progress along the route, the tracker's side offset, the next step, whether off route, and the tracker's events.
+- A `fix` row for every location fix: time, position, accuracy, where the fix came from (`gps` or `ar`), speed, course and its accuracy, the heading used and where it came from, the compass accuracy, progress along the route, the tracker's side offset, the next step, whether off route, and the tracker's events.
 - An `announcement` row for everything submitted to the announcement engine, whether or not it was then spoken.
 - `TripManager` builds no fix row unless the recorder is recording, so it costs nothing while off. Rows are written as they happen, under the recorder's lock. A file that can't be written is logged, stops, and its error shows on the recorder screen; the trip carries on.
 
