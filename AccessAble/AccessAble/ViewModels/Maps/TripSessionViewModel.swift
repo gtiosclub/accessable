@@ -401,6 +401,7 @@ final class TripSessionViewModel {
             try await services.reports.submit(report)
             await say("Reported \(kind.title.lowercased()). Thank you.", category: .system)
         } catch {
+            log.error("Report submit failed: \(error.localizedDescription, privacy: .public)")
             await say(
                 "I couldn't send that report. Check your connection and try again.",
                 category: .system
