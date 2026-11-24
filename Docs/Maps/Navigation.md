@@ -199,7 +199,7 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 | reroute asked for | "Finding a new route from here.", or "Couldn't find where you are precisely enough for a new route. Try again in a moment." | high | 10 s |
 | reroute failed | "Couldn't get a new route. Walk back the way you came."; after the fifth: "Off route. End the trip and choose your destination again."; asked for while still on the route: "Couldn't get a new route. Keep following the current one." | high | 10 s |
 | arrived | "Arriving at {name}. {name} is {direction}.", when the latest fix is at least `max(5 m, 2 × accuracy)` from the destination. Otherwise, or with the heading unknown: "Arriving at {name}. {arrive instruction}" | high | 15 s |
-| weak / back | "GPS signal is weak. Directions may be delayed." / "GPS signal is back." (system category) | high / normal | 10 s / 6 s |
+| weak / back | "Location signal is weak. Directions may be delayed." / "Location signal is back." (system category) | high / normal | 10 s / 6 s |
 | pause, resume, end | "Trip paused." / "Trip resumed." / "Trip ended.", with no dedup key, so the engine merges them with the voice command's | high | none |
 
 ## Live Activity
