@@ -331,6 +331,44 @@ struct RouteProgressTrackerTests {
     }
 
     @Test
+    func walkingOffWhileTheSourceKeepsSwitchingIsStillOffRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        // AR puts the user 20 m further out than GPS, and the source switches every 3 s
+        let isGPS = { (index: Int) in (index / 3).isMultiple(of: 2) }
+        let detour = (0..<40).map { index in
+            (along: 99.4, lateral: -1.4 * Double(index + 1) - (isGPS(index) ? 0 : 20))
+        }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: detour, start: walk.nextTime)) { isGPS($0) ? .gps : .ar })
+
+        // both sources are past 30 m from detour fix 22, and 10 s and 9.8 m of walking later the run is complete;
+        // on GPS alone it is off route on the same fix
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 31, .offRoute)])
+    }
+
+    @Test
+    func comingBackWhileTheSourceKeepsSwitchingIsBackOnRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        walk.feed((1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) })
+        #expect(walk.states.last?.isOffRoute == true)
+        let start = walk.fixCount
+        // AR puts the user 10 m further out than GPS, and the source switches every 2 fixes, faster than the 2 s a
+        // rejoin takes
+        let isGPS = { (index: Int) in (index / 2).isMultiple(of: 2) }
+        let back = (0..<40).map { index in
+            (along: 99.4, lateral: -max(40 - 1.4 * Double(index), 0) - (isGPS(index) ? 0 : 10))
+        }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: back, start: walk.nextTime)) { isGPS($0) ? .gps : .ar })
+
+        // every fix is within 15 m from fix 24, so back on route 2 s later
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 26, .backOnRoute)])
+    }
+
+    @Test
     func walkingAwayRightAfterSwitchingSourceIsStillOffRoute() throws {
         let route = try cornerRoute()
         var walk = Walk(route)

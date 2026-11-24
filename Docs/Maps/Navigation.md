@@ -41,9 +41,13 @@ reroute replaces the tracker, since every window and flag refers to one route's 
    - A step is passed once two accepted fixes in a row are at least 5 m past its vertex.
    - The next step index never decreases, and the arrive step is never passed.
 5. **Switching source.** When a fix's `source` (GPS or AR) differs from the last used fix's, the step between them
-   isn't movement: the two can place someone standing still 15 to 25 m apart. The tracker forgets the wrong-way
-   origin (the new fix becomes it) and the runs toward off route, walking away, a missed turn and back on route, so
-   each must build up again from fixes of one source. Progress is kept, since its gate already holds off a jump.
+   isn't movement: the two can place someone standing still well apart, perhaps 15 to 25 m, though that is an
+   estimate until it is measured on a device. The wrong-way origin and the first fix of the off-route and
+   walking-away runs move by that step, so movement on each side of the switch still adds up while the step counts
+   for nothing. The runs keep their start times and counts, so a source that keeps switching can't hold off a
+   warning, and a rejoin keeps its start too. A missed turn's run starts over, since its fixes are judged on where
+   they are; every stretch of GPS is long enough to confirm one. Progress is kept, since its gate already holds off
+   a jump.
 
 ### Thresholds
 

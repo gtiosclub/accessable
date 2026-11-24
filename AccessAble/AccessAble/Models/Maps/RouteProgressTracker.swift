@@ -55,8 +55,9 @@ struct RouteProgressTracker {
     /// straight on misses it.
     private let straightOnBearings: [Double?]
     private var lastFixTime: Date?
-    /// Where the last fix the tracker used came from.
-    private var lastSource: LocationSource?
+    /// A fix the tracker used: where it was, how far from the route, and where it came from.
+    private typealias UsedFix = (coordinate: GeoCoordinate, offset: Double, source: LocationSource)
+    private var lastUsedFix: UsedFix?
     /// Metres along the route of the last projection that passed the progress gate.
     private var progress = 0.0
     /// Progress from the accepted fix before the latest, so a step passes only when two fixes in a row are past it.
@@ -215,8 +216,10 @@ struct RouteProgressTracker {
             return Update(state: state, events: [])
         }
         lastFixTime = sample.timestamp
-        if let lastSource, sample.source != lastSource { forgetMovement() }
-        lastSource = sample.source
+        if let lastUsedFix, sample.source != lastUsedFix.source {
+            shiftBaselines(from: lastUsedFix, to: sample.coordinate, offset: abs(projection.sideOffset))
+        }
+        lastUsedFix = (sample.coordinate, abs(projection.sideOffset), sample.source)
 
         var events: [GuidanceEvent] = []
         if isOffRoute {
@@ -468,15 +471,27 @@ struct RouteProgressTracker {
         return true
     }
 
-    /// GPS and AR can place a user standing still metres apart, so the step from one source to the other isn't
-    /// movement. Forgets every run and origin that measures movement across fixes; progress is kept, since its
-    /// gate already holds off a jump.
-    private mutating func forgetMovement() {
-        wrongWayOrigin = nil
-        offRouteRun = nil
-        walkingAwayRun = nil
+    /// GPS and AR can place a user standing still metres apart, so the step from one source's fix to the other's
+    /// isn't movement. Every baseline that movement is measured from, the wrong-way origin and the off-route and
+    /// walking-away runs' first fix, moves by that step, so movement before and after the switch still adds up while
+    /// the step itself counts for nothing. The runs keep their start times and counts, so a source that keeps
+    /// switching can't hold off a warning. A missed turn's run starts over: each of its fixes is judged on where it
+    /// is, which the step can change alone, and it needs only two fixes 2 s apart, which every stretch of GPS gives,
+    /// since switching to AR takes 2 s of agreement. Progress is kept, since its gate already holds off a jump, and so is a rejoin, which also judges each
+    /// fix on where it is, against a wider margin.
+    private mutating func shiftBaselines(from previous: UsedFix, to coordinate: GeoCoordinate, offset: Double) {
+        // planar is exact enough over the tens of metres the sources differ by
+        let shift = { (baseline: GeoCoordinate) in
+            GeoCoordinate(latitude: baseline.latitude + coordinate.latitude - previous.coordinate.latitude,
+                          longitude: baseline.longitude + coordinate.longitude - previous.coordinate.longitude)
+        }
+        let offsetStep = offset - previous.offset
+        if let origin = wrongWayOrigin {
+            wrongWayOrigin = (shift(origin.coordinate), origin.progress, origin.offset + offsetStep)
+        }
+        if let first = offRouteRun?.first { offRouteRun?.first.coordinate = shift(first.coordinate) }
+        walkingAwayRun?.offset += offsetStep
         missedTurnRun = nil
-        rejoinSince = nil
     }
 
     private mutating func markOffRoute() {
