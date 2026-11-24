@@ -399,8 +399,9 @@ actor TripManager: TripStateProviding {
         guard self.generation == generation, phase == .active || phase == .arrived,
               let route, let progress, var matcher = landmarkMatcher
         else { return }
-        let event = matcher.match(sighting, progress: route.totalDistance - progress.distanceRemaining,
-                                  remaining: progress.distanceRemaining)
+        let along = route.totalDistance - progress.distanceRemaining
+        recorder?.record(sighting: sighting, progress: along, at: now())
+        let event = matcher.match(sighting, progress: along, remaining: progress.distanceRemaining)
         landmarkMatcher = matcher
         let time = now()
         let text: String
