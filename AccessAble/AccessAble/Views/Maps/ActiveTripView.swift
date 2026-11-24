@@ -13,6 +13,9 @@ struct ActiveTripView: View {
     @State private var session: TripSessionViewModel
     @State private var showsCommands = false
     @State private var showsReportOptions = false
+    /// Report was tried from Voice Commands: its choices open once the sheet has closed, since a
+    /// dialog can't open while the sheet is still going.
+    @State private var reportsAfterCommands = false
     private let services: AppServices?
 
     init(plan: TripPlan, services: AppServices? = nil) {
@@ -139,18 +142,26 @@ struct ActiveTripView: View {
         } message: {
             Text("Choose the problem at this location.")
         }
-        .sheet(isPresented: $showsCommands) {
+        .sheet(isPresented: $showsCommands, onDismiss: {
+            guard reportsAfterCommands else { return }
+            reportsAfterCommands = false
+            showsReportOptions = true
+        }) {
             VoiceCommandsSheet(
                 onTry: { command in
                     showsCommands = false
-                    if !session.run(command), command == .callHelp {
-                        router.push(.callHelp)
+                    guard !session.run(command) else { return }
+                    switch command {
+                    case .callHelp: router.push(.callHelp)
+                    case .reportProblem: reportsAfterCommands = true
+                    default: break
                     }
                 },
                 onSimulateBlockedRoute: {
                     showsCommands = false
                     session.simulateBlockedRoute()
-                }
+                },
+                listsReport: session.isReportingAvailable
             )
         }
     }

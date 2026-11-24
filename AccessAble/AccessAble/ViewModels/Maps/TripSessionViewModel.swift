@@ -239,14 +239,14 @@ final class TripSessionViewModel {
     // MARK: - Commands
 
     /// Runs a command from the Voice Commands sheet. Returns false for commands that open
-    /// other UI.
+    /// other UI: Call Help, and the report choices.
     @discardableResult
     func run(_ command: VoiceCommandHint) -> Bool {
         switch command {
         case .pauseTrip:
             pause()
             return true
-        case .callHelp:
+        case .callHelp, .reportProblem:
             return false
         default:
             guard let services else {
@@ -271,7 +271,7 @@ final class TripSessionViewModel {
         case .describeLocation:
             text = await services.locationContext.currentLocationDescription()
                 ?? "I couldn't find where you are. Check that Location is on for AccessAble, or try again outside."
-        case .pauseTrip, .callHelp:
+        case .pauseTrip, .reportProblem, .callHelp:
             return
         }
         await say(text, category: .ambient)
@@ -328,37 +328,45 @@ final class TripSessionViewModel {
         voiceTask = Task { await self.respond(to: text) }
     }
 
-    /// Maps a short spoken report command to one of the supported report categories.
-    static func reportKind(for command: String) -> ReportKind? {
-        let normalized = command.lowercased()
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard normalized.hasPrefix("report ") else { return nil }
-        let problem = String(normalized.dropFirst("report ".count))
-
-        if problem.contains("construction") || problem.contains("work zone") {
-            return .construction
-        }
-        if problem.contains("blocked path")
-            || problem.contains("blocked route")
-            || problem.contains("path blocked") {
-            return .blockedPath
-        }
-        if problem.contains("closed entrance") || problem.contains("entrance closed") {
-            return .closedEntrance
-        }
-        if problem.contains("elevator") {
-            return .elevatorOut
-        }
-        if problem == "other" || problem.contains("other problem") {
-            return .other
-        }
-        return nil
+    /// A spoken "report …": the kind of problem, or a report whose kind wasn't heard.
+    enum ReportCommand: Equatable {
+        case kind(ReportKind)
+        case unknown
     }
+
+    /// What may come before "report". Only these, not "report" anywhere, so a question such as
+    /// "what does this report say" still goes to Ask AI.
+    private static let reportLeadIns = ["", "please ", "i want to ", "i'd like to ", "i need to ", "can i "]
+
+    /// nil unless the words are a report command. Speech adds punctuation, so it is ignored.
+    static func reportCommand(for text: String) -> ReportCommand? {
+        let words = text.lowercased()
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'")).inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard let leadIn = reportLeadIns.first(where: { words == "\($0)report" || words.hasPrefix("\($0)report ") }) else {
+            return nil
+        }
+        // padded, so each phrase matches whole words only
+        let problem = " \(words.dropFirst(leadIn.count + "report".count)) "
+        func says(_ phrases: String...) -> Bool { phrases.contains { problem.contains(" \($0) ") } }
+
+        if says("construction", "work zone", "road work", "roadwork") { return .kind(.construction) }
+        // before blocked: "the door is closed" is a closed entrance, not a blocked path
+        if says("entrance", "door", "doorway"), says("closed", "locked") { return .kind(.closedEntrance) }
+        if says("blocked", "blocking", "obstruction", "obstacle") { return .kind(.blockedPath) }
+        if says("elevator", "lift") { return .kind(.elevatorOut) }
+        if says("other", "something else") { return .kind(.other) }
+        return .unknown
+    }
+
+    private static let reportingUnavailable = "Reporting isn't available yet."
 
     /// Submits a report at the user's location or a short distance ahead on the active route.
     func submitReport(kind: ReportKind, useRouteAhead: Bool = false) async {
         guard let services, isReportingAvailable else {
-            await say("Reporting isn't available yet.", category: .system)
+            await say(Self.reportingUnavailable, category: .system)
             return
         }
 
@@ -432,11 +440,22 @@ final class TripSessionViewModel {
 
     /// A trip command is carried out; anything else is a question for Ask AI about what the
     /// camera sees, with the conversation so far, so follow-ups make sense.
-    private func respond(to text: String) async {
+    // internal so tests can say something without the microphone
+    func respond(to text: String) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let services, !text.isEmpty else { return }
-        if let kind = Self.reportKind(for: text) {
-            await submitReport(kind: kind)
+        if let report = Self.reportCommand(for: text) {
+            switch report {
+            case .kind(let kind):
+                await submitReport(kind: kind)
+            case .unknown where isReportingAvailable:
+                await say(
+                    "What's the problem? Say report construction, blocked path, closed entrance, elevator, or other.",
+                    category: .system
+                )
+            case .unknown:
+                await say(Self.reportingUnavailable, category: .system)
+            }
             return
         }
         if Self.asksForHelp(text) {
