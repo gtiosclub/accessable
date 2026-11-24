@@ -134,43 +134,67 @@ struct LiveSceneView: View {
 
     private var preview: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .topLeading) {
+            ZStack {
                 if let analyzer = viewModel.analyzer {
+                    // Pinned to the screen. In a ZStack beside the outlines, an outline wider
+                    // than the screen (anything close, since the feed is cropped to fill)
+                    // widened the ZStack and the camera view with it, so the picture jumped
+                    // sideways each time the outline appeared or went away.
                     ARCameraPreview(session: analyzer.sessionManager.session)
+                        .frame(width: geometry.size.width, height: geometry.size.height)
                 }
-
-                if isDeveloperMode {
-                    ForEach(viewModel.observation.detections) { detection in
-                        DetectionBox(
-                            detection: detection,
-                            rect: rect(for: detection, in: geometry.size)
-                        )
-                    }
-                }
-
-                // The geometry's unnamed obstacles are clusters of depth points whose boxes
-                // cover half the screen; the status strip speaks for them instead.
-                if let focus = viewModel.focus, focus.label != Detection.obstacleLabel,
-                   let caption = viewModel.focusCaption {
-                    FocusOutline(
-                        caption: caption,
-                        color: statusColor,
-                        rect: rect(for: focus, in: geometry.size)
-                    )
-                    .transition(.opacity)
-                }
-
-                Image(systemName: "viewfinder")
-                    .font(.system(size: 36, weight: .light))
-                    .foregroundStyle(.white.opacity(0.8))
-                    .shadow(radius: 2)
-                    .position(x: geometry.size.width / 2, y: geometry.size.height / 2)
+                overlays(in: geometry.size)
             }
-            .animation(.easeOut(duration: 0.2), value: viewModel.focus.map { $0.trackID ?? $0.id })
-            // The outline is for sighted users; VoiceOver gets the status strip instead.
-            .accessibilityHidden(true)
         }
         .ignoresSafeArea()
+    }
+
+    /// Boxes, the focus outline and the viewfinder, in a layer of exactly the preview's size
+    /// and clipped to it, so nothing drawn here can change the camera view's frame.
+    private func overlays(in size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            if isDeveloperMode {
+                ForEach(viewModel.observation.detections) { detection in
+                    DetectionBox(
+                        detection: detection,
+                        rect: rect(for: detection, in: size)
+                    )
+                }
+            }
+
+            // The geometry's unnamed obstacles are clusters of depth points whose boxes
+            // cover half the screen; the status strip speaks for them instead.
+            if let focus = viewModel.focus, focus.label != Detection.obstacleLabel,
+               let caption = viewModel.focusCaption,
+               let onScreen = visibleRect(for: focus, in: size) {
+                FocusOutline(
+                    caption: caption,
+                    color: statusColor,
+                    rect: onScreen
+                )
+                .transition(.opacity)
+            }
+
+            Image(systemName: "viewfinder")
+                .font(.system(size: 36, weight: .light))
+                .foregroundStyle(.white.opacity(0.8))
+                .shadow(radius: 2)
+                .position(x: size.width / 2, y: size.height / 2)
+        }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .clipped()
+        .animation(.easeOut(duration: 0.2), value: viewModel.focus.map { $0.trackID ?? $0.id })
+        // The outline is for sighted users; VoiceOver gets the status strip instead.
+        .accessibilityHidden(true)
+    }
+
+    /// The focus outline kept on screen: something close fills more than the cropped feed
+    /// shows, and an outline running off both edges reads as stray red lines, not a box.
+    /// Nil when none of it is visible.
+    private func visibleRect(for detection: Detection, in size: CGSize) -> CGRect? {
+        let visible = rect(for: detection, in: size)
+            .intersection(CGRect(origin: .zero, size: size).insetBy(dx: 4, dy: 4))
+        return visible.isNull || visible.isEmpty ? nil : visible
     }
 
     private func rect(for detection: Detection, in size: CGSize) -> CGRect {
@@ -240,7 +264,7 @@ struct LiveSceneView: View {
 
     /// Walk / Find / Read / Describe, after Magnifier's detection modes.
     private var modePicker: some View {
-        Picker("Mode", selection: $viewModel.mode) {
+        Picker("Mode", selection: $viewModel.mode.withSelectionHaptic()) {
             ForEach(LiveMode.allCases, id: \.self) { mode in
                 Text(mode.title).tag(mode)
             }
@@ -376,7 +400,11 @@ struct LiveSceneView: View {
     private func controlButton(
         _ title: String, systemImage: String, tint: Color = .accentColor, action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
+        // Accessibility Buttons → Selection
+        Button {
+            Haptics.play(.selection)
+            action()
+        } label: {
             VStack(spacing: 4) {
                 Image(systemName: systemImage)
                     .font(.title2)
@@ -395,21 +423,21 @@ struct LiveSceneView: View {
     private var alertMenu: some View {
         @Bindable var app = app
         return Menu {
-            Picker("Warn me about", selection: $app.profile.alertFilter.minimumDanger) {
+            Picker("Warn me about", selection: $app.profile.alertFilter.minimumDanger.withSelectionHaptic()) {
                 ForEach(DangerLevel.allCases, id: \.self) { level in
                     Text(level.displayName).tag(level)
                 }
             }
             .pickerStyle(.menu)
-            Picker("Warn me within", selection: $app.profile.alertFilter.maximumDistance) {
+            Picker("Warn me within", selection: $app.profile.alertFilter.maximumDistance.withSelectionHaptic()) {
                 ForEach(AlertFilter.distanceChoices, id: \.self) { distance in
                     Text(String(format: "%g metres", distance)).tag(distance)
                 }
             }
             .pickerStyle(.menu)
-            Toggle("Vibration", isOn: channelBinding(.haptics, in: $app.profile))
+            Toggle("Vibration", isOn: channelBinding(.haptics, in: $app.profile).withSelectionHaptic())
             // Steering beeps from the side to move towards; best with headphones.
-            Toggle("Sound cues", isOn: channelBinding(.spatialAudio, in: $app.profile))
+            Toggle("Sound cues", isOn: channelBinding(.spatialAudio, in: $app.profile).withSelectionHaptic())
         } label: {
             VStack(spacing: 4) {
                 Image(systemName: "slider.horizontal.3")

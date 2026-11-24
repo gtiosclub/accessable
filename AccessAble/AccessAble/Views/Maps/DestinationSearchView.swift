@@ -37,6 +37,7 @@ struct DestinationSearchView: View {
                     .accessibilityLabel(selectedLabel(destination))
 
                     Button {
+                        Haptics.play(.selection)
                         onConfirm(destination)
                         dismiss()
                     } label: {
@@ -63,6 +64,7 @@ struct DestinationSearchView: View {
                 ForEach(viewModel.suggestions) { suggestion in
                     let isSelected = suggestion.id == viewModel.selectedSuggestionID
                     Button {
+                        Haptics.play(.selection)
                         viewModel.select(suggestion)
                     } label: {
                         HStack {
@@ -156,6 +158,7 @@ extension View {
         self
             .onChange(of: search.problem) { _, problem in
                 guard let problem else { return }
+                Haptics.play(.error)
                 // high priority so VoiceOver doesn't cut it off while reading the row's "Loading details" value
                 var message = AttributedString(problem.message)
                 message.accessibilitySpeechAnnouncementPriority = .high

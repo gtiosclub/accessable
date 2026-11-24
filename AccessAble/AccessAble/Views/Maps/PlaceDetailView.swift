@@ -48,6 +48,7 @@ struct PlaceDetailView: View {
                         .padding(.top, 4)
                     VStack(spacing: 14) {
                         Button("Start & Record New Route") {
+                            Haptics.play(.success)
                             router.push(.trip(TripPlan(
                                 place: place, route: nil, isRecording: true, origin: origin,
                                 plannedRoute: details.plannedRoute
@@ -57,12 +58,10 @@ struct PlaceDetailView: View {
                         .accessibilityHint("Starts walking and saves the route you take")
 
                         if place.recordedRouteCount > 0 {
-                            Button("Start Recorded Route") { router.push(.routes(place, .recorded, origin: origin)) }
+                            Button("Start Recorded Route") { chooseRoutes(.recorded) }
                                 .buttonStyle(.pill(.primary))
                         }
-                        Button("Start New Route") {
-                            router.push(.routes(place, .new, origin: origin, planned: details.plannedRoute))
-                        }
+                        Button("Start New Route") { chooseRoutes(.new, planned: details.plannedRoute) }
                             .buttonStyle(.pill(.primary))
                         Button("Back") { router.pop() }
                             .buttonStyle(.pill(.outline))
@@ -79,6 +78,12 @@ struct PlaceDetailView: View {
         // route failed is spoken as on the Trip screen; route ready adds the summary
         .announcesRoute(details.planner) { details.routeReadyAnnouncement }
         .task { await details.start() }
+    }
+
+    /// Start Route → Success, as for every Start button.
+    private func chooseRoutes(_ mode: RoutePlanMode, planned: PlannedRoute? = nil) {
+        Haptics.play(.success)
+        router.push(.routes(place, mode, origin: origin, planned: planned))
     }
 }
 
@@ -147,6 +152,7 @@ struct RoutePreview: View {
             .accessibilityElement(children: .combine)
         }
     }
+
 }
 
 /// "Walk out the house / Walk 50 ft • Walk past 1 crossroad …"

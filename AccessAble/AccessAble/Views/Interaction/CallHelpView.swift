@@ -42,6 +42,7 @@ struct CallHelpView: View {
                 ForEach(Tab.allCases, id: \.self) { item in
                     let isSelected = tab == item
                     Button {
+                        Haptics.play(.selection)
                         tab = item
                     } label: {
                         Text(item.rawValue)
@@ -74,8 +75,14 @@ struct CallHelpView: View {
             ForEach(volunteers) { volunteer in
                 VolunteerRow(
                     volunteer: volunteer,
-                    onCall: { calling = volunteer },
-                    onMessage: { router.push(.chat(volunteer)) }
+                    onCall: {
+                        Haptics.play(.medium)
+                        calling = volunteer
+                    },
+                    onMessage: {
+                        Haptics.play(.selection)
+                        router.push(.chat(volunteer))
+                    }
                 )
             }
         }
@@ -140,7 +147,7 @@ struct CallingView: View {
                 .font(.title3)
                 .accessibilityLabel("Calling \(volunteer.name)")
             Spacer()
-            Button("End Call", action: onEnd)
+            Button("End Call", action: endCall)
                 .buttonStyle(.pill(.destructive))
                 .padding(.horizontal, 24)
                 .padding(.bottom, 24)
@@ -148,7 +155,12 @@ struct CallingView: View {
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity)
         .background(Color.black.ignoresSafeArea())
-        .accessibilityAction(.escape, onEnd)
+        .accessibilityAction(.escape, endCall)
+    }
+
+    private func endCall() {
+        Haptics.play(.medium)
+        onEnd()
     }
 }
 

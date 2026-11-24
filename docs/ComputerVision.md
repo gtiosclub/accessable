@@ -321,7 +321,7 @@ Same caveat: none of this has been checked on a device by the integrator.
 | T41 Elevation validation | Petr | #171 | `FieldTestRecorder`, camera screen (developer tools) | Setup and outcome records for the elevation field procedure below. |
 | T45 Ask AI cancellation | Petr | #170 | `AskAI.swift` | Cancelling a question resumes once, including while Vision work is queued. |
 | T20 runner | Nish | #174 | `Evaluation/TestSetEvaluation.swift` | Precision/recall overall, per scenario and per condition, distance error, detection time. |
-| T31 Replace YOLO11 | Sahiti | #199 | `DFineObjectDetector.swift`, `ObjectDetector.swift` (`ObjectDetecting`) | Bundled model is now D-FINE-nano (Apache-2.0, `Peterande/D-FINE`, converted by `john-rocky/peaceofcake`); `yolo11n.mlpackage` removed. No built-in NMS, so it's a separate class behind a new `ObjectDetecting` protocol rather than a `modelName` swap on `ObjectDetector`, which stays as-is for a future NMS-included model. Picked after evaluating it and the full/tiny YOLOv3 (also Apple, MIT) headlessly with `coremltools` against three real COCO images — see "Known limitations" for the numbers and what was rejected. |
+| T31 Replace YOLO11 | Sahiti | #199 | `DETRObjectDetector.swift` (was `DFineObjectDetector.swift`), `ObjectDetector.swift` (`ObjectDetecting`) | Bundled model is now D-FINE-nano (Apache-2.0, `Peterande/D-FINE`, converted by `john-rocky/peaceofcake`); `yolo11n.mlpackage` removed. No built-in NMS, so it's a separate class behind a new `ObjectDetecting` protocol rather than a `modelName` swap on `ObjectDetector`, which stays as-is for a future NMS-included model. Picked after evaluating it and the full/tiny YOLOv3 (also Apple, MIT) headlessly with `coremltools` against three real COCO images — see "Known limitations" for the numbers and what was rejected. |
 
 ### Task descriptions that changed
 
@@ -357,6 +357,79 @@ Same caveat: none of this has been checked on a device by the integrator.
   offers no ultra-wide (0.5x) format — only face tracking does. A second capture session on
   the ultra-wide cannot run beside ARKit either.
 
+## Outdoor navigation (models and sidewalk guidance)
+
+Added November 2026. Measured with `Scripts/models/`, which decode exactly as the app does.
+
+**Object detection: RF-DETR Small replaces D-FINE nano as the default** (`DETRObjectDetector`,
+which also still runs D-FINE). On 300 COCO *street* images, at the precision D-FINE runs at
+(~85%), RF-DETR Small finds 60% of the people, vehicles and street furniture the app warns about
+against D-FINE's 48% (AP 47.4 vs 38.8). It costs 33 ms per frame vs 18 ms on an M4 Mac.
+RF-DETR's scores run lower, so its threshold is 0.45 (vehicles 0.4), not 0.6
+(`DetectionConfidencePolicy.rfdetr`). Nano was as fast as D-FINE with +5 AP but lower recall;
+Medium added 2 points of recall for 25% more time. The class list is read from the model's
+metadata, so a fine-tuned model drops in by name: `rfdetr_s_outdoor`, then `rfdetr_s_coco`,
+then `dfine_n_coco`, whichever is bundled first. The RF-DETR packages are not in git
+(`sh Scripts/download-models.sh --rfdetr`). Without them the app runs D-FINE as before.
+
+**Outdoor classes.** COCO has no pole, bollard, trash can, cone, tree or barrier.
+`OutdoorClasses` (= `Scripts/training/taxonomy.json`) is the vocabulary of the fine-tuned
+model. `Scripts/training/` builds its dataset (COCO street scenes with human labels, plus
+Grounding DINO auto-labels for the classes COCO lacks, plus your own recordings and Mapillary
+Vistas) and trains it. The new labels are already rated (`DangerLevel`: street furniture
+high, scooters critical), sized (`ObjectSizePriors`, for the camera-only distance estimate) and
+fusable with geometry.
+
+**The fine-tuned outdoor model (`rfdetr_s_outdoor`).** RF-DETR Small, fine-tuned for 16 epochs on
+a free Colab T4 (~50 min) on 2,400 COCO street images. Its classification head is started *by
+class name* from COCO's (`train.py`); rfdetr's own resize keeps COCO's first rows instead, which
+gave "person" COCO's empty row and "car" COCO's bicycle row, and cost 7 AP on the shared classes.
+On the 300 held-out test images (AP50):
+
+| | COCO model | outdoor |
+|---|---|---|
+| person / car / truck | 77.5 / 76.2 / 73.3 | 75.9 / 74.3 / 69.8 |
+| bus / motorcycle / bench | 85.4 / 80.5 / 78.9 | 83.2 / 82.5 / 79.3 |
+| traffic cone / pole / trash can | — | 71.3 / 42.8 / 36.1 |
+| tree / barrier / stairs | — | 23.6 / 26.0 / 9.0 |
+
+On 300 COCO val street images it gives up 5 AP on the app's classes (43.0 vs 48.2), but at the
+app's 0.45 threshold it finds the same share (60.0% vs 60.2%) at nearly the same precision
+(84.0% vs 85.2%). So it is bundled and preferred. The new-class numbers are measured against
+Grounding DINO's auto-labels, not human ones. Bollards, bike racks and wheelchairs had almost
+no training examples and are not yet detected. To go back to the COCO model, delete
+`Resources/rfdetr_s_outdoor.mlpackage`.
+
+**Distances beyond LiDAR.** LiDAR reaches about 5 m, less in sunlight. A recognized object
+with no depth now falls back to the camera-only estimate (T33) on LiDAR phones too, so a car
+or cyclist has a distance, and approach warnings (T34) watch vehicles from 25 m (people stay at 15 m).
+
+**Ground segmentation: Apple's DETR stays.** Scored by the app's ground classes on ADE20K val and
+on COCO-panoptic street scenes (300 each, `benchmark_segmentation.py`):
+
+| Model | Sidewalk IoU (ADE / COCO street) | Road IoU | Sidewalk called road (COCO street) | ms (M4) |
+|---|---|---|---|---|
+| Apple DETR-ResNet50 (kept) | 31 / **42** | 68 / **55** | 22.5% | 50 |
+| SegFormer-B1, ADE20K | 37 / 30 | 78 / 53 | 26% | 24 |
+| SegFormer-B2, ADE20K | **44** / 34 | **80** / 53 | 26% | 68 |
+| SegFormer-B1, Cityscapes | 7 / 19 | 33 / 38 | 66% | 19 |
+
+SegFormer-ADE wins on its own dataset and indoors (floor, ceiling, stairs), but on real street
+photos DETR tells sidewalk from road best, and outdoors that is the job. Cityscapes models only
+know a dashcam's view and fail from a pedestrian's. `SurfaceReader` reads either kind of model
+(`preferredModels`); SegFormer-ADE is the smaller fallback. No model is good at this yet: about
+a fifth of sidewalk pixels are called road. A segmenter fine-tuned on pedestrian-view sidewalk
+data is the next step for outdoor guidance.
+
+**Sidewalk guidance** (`SidewalkGuide`, Walk mode, outdoors only). The ground around the walking
+line is sampled in metres (0.8–3.5 m ahead, ±1.5 m), each point projected into the latest
+segmentation, so tilting the phone doesn't change the answer. Spoken once two segmentations agree:
+"Road close on your right. Keep left." (road within 1 m of the walking line, repeated at most
+every 15 s), "You may be in the road. Sidewalk on your left." (every 6 s; not within 15 s of a
+crosswalk), "Curb ahead, about 2 metres. Road beyond." The turn haptics point the way. While the
+guide knows where the user is, the surface announcer's bare "Road ahead." is left out. The
+developer readout shows the guide's reading.
+
 ## Known limitations
 
 - **No device validation yet.** Everything below "Device validation" is unverified on hardware.
@@ -371,7 +444,7 @@ Same caveat: none of this has been checked on a device by the integrator.
   caught. D-FINE itself: ~8ms/frame on a Mac vs YOLO11n's ~3-4ms (still well inside T20's
   <100ms p95 budget) and 13MB vs 5.2MB on disk, for equal-or-better detections in that
   comparison. It has no NMS stage of its own (DETR-style: a fixed set of candidate boxes,
-  trained not to duplicate one object) — `nonMaxSuppressed` in `DFineObjectDetector.swift` is
+  trained not to duplicate one object) — `nonMaxSuppressed` in `DETRObjectDetector.swift` is
   a safety net, not load-bearing so far. T39's per-class thresholds (0.6, chairs 0.55) are
   carried over from YOLO11n untuned; it has not been checked against this model's own false-positive
   behavior on real data the way the line below describes for YOLO11n.
@@ -393,7 +466,11 @@ Same caveat: none of this has been checked on a device by the integrator.
   than following the obstacle's distance continuously.
 - **Tracking is box-overlap only.** Fast lateral motion at a low analysis rate can split a
   track and repeat an announcement.
-- **Thresholds are fixed** (3/2/1 m bands, 0.9 m corridor); `GuidanceProfile` cannot adjust them yet.
+- **Thresholds are fixed** (a 2.5 m warning and a 1.2 m "Stop", 0.9 m corridor); the user's
+  alert filter moves the outer band, but nothing else is adjustable yet.
+- **Outdoor guidance is unvalidated on the street.** The sidewalk guide, RF-DETR thresholds and
+  25 m vehicle range come from datasets and synthetic tests, not walks. Segmentation still calls
+  about a fifth of sidewalk "road", which is why the guide needs a mostly-road lane twice before speaking.
 - **Detection boxes for geometric obstacles** assume a square footprint (depth is not measured).
 
 ## Device validation checklist

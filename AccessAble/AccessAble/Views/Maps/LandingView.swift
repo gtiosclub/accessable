@@ -44,6 +44,7 @@ struct LandingView: View {
             .accessibilityHint("Computer vision, maps, haptics, and command features")
             Spacer()
             CircleIconButton(systemImage: "info", label: "Voice commands") {
+                Haptics.play(.selection)
                 showsCommands = true
             }
         }

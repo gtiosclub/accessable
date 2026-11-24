@@ -76,6 +76,7 @@ struct RoutePickerView: View {
             .padding(.top, 4)
         Button("Pick Route") {
             guard let planned = details.plannedRoute else { return }
+            Haptics.play(.success)
             router.push(.trip(TripPlan(place: place, route: nil, isRecording: false, origin: origin, plannedRoute: planned)))
         }
         .buttonStyle(.pill(.primary))
@@ -98,6 +99,7 @@ struct RoutePickerView: View {
             .padding(.top, 4)
         VStack(spacing: 14) {
             Button("Pick Route") {
+                Haptics.play(.success)
                 router.push(.trip(TripPlan(place: place, route: sampleRoute, isRecording: false, origin: origin)))
             }
             .buttonStyle(.pill(.primary))
@@ -105,16 +107,21 @@ struct RoutePickerView: View {
 
             if sampleRoutes.count > 1 {
                 HStack(spacing: 16) {
-                    Button("Last Route") { index -= 1 }
+                    Button("Last Route") { pick(index - 1) }
                         .buttonStyle(.pill(.outline))
                         .disabled(index == 0)
-                    Button("Next Route") { index += 1 }
+                    Button("Next Route") { pick(index + 1) }
                         .buttonStyle(.pill(.primary))
                         .disabled(index == sampleRoutes.count - 1)
                 }
             }
         }
         .padding(.top, 8)
+    }
+
+    private func pick(_ newIndex: Int) {
+        Haptics.play(.selection)
+        index = newIndex
     }
 
     private var sampleRoute: SampleRoute { sampleRoutes[index] }

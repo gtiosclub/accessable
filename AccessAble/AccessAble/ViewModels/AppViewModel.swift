@@ -14,6 +14,7 @@ final class AppViewModel {
             services.alertSettings.filter = profile.alertFilter
             services.alertSettings.soundCues = profile.channels.contains(.spatialAudio)
             services.distanceSettings.units = profile.distanceUnits
+            Self.applyHaptics(profile)
             Task { await services.announcements.updateProfile(profile) }
         }
     }
@@ -57,6 +58,7 @@ final class AppViewModel {
         self.services.alertSettings.filter = profile.alertFilter
         self.services.alertSettings.soundCues = profile.channels.contains(.spatialAudio)
         self.services.distanceSettings.units = profile.distanceUnits
+        Self.applyHaptics(profile)
         let announcements = self.services.announcements
         Task { await announcements.updateProfile(profile) }
 
@@ -77,6 +79,12 @@ final class AppViewModel {
     func completeOnboarding(with profile: GuidanceProfile) {
         self.profile = profile
         hasCompletedOnboarding = true
+    }
+
+    /// Tap and app-feedback haptics follow the same Haptics switch and strength as guidance.
+    private static func applyHaptics(_ profile: GuidanceProfile) {
+        Haptics.isEnabled = profile.channels.contains(.haptics)
+        Haptics.intensity = profile.hapticIntensity
     }
 
     // MARK: - Persistence

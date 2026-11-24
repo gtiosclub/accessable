@@ -55,10 +55,10 @@ struct SceneNavigationRestartTests {
 
         analyzer.navigate(to: "the door")
         analyzer.navigate(to: nil)
-        var switches = 0
-        for await _ in meshSwitch.switches {
-            switches += 1
-            if switches == 2 { break }
+        // Mesh changes are debounced, so only the latest one reaches the session.
+        for await enabled in meshSwitch.switches {
+            #expect(!enabled)
+            break
         }
 
         #expect(perception.navigationQuery == nil)

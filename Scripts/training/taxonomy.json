@@ -1,0 +1,31 @@
+{
+  "comment": "Classes of the outdoor detector, in model order. Must match OutdoorClasses.all in the app (OutdoorClassesTests checks). 'coco' names the COCO category that already labels it (real labels are used); 'prompt' is what Grounding DINO is asked for when a class has no COCO label (auto-labelled); 'mapillary' lists Mapillary Vistas v2 labels that convert to it.",
+  "classes": [
+    {"name": "person", "coco": "person", "mapillary": ["human--person--individual", "human--person--person-group"]},
+    {"name": "bicycle", "coco": "bicycle", "mapillary": ["object--vehicle--bicycle"]},
+    {"name": "car", "coco": "car", "mapillary": ["object--vehicle--car"]},
+    {"name": "motorcycle", "coco": "motorcycle", "mapillary": ["object--vehicle--motorcycle"]},
+    {"name": "bus", "coco": "bus", "mapillary": ["object--vehicle--bus"]},
+    {"name": "truck", "coco": "truck", "mapillary": ["object--vehicle--truck"]},
+    {"name": "scooter", "prompt": "electric scooter", "mapillary": []},
+    {"name": "stroller", "prompt": "baby stroller", "mapillary": []},
+    {"name": "wheelchair", "prompt": "wheelchair", "mapillary": ["object--vehicle--wheeled-slow"]},
+    {"name": "dog", "coco": "dog", "mapillary": []},
+    {"name": "pole", "prompt": "pole", "mapillary": ["object--support--pole", "object--support--utility-pole", "object--street-light", "object--support--traffic-sign-frame"]},
+    {"name": "bollard", "prompt": "bollard", "mapillary": ["object--bollard"]},
+    {"name": "tree", "prompt": "tree trunk", "mapillary": []},
+    {"name": "traffic light", "coco": "traffic light", "mapillary": ["object--traffic-light--pedestrians", "object--traffic-light--general-upright", "object--traffic-light--general-horizontal"]},
+    {"name": "stop sign", "coco": "stop sign", "mapillary": []},
+    {"name": "fire hydrant", "coco": "fire hydrant", "mapillary": ["object--fire-hydrant"]},
+    {"name": "parking meter", "coco": "parking meter", "mapillary": ["object--parking-meter"]},
+    {"name": "trash can", "prompt": "trash can", "mapillary": ["object--trash-can"]},
+    {"name": "bench", "coco": "bench", "mapillary": ["object--bench"]},
+    {"name": "bike rack", "prompt": "bike rack", "mapillary": ["object--bike-rack"]},
+    {"name": "traffic cone", "prompt": "traffic cone", "mapillary": ["object--traffic-cone"]},
+    {"name": "barrier", "prompt": "barricade", "mapillary": ["construction--barrier--temporary"]},
+    {"name": "stairs", "prompt": "outdoor stairs", "mapillary": []},
+    {"name": "potted plant", "coco": "potted plant", "mapillary": []},
+    {"name": "chair", "coco": "chair", "mapillary": []},
+    {"name": "table", "coco": "dining table", "mapillary": []}
+  ]
+}

@@ -78,6 +78,18 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// the user is standing still waiting for guidance that is not coming back.
     private static let relocalizationTimeout: Duration = .seconds(5)
 
+    /// The back wide-angle camera's format, pinned so the preview never changes lens.
+    /// ARKit's default is usually this camera already; pinning it makes that a guarantee,
+    /// and the wide camera is the one LiDAR depth is registered to. Prefers ARKit's default
+    /// format when it is on that camera, so resolution and frame rate stay the same.
+    static func primaryVideoFormat(from formats: [ARConfiguration.VideoFormat]) -> ARConfiguration.VideoFormat? {
+        let isWideBack = { (format: ARConfiguration.VideoFormat) in
+            format.captureDeviceType == .builtInWideAngleCamera && format.captureDevicePosition == .back
+        }
+        if let first = formats.first, isWideBack(first) { return first }
+        return formats.first(where: isWideBack)
+    }
+
     // MARK: - Lifecycle
 
     /// Starts world tracking, or geo-tracking when it is wanted and the mesh isn't. Calling it
@@ -119,6 +131,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         let configuration = ARWorldTrackingConfiguration()
         configuration.worldAlignment = .gravity
         configuration.planeDetection = []
+        pinPrimaryVideoFormat(configuration, from: ARWorldTrackingConfiguration.supportedVideoFormats)
         if isDepthSupported {
             configuration.frameSemantics.insert(.sceneDepth)
         } else {
@@ -134,6 +147,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     private func geoTrackingConfiguration() -> ARGeoTrackingConfiguration {
         let configuration = ARGeoTrackingConfiguration()
         configuration.planeDetection = []
+        pinPrimaryVideoFormat(configuration, from: ARGeoTrackingConfiguration.supportedVideoFormats)
         if ARGeoTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
             configuration.frameSemantics.insert(.sceneDepth)
         } else {
@@ -142,8 +156,17 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         return configuration
     }
 
-    /// Turns the classified mesh on or off without restarting tracking. Takes effect at the
-    /// next `start()` when the session isn't running.
+    /// Pins the back wide-angle camera, when `formats` has it.
+    private func pinPrimaryVideoFormat(_ configuration: ARConfiguration, from formats: [ARConfiguration.VideoFormat]) {
+        guard let format = Self.primaryVideoFormat(from: formats) else { return }
+        configuration.videoFormat = format
+        log.notice("camera: back wide-angle, \(Int(format.imageResolution.width), privacy: .public)x\(Int(format.imageResolution.height), privacy: .public) at \(format.framesPerSecond, privacy: .public) fps")
+    }
+
+    /// Turns the classified mesh on or off without restarting tracking. While the session
+    /// isn't running (stopped, or a call has the camera) it only records the wish, and the next
+    /// `start()` applies it: re-running a paused session here and again in `start()` made the
+    /// preview visibly jump.
     ///
     /// - Returns: true when tracking had to restart from scratch: the mesh was wanted while
     ///   geo-tracking, which can't build one, on a device that can, so the session went back
@@ -155,8 +178,10 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             defer { wanted = enabled }
             return wanted != enabled
         }
-        guard cameraOwnership.callOwner == nil, changed else { return false }
-        if enabled, isMeshSupported, runningTracking.withLock({ $0 }) == .geo {
+        guard cameraOwnership.callOwner == nil, changed,
+              let running = runningTracking.withLock({ $0 })
+        else { return false }
+        if enabled, isMeshSupported, running == .geo {
             log.notice("mesh wanted while geo-tracking; switching to world tracking")
             // Geo-tracking was running, so world tracking is supported, and no call has the camera.
             runSession()

@@ -8,12 +8,18 @@ import os
 
 /// Segments the ground (`SurfaceMap`) beside the perception pipeline. Owner: Computer Vision (1.1).
 ///
-/// Runs Apple's Core ML DETR semantic segmentation (about 18 ms on the Neural Engine of an
-/// iPhone 12 Pro) on its own queue at most once per `interval`, like `TextReader` does OCR,
-/// so it never delays an obstacle warning. Each frame picks up the latest map.
+/// Runs a semantic-segmentation model on its own queue at most once per `interval`, like
+/// `TextReader` does OCR, so it never delays an obstacle warning. Each frame picks up the
+/// latest map.
 ///
-/// The model is 86 MB and not in git: `scripts/download-models.sh` fetches it into
-/// `Resources/`. Without it `init` returns nil and the pipeline runs as before.
+/// The first bundled model in `preferredModels` is used. Apple's Core ML DETR (COCO-panoptic)
+/// comes first: on 300 COCO street scenes it told sidewalk from road best of everything tried
+/// (sidewalk IoU 42%, road 55%, vs 30% / 53% for SegFormer-B1 on ADE20K and under 20% / 38%
+/// for SegFormer on Cityscapes, which only knows a dashcam's view;
+/// `Scripts/models/benchmark_segmentation.py`). SegFormer-ADE is the fallback: better indoors
+/// (floor, ceiling, stairs) and half the time, 7–26 MB instead of 86. None is in git:
+/// `sh Scripts/download-models.sh` fetches them. Without any, `init` returns nil and the
+/// pipeline runs as before.
 ///
 /// The model loads on the first segmentation, on `queue`, not at app launch.
 ///
@@ -21,15 +27,15 @@ import os
 /// model is only created and used on `queue`, one segmentation at a time; the rest of the
 /// state is behind a `Mutex`.
 final class SurfaceReader: @unchecked Sendable {
-    /// Bundled model name, without extension.
-    static let modelName = "DETRResnet50SemanticSegmentationF16"
+    /// Bundled model names without extension, best first.
+    static let preferredModels = ["DETRResnet50SemanticSegmentationF16", "segformer_b1_ade", "segformer_b0_ade"]
 
     private let modelURL: URL
     /// The model and its class labels by output index; loaded on `queue` when first needed.
     private var loaded: (model: VNCoreMLModel, labels: [SurfaceKind])?
     private var loadFailed = false
     private let interval: TimeInterval
-    /// Cells per side of the stored map; the model's 448 × 448 is far more than needed.
+    /// Cells per side of the stored map; the models' 128–448 cells a side is more than needed.
     private let side = 56
     /// A map older than this is stale, so the ground ahead is treated as unknown.
     private let freshness: TimeInterval = 1.5
@@ -46,9 +52,15 @@ final class SurfaceReader: @unchecked Sendable {
 
     private let state = Mutex(State())
 
-    init?(interval: TimeInterval = 0.4) {
-        guard let url = Bundle.main.url(forResource: Self.modelName, withExtension: "mlmodelc") else { return nil }
-        modelURL = url
+    convenience init?(interval: TimeInterval = 0.4, bundle: Bundle = .main) {
+        guard let url = Self.preferredModels.lazy.compactMap({ bundle.url(forResource: $0, withExtension: "mlmodelc") }).first
+        else { return nil }
+        self.init(compiledModelURL: url, interval: interval)
+    }
+
+    /// From a compiled model anywhere on disk (tests).
+    init(compiledModelURL: URL, interval: TimeInterval = 0.4) {
+        modelURL = compiledModelURL
         self.interval = interval
     }
 
@@ -114,6 +126,7 @@ final class SurfaceReader: @unchecked Sendable {
               output.shape.count == 2
         else { return nil }
         let rows = output.shape[0].intValue, columns = output.shape[1].intValue
+        let rowStride = output.strides[0].intValue, columnStride = output.strides[1].intValue
         let pointer = output.dataPointer.assumingMemoryBound(to: Int32.self)
         var kinds: [SurfaceKind] = []
         kinds.reserveCapacity(side * side)
@@ -121,16 +134,20 @@ final class SurfaceReader: @unchecked Sendable {
             let sourceRow = min(rows - 1, (row * rows + rows / 2) / side)
             for column in 0 ..< side {
                 let sourceColumn = min(columns - 1, (column * columns + columns / 2) / side)
-                let index = Int(pointer[sourceRow * columns + sourceColumn])
+                let index = Int(pointer[sourceRow * rowStride + sourceColumn * columnStride])
                 kinds.append(labels.indices.contains(index) ? labels[index] : .other)
             }
         }
         return kinds
     }
 
-    /// The class names Apple ships in the model's preview metadata.
-    private static func classNames(of model: MLModel) -> [String] {
+    /// The class names: `classes` in the metadata of a model we exported, or the ones Apple
+    /// ships in its model's preview metadata.
+    static func classNames(of model: MLModel) -> [String] {
         let metadata = model.modelDescription.metadata[.creatorDefinedKey] as? [String: String]
+        if let listed = metadata?["classes"], !listed.isEmpty {
+            return listed.split(separator: ",", omittingEmptySubsequences: false).map(String.init)
+        }
         guard let json = metadata?["com.apple.coreml.model.preview.params"]?.data(using: .utf8),
               let params = try? JSONSerialization.jsonObject(with: json) as? [String: Any],
               let labels = params["labels"] as? [String]
