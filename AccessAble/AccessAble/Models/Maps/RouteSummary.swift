@@ -15,6 +15,8 @@ struct RouteSummary: Equatable, Sendable {
     var escalators: Int
     /// Crossings placed on the route, marked or not.
     var crosswalks: Int
+    /// Community reports successfully excluded from the route.
+    var avoidedReports: [Report]
 
     init(route: NavigationRoute, crossings: [RouteCrossing]) {
         duration = route.estimatedDuration
@@ -25,6 +27,7 @@ struct RouteSummary: Equatable, Sendable {
         elevators = kinds.count { $0 == .elevator }
         escalators = kinds.count { $0 == .escalator }
         crosswalks = crossings.count
+        avoidedReports = route.avoidedReports.filter { !$0.isRemoved && $0.expiresAt > .now }
     }
 
     /// The summary in the user's units, for speech and the screen alike.
@@ -39,7 +42,28 @@ struct RouteSummary: Equatable, Sendable {
             Self.count(escalators, "escalator", "escalators"),
             Self.count(crosswalks, "crosswalk", "crosswalks"),
         ].compactMap { $0 }
-        return "\(time) \(counts.joined(separator: ", "))."
+        let base = "\(time) \(counts.joined(separator: ", "))."
+        let reports = Self.reportSummary(avoidedReports)
+        return reports.isEmpty ? base : "\(base) \(reports)"
+    }
+
+    private static func reportSummary(_ reports: [Report]) -> String {
+        guard !reports.isEmpty else { return "" }
+        let groups = Dictionary(grouping: reports, by: \.kind)
+        let descriptions = groups.keys.sorted { $0.rawValue < $1.rawValue }.compactMap { kind -> String? in
+            guard let count = groups[kind]?.count, count > 0 else { return nil }
+            let name: String
+            switch kind {
+            case .construction: name = count == 1 ? "construction site" : "construction sites"
+            case .blockedPath: name = count == 1 ? "blocked path" : "blocked paths"
+            case .closedEntrance: name = count == 1 ? "closed entrance" : "closed entrances"
+            case .elevatorOut: name = count == 1 ? "elevator out of service" : "elevators out of service"
+            case .other: name = count == 1 ? "other problem" : "other problems"
+            }
+            return "\(count) reported \(name)"
+        }
+        guard !descriptions.isEmpty else { return "" }
+        return "Avoiding \(descriptions.joined(separator: ", "))."
     }
 
     private static func count(_ n: Int, _ singular: String, _ plural: String) -> String? {

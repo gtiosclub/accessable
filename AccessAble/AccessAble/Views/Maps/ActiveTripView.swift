@@ -225,7 +225,8 @@ struct ActiveTripView: View {
                     coordinate: GeoCoordinate(latitude: session.plan.place.latitude, longitude: session.plan.place.longitude)
                 ),
                 accessibilityLabel: session.directions?.mapAccessibilityLabel
-                    ?? "Map showing walking directions to \(session.destinationName)."
+                    ?? "Map showing walking directions to \(session.destinationName).",
+                reports: session.activeReports
             )
         } else if let services {
             LiveSceneView(services: services, mode: .walk, chrome: .cameraOnly)

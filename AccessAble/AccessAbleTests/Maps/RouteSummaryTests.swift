@@ -86,6 +86,30 @@ struct RouteSummaryTests {
     }
 
     @Test
+    func summaryMentionsAnAvoidedConstructionReport() throws {
+        let report = Report(
+            id: "construction-1",
+            kind: .construction,
+            coordinate: start,
+            createdAt: .now,
+            expiresAt: .now.addingTimeInterval(60 * 60),
+            reporterID: "test-user"
+        )
+        let destination = TripWalk.destination(from: start, bearing: 0, distance: 100)
+        let route = try NavigationRoute(
+            coordinates: [start, destination],
+            steps: [
+                RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Start", spokenInstruction: "Start"),
+                RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "Arrive")
+            ],
+            estimatedDuration: 60,
+            avoidedReports: [report]
+        )
+        let text = RouteSummary(route: route, crossings: []).text(distances: .metric)
+        #expect(text == "About 1 minute, 100 metres. No turns. Avoiding 1 reported construction site.")
+    }
+
+    @Test
     func slightTurnsAndUTurnsCountButOtherStepsDoNot() throws {
         let counted = RouteSummary(route: try route(metres: 100, seconds: 60, kinds: [.slightLeft, .slightRight, .uTurn]),
                                    crossings: [])

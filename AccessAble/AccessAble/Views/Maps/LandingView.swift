@@ -75,6 +75,7 @@ struct CampusMap: View {
     var routeLine: [CLLocationCoordinate2D]?
     var destination: Destination?
     var accessibilityLabel = "Map"
+    var reports: [Report] = []
     @Environment(\.colorSchemeContrast) private var contrast
 
     /// Shown until a location arrives, and in previews.
@@ -100,6 +101,23 @@ struct CampusMap: View {
             if let destination {
                 Marker(destination.name, systemImage: "flag.checkered", coordinate: destination.coordinate.clCoordinate)
             }
+            // High-contrast warning markers identify reports that may affect this trip.
+            ForEach(visibleReports) { report in
+                Annotation(
+                    report.kind.title,
+                    coordinate: report.coordinate.clCoordinate,
+                    anchor: .bottom
+                ) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.black)
+                        .padding(9)
+                        .background(.yellow, in: Circle())
+                        .overlay(Circle().stroke(.black, lineWidth: 2))
+                        .accessibilityLabel("Reported \(report.kind.title.lowercased())")
+                        .accessibilityHint("Active community report that may affect this route.")
+                }
+            }
             // The real location, so it moves with each fix (and with a simulated GPX walk).
             UserAnnotation { user in
                 userMarker(heading: user.heading)
@@ -117,6 +135,20 @@ struct CampusMap: View {
         .ignoresSafeArea()
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
+        .accessibilityRepresentation {
+            VStack(alignment: .leading) {
+                Text(accessibilityLabel)
+                // High-contrast warning markers identify reports that may affect this trip.
+            ForEach(visibleReports) { report in
+                    Text("Reported \(report.kind.title.lowercased()). Active community report.")
+                }
+            }
+            .accessibilityElement(children: .contain)
+        }
+    }
+
+    private var visibleReports: [Report] {
+        reports.filter { !$0.isRemoved && $0.expiresAt > .now }
     }
 
     /// An arrow the way the user faces, turned back by however far the map is turned, or a dot while the compass
