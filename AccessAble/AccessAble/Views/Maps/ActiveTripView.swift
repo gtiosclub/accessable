@@ -58,7 +58,12 @@ struct ActiveTripView: View {
                     isMicMuted: session.isMicOff,
                     onCallHelp: { router.push(.callHelp) },
                     onMicrophone: { Task { await session.toggleMicrophone() } },
-                    onPauseTrip: { session.pause() }
+                    onPauseTrip: { session.pause() },
+                    hasArrived: session.hasArrived,
+                    onEndTrip: {
+                        session.exit()
+                        router.popToRoot()
+                    }
                 )
             }
             .accessibilityHidden(session.isRouteBlocked || session.isPaused)
@@ -205,7 +210,7 @@ struct ActiveTripView: View {
                 accessibilityLabel: session.directions?.mapAccessibilityLabel
                     ?? "Map showing walking directions to \(session.destinationName)."
             )
-        } else if let services {
+        } else if let services, session.isCameraReady {
             LiveSceneView(services: services, mode: .walk, chrome: .cameraOnly)
         } else {
             CameraBackdrop()
