@@ -181,6 +181,11 @@ extension RouteStep {
         return "stairs"
     }
 
+    /// Valhalla capitalizes the step it joins on, "Turn left. Then Turn right.", which reads oddly on screen.
+    static func withLowercaseThen(_ text: String) -> String {
+        text.replacing(/\. Then (\p{Lu})/) { ". Then " + $0.output.1.lowercased() }
+    }
+
     /// The instruction without the compass direction Valhalla starts a route with, which a blind user can't act on:
     /// "Walk north on Ferst Drive." becomes "Follow Ferst Drive.", and "Walk north for 50 meters." becomes "Follow the
     /// path for 50 meters.". Any other instruction is returned as it is.

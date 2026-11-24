@@ -128,6 +128,14 @@ final class TripRecorder: Sendable {
         write(["announcement", Self.rowTime.format(time)] + Array(repeating: "", count: 15) + [text])
     }
 
+    /// A sign the camera read, matched or not, so a walk's missed buildings can be told from its misreads (LAND-5).
+    /// The text goes in the announcement column, and its kind and confidence in events.
+    func record(sighting: LandmarkObservation, progress: Double, at time: Date) {
+        write(["sighting", Self.rowTime.format(time)] + Array(repeating: "", count: 10)
+            + [Self.format(progress), "", "", "", "\(sighting.kind.rawValue) \(Self.format(Double(sighting.confidence), digits: 2))",
+               sighting.text ?? ""])
+    }
+
     /// The recordings on this phone, newest first.
     func recordings() throws -> [URL] {
         guard FileManager.default.fileExists(atPath: directory.path()) else { return [] }

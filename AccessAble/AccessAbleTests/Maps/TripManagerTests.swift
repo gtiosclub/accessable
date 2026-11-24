@@ -356,7 +356,7 @@ private let newRouteSpeech = "New route. \(setOff)"
 private let library = Destination(name: "Library", coordinate: GeoCoordinate(latitude: 33.7759, longitude: -84.3984))
 
 /// North 100 m, right onto Ferst Drive, then 60 m east to the destination.
-private func cornerRoute() throws -> NavigationRoute {
+private func cornerRoute(arrival: String = "Your destination is on the left.") throws -> NavigationRoute {
     let start = GeoCoordinate(latitude: 33.775, longitude: -84.399)
     let corner = TripWalk.destination(from: start, bearing: 0, distance: 100)
     let end = TripWalk.destination(from: corner, bearing: 90, distance: 60)
@@ -366,7 +366,7 @@ private func cornerRoute() throws -> NavigationRoute {
     return try NavigationRoute(coordinates: [start, corner, end], steps: [
         step(.depart, 0, "Walk north."),
         step(.turnRight, 1, "Turn right onto Ferst Drive."),
-        step(.arrive, 2, "Your destination is on the left."),
+        step(.arrive, 2, arrival),
     ], estimatedDuration: 130)
 }
 
@@ -527,6 +527,18 @@ struct TripManagerTests {
         let texts = await harness.engine.waitForCount(5).map(\.text)
         #expect(texts[1] == "In about 125 feet, turn right onto Ferst Drive.")
         #expect(texts[3] == "In about 125 feet, your destination is on the left.")
+    }
+
+    // Valhalla's generic arrival is past tense: read out early it says arrived 40 m away, and on arrival it doubles up
+    @Test
+    func aGenericArrivalIsNotSaidBeforeArriving() async throws {
+        let harness = try Harness(route: try cornerRoute(arrival: "You have arrived at your destination."))
+        await harness.start()
+        await harness.walk(from: 0, to: 160)
+
+        let texts = await harness.engine.waitForCount(5).map(\.text)
+        #expect(texts[3] == "In about 40 metres, you'll reach Library.")
+        #expect(texts[4] == "You have arrived at Library.")
     }
 
     @Test
@@ -1779,6 +1791,30 @@ struct TripManagerDepartureTests {
 
 @Suite(.timeLimit(.minutes(1)))
 struct TripManagerRecordingTests {
+    // a walk's misreads and missed buildings only show if signs that matched nothing are kept too
+    @Test
+    func recordsEverySignTheCameraReads() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recorder = TripRecorder(directory: directory)
+        recorder.setEnabled(true)
+        let skiles = try building("Skiles", along: 50, lateral: 15)
+        let harness = try Harness(buildings: [skiles], recorder: recorder)
+        await harness.start()
+        await harness.walk(from: 0, to: 30)
+        harness.landmarks.yield(sign("NO PARKING"))
+        harness.landmarks.yield(sign("SKILES"))
+        await harness.landmarks.waitUntilHandled()
+        await harness.manager.endTrip()
+
+        let url = try #require(try recorder.recordings().first)
+        let rows = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init)
+        let sightings = rows.filter { $0.hasPrefix("sighting,") }
+        #expect(sightings.count == 2)
+        #expect(sightings.first?.hasSuffix(",signText 0.90,NO PARKING") == true)
+        #expect(rows.contains { $0.hasPrefix("announcement,") && $0.hasSuffix(",Passing Skiles on your right.") })
+    }
+
     @Test
     func recordsEachFixAndAnnouncementWhileOn() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")

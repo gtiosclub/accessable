@@ -191,5 +191,48 @@ struct TripScreenCameraTests {
         await session.closeCamera(camera)
 
         #expect(await scene.calls.isEmpty)
+        #expect(!session.isCameraReady)
+    }
+
+    // the camera view takes its own hold, so it must not start the session before the geo ask
+    @Test(.timeLimit(.minutes(1)))
+    func theCameraPictureWaitsUntilGeoTrackingWasAskedFor() async throws {
+        let scene = GeoScene()
+        let clock = ManualClock()
+        let camera = camera(scene) { await ARSessionManager.isGeoTrackingAvailableHere(clock: clock, check: { _ in }) }
+        let session = TripSessionViewModel(plan: plan)
+
+        let opening = Task { await session.openCamera(camera) }
+        try await clock.waitForSleepers(1)
+        #expect(!session.isCameraReady)
+        clock.advance(by: .seconds(10))
+        await opening.value
+
+        #expect(session.isCameraReady)
+        await session.closeCamera(camera)
+        #expect(!session.isCameraReady)
+    }
+
+    @Test
+    func theCameraPictureFollowsTheGeoAskAndStart() async {
+        let scene = GeoScene()
+        let camera = camera(scene) { true }
+        let session = TripSessionViewModel(plan: plan)
+
+        await session.openCamera(camera)
+
+        #expect(session.isCameraReady)
+        #expect(await scene.calls == ["geo", "start"])
+        await session.closeCamera(camera)
+    }
+
+    @Test
+    func aFailedStartStillShowsTheCameraViewForItsError() async {
+        let camera = camera(GeoScene(startFails: true)) { true }
+        let session = TripSessionViewModel(plan: plan)
+
+        await session.openCamera(camera)
+
+        #expect(session.isCameraReady)
     }
 }
