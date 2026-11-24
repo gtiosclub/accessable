@@ -52,7 +52,8 @@ struct FusedLocationProvider: LocationProvider {
 ///   is `arAccuracyLimit` or better and agrees with a fresh GPS fix. Without fresh GPS nothing would catch a lock on
 ///   the wrong street, so none qualifies.
 /// - On AR: each reading `arAccuracyLimit` or better that agrees with GPS extends trust by `arLifetime`. GPS going
-///   stale doesn't end it, since the lock was checked against GPS on the way in.
+///   stale doesn't end it at once, since the lock was checked against GPS on the way in, but after `arUncheckedLimit`
+///   without a fresh GPS fix to check against, AR is left until GPS is back and it qualifies again.
 /// - Back to GPS at once when geo-tracking loses its lock; after `arFailedReadingsToLeave` readings in a row that are
 ///   too coarse or disagree with fresh GPS, since one alone is what noise near either limit gives; or when
 ///   `arLifetime` passes with no reading that extends it. Coming back to AR takes a whole new run, and every reading
@@ -80,6 +81,9 @@ struct LocationFusion {
     static let disagreementAllowance: Double = 20
     /// Seconds a GPS fix counts for checking AR against.
     static let gpsFreshness: TimeInterval = 5
+    /// Seconds AR stays trusted with no fresh GPS fix to check it against. A lock on the wrong street could otherwise
+    /// last as long as GPS stays out, as it can under a roof or between tall buildings.
+    static let arUncheckedLimit: TimeInterval = 30
     /// Qualifying AR readings in a row that switch to AR. At geo-tracking's one a second, about `arEntrySpan`.
     static let arEntryReadings = 3
     /// Seconds from the first to the last reading of the run that switches to AR, so a burst can't switch alone.
@@ -90,6 +94,8 @@ struct LocationFusion {
     private var trustedARUntil: Date?
     /// The run of qualifying readings toward switching to AR.
     private var entryRun: (since: Date, count: Int)?
+    /// When the last AR reading passed on was checked against fresh GPS.
+    private var checkedAt: Date?
     private var failedReadings = 0
 
     mutating func receive(_ reading: Reading) -> LocationSample? {
@@ -113,6 +119,11 @@ struct LocationFusion {
                 return nil
             }
             failedReadings = 0
+            if trustedARUntil != nil, gps == nil, let checkedAt,
+               sample.timestamp.timeIntervalSince(checkedAt) > Self.arUncheckedLimit {
+                leaveAR()
+                return nil
+            }
             if trustedARUntil == nil {
                 guard gps != nil else {
                     entryRun = nil
@@ -127,6 +138,7 @@ struct LocationFusion {
                 entryRun = nil
             }
             trustedARUntil = sample.timestamp.addingTimeInterval(Self.arLifetime)
+            if gps != nil { checkedAt = sample.timestamp }
             // geo-tracking has no speed or course, and walking-direction heading needs them; an older fix's may be from
             // before the user turned
             if let gps, abs(sample.timestamp.timeIntervalSince(gps.timestamp)) <= HeadingEstimator.maximumSampleAge {
@@ -146,6 +158,7 @@ struct LocationFusion {
         trustedARUntil = nil
         entryRun = nil
         failedReadings = 0
+        checkedAt = nil
     }
 
     private func agrees(_ sample: LocationSample, with gps: LocationSample) -> Bool {

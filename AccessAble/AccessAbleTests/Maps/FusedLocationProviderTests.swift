@@ -348,6 +348,26 @@ struct LocationFusionTests {
             #expect(received?.source == .ar)
         }
     }
+
+    @Test
+    func arUncheckedForThirtySecondsIsLeftUntilGPSIsBack() {
+        var fusion = LocationFusion()
+        let time = lockOn(&fusion)
+        // GPS goes quiet after the fix half a second before `time`
+        let lastFix = time - 0.5
+        var reading = time
+        var checked = time
+        while true {
+            reading += 1
+            if reading - lastFix <= LocationFusion.gpsFreshness { checked = reading }
+            if reading - checked > LocationFusion.arUncheckedLimit { break }
+            #expect(fusion.receive(.ar(ar(reading)))?.source == .ar)
+        }
+
+        #expect(fusion.receive(.ar(ar(reading))) == nil)
+        #expect(fusion.receive(.ar(ar(reading + 1))) == nil)
+        lockOn(&fusion, at: reading + 2)
+    }
 }
 
 // each stream test has a time limit, so a stream that never sends fails instead of hanging the run
