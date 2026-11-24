@@ -369,6 +369,40 @@ struct RouteProgressTrackerTests {
     }
 
     @Test
+    func walkingOffAfterAGapAndASwitchStartsTheRunsOver() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        // walking off on GPS, nothing for 8 s, then AR, which puts the user 20 m further out
+        let path = (1...50).map { (along: 99.4, lateral: -1.4 * Double($0) - ($0 > 32 ? 20 : 0)) }
+        let fixes = sourced(TripWalk.fixes(on: route, path: path, start: walk.nextTime)) { $0 >= 32 ? .ar : .gps }
+        walk.feed(Array(fixes[..<24]) + Array(fixes[32...]))
+
+        // the step after the gap holds walking as well as the sources' difference, so the run starts over at the
+        // first AR fix and is complete 10 s and 14 m later
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 34, .offRoute)])
+    }
+
+    @Test
+    func walkingPastATurnWhileTheSourceKeepsSwitchingIsAMissedTurn() throws {
+        let route = try turnRoute(61)
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        // AR puts the user 3 m further on than GPS, and the source switches every 2 fixes
+        let isGPS = { (index: Int) in (index / 2).isMultiple(of: 2) }
+        let fixes = straightOn(past: route, count: 18, start: walk.nextTime) { isGPS($0 - 1) ? (0, 0) : (3, 0) }
+        walk.feed(sourced(fixes) { isGPS($0) ? .gps : .ar })
+
+        // AR is 15 m from the outgoing leg first at fix 11, and GPS confirms it 2 s later; on GPS alone that comes
+        // at fix 15
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [
+            Logged(start + 12, .missedTurn(step: 1, distanceBack: 18.2)),
+        ])
+    }
+
+    @Test
     func walkingAwayRightAfterSwitchingSourceIsStillOffRoute() throws {
         let route = try cornerRoute()
         var walk = Walk(route)

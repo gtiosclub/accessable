@@ -42,12 +42,17 @@ reroute replaces the tracker, since every window and flag refers to one route's 
    - The next step index never decreases, and the arrive step is never passed.
 5. **Switching source.** When a fix's `source` (GPS or AR) differs from the last used fix's, the step between them
    isn't movement: the two can place someone standing still well apart, perhaps 15 to 25 m, though that is an
-   estimate until it is measured on a device. The wrong-way origin and the first fix of the off-route and
-   walking-away runs move by that step, so movement on each side of the switch still adds up while the step counts
-   for nothing. The runs keep their start times and counts, so a source that keeps switching can't hold off a
-   warning, and a rejoin keeps its start too. A missed turn's run starts over, since its fixes are judged on where
-   they are; every stretch of GPS is long enough to confirm one. Progress is kept, since its gate already holds off
-   a jump.
+   estimate until it is measured on a device.
+   - Within 4 s of the last used fix (`LocationFusion.arLifetime` + 1 s, as long as the fusion takes to switch), the
+     wrong-way origin and the first fix of the off-route and walking-away runs move by that step, so movement on
+     each side of the switch still adds up while the step counts for nothing. The runs keep their start times and
+     counts, so a source that keeps switching can't hold off a warning.
+   - After a longer gap the step holds walking too, which shifting would erase, so those runs start over from the
+     new fix and take their usual time from it.
+   - A missed turn's run carries on across a switch, since each of its fixes is judged on where it is, but a fix
+     from the other source that places the user short of the turn ends it: one source alone saying the user is
+     past the turn isn't enough.
+   - Progress and a rejoin carry on too; progress's gate already holds off a jump.
 
 ### Thresholds
 
