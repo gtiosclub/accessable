@@ -39,8 +39,8 @@ struct FusedLocationProvider: LocationProvider {
     }
 
     /// The compass, plus the camera's heading from each geo-tracking update that has one (AR-4). `HeadingEstimator`
-    /// uses the camera's only while the latest position is AR's, so it is trusted exactly as long as `LocationFusion`
-    /// trusts the lock. Ends when the compass ends; geo-tracking ending leaves the compass coming.
+    /// uses the camera's only from a reading `LocationFusion` passed on as the trip's position, so no second fusion
+    /// is needed here. Ends when the compass ends; geo-tracking ending leaves the compass coming.
     func headingSamples() -> AsyncStream<HeadingSample> {
         guard let geoTracking else { return gps.headingSamples() }
         // subscribed here, not in the task, as for locations

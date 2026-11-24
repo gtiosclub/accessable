@@ -57,6 +57,14 @@ struct HeadingEstimatorTests {
         #expect(estimate([fix(speed: 1.4, course: nil, source: .ar)], [arHeading()]) == nil)
     }
 
+    @Test func arHeadingFromAReadingTheFusionTurnedDownIsNotUsed() {
+        // on AR from the reading at 1 s; the one at 2 s disagreed with GPS, so it brought no fix
+        #expect(estimate([fix(speed: 0, at: 1, source: .ar)], [compass(at: 2), arHeading(at: 1), arHeading(200, at: 2)],
+                         at: 2) == UserHeading(degrees: 87, source: .compass, timestamp: start.addingTimeInterval(2)))
+        // its fix arriving after the heading makes it usable
+        #expect(estimate([fix(speed: 0, at: 2, source: .ar)], [arHeading(200, at: 2)], at: 2)?.degrees == 200)
+    }
+
     @Test func arHeadingNeedsAKnownStandingSpeed() {
         // an AR fix with no GPS fresh enough to lend a speed may be walking, with the camera pointed aside
         #expect(estimate([fix(speed: nil, source: .ar)], [compass(), arHeading(177)])

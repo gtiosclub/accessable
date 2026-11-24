@@ -77,12 +77,14 @@ struct HeadingEstimator {
                            timestamp: compass.timestamp)
     }
 
-    /// Where the camera faces (AR-4), only while the trip's own fusion trusts the lock: its latest fix is AR's and
-    /// fresh, so this never trusts AR longer than the position does.
+    /// Where the camera faces (AR-4), only from a reading the trip's own fusion passed on: its latest fix is AR's and
+    /// fresh, and the heading is no newer than that fix. A heading and its fix share their update's timestamp, so a
+    /// newer heading is from a reading the fusion turned down, such as one disagreeing with GPS.
     private func trustedARHeading(at time: Date) -> UserHeading? {
         guard let arHeading, let degrees = arHeading.trueHeading, arHeading.accuracy <= Self.maximumCompassError,
               time.timeIntervalSince(arHeading.timestamp) <= Self.maximumARAge,
-              let location, location.source == .ar, isFresh(location.timestamp, at: time) else { return nil }
+              let location, location.source == .ar, isFresh(location.timestamp, at: time),
+              arHeading.timestamp <= location.timestamp else { return nil }
         return UserHeading(degrees: degrees, source: .ar, timestamp: arHeading.timestamp)
     }
 
