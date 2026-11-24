@@ -70,7 +70,7 @@ struct LocationFusion {
     static let arAccuracyLimit = ARGeoLocationProvider.horizontalAccuracy(.medium) ?? 0
     /// Metres beyond GPS's own accuracy that AR may disagree with it; GPS often errs past its stated accuracy.
     static let disagreementAllowance: Double = 20
-    /// Seconds a GPS fix counts for checking AR against, and for lending AR readings its speed and course.
+    /// Seconds a GPS fix counts for checking AR against.
     static let gpsFreshness: TimeInterval = 5
     /// Qualifying AR readings in a row that switch to AR. At geo-tracking's one a second, about `arEntrySpan`.
     static let arEntryReadings = 3
@@ -124,8 +124,9 @@ struct LocationFusion {
                 entryRun = nil
             }
             trustedARUntil = sample.timestamp.addingTimeInterval(Self.arLifetime)
-            // geo-tracking has no speed or course, and walking-direction heading needs them
-            if let gps {
+            // geo-tracking has no speed or course, and walking-direction heading needs them; an older fix's may be from
+            // before the user turned
+            if let gps, abs(sample.timestamp.timeIntervalSince(gps.timestamp)) <= HeadingEstimator.maximumSampleAge {
                 sample.speed = gps.speed
                 sample.speedAccuracy = gps.speedAccuracy
                 sample.course = gps.course

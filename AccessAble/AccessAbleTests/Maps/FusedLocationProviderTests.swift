@@ -157,6 +157,19 @@ struct LocationFusionTests {
     }
 
     @Test
+    func arBorrowsMovementOnlyFromARecentFix() throws {
+        var fusion = LocationFusion()
+        let time = lockOn(&fusion)
+
+        // the last fix was half a second before `time`
+        #expect(fusion.receive(.ar(ar(time + 1.5)))?.speed == 1.3)
+        // 3.5 s old, it still checks AR, but its course may be from before a turn
+        let received = fusion.receive(.ar(ar(time + 3)))
+        let sample = try #require(received)
+        #expect(sample.speed == nil && sample.course == nil)
+    }
+
+    @Test
     func gpsReturnsWhenARReadingsStop() {
         var fusion = LocationFusion()
         let time = lockOn(&fusion)
