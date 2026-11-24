@@ -16,6 +16,7 @@ enum Theme {
     static let sparkle = Color(red: 0.98, green: 0.92, blue: 0.48)
     /// Opacity for controls that are shown but not active (tutorial, first/last route).
     static let dimmedOpacity = 0.45
+    static let textOffWhite = Color(white: 0.94)
 }
 
 // MARK: - Buttons
@@ -40,7 +41,7 @@ struct PillButtonStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .font(size == .regular ? .title3.weight(.semibold) : .body)
+                .font(size == .regular ? .title3.weight(.semibold) : .title3)
                 .multilineTextAlignment(.center)
                 .foregroundStyle(foreground)
                 .padding(.horizontal, size == .regular ? 20 : 18)
@@ -61,7 +62,7 @@ struct PillButtonStyle: ButtonStyle {
             switch kind {
             case .primary: .black
             case .destructive: .white
-            case .outline: Theme.cyan
+            case .outline: Theme.textOffWhite
             }
         }
 
@@ -110,8 +111,6 @@ struct CircleIconButton: View {
     }
 }
 
-// MARK: - Shared pieces
-
 /// The AccessAble mark: an eye with a sparkle, in a dark outlined circle.
 struct AppLogo: View {
     var size: CGFloat = 170
@@ -142,7 +141,6 @@ struct AppLogo: View {
     }
 }
 
-/// Stands in for the live camera feed until the camera is wired into these screens.
 struct CameraBackdrop: View {
     var body: some View {
         LinearGradient(
@@ -335,5 +333,36 @@ struct TwoFingerSwipe: UIGestureRecognizerRepresentable {
 
     func handleUIGestureRecognizerAction(_ recognizer: UISwipeGestureRecognizer, context: Context) {
         if recognizer.state == .ended { action() }
+    }
+}
+
+/// Names of the backdrop images in Assets.xcassets. Add an image set with
+/// one of these names and it appears; nothing else to change.
+enum BackdropAsset {
+    static let map = "backdrop_map"          // landing page + tutorial steps 1-5
+    static let picture = "backdrop_picture"  // tutorial steps 6-10 (picture mode)
+}
+
+/// Shows the named image full-screen if it exists, otherwise nothing,
+/// so put your own fallback behind it.
+struct BackdropImage: View {
+    let name: String
+
+    var body: some View {
+        if UIImage(named: name) != nil {
+            Color.clear
+                .overlay { Image(name).resizable().scaledToFill() }
+                .clipped()
+                .ignoresSafeArea()
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+extension Color {
+    init(hex: UInt32) {
+        self.init(red: Double((hex >> 16) & 0xFF) / 255,
+                  green: Double((hex >> 8) & 0xFF) / 255,
+                  blue: Double(hex & 0xFF) / 255)
     }
 }

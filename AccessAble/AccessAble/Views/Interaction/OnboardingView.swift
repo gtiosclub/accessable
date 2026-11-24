@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Owner: User Interaction (3.4). First-launch flow: role → VoiceOver → tutorial → done.
 struct OnboardingView: View {
     @Environment(AppViewModel.self) private var app
     @State private var viewModel = OnboardingViewModel()
@@ -11,7 +10,22 @@ struct OnboardingView: View {
             case .role:
                 RoleQuestionView { viewModel.chooseRole($0) }
             case .voiceOver:
-                VoiceOverQuestionView { viewModel.answerVoiceOver($0) }
+                VoiceOverQuestionView { answer in
+                    viewModel.answerVoiceOver(answer)
+                    app.profile = viewModel.profile
+                    app.preferences.usesSystemScreenReader = answer
+                }
+            case .account:
+                AccountCreationView(
+                    error: viewModel.accountError,
+                    isLoading: viewModel.isCreatingAccount
+                ) { username, password in
+                    Task { await viewModel.createAccount(username: username, password: password) }
+                }
+            case .settings:
+                NavigationStack {
+                    SettingsView(app: app) { viewModel.finishSettings() }
+                }
             case .tutorial:
                 TutorialView { viewModel.finishTutorial() }
             case .complete:
@@ -25,12 +39,11 @@ struct OnboardingView: View {
     }
 
     private func finish() {
-        app.preferences.usesSystemScreenReader = viewModel.usesVoiceOver
-        app.completeOnboarding(with: viewModel.profile)
+        app.hasCompletedOnboarding = true
     }
 }
 
-/// "Welcome to AccessAble" title block shared by the first two questions.
+/// "Welcome to AccessAble" title block shared by the first questions.
 private struct WelcomeTitle: View {
     var body: some View {
         VStack(spacing: 16) {
@@ -116,33 +129,128 @@ struct VoiceOverQuestionView: View {
     }
 }
 
+/// Look and wording of the account screen. Edit values here to match Figma.
+struct AccountFormStyle {
+    var title = "Create an account"
+    var usernameLabel = "Username"
+    var usernamePlaceholder = "Create username"
+    var passwordLabel = "Password"
+    var passwordPlaceholder = "At least 6 characters"
+    var buttonTitle = "Create Account"
+    var fieldColor = Color(white: 0.22)
+    var fieldCornerRadius: CGFloat = 16
+    var fieldHeight: CGFloat = 49
+    var fieldHorizontalPadding: CGFloat = 16
+    var spacing: CGFloat = 16
+
+    static let standard = AccountFormStyle()
+}
+
+struct AccountCreationView: View {
+    let error: String?
+    let isLoading: Bool
+    var style: AccountFormStyle = .standard
+    let onCreate: (String, String) -> Void
+
+    @State private var username = ""
+    @State private var password = ""
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: style.spacing) {
+                WelcomeTitle()
+                    .frame(maxWidth: .infinity)
+                    .padding(.bottom, 12)
+
+                Text(style.title)
+                    .font(.title3.bold())
+                    .accessibilityAddTraits(.isHeader)
+
+                field(style.usernameLabel) {
+                    TextField(style.usernamePlaceholder, text: $username)
+                        .font(.title3)
+                        .textContentType(.username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+                field(style.passwordLabel) {
+                    SecureField(style.passwordPlaceholder, text: $password)
+                        .font(.title3)
+                }
+
+                if let error {
+                    Text(error)
+                        .font(.subheadline)
+                        .foregroundStyle(Theme.red)
+                        .accessibilityLabel("Error: \(error)")
+                }
+
+                Button(style.buttonTitle) { onCreate(username, password) }
+                    .buttonStyle(.pill(.primary))
+                    .disabled(isLoading)
+                    .overlay { if isLoading { ProgressView().tint(.black) } }
+                    .padding(.top, 8)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 48)
+            .frame(maxWidth: .infinity)
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .defaultScrollAnchor(.center)
+        .background(Color.black.ignoresSafeArea())
+        .onChange(of: error) { _, message in
+            if let message { AccessibilityNotification.Announcement(message).post() }
+        }
+    }
+
+    private func field<Field: View>(_ label: String, @ViewBuilder content: () -> Field) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.subheadline.weight(.semibold))
+            content()
+                .padding(.horizontal, style.fieldHorizontalPadding)
+                .frame(minHeight: style.fieldHeight)
+                .background(style.fieldColor, in: RoundedRectangle(cornerRadius: style.fieldCornerRadius, style: .continuous))
+        }
+    }
+}
+
 struct OnboardingCompleteView: View {
     let onContinue: () -> Void
     let onRepeatTutorial: () -> Void
 
+    private let accent = Color(red: 0.76, green: 0.97, blue: 0.96) // light cyan
+
     var body: some View {
         ScrollView {
-            VStack(spacing: 16) {
+            VStack(spacing: 12) {
                 AppLogo(size: 170)
-                    .padding(.bottom, 8)
+                    .padding(.bottom, 16)
+
                 Text("Onboarding Successful")
                     .font(.title2.bold())
                     .accessibilityAddTraits(.isHeader)
+
                 Text("You're all set and ready to get started with your experience")
                     .font(.body)
                     .multilineTextAlignment(.center)
+                    .frame(maxWidth: 260)
+
                 VStack(spacing: 24) {
                     Button("Continue", action: onContinue)
-                        .buttonStyle(.pill(.primary))
+                        .buttonStyle(OnboardingButtonStyle(
+                            fill: accent,
+                            foreground: .black,
+                            border: nil
+                        ))
                     Button("Repeat Tutorial", action: onRepeatTutorial)
-                        .buttonStyle(.pill(.outline))
+                        .buttonStyle(OnboardingButtonStyle(
+                            fill: .black,
+                            foreground: accent,
+                            border: accent
+                        ))
                 }
-                .padding(.top, 24)
-                Text(OnboardingViewModel.safetyDisclosure)
-                    .font(.footnote)
-                    .foregroundStyle(.white.opacity(0.8))
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 24)
+                .padding(.top, 38)
             }
             .foregroundStyle(.white)
             .padding(.horizontal, 28)
@@ -151,13 +259,40 @@ struct OnboardingCompleteView: View {
         }
         .scrollBounceBehavior(.basedOnSize)
         .defaultScrollAnchor(.center)
-        .background(Theme.navy.ignoresSafeArea())
+        .background(Color.black.ignoresSafeArea())
+    }
+}
+
+private struct OnboardingButtonStyle: ButtonStyle {
+    let fill: Color
+    let foreground: Color
+    let border: Color?
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.title3.bold())
+            .foregroundStyle(foreground)
+            .frame(maxWidth: .infinity)
+            .frame(height: 58)
+            .background(fill, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                if let border {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .strokeBorder(border, lineWidth: 2)
+                }
+            }
+            .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }
 
 #Preview("Onboarding") {
     OnboardingView()
         .environment(AppViewModel(defaults: UserDefaults(suiteName: "preview-onboarding") ?? .standard, services: .preview))
+        .preferredColorScheme(.dark)
+}
+
+#Preview("Account") {
+    AccountCreationView(error: nil, isLoading: false) { _, _ in }
         .preferredColorScheme(.dark)
 }
 

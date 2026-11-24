@@ -1,11 +1,6 @@
 import MapKit
 import SwiftUI
 
-/// Owner: Maps (2.x). Home screen: Settings, Dev Tools and Voice commands at the top, Search
-/// Destination at the bottom, over a plain background for now (a static image is to come).
-///
-/// There is no camera or map here, so no camera/map switch either: the camera runs on the
-/// trip screen, where the switch is, and from Dev Tools.
 struct LandingView: View {
     @Environment(AppRouter.self) private var router
     @State private var showsCommands = false
@@ -19,7 +14,12 @@ struct LandingView: View {
         .padding(.horizontal, 24)
         .padding(.bottom, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.navy.ignoresSafeArea())
+        .background {
+            ZStack {
+                Theme.navy.ignoresSafeArea()
+                BackdropImage(name: BackdropAsset.map)
+            }
+        }
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showsCommands) {
             VoiceCommandsSheet()
