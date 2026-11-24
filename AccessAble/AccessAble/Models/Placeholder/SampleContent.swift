@@ -158,7 +158,7 @@ enum VoiceCommandHint: String, CaseIterable, Identifiable, Sendable {
         case .describeSurroundings: "Lists what the camera sees around you."
         case .describeLocation: "Tells you the street you're on and what's nearby."
         case .pauseTrip: "Pauses directions until you continue."
-        case .reportProblem: "Reports a problem where you are. Also say blocked path, closed entrance, elevator, or other."
+        case .reportProblem: "Reports a problem where you are. Also say report blocked path, report closed entrance, report elevator, or report other."
         case .callHelp: "Starts a video call with an available volunteer."
         }
     }

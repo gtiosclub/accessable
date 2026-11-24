@@ -343,7 +343,7 @@ final class TripSessionViewModel {
 
     /// What may come before "report". Only these, not "report" anywhere, so a question such as
     /// "what does this report say" still goes to Ask AI.
-    private static let reportLeadIns = ["", "please ", "i want to ", "i'd like to ", "i need to ", "can i "]
+    private static let reportLeadIns = ["", "please ", "ok ", "okay ", "i want to ", "i'd like to ", "i would like to ", "i need to ", "can i "]
 
     /// nil unless the words are a report command. Speech adds punctuation, so it is ignored.
     static func reportCommand(for text: String) -> ReportCommand? {
@@ -360,10 +360,11 @@ final class TripSessionViewModel {
         func says(_ phrases: String...) -> Bool { phrases.contains { problem.contains(" \($0) ") } }
 
         if says("construction", "work zone", "road work", "roadwork") { return .kind(.construction) }
+        // before the entrance: "the elevator door is closed" is an elevator out of service
+        if says("elevator", "lift") { return .kind(.elevatorOut) }
         // before blocked: "the door is closed" is a closed entrance, not a blocked path
         if says("entrance", "door", "doorway"), says("closed", "locked") { return .kind(.closedEntrance) }
         if says("blocked", "blocking", "obstruction", "obstacle") { return .kind(.blockedPath) }
-        if says("elevator", "lift") { return .kind(.elevatorOut) }
         if says("other", "something else") { return .kind(.other) }
         return .unknown
     }
@@ -442,8 +443,8 @@ final class TripSessionViewModel {
     }
 
     /// A trip command is carried out; anything else is a question for Ask AI about what the
-    /// camera sees, with the conversation so far, so follow-ups make sense.
-    // internal so tests can say something without the microphone
+    /// camera sees, with the conversation so far, so follow-ups make sense. Internal so tests can
+    /// say something without the microphone.
     func respond(to text: String) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let services, !text.isEmpty else { return }
@@ -453,7 +454,7 @@ final class TripSessionViewModel {
                 await submitReport(kind: kind)
             case .unknown where isReportingAvailable:
                 await say(
-                    "What's the problem? Say report construction, blocked path, closed entrance, elevator, or other.",
+                    "What's the problem? Say report, then the problem: report construction, report blocked path, report closed entrance, report elevator, or report other.",
                     category: .system
                 )
             case .unknown:
