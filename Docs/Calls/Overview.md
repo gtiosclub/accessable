@@ -2,6 +2,8 @@
 
 Shared decisions for the video-call feature. Every call task builds on these.
 
+Volunteer ringing and answers: [incoming-call flow, rules contract and testing](IncomingCalls.md).
+
 Two-iPhone media test: [LiveKit Debug harness and acceptance checklist](MediaTest.md).
 
 Email/password accounts and role routing: [VOLUNTEER-2 setup and verification](SignIn.md).

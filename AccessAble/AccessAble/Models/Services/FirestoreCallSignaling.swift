@@ -253,14 +253,21 @@ struct FirestoreCallSignaling: CallSignaling {
                     let data = try transaction.getDocument(volunteerRef).data() ?? [:]
                     guard let volunteer = Volunteer(id: volunteerID, firestoreData: data),
                           volunteer.isFreeToRing() else { return "busy" }
-                    transaction.setData([
+                    // A volunteer cannot read the caller's private users doc. Project only
+                    // the first name into the participant-only call; rules verify it.
+                    let profile = try transaction.getDocument(db.collection("users").document(me)).data()
+                    var callData: [String: Any] = [
                         "callerId": me,
                         "volunteerId": volunteerID,
                         "status": "ringing",
                         "roomName": "call-\(callID)",
                         "createdAt": FieldValue.serverTimestamp(),
                         "updatedAt": FieldValue.serverTimestamp(),
-                    ], forDocument: callRef)
+                    ]
+                    if let name = profile?["displayName"] as? String, !name.isEmpty {
+                        callData["callerFirstName"] = IncomingCall.firstName(from: name)
+                    }
+                    transaction.setData(callData, forDocument: callRef)
                     // ringingSince is the server's clock, never the phone's; the rules require it.
                     transaction.updateData(
                         ["ringingCallId": callID, "ringingSince": FieldValue.serverTimestamp()],

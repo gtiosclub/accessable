@@ -294,19 +294,28 @@ struct PlaceholderCallSignaling: CallSignaling {
     }
 
     func accept(callID: String) async throws -> CallTicket {
-        sampleTicket(volunteerID: "placeholder-volunteer")
+        sampleTicket(volunteerID: "placeholder-volunteer", callID: callID)
     }
 
     func decline(callID: String) async throws {}
     func skip(callID: String) async throws {}
     func endCall(callID: String) async {}
 
-    private func sampleTicket(volunteerID: String) -> CallTicket {
+    private func sampleTicket(volunteerID: String, callID: String = UUID().uuidString) -> CallTicket {
         CallTicket(
-            callID: UUID().uuidString, roomName: "placeholder-room", token: "placeholder-token",
+            callID: callID, roomName: "placeholder-room", token: "placeholder-token",
             callerID: "placeholder-caller", volunteerID: volunteerID,
             expiresAt: Date().addingTimeInterval(60)
         )
+    }
+}
+
+/// No unsolicited incoming calls in normal previews. Supply an offer for a ringing preview.
+struct PlaceholderIncomingCalls: IncomingCallProviding {
+    var call: IncomingCall? = nil
+
+    @MainActor func incomingCalls(volunteerID: String) -> AsyncThrowingStream<IncomingCall?, Error> {
+        AsyncThrowingStream { continuation in continuation.yield(call) }
     }
 }
 

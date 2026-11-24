@@ -21,6 +21,12 @@ final class LiveKitVideoCallSession: VideoCallSession {
     /// Whether the other person has joined, so their leaving can be noticed.
     private var sawPartner = false
 
+    /// Main-actor read access for the volunteer's renderer; never exposes tokens or the Room.
+    var remoteVideoTrack: VideoTrack? {
+        room?.remoteParticipants.values.flatMap { $0.videoTracks }
+            .compactMap { $0.track as? VideoTrack }.first
+    }
+
     init(
         auth: any AuthService,
         pauseCamera: @escaping @MainActor () throws -> UUID?,

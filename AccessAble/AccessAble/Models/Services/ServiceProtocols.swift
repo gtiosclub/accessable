@@ -177,6 +177,13 @@ protocol PresenceService: Sendable {
     func setOnline(_ isOnline: Bool) async throws
 }
 
+/// Volunteer-side read model. Cancel the stream when the app is no longer on screen.
+/// Nil dismisses a withdrawn/ended ring. Errors must not silently become a missing call.
+protocol IncomingCallProviding: Sendable {
+    @MainActor
+    func incomingCalls(volunteerID: String) -> AsyncThrowingStream<IncomingCall?, Error>
+}
+
 /// What a caller hears while `requestCall` works (VOLUNTEER-7).
 enum CallRequestProgress: Equatable, Sendable {
     enum Miss: Equatable, Sendable { case noAnswer, declined }
@@ -190,13 +197,12 @@ enum CallRequestProgress: Equatable, Sendable {
 /// and firestore.rules enforce every step. Tickets come only from the getCallToken Worker.
 protocol CallSignaling: Sendable {
     /// Caller: rings online volunteers one at a time (`volunteerID` first, if given) until one accepts,
-    /// then returns the ticket. A decline or 30 seconds moves on to the next volunteer.
-    /// Caller: rings online volunteers one at a time (`volunteerID` first, if given) until one accepts,
     /// then returns the ticket. A decline or 30 seconds moves on to the next volunteer, reported on `progress`.
     func requestCall(
         preferring volunteerID: String?,
         progress: @Sendable (CallRequestProgress) -> Void
-    ) async throws -> CallTicket    /// Volunteer: answers a call that's ringing them. Throws if it was taken or ended.
+    ) async throws -> CallTicket
+    /// Volunteer: answers a call that's ringing them. Throws if it was taken or ended.
     func accept(callID: String) async throws -> CallTicket
     /// Volunteer: turns down a call that's ringing them.
     func decline(callID: String) async throws

@@ -26,6 +26,7 @@ struct AppServices: Sendable {
     var volunteers: any VolunteerDirectory = PlaceholderVolunteerDirectory()
     var presence: any PresenceService = PlaceholderPresenceService()
     var callSignaling: any CallSignaling = PlaceholderCallSignaling()
+    var incomingCalls: any IncomingCallProviding = PlaceholderIncomingCalls()
     var videoCall: any VideoCallSession = PlaceholderVideoCallSession()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
@@ -79,6 +80,7 @@ struct AppServices: Sendable {
             services.volunteers = FirestoreVolunteerDirectory()
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
+            services.incomingCalls = FirestoreIncomingCalls(presence: services.presence)
             if let tokenURL = LiveKitConfig.callTokenURL {
                 services.callSignaling = FirestoreCallSignaling(auth: services.auth, tokenURL: tokenURL)
             }
@@ -150,6 +152,7 @@ struct AppServices: Sendable {
         services.presence = PlaceholderPresenceService()
         services.videoCall = PlaceholderVideoCallSession()
         services.callSignaling = PlaceholderCallSignaling()
+        services.incomingCalls = PlaceholderIncomingCalls()
         return services
     }
 }
