@@ -1791,6 +1791,30 @@ struct TripManagerDepartureTests {
 
 @Suite(.timeLimit(.minutes(1)))
 struct TripManagerRecordingTests {
+    // a walk's misreads and missed buildings only show if signs that matched nothing are kept too
+    @Test
+    func recordsEverySignTheCameraReads() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recorder = TripRecorder(directory: directory)
+        recorder.setEnabled(true)
+        let skiles = try building("Skiles", along: 50, lateral: 15)
+        let harness = try Harness(buildings: [skiles], recorder: recorder)
+        await harness.start()
+        await harness.walk(from: 0, to: 30)
+        harness.landmarks.yield(sign("NO PARKING"))
+        harness.landmarks.yield(sign("SKILES"))
+        await harness.landmarks.waitUntilHandled()
+        await harness.manager.endTrip()
+
+        let url = try #require(try recorder.recordings().first)
+        let rows = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init)
+        let sightings = rows.filter { $0.hasPrefix("sighting,") }
+        #expect(sightings.count == 2)
+        #expect(sightings.first?.hasSuffix(",signText 0.90,NO PARKING") == true)
+        #expect(rows.contains { $0.hasPrefix("announcement,") && $0.hasSuffix(",Passing Skiles on your right.") })
+    }
+
     @Test
     func recordsEachFixAndAnnouncementWhileOn() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")
