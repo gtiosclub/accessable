@@ -116,6 +116,10 @@ private func lockOn(_ fusion: inout LocationFusion, at seconds: TimeInterval = 0
     return seconds + Double(LocationFusion.arEntryReadings - 1) + 0.5
 }
 
+/// Seconds between geo-tracking readings as the session sends them: the first frame at least a second after the
+/// last, at 60 frames a second.
+private let cadence: TimeInterval = 61.0 / 60
+
 /// How often the passed-on readings change source.
 private func switches(_ samples: [LocationSample]) -> Int {
     zip(samples, samples.dropFirst()).filter { $0.source != $1.source }.count
@@ -189,35 +193,46 @@ struct LocationFusionTests {
         var fusion = LocationFusion()
         let time = lockOn(&fusion)
 
-        #expect(fusion.receive(.gps(gps(time + 2))) == nil)
-        #expect(fusion.receive(.gps(gps(time + 2.1)))?.source == .gps)
+        #expect(fusion.receive(.gps(gps(time + LocationFusion.arLifetime))) == nil)
+        #expect(fusion.receive(.gps(gps(time + LocationFusion.arLifetime + 0.1)))?.source == .gps)
         // and switching back takes a whole run
-        #expect(fusion.receive(.ar(ar(time + 2.5))) == nil)
+        #expect(fusion.receive(.ar(ar(time + LocationFusion.arLifetime + 0.5))) == nil)
     }
 
     @Test
     func oneCoarseReadingKeepsARButTwoInARowEndIt() {
         var fusion = LocationFusion()
         let time = lockOn(&fusion)
+        let at = { (reading: Double) in time + reading * cadence }
 
-        #expect(fusion.receive(.ar(ar(time + 1, accuracy: .low))) == nil)
-        #expect(fusion.receive(.gps(gps(time + 1.2))) == nil)
-        #expect(fusion.receive(.ar(ar(time + 2)))?.source == .ar)
+        #expect(fusion.receive(.ar(ar(at(1), accuracy: .low))) == nil)
+        #expect(fusion.receive(.gps(gps(at(1.5)))) == nil)
+        #expect(fusion.receive(.ar(ar(at(2))))?.source == .ar)
 
-        #expect(fusion.receive(.ar(ar(time + 3, accuracy: .low))) == nil)
-        #expect(fusion.receive(.ar(ar(time + 4, accuracy: .low))) == nil)
-        #expect(fusion.receive(.gps(gps(time + 4.2)))?.source == .gps)
-        #expect(fusion.receive(.ar(ar(time + 5))) == nil)
+        #expect(fusion.receive(.ar(ar(at(3), accuracy: .low))) == nil)
+        #expect(fusion.receive(.ar(ar(at(4), accuracy: .low))) == nil)
+        #expect(fusion.receive(.gps(gps(at(4.2))))?.source == .gps)
+        #expect(fusion.receive(.ar(ar(at(5)))) == nil)
+    }
+
+    @Test
+    func oneMissingReadingKeepsAR() {
+        var fusion = LocationFusion()
+        let time = lockOn(&fusion)
+
+        // the reading at one interval never came
+        #expect(fusion.receive(.gps(gps(time + 1.5 * cadence))) == nil)
+        #expect(fusion.receive(.ar(ar(time + 2 * cadence)))?.source == .ar)
     }
 
     @Test
     func accuracyFlickeringToLowSwitchesAtMostOnce() {
         var fusion = LocationFusion()
         var passed: [LocationSample] = []
-        for second in 0..<30 {
-            let time = Double(second)
+        for reading in 0..<30 {
+            let time = Double(reading) * cadence
             if let sample = fusion.receive(.gps(gps(time))) { passed.append(sample) }
-            let accuracy: GeoTrackingUpdate.Accuracy = second.isMultiple(of: 2) ? .high : .low
+            let accuracy: GeoTrackingUpdate.Accuracy = reading.isMultiple(of: 2) ? .high : .low
             if let sample = fusion.receive(.ar(ar(time + 0.5, accuracy: accuracy))) { passed.append(sample) }
         }
 
@@ -229,25 +244,31 @@ struct LocationFusionTests {
         var fusion = LocationFusion()
         let time = lockOn(&fusion)
         var passed: [LocationSample] = []
-        for second in 1...30 {
-            let at = time + Double(second)
+        for reading in 1...30 {
+            let at = time + Double(reading) * cadence
             if let sample = fusion.receive(.gps(gps(at - 0.5))) { passed.append(sample) }
-            let accuracy: GeoTrackingUpdate.Accuracy = second.isMultiple(of: 2) ? .high : .low
+            let accuracy: GeoTrackingUpdate.Accuracy = reading.isMultiple(of: 2) ? .high : .low
             if let sample = fusion.receive(.ar(ar(at, accuracy: accuracy))) { passed.append(sample) }
         }
 
-        #expect(passed.allSatisfy { $0.source == .ar })
+        #expect(!passed.isEmpty && passed.allSatisfy { $0.source == .ar })
     }
 
     @Test
-    func arDisagreeingWithGPSEndsAtOnce() {
+    func oneDisagreementKeepsARButTwoInARowEndIt() {
         var fusion = LocationFusion()
         let time = lockOn(&fusion)
+        let at = { (reading: Double) in time + reading * cadence }
 
         // GPS is 10 m accurate, so AR may be 30 m off
-        #expect(fusion.receive(.ar(ar(time + 1, metresNorth: 29)))?.source == .ar)
-        #expect(fusion.receive(.ar(ar(time + 2, metresNorth: 31))) == nil)
-        #expect(fusion.receive(.gps(gps(time + 2.1)))?.source == .gps)
+        #expect(fusion.receive(.ar(ar(at(1), metresNorth: 31))) == nil)
+        #expect(fusion.receive(.gps(gps(at(1.5)))) == nil)
+        #expect(fusion.receive(.ar(ar(at(2), metresNorth: 29)))?.source == .ar)
+
+        #expect(fusion.receive(.ar(ar(at(3), metresNorth: 31))) == nil)
+        #expect(fusion.receive(.gps(gps(at(3.5)))) == nil)
+        #expect(fusion.receive(.ar(ar(at(4), metresNorth: 31))) == nil)
+        #expect(fusion.receive(.gps(gps(at(4.5))))?.source == .gps)
     }
 
     @Test
@@ -255,15 +276,30 @@ struct LocationFusionTests {
         var fusion = LocationFusion()
         let time = lockOn(&fusion)
         var passed: [LocationSample] = []
-        for second in 1...30 {
-            let at = time + Double(second)
+        for reading in 1...30 {
+            let at = time + Double(reading) * cadence
             if let sample = fusion.receive(.gps(gps(at - 0.5))) { passed.append(sample) }
-            let north: Double = second.isMultiple(of: 2) ? 29 : 31
+            let north: Double = reading.isMultiple(of: 2) ? 29 : 31
             if let sample = fusion.receive(.ar(ar(at, metresNorth: north))) { passed.append(sample) }
         }
 
-        #expect(passed.first?.source == .gps)
-        #expect(switches(passed) == 0)
+        #expect(!passed.isEmpty && passed.allSatisfy { $0.source == .ar })
+    }
+
+    @Test
+    func aStrayGPSFixDoesNotEndAR() {
+        var fusion = LocationFusion()
+        let time = lockOn(&fusion)
+        var passed: [LocationSample] = []
+        // every fourth GPS fix strays 32 m
+        for reading in 1...30 {
+            let at = time + Double(reading) * cadence
+            let fix = gps(at - 0.5, metresNorth: reading.isMultiple(of: 4) ? 32 : 0)
+            if let sample = fusion.receive(.gps(fix)) { passed.append(sample) }
+            if let sample = fusion.receive(.ar(ar(at))) { passed.append(sample) }
+        }
+
+        #expect(!passed.isEmpty && passed.allSatisfy { $0.source == .ar })
     }
 
     @Test
@@ -271,8 +307,9 @@ struct LocationFusionTests {
         var fusion = LocationFusion()
         let time = lockOn(&fusion)
         #expect(fusion.receive(.ar(ar(time + 1, metresNorth: 40))) == nil)
+        #expect(fusion.receive(.ar(ar(time + 2, metresNorth: 40))) == nil)
 
-        let back = lockOn(&fusion, at: time + 1.5)
+        let back = lockOn(&fusion, at: time + 2.5)
         #expect(fusion.receive(.gps(gps(back + 0.2))) == nil)
     }
 

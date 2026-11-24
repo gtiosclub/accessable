@@ -53,9 +53,10 @@ struct FusedLocationProvider: LocationProvider {
 ///   the wrong street, so none qualifies.
 /// - On AR: each reading `arAccuracyLimit` or better that agrees with GPS extends trust by `arLifetime`. GPS going
 ///   stale doesn't end it, since the lock was checked against GPS on the way in.
-/// - Back to GPS at once when a reading disagrees with fresh GPS or geo-tracking loses its lock, after
-///   `arCoarseReadingsToLeave` too-coarse readings in a row, or when `arLifetime` passes with no reading that extends
-///   it. Coming back to AR takes a whole new run.
+/// - Back to GPS at once when geo-tracking loses its lock; after `arFailedReadingsToLeave` readings in a row that are
+///   too coarse or disagree with fresh GPS, since one alone is what noise near either limit gives; or when
+///   `arLifetime` passes with no reading that extends it. Coming back to AR takes a whole new run, and every reading
+///   of it must pass both limits.
 struct LocationFusion {
     enum Reading: Equatable, Sendable {
         case gps(LocationSample)
@@ -64,8 +65,15 @@ struct LocationFusion {
         case arLost
     }
 
-    /// Seconds an AR reading is trusted for. Geo-tracking sends one a second; a gap means the camera stopped.
-    static let arLifetime: TimeInterval = 2
+    /// Seconds between geo-tracking readings: the session sends one on the first frame at least this long after the
+    /// last, so gaps run a frame or so over.
+    static let arReadingInterval: TimeInterval = 1
+    /// Bad AR readings in a row that switch back to GPS: too coarse, or disagreeing with fresh GPS.
+    static let arFailedReadingsToLeave = 2
+    /// Seconds a good AR reading is trusted for. It must outlast the readings before the one that ends trust, which
+    /// don't extend it, and the frame or so each gap runs over, else one bad or missing reading would end AR on its
+    /// own. A longer gap means the camera stopped.
+    static let arLifetime = Double(arFailedReadingsToLeave) * arReadingInterval + 1
     /// Worst AR accuracy trusted, in metres: medium.
     static let arAccuracyLimit = ARGeoLocationProvider.horizontalAccuracy(.medium) ?? 0
     /// Metres beyond GPS's own accuracy that AR may disagree with it; GPS often errs past its stated accuracy.
@@ -76,15 +84,13 @@ struct LocationFusion {
     static let arEntryReadings = 3
     /// Seconds from the first to the last reading of the run that switches to AR, so a burst can't switch alone.
     static let arEntrySpan: TimeInterval = 2
-    /// Too-coarse AR readings in a row that switch back to GPS. One, as a grade flickering to low gives, doesn't.
-    static let arCoarseReadingsToLeave = 2
 
     private var latestGPS: LocationSample?
     /// While AR is passed on: until when, unless a reading extends it.
     private var trustedARUntil: Date?
     /// The run of qualifying readings toward switching to AR.
     private var entryRun: (since: Date, count: Int)?
-    private var coarseReadings = 0
+    private var failedReadings = 0
 
     mutating func receive(_ reading: Reading) -> LocationSample? {
         switch reading {
@@ -98,18 +104,15 @@ struct LocationFusion {
         case .ar(var sample):
             if let trustedARUntil, sample.timestamp > trustedARUntil { leaveAR() }
             let gps = freshGPS(at: sample.timestamp)
-            guard sample.horizontalAccuracy <= Self.arAccuracyLimit else {
-                entryRun = nil
-                coarseReadings += 1
-                if coarseReadings >= Self.arCoarseReadingsToLeave { leaveAR() }
-                return nil
-            }
-            coarseReadings = 0
             // geo-tracking can lock on to the wrong street; a fresh GPS fix catches that
-            if let gps, !agrees(sample, with: gps) {
-                leaveAR()
+            guard sample.horizontalAccuracy <= Self.arAccuracyLimit,
+                  gps.map({ agrees(sample, with: $0) }) ?? true else {
+                entryRun = nil
+                failedReadings += 1
+                if failedReadings >= Self.arFailedReadingsToLeave { leaveAR() }
                 return nil
             }
+            failedReadings = 0
             if trustedARUntil == nil {
                 guard gps != nil else {
                     entryRun = nil
@@ -142,7 +145,7 @@ struct LocationFusion {
     private mutating func leaveAR() {
         trustedARUntil = nil
         entryRun = nil
-        coarseReadings = 0
+        failedReadings = 0
     }
 
     private func agrees(_ sample: LocationSample, with gps: LocationSample) -> Bool {
