@@ -19,7 +19,10 @@ final class AppViewModel {
 
     /// Settings-page choices that are not part of the GuidanceProfile.
     var preferences: SettingsPreferences {
-        didSet { save(preferences, forKey: Keys.preferences) }
+        didSet {
+            save(preferences, forKey: Keys.preferences)
+            services.repeatSettings.autoRepeat = preferences.autoRepeat
+        }
     }
 
     var hasCompletedOnboarding: Bool {
@@ -51,6 +54,7 @@ final class AppViewModel {
         self.services.askAISettings.priorities = profile.aiPriorities
         self.services.alertSettings.filter = profile.alertFilter
         self.services.alertSettings.soundCues = profile.channels.contains(.spatialAudio)
+        self.services.repeatSettings.autoRepeat = preferences.autoRepeat
         let announcements = self.services.announcements
         Task { await announcements.updateProfile(profile) }
 

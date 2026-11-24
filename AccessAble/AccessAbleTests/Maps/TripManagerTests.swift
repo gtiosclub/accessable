@@ -320,13 +320,15 @@ private struct Harness {
     let manager: TripManager
     let route: NavigationRoute
 
-    init(route: NavigationRoute? = nil, reroutes: [Result<NavigationRoute, RoutingError>] = []) throws {
+    init(route: NavigationRoute? = nil, reroutes: [Result<NavigationRoute, RoutingError>] = [],
+         autoRepeat: AutoRepeat = .onlyWhenAsked) throws {
         let route = try route ?? cornerRoute()
         self.route = route
         router = ScriptedRouter(reroutes)
         manager = TripManager(
             location: location, routing: router, announcements: engine,
             setBackgroundTracking: { [background] in background.record($0) },
+            repeats: RepeatSettings(autoRepeat: autoRepeat),
             now: { [clock] in clock.now() },
             sleep: { [clock] in try await clock.sleep($0) }
         )
@@ -858,5 +860,72 @@ struct TripManagerTests {
         let texts = await harness.engine.texts
         let resumed = try #require(texts.firstIndex(of: "Trip resumed."))
         #expect(!texts[resumed...].contains("You're off the route. Finding a new route."))
+    }
+
+    // MARK: T49 auto-repeat
+
+    @Test
+    func autoRepeatSaysTheCurrentInstructionWithAnUpdatedDistance() async throws {
+        let harness = try Harness(autoRepeat: .twice)
+        await harness.start()
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+        await harness.engine.waitForCount(1)
+
+        // 20 s of walking after the start cue; the repeat lands around 27 m in
+        await harness.walk(from: 0, to: 28)
+        let events = await harness.engine.waitForCount(2)
+        #expect(events[1].text == "In about 70 metres, turn right onto Ferst Drive.")
+        #expect(events[1].priority == .normal)
+        #expect(events[1].category == .maneuver)
+    }
+
+    @Test
+    func autoRepeatStopsAfterTheChosenCount() async throws {
+        let harness = try Harness(autoRepeat: .once)
+        await harness.start()
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+        await harness.engine.waitForCount(1)
+
+        // 35 s with no new cue: one repeat, not two
+        await harness.walk(from: 0, to: 50)
+        await harness.engine.waitForCount(2)
+        let texts = await harness.engine.texts
+        #expect(texts.count == 2)
+        #expect(texts[1].hasSuffix("turn right onto Ferst Drive."))
+    }
+
+    @Test
+    func autoRepeatIsOffByDefault() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+        await harness.engine.waitForCount(1)
+
+        await harness.walk(from: 0, to: 50)
+        #expect(await harness.engine.texts.count == 1)
+    }
+
+    @Test
+    func pausingOrEndingCancelsTheRepeat() async throws {
+        let harness = try Harness(autoRepeat: .threeTimes)
+        await harness.start()
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+        await harness.engine.waitForCount(1)
+        // the watchdog and the repeat timer
+        await harness.waitForSleepers(2)
+
+        await harness.manager.pauseTrip()
+        await waitUntil { harness.clock.sleeperCount == 1 }
+
+        await harness.manager.endTrip()
+        await waitUntil { harness.clock.sleeperCount == 0 }
+        harness.clock.advance(by: 60)
+        #expect(await harness.engine.texts == [
+            "Starting directions to Library, about 160 metres. Walk north.", "Trip paused.", "Trip ended.",
+        ])
     }
 }
