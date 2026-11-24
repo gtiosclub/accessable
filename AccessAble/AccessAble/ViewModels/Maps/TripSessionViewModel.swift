@@ -185,11 +185,17 @@ final class TripSessionViewModel {
         await camera.stop(geoTracking: geoTracking)
     }
 
-    /// Starts walking as soon as a route is ready, and again after a re-route.
+    /// Starts walking as soon as a route is ready, and again after a re-route. Each route is tried
+    /// once: a start that doesn't take (the refresh failed, or the trip stayed in planning) would
+    /// otherwise make `canStartTrip` true again at once and retry forever on the main actor.
     private func startWhenRouteIsReady() async {
         guard let directions else { return }
-        for await canStart in Observations({ directions.canStartTrip }) where canStart {
+        var tried: NavigationRoute?
+        for await ready in Observations({ directions.canStartTrip ? directions.route : nil }) {
+            guard let ready, ready != tried else { continue }
             await directions.startTrip()
+            // the route the start ended with: a refresh inside it may have replaced this one
+            tried = directions.route
         }
     }
 
