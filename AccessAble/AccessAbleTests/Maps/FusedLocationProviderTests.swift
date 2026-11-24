@@ -63,6 +63,13 @@ struct ARGeoLocationProviderTests {
         noPosition.coordinate = nil
         #expect(ARGeoLocationProvider.sample(from: noPosition) == nil)
     }
+
+    @Test(arguments: [GeoTrackingUpdate.State.stopped, .localizing, .initializing, .notAvailable])
+    func everyUpdateWithoutAPositionIsALoss(state: GeoTrackingUpdate.State) {
+        #expect(ARGeoLocationProvider.reading(from: update(0, state: state)) == .arLost)
+        #expect(ARGeoLocationProvider.reading(from: update(0, accuracy: .undetermined)) == .arLost)
+        #expect(ARGeoLocationProvider.reading(from: update(0)) == .ar(ar(0)))
+    }
 }
 
 struct LocationFusionTests {
@@ -100,6 +107,16 @@ struct LocationFusionTests {
         _ = fusion.receive(.ar(ar(3)))
         #expect(fusion.receive(.ar(ar(3.5, accuracy: .low))) == nil)
         #expect(fusion.receive(.gps(gps(3.6)))?.source == .gps)
+    }
+
+    @Test
+    func gpsReturnsAsSoonAsGeoTrackingStops() {
+        var fusion = LocationFusion()
+        _ = fusion.receive(.gps(gps(0)))
+        #expect(fusion.receive(.ar(ar(0.5)))?.source == .ar)
+
+        #expect(fusion.receive(ARGeoLocationProvider.reading(from: update(0.8, state: .stopped))) == nil)
+        #expect(fusion.receive(.gps(gps(1)))?.source == .gps)
     }
 
     @Test

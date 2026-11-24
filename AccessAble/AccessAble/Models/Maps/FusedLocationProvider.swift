@@ -11,7 +11,7 @@ struct FusedLocationProvider: LocationProvider {
         guard let geoTracking else { return gps.locationSamples() }
         // subscribed here, not in the task, so no reading sent before the task starts is lost
         let gpsSamples = gps.locationSamples()
-        let arSamples = ARGeoLocationProvider(geoTracking: geoTracking).locationSamples()
+        let arReadings = ARGeoLocationProvider(geoTracking: geoTracking).readings()
         let (readings, input) = AsyncStream.makeStream(of: LocationFusion.Reading.self)
 
         return AsyncStream(bufferingPolicy: .bufferingNewest(8)) { continuation in
@@ -22,7 +22,7 @@ struct FusedLocationProvider: LocationProvider {
                         input.finish()
                     }
                     group.addTask {
-                        for await sample in arSamples { input.yield(.ar(sample)) }
+                        for await reading in arReadings { input.yield(reading) }
                     }
                     group.addTask {
                         var fusion = LocationFusion()
@@ -46,9 +46,11 @@ struct FusedLocationProvider: LocationProvider {
 /// Which reading to pass on: AR while geo-tracking is locked on with medium accuracy or better and agrees with GPS,
 /// GPS otherwise. Passing both would make the position jump between them.
 struct LocationFusion {
-    enum Reading: Sendable {
+    enum Reading: Equatable, Sendable {
         case gps(LocationSample)
         case ar(LocationSample)
+        /// Geo-tracking stopped or lost its lock.
+        case arLost
     }
 
     /// Seconds an AR reading is trusted for. Geo-tracking sends one a second; a gap means the camera stopped.
@@ -83,6 +85,9 @@ struct LocationFusion {
                 sample.courseAccuracy = gps.courseAccuracy
             }
             return sample
+        case .arLost:
+            trustedARUntil = nil
+            return nil
         }
     }
 
