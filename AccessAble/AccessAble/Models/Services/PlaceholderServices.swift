@@ -339,7 +339,7 @@ actor PlaceholderUserProfileStore: UserProfileStore {
     }
 }
 
-/// In-memory reports for previews and tests; replaced by Firestore when Firebase is configured.
+/// The in-memory stand-in for reports, used in previews and tests until REPORT-3's Firestore service.
 actor PlaceholderReportService: ReportService {
     private var storedReports: [Report] = []
     private nonisolated let changes = Broadcaster<[Report]>(replaysLatest: true)

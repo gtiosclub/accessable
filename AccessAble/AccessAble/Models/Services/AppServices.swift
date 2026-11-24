@@ -25,6 +25,8 @@ struct AppServices: Sendable {
     var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
     /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
     var accountsAvailable = false
+    /// True once a real report service is wired (REPORT-3); until then the trip screen offers no reporting.
+    var reportsAvailable = false
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
     // TODO(MATCH-x): replace these four placeholders with the real call services.
     var volunteers: any VolunteerDirectory = PlaceholderVolunteerDirectory()
@@ -158,6 +160,9 @@ struct AppServices: Sendable {
         ])
         services.volunteers = PlaceholderVolunteerDirectory()
         services.presence = PlaceholderPresenceService()
+        // Reports stay in memory, so previews and tests can report a problem.
+        services.reports = PlaceholderReportService()
+        services.reportsAvailable = true
         return services
     }
 }

@@ -39,11 +39,13 @@ struct ActiveTripView: View {
                         .accessibilityAddTraits(.updatesFrequently)
                 }
 
-                Button("Report a problem here") {
-                    showsReportOptions = true
+                if session.isReportingAvailable {
+                    Button("Report a problem here") {
+                        showsReportOptions = true
+                    }
+                    .buttonStyle(.pill(.outline, size: .compact))
+                    .accessibilityHint("Choose the problem at your current location")
                 }
-                .buttonStyle(.pill(.outline, size: .compact))
-                .accessibilityHint("Choose the problem at your current location")
 
                 Spacer()
 
@@ -75,7 +77,7 @@ struct ActiveTripView: View {
                     onReroute: { session.reroute() },
                     onPause: { session.pause() },
                     onContinue: { session.resume() },
-                    onReport: { showsReportOptions = true }
+                    onReport: session.isReportingAvailable ? { showsReportOptions = true } : nil
                 )
                 .transition(.opacity)
             }
@@ -258,7 +260,8 @@ struct RouteBlockedScreen: View {
     let onReroute: () -> Void
     let onPause: () -> Void
     let onContinue: () -> Void
-    var onReport: () -> Void = {}
+    /// Nil hides the report button, where reporting isn't available.
+    let onReport: (() -> Void)?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -339,7 +342,8 @@ struct RouteBlockedCard: View {
     let onReroute: () -> Void
     let onPause: () -> Void
     let onContinue: () -> Void
-    var onReport: () -> Void = {}
+    /// Nil hides the report button, where reporting isn't available.
+    let onReport: (() -> Void)?
 
     @AccessibilityFocusState private var isTitleFocused: Bool
 
@@ -355,8 +359,10 @@ struct RouteBlockedCard: View {
                     .multilineTextAlignment(.center)
                 Button("Call Help", action: onCallHelp)
                     .buttonStyle(.pill(.outline))
-                Button("Report a problem here", action: onReport)
-                    .buttonStyle(.pill(.outline))
+                if let onReport {
+                    Button("Report a problem here", action: onReport)
+                        .buttonStyle(.pill(.outline))
+                }
                 Button("Re-Route", action: onReroute)
                     .buttonStyle(.pill(.destructive))
                     .accessibilityHint("Finds a safer route")

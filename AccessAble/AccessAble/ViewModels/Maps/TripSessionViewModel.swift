@@ -95,6 +95,9 @@ final class TripSessionViewModel {
 
     var destinationName: String { plan.place.name }
 
+    /// Whether the trip offers reporting a problem: only once a real report service is wired.
+    var isReportingAvailable: Bool { services?.reportsAvailable == true }
+
     var hasArrived: Bool { directions?.tripState.phase == .arrived }
 
     /// One line on where directions stand, or nil while walking normally.
@@ -354,7 +357,10 @@ final class TripSessionViewModel {
 
     /// Submits a report at the user's location or a short distance ahead on the active route.
     func submitReport(kind: ReportKind, useRouteAhead: Bool = false) async {
-        guard let services else { return }
+        guard let services, isReportingAvailable else {
+            await say("Reporting isn't available yet.", category: .system)
+            return
+        }
 
         guard let user = await services.auth.currentUser() else {
             await say("Sign in to report a problem.", category: .system)
