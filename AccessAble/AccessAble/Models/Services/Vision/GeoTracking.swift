@@ -38,6 +38,10 @@ struct GeoTrackingUpdate: Equatable, Sendable {
     var timestamp: Date
     /// nil when ARKit gives none, and for `.stopped`.
     var stateReason: StateReason?
+
+    /// Seconds between updates: the session sends one on the first frame at least this long after the last, so gaps
+    /// run a frame or so over. `LocationFusion` times how long AR is trusted from it.
+    static let interval: TimeInterval = 1
 }
 
 /// Lets a trip ask the shared camera session for geo-tracking (AR-2).

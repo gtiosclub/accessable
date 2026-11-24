@@ -66,15 +66,12 @@ struct LocationFusion {
         case arLost
     }
 
-    /// Seconds between geo-tracking readings: the session sends one on the first frame at least this long after the
-    /// last, so gaps run a frame or so over.
-    static let arReadingInterval: TimeInterval = 1
     /// Bad AR readings in a row that switch back to GPS: too coarse, or disagreeing with fresh GPS.
     static let arFailedReadingsToLeave = 2
     /// Seconds a good AR reading is trusted for. It must outlast the readings before the one that ends trust, which
     /// don't extend it, and the frame or so each gap runs over, else one bad or missing reading would end AR on its
     /// own. A longer gap means the camera stopped.
-    static let arLifetime = Double(arFailedReadingsToLeave) * arReadingInterval + 1
+    static let arLifetime = Double(arFailedReadingsToLeave) * GeoTrackingUpdate.interval + 1
     /// Worst AR accuracy trusted, in metres: medium.
     static let arAccuracyLimit = ARGeoLocationProvider.horizontalAccuracy(.medium) ?? 0
     /// Metres beyond GPS's own accuracy that AR may disagree with it; GPS often errs past its stated accuracy.
