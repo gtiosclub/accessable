@@ -17,6 +17,8 @@
 	<string>AccessAble listens when you hold the talk button so you can give voice commands and ask questions.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>AccessAble turns your voice commands into actions like "start trip" or "describe my surroundings".</string>
+	<key>NFCReaderUsageDescription</key>
+	<string>AccessAble scans NFC info tags to read out descriptions of the surroundings that volunteers have written.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>AccessAble uses motion data to track your steps between GPS updates for more accurate directions.</string>
 	<key>NSSupportsLiveActivities</key>

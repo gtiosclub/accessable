@@ -58,15 +58,20 @@ struct LandingView: View {
 /// Satellite map of campus with the sample places marked.
 struct CampusMap: View {
     var routeLine: [CLLocationCoordinate2D]?
+    @Environment(InfoTagsModel.self) private var infoTags: InfoTagsModel?
+    @State private var selectedTagID: String?
 
     var body: some View {
         Map(initialPosition: .region(MKCoordinateRegion(
             center: CLLocationCoordinate2D(latitude: SampleContent.campusLatitude, longitude: SampleContent.campusLongitude),
             latitudinalMeters: 1200,
             longitudinalMeters: 1200
-        ))) {
+        )), selection: $selectedTagID) {
             ForEach(SampleContent.places) { place in
                 Marker(place.name, coordinate: place.coordinate)
+            }
+            if let infoTags {
+                InfoTagPins(tags: infoTags.tags)
             }
             if let routeLine, let current = routeLine.first {
                 MapPolyline(coordinates: routeLine)
@@ -81,6 +86,8 @@ struct CampusMap: View {
             }
         }
         .mapStyle(.imagery(elevation: .flat))
+        // below the trip screen's top bar, clear of the controls at the bottom
+        .infoTagOverlay(selection: $selectedTagID, alignment: .trailing)
         .ignoresSafeArea()
     }
 }

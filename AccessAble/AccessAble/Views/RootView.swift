@@ -12,6 +12,8 @@ struct RootView: View {
                 OnboardingView()
             }
         }
+        // Every map shows the same NFC info tags.
+        .environment(app.infoTags)
         // The redesign is dark throughout; this also keeps the status bar light.
         .preferredColorScheme(.dark)
     }

@@ -172,6 +172,8 @@ private struct TripMapView: View {
     let showsUserLocation: Bool
     let accessibilityLabel: String
     @Environment(\.colorSchemeContrast) private var contrast
+    @Environment(InfoTagsModel.self) private var infoTags: InfoTagsModel?
+    @State private var selectedTagID: String?
     // .automatic zooms out to the whole continent when there's nothing on the map yet
     @State private var cameraPosition: MapCameraPosition = .region(
         MKCoordinateRegion(center: SearchRegion.georgiaTech.center.clCoordinate,
@@ -179,7 +181,7 @@ private struct TripMapView: View {
     )
 
     var body: some View {
-        Map(position: $cameraPosition, interactionModes: [.pan, .zoom]) {
+        Map(position: $cameraPosition, interactionModes: [.pan, .zoom], selection: $selectedTagID) {
             if let route {
                 let coordinates = route.coordinates.map(\.clCoordinate)
                 // a background-coloured casing keeps the line visible over roads and parks of any colour
@@ -196,6 +198,9 @@ private struct TripMapView: View {
             }
             if let destination {
                 Marker(destination.name, systemImage: "flag.checkered", coordinate: destination.coordinate.clCoordinate)
+            }
+            if let infoTags {
+                InfoTagPins(tags: infoTags.tags)
             }
             if showsUserLocation {
                 UserAnnotation()
@@ -239,6 +244,8 @@ private struct TripMapView: View {
         // summary element so VoiceOver users can swipe past it instead of exploring each pin.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
+        // after the summary element, so the info tag button stays reachable with VoiceOver
+        .infoTagOverlay(selection: $selectedTagID, alignment: .bottomTrailing)
     }
 
     // standard system blue measures under 3:1 against parts of the muted map; its Increase Contrast variant doesn't
