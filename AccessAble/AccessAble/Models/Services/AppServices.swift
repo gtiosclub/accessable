@@ -85,6 +85,7 @@ struct AppServices: Sendable {
         )
         services.geoTracking = geoTracking
         if FirebaseApp.app() != nil {
+            services.reports = FirestoreReportService(auth: services.auth)
             services.userProfiles = FirestoreUserProfileStore()
             services.volunteers = FirestoreVolunteerDirectory()
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
