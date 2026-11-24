@@ -6,10 +6,14 @@ enum AppRoute: Hashable {
     case search
     /// `origin` is the starting point picked in search; nil for My Location.
     case place(SamplePlace, origin: SamplePlace? = nil)
-    case routes(SamplePlace, RoutePlanMode, origin: SamplePlace? = nil)
+    /// A real place picked from search results.
+    case destination(Destination, origin: SamplePlace? = nil)
+    /// `planned` is the route the details screen already found, so it isn't asked for again.
+    case routes(SamplePlace, RoutePlanMode, origin: SamplePlace? = nil, planned: PlannedRoute? = nil)
     case trip(TripPlan)
     case settings
     case callHelp
+    case volunteers
     case chat(Volunteer)
     /// The pre-redesign feature screens: computer vision, maps, haptics, commands.
     case developerTools

@@ -52,6 +52,16 @@ private func straightOn(past route: NavigationRoute, count: Int, start: Date,
     }, start: start)
 }
 
+/// The fixes with a walking `speed` and `course`, as Core Location gives them while walking that way.
+private func walking(_ fixes: [LocationSample], course: Double?, speed: Double? = 1.4) -> [LocationSample] {
+    fixes.map { fix in
+        var fix = fix
+        fix.speed = speed
+        fix.course = course
+        return fix
+    }
+}
+
 /// An event and the index of the fix that produced it, with distances to 0.1 m so expectations can be written out.
 private struct Logged: Equatable {
     let fix: Int
@@ -86,8 +96,8 @@ private struct Walk {
     private(set) var logged: [Logged] = []
     private(set) var states: [RouteProgressTracker.Progress] = []
 
-    init(_ route: NavigationRoute) {
-        tracker = RouteProgressTracker(route: route, startedAt: TripWalk.start)
+    init(_ route: NavigationRoute, crossings: [Double] = []) {
+        tracker = RouteProgressTracker(route: route, startedAt: TripWalk.start, crossings: crossings)
     }
 
     var fixCount: Int { states.count }
@@ -104,6 +114,23 @@ private struct Walk {
 
     mutating func feed(_ path: [(along: Double, lateral: Double)], accuracy: Double = 5, emitsCues: Bool = true) {
         feed(TripWalk.fixes(on: tracker.route, path: path, start: nextTime, accuracy: accuracy), emitsCues: emitsCues)
+    }
+}
+
+/// The fixes, each marked as coming from `source(index)`.
+private func sourced(_ fixes: [LocationSample], _ source: (Int) -> LocationSource) -> [LocationSample] {
+    fixes.enumerated().map { index, fix in
+        var fix = fix
+        fix.source = source(index)
+        return fix
+    }
+}
+
+/// Whether the event says the user moved: off route, the wrong way or past a turn.
+private func isMovement(_ logged: Logged) -> Bool {
+    switch logged.event {
+    case .offRoute, .wrongWay, .missedTurn: true
+    default: false
     }
 }
 
@@ -248,6 +275,270 @@ struct RouteProgressTrackerTests {
     }
 
     @Test
+    func walkingAwayFromTheRouteIsOffRouteWithinSixSeconds() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        walk.feed(walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime), course: 270))
+
+        // past 20 m first at 21 m (detour fix 15), so 5 s later at fix 20, long before the 30 m rule's fix 32
+        let firstPast = start + 14
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(firstPast + 5, .offRoute)])
+        #expect(walk.states[..<(firstPast + 5)].allSatisfy { !$0.isOffRoute })
+    }
+
+    // GPS and AR place someone standing still apart; the step between them when the source switches isn't movement
+    @Test
+    func switchingSourceAtTheStartIsNotTheWrongWay() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        // AR puts the user 20 m west of GPS, and the source switches every 3 s
+        let isGPS = { (index: Int) in (index / 3).isMultiple(of: 2) }
+        let path = (0..<60).map { (along: 0.0, lateral: isGPS($0) ? 0.0 : -20) }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: path, start: walk.nextTime)) { isGPS($0) ? .gps : .ar })
+
+        #expect(!walk.logged.contains(where: isMovement))
+    }
+
+    @Test
+    func switchingSourceFarFromTheRouteIsNotLeavingIt() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        // standing 32 m off, where AR puts the user 23 m further
+        let path = (0..<30).map { (along: 99.4, lateral: (5..<25).contains($0) ? -55.0 : -32) }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: path, start: walk.nextTime)) {
+            (5..<25).contains($0) ? .ar : .gps
+        })
+
+        #expect(!walk.logged.contains(where: isMovement))
+        #expect(walk.states.allSatisfy { !$0.isOffRoute })
+    }
+
+    @Test
+    func switchingSourceAtATurnIsNotMissingIt() throws {
+        let route = try turnRoute(90)
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 99)))
+        // just before the turn, where AR puts the user 20 m straight on past it; the source switches every fix
+        let ahead = TripWalk.destination(from: route.coordinates[1], bearing: 0, distance: 20)
+        let coordinates = (0..<30).map { $0.isMultiple(of: 2) ? TripWalk.point(on: route, along: 99) : ahead }
+        walk.feed(sourced(TripWalk.fixes(at: coordinates, start: walk.nextTime)) { $0.isMultiple(of: 2) ? .gps : .ar })
+
+        #expect(!walk.logged.contains(where: isMovement))
+    }
+
+    @Test
+    func walkingOffWhileTheSourceKeepsSwitchingIsStillOffRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        // AR puts the user 20 m further out than GPS, and the source switches every 3 s
+        let isGPS = { (index: Int) in (index / 3).isMultiple(of: 2) }
+        let detour = (0..<40).map { index in
+            (along: 99.4, lateral: -1.4 * Double(index + 1) - (isGPS(index) ? 0 : 20))
+        }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: detour, start: walk.nextTime)) { isGPS($0) ? .gps : .ar })
+
+        // both sources are past 30 m from detour fix 22, and 10 s and 9.8 m of walking later the run is complete;
+        // on GPS alone it is off route on the same fix
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 31, .offRoute)])
+    }
+
+    @Test
+    func comingBackWhileTheSourceKeepsSwitchingIsBackOnRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        walk.feed((1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) })
+        #expect(walk.states.last?.isOffRoute == true)
+        let start = walk.fixCount
+        // AR puts the user 10 m further out than GPS, and the source switches every 2 fixes, faster than the 2 s a
+        // rejoin takes
+        let isGPS = { (index: Int) in (index / 2).isMultiple(of: 2) }
+        let back = (0..<40).map { index in
+            (along: 99.4, lateral: -max(40 - 1.4 * Double(index), 0) - (isGPS(index) ? 0 : 10))
+        }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: back, start: walk.nextTime)) { isGPS($0) ? .gps : .ar })
+
+        // every fix is within 15 m from fix 24, so back on route 2 s later
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 26, .backOnRoute)])
+    }
+
+    // fusion switches within 4 s of the last fix it passed on, so a longer gap holds walking and the runs start over
+    @Test(arguments: zip([4.0, 4.1], [4, 10]))
+    func aSwitchShiftsTheRunsUpToFourSecondsAfterTheLastFix(gap: TimeInterval, firesAfter: Int) throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        // walking off on GPS, past 30 m from detour fix 22, then nothing for `gap`, then AR 20 m further out
+        walk.feed((1...24).map { (along: 99.4, lateral: -1.4 * Double($0)) })
+        let arStart = walk.fixCount
+        let resumed = walk.nextTime.addingTimeInterval(gap - 1)
+        let path = (0..<12).map { (along: 99.4, lateral: -1.4 * (24 + gap + Double($0)) - 20) }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: path, start: resumed)) { _ in .ar })
+
+        // shifted, the GPS run goes on and has 8.4 m of walking 4 fixes later; restarted, it needs 10 s from the
+        // first AR fix
+        #expect(Array(walk.logged.drop { $0.fix < arStart }) == [Logged(arStart + firesAfter, .offRoute)])
+    }
+
+    @Test
+    func aShortFixForgivenOnOneSourceCantBeConfirmedByTheOther() throws {
+        let route = try turnRoute(61)
+        let vertex = route.coordinates[1]
+        let past = { (distance: Double) in TripWalk.destination(from: vertex, bearing: 0, distance: distance) }
+        // past the turn, short of it, then past it again 2 s after the first
+        let fixes = TripWalk.fixes(at: [past(21), TripWalk.point(on: route, along: 99), past(22)],
+                                   start: TripWalk.start.addingTimeInterval(80))
+
+        var gpsOnly = Walk(route)
+        gpsOnly.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = gpsOnly.fixCount
+        gpsOnly.feed(fixes)
+        #expect(gpsOnly.logged.drop { $0.fix < start }.map(\.fix) == [start + 2])
+
+        var switching = Walk(route)
+        switching.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        switching.feed(sourced(fixes) { $0 == 2 ? .ar : .gps })
+        #expect(!switching.logged.contains(where: isMovement))
+    }
+
+    @Test
+    func walkingOffAfterAGapAndASwitchStartsTheRunsOver() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        // walking off on GPS, nothing for 8 s, then AR, which puts the user 20 m further out
+        let path = (1...50).map { (along: 99.4, lateral: -1.4 * Double($0) - ($0 > 32 ? 20 : 0)) }
+        let fixes = sourced(TripWalk.fixes(on: route, path: path, start: walk.nextTime)) { $0 >= 32 ? .ar : .gps }
+        walk.feed(Array(fixes[..<24]) + Array(fixes[32...]))
+
+        // the step after the gap holds walking as well as the sources' difference, so the run starts over at the
+        // first AR fix and is complete 10 s and 14 m later
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 34, .offRoute)])
+    }
+
+    @Test
+    func walkingPastATurnWhileTheSourceKeepsSwitchingIsAMissedTurn() throws {
+        let route = try turnRoute(61)
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        // AR puts the user 3 m further on than GPS, and the source switches every 2 fixes
+        let isGPS = { (index: Int) in (index / 2).isMultiple(of: 2) }
+        let fixes = straightOn(past: route, count: 18, start: walk.nextTime) { isGPS($0 - 1) ? (0, 0) : (3, 0) }
+        walk.feed(sourced(fixes) { isGPS($0) ? .gps : .ar })
+
+        // AR is 15 m from the outgoing leg first at fix 11, and GPS confirms it 2 s later; on GPS alone that comes
+        // at fix 15
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [
+            Logged(start + 12, .missedTurn(step: 1, distanceBack: 18.2)),
+        ])
+    }
+
+    @Test
+    func walkingAwayRightAfterSwitchingSourceIsStillOffRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        let fixes = walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime), course: 270)
+        walk.feed(sourced(fixes) { _ in .ar })
+
+        // as on GPS alone: past 20 m first at detour fix 15, and off route 5 s later
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 19, .offRoute)])
+    }
+
+    // a gap in fixes mustn't let two of them alone decide it
+    @Test
+    func walkingAwayNeedsThreeFixesHoweverFarApart() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        let fixes = walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime), course: 270)
+        // one fix every 5 s, the first of them 21 m off
+        walk.feed(stride(from: 14, to: fixes.count, by: 5).map { fixes[$0] })
+
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 2, .offRoute)])
+    }
+
+    @Test
+    func walkingAwayWithoutAWalkingDirectionWaitsForTheThirtyMetreRule() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        walk.feed(walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime), course: nil, speed: nil))
+
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 31, .offRoute)])
+    }
+
+    @Test(arguments: [nil, 0.0])
+    func standingStillWithDriftAndAStaleCourseStaysOnRoute(_ speed: Double?) throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        var generator = SeededGenerator(seed: 7)
+        // drifting out from 35 m to 38 m, the course pointing away: only the speed shows it isn't walking
+        let drift = (0..<30).map {
+            (along: 99.4 + 2 * Double.random(in: -1...1, using: &generator), lateral: -35 - 0.1 * Double($0))
+        }
+        walk.feed(walking(TripWalk.fixes(on: route, path: drift, start: walk.nextTime), course: 270, speed: speed))
+
+        #expect(!walk.logged.contains { $0.event == .offRoute })
+        #expect(walk.states.allSatisfy { !$0.isOffRoute })
+    }
+
+    @Test
+    func walkingAlongsideTheRouteStaysOnRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let alongside = TripWalk.distances(from: 100, to: 142).map { (along: $0, lateral: -25.0) }
+        walk.feed(walking(TripWalk.fixes(on: route, path: alongside, start: walk.nextTime), course: 0))
+
+        #expect(walk.states.allSatisfy { !$0.isOffRoute })
+    }
+
+    @Test
+    func walkingBackTowardTheRouteAtASteepAngleStaysOnRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        // from 40 m to the left, at 1.4 m/s on a course 70° off the route's, so 1.32 m nearer each second
+        let back = (0..<20).map { second -> (along: Double, lateral: Double) in
+            (99.4 + 0.48 * Double(second), -40 + 1.32 * Double(second))
+        }
+        walk.feed(walking(TripWalk.fixes(on: route, path: back, start: walk.nextTime), course: 70))
+
+        #expect(walk.states.allSatisfy { !$0.isOffRoute })
+    }
+
+    @Test
+    func walkingAwayWithRoughFixesWaitsForTheScaledLimit() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        walk.feed(walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime, accuracy: 20), course: 270))
+
+        // 20 m accuracy scales the limit to 30 m, so 25 m off (detour fix 18) isn't enough: past 30 m first at
+        // 30.8 m (detour fix 22), so 5 s later at fix 27
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 26, .offRoute)])
+        #expect(!walk.states[start + 25].isOffRoute)
+    }
+
+    @Test
     func rejoiningBehindProgressRearmsCues() throws {
         let route = try cornerRoute()
         var walk = Walk(route)
@@ -376,6 +667,23 @@ struct RouteProgressTrackerTests {
         // the route starts south; walk 15.4 m north
         walk.feed((0...11).map { (along: -1.4 * Double($0), lateral: 0) })
         #expect(walk.logged == [Logged(8, .wrongWay)])
+    }
+
+    @Test
+    func offRouteOnTheSameFixReplacesTheWrongWay() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        // west from the start: rough fixes give no wrong way, until a precise one 28 m off, which also has been
+        // walking away for 5 s
+        let path = (0...20).map { (along: 0.0, lateral: -1.4 * Double($0)) }
+        let fixes = TripWalk.fixes(on: route, path: path, start: walk.nextTime, accuracy: 12)
+            .enumerated().map { index, fix in
+                var fix = fix
+                if index == 0 || index == 20 { fix.horizontalAccuracy = 5 }
+                return fix
+            }
+        walk.feed(walking(fixes, course: 270))
+        #expect(walk.logged == [Logged(20, .offRoute)])
     }
 
     @Test
@@ -637,6 +945,90 @@ struct RouteProgressTrackerTests {
         #expect(walk.states.allSatisfy { $0.distanceRemaining > 140 })
     }
 
+    @Test
+    func eachCrossingIsAnnouncedOnceBeforeItIsReachedOnANoisyWalk() throws {
+        let route = try fixtureRoute()
+        let crossings = [60.0, 250, 403.7]
+        var walk = Walk(route, crossings: crossings)
+        walk.feed(noisyFixtureWalk(route), accuracy: 10)
+
+        for index in crossings.indices {
+            let announced = walk.logged.filter { $0.event == .crossing(index: index) }
+            #expect(announced.count == 1)
+            let fix = try #require(announced.first).fix
+            let walked = route.totalDistance - walk.states[fix].distanceRemaining
+            #expect((0...20).contains(crossings[index] - walked))
+        }
+    }
+
+    @Test
+    func noCrossingIsAnnouncedWhileOffRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route, crossings: [150])
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        // out 40 m to the left, then on beside the route past the crossing
+        walk.feed((1...29).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) })
+        walk.feed(TripWalk.distances(from: 100.8, to: 170).map { (along: $0, lateral: -40) })
+
+        #expect(walk.logged.map(\.event).contains(.offRoute))
+        #expect(!walk.logged.contains { if case .crossing = $0.event { true } else { false } })
+    }
+
+    @Test
+    func crossingDueWhilePausedIsAnnouncedOnceCuesResume() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route, crossings: [100])
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 70)))
+        walk.feed(onRoute(TripWalk.distances(from: 71.4, to: 84)), emitsCues: false)
+        #expect(walk.logged.isEmpty)
+        let resumed = walk.fixCount
+        walk.feed(onRoute(TripWalk.distances(from: 85.4, to: 95)))
+
+        #expect(walk.logged == [Logged(resumed, .crossing(index: 0))])
+    }
+
+    @Test
+    func crossingAlreadyBehindTheFirstFixIsNotAnnounced() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route, crossings: [5, 30])
+        // a rough first fix is let 20 m along at once
+        walk.feed([(along: 15, lateral: 0)], accuracy: 20)
+        walk.feed(onRoute(TripWalk.distances(from: 16.4, to: 60)))
+
+        #expect(walk.logged == [Logged(0, .crossing(index: 1))])
+    }
+
+    @Test
+    func rejoiningBehindACrossingAnnouncesItAgain() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route, crossings: [280])
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 296)))
+        // out 40 m to the left, back 50.4 m beside the route, and in again at 245 m
+        walk.feed((1...29).map { (along: 295.4, lateral: -min(1.4 * Double($0), 40)) })
+        walk.feed((1...36).map { (along: 295.4 - 1.4 * Double($0), lateral: -40) })
+        walk.feed((1...29).map { (along: 245.0, lateral: -40 + min(1.4 * Double($0), 40)) })
+        walk.feed(onRoute(TripWalk.distances(from: 246.4, to: 300)))
+
+        let events = walk.logged.map(\.event).filter { event in
+            switch event {
+            case .crossing, .offRoute, .backOnRoute: true
+            default: false
+            }
+        }
+        #expect(events == [.crossing(index: 0), .offRoute, .backOnRoute, .crossing(index: 0)])
+    }
+
+    @Test
+    func turnCueOnTheSameFixComesBeforeTheCrossing() throws {
+        let route = try cornerRoute()
+        // the turn at 300 m is prepared 40 m before, where the crossing at 280 m is 20 m ahead
+        var walk = Walk(route, crossings: [280])
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 270)))
+
+        let fix = TripWalk.distances(from: 0, to: 270).firstIndex { $0 >= 260 } ?? -1
+        #expect(walk.logged == [Logged(fix, .prepare(step: 1, distance: 39.6)), Logged(fix, .crossing(index: 0))])
+    }
+
     /// North 100 m to the first step, then `legs` (west unless given), each starting a step, then an arrival.
     private func closeStepsRoute(_ legs: [(length: Double, bearing: Double, kind: ManeuverKind, text: String,
                                            multiCue: Bool)]) throws -> NavigationRoute {
@@ -688,6 +1080,75 @@ struct RouteProgressTrackerTests {
         #expect(fixes.count == 2 && fixes[0] == fixes[1])
     }
 
+    // without the warning, at 2 m/s the turn is passed with the next step 7 m ahead, inside nowDistance
+    @Test
+    func stairsAfterAShortLegAreWarnedBeforeTheTurn() throws {
+        func walk(_ kind: ManeuverKind) throws -> Walk {
+            walkAtTwoMetresASecond(try closeStepsRoute([
+                (15, 270, .turnLeft, "Turn left onto the walkway.", false),
+                (40, 270, kind, "Take the stairs up.", false),
+            ]))
+        }
+        let stairs = try walk(.stairs)
+        #expect(cueKinds(stairs.logged) == [
+            .prepare(step: 1, distance: 0), .prepare(step: 2, distance: 0), .now(step: 1), .now(step: 2),
+            .prepare(step: 3, distance: 0), .arrived,
+        ])
+        let warning = try #require(stairs.logged.first { cueKinds([$0]) == [.prepare(step: 2, distance: 0)] })
+        guard case let .prepare(_, distance) = warning.event else { return }
+        #expect((30...40).contains(distance))
+        #expect(cueKinds(try walk(.straight).logged) == [
+            .prepare(step: 1, distance: 0), .now(step: 1), .now(step: 2), .prepare(step: 3, distance: 0), .arrived,
+        ])
+    }
+
+    @Test
+    func stairsAfterAMultiCueTurnStillGetTheirWarning() throws {
+        func walk(_ kind: ManeuverKind) throws -> Walk {
+            walkAtTwoMetresASecond(try closeStepsRoute([
+                (30, 270, .turnLeft, "Turn left onto the walkway. Then Take the stairs.", true),
+                (40, 270, kind, "Take the stairs.", false),
+            ]))
+        }
+        #expect(cueKinds(try walk(.stairs).logged) == [
+            .prepare(step: 1, distance: 0), .prepare(step: 2, distance: 0), .now(step: 1), .now(step: 2),
+            .prepare(step: 3, distance: 0), .arrived,
+        ])
+        #expect(cueKinds(try walk(.straight).logged) == [
+            .prepare(step: 1, distance: 0), .now(step: 1), .now(step: 2), .prepare(step: 3, distance: 0), .arrived,
+        ])
+    }
+
+    // six metres after a turn the stairs are cued together with it, so only a look past the turn warns of them
+    @Test
+    func stairsRightAfterATurnAreStillWarned() throws {
+        let walk = walkAtTwoMetresASecond(try closeStepsRoute([
+            (6, 270, .turnLeft, "Turn left onto the walkway.", false),
+            (40, 270, .stairs, "Take the stairs.", false),
+        ]))
+        let kinds = cueKinds(walk.logged)
+        let warning = try #require(kinds.firstIndex(of: .prepare(step: 2, distance: 0)))
+        #expect(warning < (try #require(kinds.firstIndex(of: .now(step: 1)))))
+        #expect(kinds.filter { $0 == .prepare(step: 2, distance: 0) }.count == 1)
+    }
+
+    @Test(arguments: [30.0, 5.0])
+    func stairsNearTheStartAreWarnedOnTheFirstFix(_ firstLeg: Double) throws {
+        func walk(_ kind: ManeuverKind) throws -> Walk {
+            var walk = Walk(try syntheticRoute([
+                (0, firstLeg, .depart, "Walk north."), (270, 50, kind, "Take the stairs down."),
+            ]))
+            walk.feed(onRoute([0]))
+            return walk
+        }
+        let stairs = try walk(.stairs).logged
+        #expect(stairs.first == Logged(0, .prepare(step: 1, distance: firstLeg)))
+        // inside nowDistance the warning comes just before the cue
+        let rest = Array(stairs.map(\.event).dropFirst())
+        #expect(rest == (firstLeg > RouteProgressTracker.nowDistance ? [] : [Event.now(step: 1)]))
+        #expect(!cueKinds(try walk(.turnLeft).logged).contains(.prepare(step: 1, distance: 0)))
+    }
+
     @Test
     func chainOfStepsFourMetresApartIsCuedTogether() throws {
         let route = try closeStepsRoute([
@@ -720,5 +1181,197 @@ struct RouteProgressTrackerTests {
         #expect(nows.map(\.step) == Array(1...7))
         #expect(Dictionary(grouping: nows, by: \.fix).values.map(\.count).sorted() == [1, 3, 3])
         #expect(!walk.logged.contains { if case .passedTurnConfirmation = $0.event { true } else { false } })
+    }
+}
+
+// MARK: Field walks
+
+/// North 100 m, right 40 m, right again and south 100 m, then left and east 100 m: round a block, with the way back
+/// 40 m from the way out.
+private func blockRoute() throws -> NavigationRoute {
+    try syntheticRoute([
+        (0, 100, .depart, "Walk north."), (90, 40, .turnRight, "Turn right."),
+        (180, 100, .turnRight, "Turn right."), (90, 100, .turnLeft, "Turn left."),
+    ])
+}
+
+/// Seconds from the fix at `index` to the first off route, if any.
+private func secondsToOffRoute(_ walk: Walk, from index: Int) -> Int? {
+    walk.logged.first { $0.fix >= index && $0.event == .offRoute }.map { $0.fix - index }
+}
+
+private func isTurnCue(_ event: Event) -> Bool {
+    switch event {
+    case .prepare, .now, .passedTurnConfirmation: true
+    default: false
+    }
+}
+
+/// Turns passed without a word: no `.now` before, and on the fix that passed them neither a confirmation nor a cue
+/// for a later step, which says what comes next instead.
+private func skippedTurns(in walk: Walk) -> [Int] {
+    var skipped: [Int] = []
+    var previous = 1
+    for (fix, state) in walk.states.enumerated() where state.nextStepIndex > previous {
+        let events = walk.logged.filter { $0.fix == fix }.map(\.event)
+        for step in previous..<state.nextStepIndex {
+            let cued = walk.logged.contains { $0.fix <= fix && $0.event == .now(step: step) }
+            let spoken = events.contains {
+                switch $0 {
+                case .passedTurnConfirmation, .missedTurn: true
+                case let .prepare(later, _), let .now(later): later > step
+                default: false
+                }
+            }
+            if !cued, !spoken { skipped.append(step) }
+        }
+        previous = state.nextStepIndex
+    }
+    return skipped
+}
+
+/// Walks like those of a field test outdoors: walking at 1.4 m/s with a fix a second, a position error that drifts,
+/// and a course that is sometimes too rough to use.
+struct RouteProgressTrackerFieldWalkTests {
+    // The far side of the block is 40 m away, nearer than the 20 m limit once more than half way across. Measured from
+    // it, as before, the walk was never off route, and progress skipped both turns when it got there.
+    @Test
+    func walkingAcrossABlockToTheWayBackIsOffRoute() throws {
+        var walk = Walk(try blockRoute())
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 30)))
+        let start = walk.fixCount
+        let across = (1...40).map { (along: 29.4, lateral: 1.4 * Double($0)) }
+        walk.feed(walking(TripWalk.fixes(on: walk.tracker.route, path: across, start: walk.nextTime), course: 90))
+
+        // past 20 m first at 21 m (fix 15), so 5 s later at fix 20, 28 m across: before reaching the far side
+        let afterStart = walk.logged.drop { $0.fix < start }
+        #expect(afterStart.first == Logged(start + 19, .offRoute))
+        #expect(!afterStart.prefix { $0.event != .offRoute }.contains { isTurnCue($0.event) })
+    }
+
+    // Outdoors one course in a few is rougher than the 45° a walking direction needs. Such a fix ended the run before,
+    // leaving only the 30 m rule, at fix 32.
+    @Test
+    func walkingAwayWithSomeRoughCoursesIsStillOffRouteQuickly() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        let fixes = walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime), course: 270)
+            .enumerated().map { index, fix in
+                var fix = fix
+                fix.courseAccuracy = index.isMultiple(of: 2) ? 60 : 20
+                return fix
+            }
+        walk.feed(fixes)
+
+        // past 20 m first at fix 15, whose course is rough; counted from fix 16, with 3 usable courses over 5 s by fix
+        // 22, the next with a usable course after fix 21
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 21, .offRoute)])
+    }
+
+    @Test(arguments: [
+        // one fix short of the limit, as noise gives, doesn't end the run
+        ([17], 19),
+        // two in a row do: it starts again at fix 19, so 5 s later at fix 24
+        ([17, 18], 23),
+    ])
+    func walkingAwayToleratesOneFixShortOfTheLimit(_ short: [Int], _ offRouteFix: Int) throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { index in
+            (along: 99.4, lateral: short.contains(index) ? -19 : -min(1.4 * Double(index), 40))
+        }
+        walk.feed(walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime), course: 270))
+
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + offRouteFix, .offRoute)])
+    }
+
+    // Before, a rough course or a fix nearer than the run's first, both common with real GPS, ended the run, so
+    // these took 18 to 37 s, half of them 35 s or more.
+    @Test(arguments: [90.0, 270.0])
+    func realisticWalksOffTheRouteAreOffRouteWithinTwentyFiveSeconds(_ bearing: Double) throws {
+        let route = try syntheticRoute([(0, 300, .depart, "Walk north.")])
+        let path = FieldWalk.path(on: route, leaving: 100, bearing: bearing, seconds: 60)
+        let leftAt = TripWalk.distances(from: 0, to: 100).count
+        for seed in 1...6 as ClosedRange<UInt64> {
+            var walk = Walk(route)
+            walk.feed(FieldWalk.fixes(along: path, accuracy: 5...10, courseAccuracy: 10...70, seed: seed))
+            let seconds = try #require(secondsToOffRoute(walk, from: leftAt), "seed \(seed)")
+            #expect(seconds <= 25, "seed \(seed)")
+        }
+    }
+
+    // Before, these were off route after 48 to 72 s or never, and progress could jump to the far side. With fixes
+    // accurate to 20 m the limits reach 30 m, so some take over half a minute.
+    @Test
+    func realisticWalksAcrossABlockAreOffRouteBeforeAnyTurnCue() throws {
+        let route = try blockRoute()
+        let path = FieldWalk.path(on: route, leaving: 30, bearing: 90, seconds: 60)
+        let leftAt = TripWalk.distances(from: 0, to: 30).count
+        for seed in 1...6 as ClosedRange<UInt64> {
+            var walk = Walk(route)
+            walk.feed(FieldWalk.fixes(along: path, accuracy: 5...20, courseAccuracy: 10...70, seed: seed))
+            let seconds = try #require(secondsToOffRoute(walk, from: leftAt), "seed \(seed)")
+            #expect(seconds <= 40, "seed \(seed)")
+            let beforeOffRoute = walk.logged.prefix { $0.event != .offRoute }
+            #expect(!beforeOffRoute.contains { isTurnCue($0.event) }, "seed \(seed)")
+        }
+    }
+
+    // walking beside the route, including on the inside of each corner, where the leg after it is nearer, with no
+    // turn passed unheard
+    @Test(arguments: [0.0, -12, 18])
+    func realisticWalksAlongTheRouteStayOnIt(_ lateral: Double) throws {
+        let routes = [
+            try syntheticRoute([(0, 300, .depart, "Walk north.")]),
+            try syntheticRoute([(0, 150, .depart, "Walk north."), (90, 150, .turnRight, "Turn right.")]),
+            try blockRoute(),
+            try syntheticRoute([
+                (0, 60, .depart, "Walk north."), (90, 30, .turnRight, "Turn right."), (0, 60, .turnLeft, "Turn left."),
+                (270, 30, .turnLeft, "Turn left."), (0, 60, .turnRight, "Turn right."),
+            ]),
+        ]
+        for (index, route) in routes.enumerated() {
+            for seed in 1...10 as ClosedRange<UInt64> {
+                var walk = Walk(route)
+                let path = FieldWalk.path(on: route, lateral: lateral)
+                walk.feed(FieldWalk.fixes(along: path, accuracy: 5...10, courseAccuracy: 10...70, seed: seed))
+                #expect(!walk.logged.contains { $0.event == .offRoute }, "route \(index), seed \(seed)")
+                #expect(walk.states.last?.nextStepIndex == route.steps.count - 1, "route \(index), seed \(seed)")
+                #expect(skippedTurns(in: walk).isEmpty, "route \(index), seed \(seed)")
+            }
+        }
+    }
+
+    // Crossing a switchback near its end is no longer than cutting the inside of a corner, so it can't be told from
+    // walking the route; the docs' known limits say so. Crossing it further from its end is off route, before the turns.
+    @Test(arguments: [
+        // 10 m before the end of a 15 m-wide switchback: progress moves to the way back, and "Continue for …" is the
+        // only word, so the two turns of the switchback go unsaid
+        (10.0, false),
+        (35, true),
+    ])
+    func crossingASwitchbackIsOffRouteOnlyFarFromItsEnd(_ beforeEnd: Double, _ isOffRoute: Bool) throws {
+        let route = try syntheticRoute([
+            (0, 60, .depart, "Walk north."), (90, 15, .turnRight, "Turn right."),
+            (180, 60, .turnRight, "Turn right."), (90, 60, .turnLeft, "Turn left."),
+        ])
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 60 - beforeEnd)))
+        let start = walk.fixCount
+        let along = walk.tracker.route.totalDistance - (walk.states.last?.distanceRemaining ?? 0)
+        let across = (1...30).map { (along: along, lateral: 1.4 * Double($0)) }
+        walk.feed(walking(TripWalk.fixes(on: route, path: across, start: walk.nextTime), course: 90))
+
+        let afterStart = walk.logged.drop { $0.fix < start }
+        #expect(afterStart.contains { $0.event == .offRoute } == isOffRoute)
+        if !isOffRoute {
+            #expect(afterStart.map(\.event) == [.passedTurnConfirmation(step: 2)])
+            #expect(try #require(walk.states.last).nextStepIndex == 3)
+        }
     }
 }

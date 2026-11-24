@@ -18,6 +18,16 @@ enum PlaceCategory: String, CaseIterable, Hashable, Sendable {
         case .publicTransit: "Public Transit"
         }
     }
+
+    /// Added to the search so a chip finds that kind of place near campus.
+    var searchTerm: String {
+        switch self {
+        case .restaurants: "restaurants"
+        case .labeledPlaces: "buildings"
+        case .parks: "parks"
+        case .publicTransit: "transit"
+        }
+    }
 }
 
 struct SamplePlace: Identifiable, Hashable, Sendable {
@@ -34,6 +44,27 @@ struct SamplePlace: Identifiable, Hashable, Sendable {
     var longitude: Double
 
     var coordinate: CLLocationCoordinate2D { CLLocationCoordinate2D(latitude: latitude, longitude: longitude) }
+}
+
+extension SamplePlace {
+    /// A real place from search, for the route and trip screens that still take a
+    /// `SamplePlace`. Keeps the name, coordinate and address; it has no ratings or recorded
+    /// routes.
+    init(destination: Destination) {
+        self.init(
+            id: "destination:\(destination.coordinate.latitude),\(destination.coordinate.longitude)",
+            name: destination.name,
+            address: destination.address ?? "",
+            category: .labeledPlaces,
+            rating: 0,
+            reviewCount: 0,
+            recordedRouteCount: 0,
+            isSaved: false,
+            isRecent: false,
+            latitude: destination.coordinate.latitude,
+            longitude: destination.coordinate.longitude
+        )
+    }
 }
 
 struct SampleRouteStep: Hashable, Sendable {
@@ -62,14 +93,11 @@ struct TripPlan: Hashable, Sendable {
     /// The starting point picked in search; nil for My Location. A live trip still starts
     /// where the user is, and says so.
     var origin: SamplePlace? = nil
+    /// The real route picked before the trip; nil asks for one when the trip starts.
+    var plannedRoute: PlannedRoute? = nil
 }
 
-struct Volunteer: Identifiable, Hashable, Sendable {
-    let id: String
-    var name: String
-    var availableUntil: String
-    var isOnline: Bool
-}
+// `Volunteer` now lives in Models/Calls/Volunteer.swift.
 
 struct ChatMessage: Identifiable, Hashable, Sendable {
     let id: UUID
@@ -108,6 +136,7 @@ enum VoiceCommandHint: String, CaseIterable, Identifiable, Sendable {
     case describeSurroundings
     case describeLocation
     case pauseTrip
+    case reportProblem
     case callHelp
 
     var id: Self { self }
@@ -118,6 +147,7 @@ enum VoiceCommandHint: String, CaseIterable, Identifiable, Sendable {
         case .describeSurroundings: "Describe surroundings"
         case .describeLocation: "Describe location"
         case .pauseTrip: "Pause trip"
+        case .reportProblem: "Report construction"
         case .callHelp: "Call help"
         }
     }
@@ -128,6 +158,7 @@ enum VoiceCommandHint: String, CaseIterable, Identifiable, Sendable {
         case .describeSurroundings: "Lists what the camera sees around you."
         case .describeLocation: "Tells you the street you're on and what's nearby."
         case .pauseTrip: "Pauses directions until you continue."
+        case .reportProblem: "Reports a problem where you are. Also say report blocked path, report closed entrance, report elevator, or report other."
         case .callHelp: "Starts a video call with an available volunteer."
         }
     }
@@ -138,7 +169,7 @@ enum VoiceCommandHint: String, CaseIterable, Identifiable, Sendable {
         case .repeatWarning: TripAnnouncement(text: SampleContent.pillarWarning, kind: .warning)
         case .describeSurroundings: TripAnnouncement(text: "Lamp post; Open area; Concrete floor; 10 floor building", kind: .info)
         case .describeLocation: TripAnnouncement(text: "Longman Road, next to restaurant Koko Bar, convenient store", kind: .info)
-        case .pauseTrip, .callHelp: nil
+        case .pauseTrip, .reportProblem, .callHelp: nil
         }
     }
 }

@@ -10,8 +10,10 @@ final class SpeechDictation {
     private(set) var isRecording = false
     private(set) var errorMessage: String?
 
-    @ObservationIgnored private let audioEngine = AVAudioEngine()
-    @ObservationIgnored private let recognizer = SFSpeechRecognizer(locale: Locale.current)
+    // Both made on first start(): screens rebuild their view models often, most never dictate, and each
+    // recognizer opens a dictation connection that is never freed.
+    @ObservationIgnored private var audioEngine: AVAudioEngine?
+    @ObservationIgnored private lazy var recognizer = SFSpeechRecognizer(locale: Locale.current)
     @ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
     @ObservationIgnored private var task: SFSpeechRecognitionTask?
     @ObservationIgnored private var wasCancelled = false
@@ -55,6 +57,8 @@ final class SpeechDictation {
             try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
             try session.setActive(true, options: .notifyOthersOnDeactivation)
 
+            let audioEngine = audioEngine ?? AVAudioEngine()
+            self.audioEngine = audioEngine
             let input = audioEngine.inputNode
             let format = input.outputFormat(forBus: 0)
             guard format.channelCount > 0, format.sampleRate > 0 else {
@@ -100,8 +104,10 @@ final class SpeechDictation {
     }
 
     private func stopAudioCapture() {
-        if audioEngine.isRunning { audioEngine.stop() }
-        audioEngine.inputNode.removeTap(onBus: 0)
+        if let audioEngine {
+            if audioEngine.isRunning { audioEngine.stop() }
+            audioEngine.inputNode.removeTap(onBus: 0)
+        }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 

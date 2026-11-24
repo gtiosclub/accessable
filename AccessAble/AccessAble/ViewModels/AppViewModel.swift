@@ -13,6 +13,7 @@ final class AppViewModel {
             services.askAISettings.priorities = profile.aiPriorities
             services.alertSettings.filter = profile.alertFilter
             services.alertSettings.soundCues = profile.channels.contains(.spatialAudio)
+            services.distanceSettings.units = profile.distanceUnits
             Self.applyHaptics(profile)
             Task { await services.announcements.updateProfile(profile) }
         }
@@ -32,6 +33,8 @@ final class AppViewModel {
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var tripCameraTask: Task<Void, Never>?
+    @ObservationIgnored private var tripActivityTask: Task<Void, Never>?
+    @ObservationIgnored private let foregrounds: AsyncStream<Void>.Continuation
 
     private enum Keys {
         static let profile = "guidanceProfile"
@@ -47,17 +50,30 @@ final class AppViewModel {
         self.profile = Self.load(GuidanceProfile.self, forKey: Keys.profile, from: defaults) ?? .default
         self.preferences = Self.load(SettingsPreferences.self, forKey: Keys.preferences, from: defaults) ?? .default
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarded)
+        let (foregroundStream, foregrounds) = AsyncStream<Void>.makeStream()
+        self.foregrounds = foregrounds
 
         let profile = self.profile
         self.services.askAISettings.priorities = profile.aiPriorities
         self.services.alertSettings.filter = profile.alertFilter
         self.services.alertSettings.soundCues = profile.channels.contains(.spatialAudio)
+        self.services.distanceSettings.units = profile.distanceUnits
         Self.applyHaptics(profile)
         let announcements = self.services.announcements
         Task { await announcements.updateProfile(profile) }
 
-        let tripCamera = TripCameraCoordinator(trip: self.services.trip, scene: self.services.scene)
+        let tripCamera = TripCameraCoordinator(trip: self.services.trip, camera: self.services.tripCamera)
         tripCameraTask = Task { await tripCamera.run() }
+        let tripActivity = TripActivityController(
+            trip: self.services.trip, activity: self.services.tripActivity, distances: self.services.distanceSettings,
+            foregrounds: foregroundStream
+        )
+        tripActivityTask = Task { await tripActivity.run() }
+    }
+
+    /// A trip's Live Activity can only start in the foreground, so one that failed in the background starts now.
+    func appBecameActive() {
+        foregrounds.yield()
     }
 
     func completeOnboarding(with profile: GuidanceProfile) {

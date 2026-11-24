@@ -34,7 +34,8 @@ future "Ask AI" feature (T19) stays outside it.
 
 ```
 ARSessionManager (T1, T2)           Services/Vision — the app's only ARSession
-  world tracking, gravity-aligned; sceneDepth on LiDAR devices; T1 health checks
+  world tracking, gravity-aligned, or geo-tracking during a trip (AR-2, +Y still up);
+  sceneDepth on LiDAR devices; T1 health checks
         │ every ARFrame, on the session's queue
         ▼
 ARSceneAnalyzer                     Services/Vision — services.scene, services.sceneDescriber

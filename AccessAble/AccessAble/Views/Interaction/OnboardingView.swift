@@ -1,13 +1,44 @@
 import SwiftUI
 
-/// Owner: User Interaction (3.4). First-launch flow: role → VoiceOver → tutorial → done.
+/// Signed-in profile setup: account role → details → guidance → VoiceOver → tutorial.
 struct OnboardingView: View {
     @Environment(AppViewModel.self) private var app
-    @State private var viewModel = OnboardingViewModel()
+    @State private var viewModel: OnboardingViewModel
+    let onSave: ((UserRole, String, [String]) async throws -> Void)?
+    let onSignOut: (() async throws -> Void)?
+    @State private var isSaving = false
+    @State private var errorMessage: String?
+
+    init(includesAccount: Bool = true,
+         onSave: ((UserRole, String, [String]) async throws -> Void)? = nil,
+         onSignOut: (() async throws -> Void)? = nil) {
+        _viewModel = State(initialValue: OnboardingViewModel(includesAccount: includesAccount))
+        self.onSave = onSave
+        self.onSignOut = onSignOut
+    }
 
     var body: some View {
         Group {
             switch viewModel.step {
+            case .accountRole:
+                VStack(spacing: 24) {
+                    Text("How will you use AccessAble?").font(.title.bold())
+                    Button("Caller — get assistance") { viewModel.chooseAccountRole(.caller) }
+                        .buttonStyle(.pill(.primary))
+                        .accessibilityHint("Choose to request assistance from volunteers")
+                    Button("Volunteer — offer assistance") { viewModel.chooseAccountRole(.volunteer) }
+                        .buttonStyle(.pill(.primary))
+                    if let onSignOut {
+                        Button("Sign out") {
+                            Task {
+                                do { try await onSignOut() }
+                                catch { errorMessage = "Couldn't sign out. Please try again." }
+                            }
+                        }.frame(minHeight: 44)
+                    }
+                }.padding(24)
+            case .accountDetails:
+                accountDetails
             case .role:
                 RoleQuestionView { viewModel.chooseRole($0) }
             case .voiceOver:
@@ -21,12 +52,57 @@ struct OnboardingView: View {
                 )
             }
         }
+        .disabled(isSaving)
+        .overlay { if isSaving { ProgressView("Saving your profile").padding().background(.regularMaterial) } }
+        .alert("Account setup", isPresented: Binding(
+            get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+        )) { Button("OK") { errorMessage = nil } } message: { Text(errorMessage ?? "") }
         .animation(.easeInOut(duration: 0.25), value: viewModel.step)
     }
 
+    private var accountDetails: some View {
+        @Bindable var model = viewModel
+        return NavigationStack {
+            Form {
+                Text("Account role: \(model.accountRole.title)")
+                TextField("Display name", text: $model.displayName).textContentType(.name)
+                TextField("Languages, separated by commas", text: $model.languageText)
+                    .accessibilityHint("For example, English, Korean")
+                Button("Continue") {
+                    if model.accountRole == .volunteer { finish() } else { model.finishAccountDetails() }
+                }
+                    .disabled(!model.canContinueDetails).frame(minHeight: 44)
+                if !model.canContinueDetails {
+                    Text("Enter your name and at least one language to continue.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Button("Change account role") { model.returnToAccountRole() }
+                    .frame(minHeight: 44)
+            }.navigationTitle("Your profile")
+        }
+    }
+
     private func finish() {
-        app.preferences.usesSystemScreenReader = viewModel.usesVoiceOver
-        app.completeOnboarding(with: viewModel.profile)
+        guard !isSaving else { return }
+        isSaving = true
+        Task {
+            defer { isSaving = false }
+            do {
+                if let onSave {
+                    try await onSave(viewModel.accountRole,
+                        viewModel.displayName.trimmingCharacters(in: .whitespacesAndNewlines),
+                        viewModel.languages)
+                }
+                if viewModel.accountRole == .caller {
+                    app.preferences.usesSystemScreenReader = viewModel.usesVoiceOver
+                    app.completeOnboarding(with: viewModel.profile)
+                }
+            } catch {
+                errorMessage = (error as? UserProfileError)?.localizedDescription
+                    ?? "Couldn't save your profile. Check your connection and try again."
+            }
+        }
     }
 }
 
@@ -55,14 +131,14 @@ struct RoleQuestionView: View {
             VStack(spacing: 28) {
                 WelcomeTitle()
                 AppLogo(size: 180)
-                Text("Are you a")
+                Text("Choose your guidance preferences")
                     .font(.title3.bold())
                     .foregroundStyle(.white)
                 VStack(spacing: 20) {
-                    Button("Sighted Volunteer") { choose(.sighted) }
+                    Button("Sighted / standard guidance") { choose(.sighted) }
                         .buttonStyle(.pill(.primary))
-                        .accessibilityLabel("I am a sighted volunteer")
-                    Button("Blind/Low Vision User") { choose(.blind) }
+                        .accessibilityLabel("Sighted guidance preferences")
+                    Button("Blind / low vision guidance") { choose(.blind) }
                         .buttonStyle(.pill(.primary))
                         .accessibilityLabel("I am blind or have low vision")
                 }

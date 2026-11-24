@@ -1,5 +1,8 @@
 import Foundation
 import Observation
+import os
+
+private let log = Logger(subsystem: "AccessAble", category: "TripSession")
 
 /// Owner: Maps (2.x) + Interaction (3.x). State for the redesigned trip screen.
 ///
@@ -43,8 +46,12 @@ final class TripSessionViewModel {
     /// While something asked about isn't in view, Ask AI looks again this often, for this long.
     static let lookAgainEvery: Duration = .seconds(2)
     static let keepLookingFor: Duration = .seconds(20)
+    /// How far ahead on the route a report from Route Blocked Ahead goes: the blockage it
+    /// answers is at most this far ahead.
+    static let reportAheadDistance = Double(RouteBlockDetector().blockedWithin)
 
     @ObservationIgnored private let services: AppServices?
+    @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let warningLifetime: Duration
     @ObservationIgnored private let infoLifetime: Duration
     @ObservationIgnored private var blockDetector = RouteBlockDetector()
@@ -55,20 +62,31 @@ final class TripSessionViewModel {
     @ObservationIgnored private var lastSaid: String?
     @ObservationIgnored private var silenceTask: Task<Void, Never>?
     @ObservationIgnored private var voiceTask: Task<Void, Never>?
+    /// Whether geo-tracking was asked for with the camera the screen holds; nil while it holds none.
+    @ObservationIgnored private var heldCamera: Bool?
+    /// Whether this trip can geo-track, asked once: the view model lives for one trip, so the
+    /// screen coming back doesn't wait on Apple again.
+    @ObservationIgnored private var canGeoTrack: Bool?
+    /// The camera picture waits for this. Its view takes its own hold on the camera, and a hold taken before the
+    /// geo-tracking ask starts the session on world tracking, which a running session keeps for the whole trip.
+    private(set) var isCameraReady = false
 
     /// - Parameters:
     ///   - services: The app's services, for a real trip; nil for front end only.
     ///   - warningLifetime, infoLifetime: How long a red or blue bar stays before it fades.
+    ///   - now: The time, for how old a location fix is and when a report is made.
     init(
         plan: TripPlan,
         services: AppServices? = nil,
         announcements: [TripAnnouncement] = [],
         warningLifetime: Duration = .seconds(8),
-        infoLifetime: Duration = .seconds(12)
+        infoLifetime: Duration = .seconds(12),
+        now: @escaping () -> Date = { .now }
     ) {
         self.plan = plan
         self.services = services
-        self.directions = services.map { TripViewModel(services: $0) }
+        self.now = now
+        self.directions = services.map { TripViewModel(services: $0, now: now) }
         self.warningLifetime = warningLifetime
         self.infoLifetime = infoLifetime
         self.announcements = []
@@ -83,6 +101,11 @@ final class TripSessionViewModel {
     var isSpokenByEngine: Bool { services != nil }
 
     var destinationName: String { plan.place.name }
+
+    /// Whether the trip offers reporting a problem: only once a real report service is wired.
+    var isReportingAvailable: Bool { services?.reportsAvailable == true }
+
+    var hasArrived: Bool { directions?.tripState.phase == .arrived }
 
     /// One line on where directions stand, or nil while walking normally.
     var directionsStatus: String? {
@@ -119,31 +142,78 @@ final class TripSessionViewModel {
         guard let services, let directions else { return }
         if !hasSetDestination {
             hasSetDestination = true
-            directions.setDestination(Destination(
-                name: plan.place.name,
-                coordinate: GeoCoordinate(latitude: plan.place.latitude, longitude: plan.place.longitude),
-                address: plan.place.address
-            ))
+            if let planned = plan.plannedRoute {
+                // The route picked on the previous screen; no second request.
+                directions.use(planned)
+            } else {
+                directions.setDestination(Destination(
+                    name: plan.place.name,
+                    coordinate: GeoCoordinate(latitude: plan.place.latitude, longitude: plan.place.longitude),
+                    // A place from search may have no address.
+                    address: plan.place.address.isEmpty ? nil : plan.place.address
+                ))
+            }
             if let origin = plan.origin {
                 await say("Directions start from where you are now, not from \(origin.name).", category: .system)
             }
         }
-        let holdsCamera = (try? await services.scene.start()) != nil
+        let camera = services.tripCamera
         await withDiscardingTaskGroup { group in
+            group.addTask { await self.openCamera(camera) }
             group.addTask { await directions.start() }
             group.addTask { await self.startWhenRouteIsReady() }
             group.addTask { await self.showAnnouncements(from: services.announcements) }
             group.addTask { await self.watchForBlockedPath(services.scene) }
         }
         stopListening()
-        if holdsCamera { await services.scene.stop() }
+        await closeCamera(camera)
     }
 
-    /// Starts walking as soon as a route is ready, and again after a re-route.
+    /// Opens the camera beside the route request rather than before it, since asking Apple about
+    /// geo-tracking can take a few seconds. The screen usually opens it before the trip goes active,
+    /// so it decides the tracking.
+    func openCamera(_ camera: TripCamera) async {
+        let geoTracking: Bool
+        if let canGeoTrack {
+            geoTracking = canGeoTrack
+        } else {
+            geoTracking = await camera.canGeoTrack()
+            // a cancelled check says no without Apple's answer, so it isn't kept
+            guard !Task.isCancelled else { return }
+            canGeoTrack = geoTracking
+        }
+        // the screen closed while Apple was asked
+        guard !Task.isCancelled else { return }
+        do {
+            try await camera.start(geoTracking: geoTracking)
+            heldCamera = geoTracking
+        } catch {
+            log.error("No obstacle detection on the trip screen: \(error.localizedDescription, privacy: .public)")
+        }
+        // also after a failed start, so the camera view can say what went wrong
+        isCameraReady = true
+    }
+
+    /// Gives back the camera the screen holds, if any.
+    func closeCamera(_ camera: TripCamera) async {
+        isCameraReady = false
+        guard let geoTracking = heldCamera else { return }
+        // cleared first, so a run() that starts meanwhile keeps its own hold
+        heldCamera = nil
+        await camera.stop(geoTracking: geoTracking)
+    }
+
+    /// Starts walking as soon as a route is ready, and again after a re-route. Each route is tried
+    /// once: a start that doesn't take (the refresh failed, or the trip stayed in planning) would
+    /// otherwise make `canStartTrip` true again at once and retry forever on the main actor.
     private func startWhenRouteIsReady() async {
         guard let directions else { return }
-        for await canStart in Observations({ directions.canStartTrip }) where canStart {
+        var tried: NavigationRoute?
+        for await ready in Observations({ directions.canStartTrip ? directions.route : nil }) {
+            guard let ready, ready != tried else { continue }
             await directions.startTrip()
+            // the route the start ended with: a refresh inside it may have replaced this one
+            tried = directions.route
         }
     }
 
@@ -176,14 +246,14 @@ final class TripSessionViewModel {
     // MARK: - Commands
 
     /// Runs a command from the Voice Commands sheet. Returns false for commands that open
-    /// other UI.
+    /// other UI: Call Help, and the report choices.
     @discardableResult
     func run(_ command: VoiceCommandHint) -> Bool {
         switch command {
         case .pauseTrip:
             pause()
             return true
-        case .callHelp:
+        case .callHelp, .reportProblem:
             return false
         default:
             guard let services else {
@@ -208,7 +278,7 @@ final class TripSessionViewModel {
         case .describeLocation:
             text = await services.locationContext.currentLocationDescription()
                 ?? "I couldn't find where you are. Check that Location is on for AccessAble, or try again outside."
-        case .pauseTrip, .callHelp:
+        case .pauseTrip, .reportProblem, .callHelp:
             return
         }
         await say(text, category: .ambient)
@@ -265,6 +335,95 @@ final class TripSessionViewModel {
         voiceTask = Task { await self.respond(to: text) }
     }
 
+    /// A spoken "report …": the kind of problem, or a report whose kind wasn't heard.
+    enum ReportCommand: Equatable {
+        case kind(ReportKind)
+        case unknown
+    }
+
+    /// What may come before "report". Only these, not "report" anywhere, so a question such as
+    /// "what does this report say" still goes to Ask AI.
+    private static let reportLeadIns = ["", "please ", "ok ", "okay ", "i want to ", "i'd like to ", "i would like to ", "i need to ", "can i "]
+
+    /// nil unless the words are a report command. Speech adds punctuation, so it is ignored.
+    static func reportCommand(for text: String) -> ReportCommand? {
+        let words = text.lowercased()
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'")).inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard let leadIn = reportLeadIns.first(where: { words == "\($0)report" || words.hasPrefix("\($0)report ") }) else {
+            return nil
+        }
+        // padded, so each phrase matches whole words only
+        let problem = " \(words.dropFirst(leadIn.count + "report".count)) "
+        func says(_ phrases: String...) -> Bool { phrases.contains { problem.contains(" \($0) ") } }
+
+        if says("construction", "work zone", "road work", "roadwork") { return .kind(.construction) }
+        // before the entrance: "the elevator door is closed" is an elevator out of service
+        if says("elevator", "lift") { return .kind(.elevatorOut) }
+        // before blocked: "the door is closed" is a closed entrance, not a blocked path
+        if says("entrance", "door", "doorway"), says("closed", "locked") { return .kind(.closedEntrance) }
+        if says("blocked", "blocking", "obstruction", "obstacle") { return .kind(.blockedPath) }
+        if says("other", "something else") { return .kind(.other) }
+        return .unknown
+    }
+
+    private static let reportingUnavailable = "Reporting isn't available yet."
+
+    /// Submits a report at the user's location or a short distance ahead on the active route.
+    func submitReport(kind: ReportKind, useRouteAhead: Bool = false) async {
+        guard let services, isReportingAvailable else {
+            await say(Self.reportingUnavailable, category: .system)
+            return
+        }
+
+        guard let user = await services.auth.currentUser() else {
+            await say("Sign in to report a problem.", category: .system)
+            return
+        }
+
+        guard let location = directions?.reportableLocation else {
+            await say("Your location isn't precise enough to report yet. Try again in a moment.", category: .system)
+            return
+        }
+
+        let createdAt = now()
+        let report = Report(
+            id: UUID().uuidString,
+            kind: kind,
+            coordinate: useRouteAhead ? pointAhead(of: location) : location,
+            createdAt: createdAt,
+            expiresAt: createdAt.addingTimeInterval(kind.lifetime),
+            reporterID: user.id
+        )
+
+        do {
+            try await services.reports.submit(report)
+            await say("Reported \(kind.title.lowercased()). Thank you.", category: .system)
+        } catch {
+            log.error("Report submit failed: \(error.localizedDescription, privacy: .public)")
+            await say(
+                "I couldn't send that report. Check your connection and try again.",
+                category: .system
+            )
+        }
+    }
+
+    /// `reportAheadDistance` on from how far along the route the trip is; `location` while the
+    /// trip has no progress to go by.
+    private func pointAhead(of location: GeoCoordinate) -> GeoCoordinate {
+        guard let route = directions?.route, let remaining = directions?.tripState.distanceRemaining else {
+            return location
+        }
+        let walked = max(0, route.totalDistance - remaining)
+        return GeoMath.coordinate(
+            atDistance: min(walked + Self.reportAheadDistance, route.totalDistance),
+            along: route.coordinates,
+            cumulativeDistances: route.cumulativeDistances
+        )
+    }
+
     private func armSilenceTimer() {
         silenceTask?.cancel()
         silenceTask = Task { [weak self] in
@@ -284,10 +443,25 @@ final class TripSessionViewModel {
     }
 
     /// A trip command is carried out; anything else is a question for Ask AI about what the
-    /// camera sees, with the conversation so far, so follow-ups make sense.
-    private func respond(to text: String) async {
+    /// camera sees, with the conversation so far, so follow-ups make sense. Internal so tests can
+    /// say something without the microphone.
+    func respond(to text: String) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let services, !text.isEmpty else { return }
+        if let report = Self.reportCommand(for: text) {
+            switch report {
+            case .kind(let kind):
+                await submitReport(kind: kind)
+            case .unknown where isReportingAvailable:
+                await say(
+                    "What's the problem? Say report, then the problem: report construction, report blocked path, report closed entrance, report elevator, or report other.",
+                    category: .system
+                )
+            case .unknown:
+                await say(Self.reportingUnavailable, category: .system)
+            }
+            return
+        }
         if Self.asksForHelp(text) {
             onCallHelp?()
             return
@@ -415,21 +589,14 @@ final class TripSessionViewModel {
         await say("Route blocked ahead. Something is in the way with no way round.", category: .hazard, haptic: .routeBlocked)
     }
 
-    /// Asks for a new route from where the user is now. The route service doesn't know about
-    /// the obstacle, so the new route is the best one from here, not one that avoids it.
+    /// Asks `TripManager` for a new route from where the user is now ("find another way" on
+    /// Route Blocked Ahead). It says what happens, so the bars show only real cues. The route
+    /// service doesn't know about the obstacle, so the new route is the best one from here,
+    /// not one that avoids it.
     func reroute() {
         answerBlockedRoute()
-        guard let directions, let services else {
-            add(TripAnnouncement(text: "New route: turn right in 20 ft, then walk straight", kind: .info))
-            return
-        }
-        Task {
-            await say("Finding a new route from here.", category: .system)
-            // Ending the trip drops the route; the next location fix plans a new one, and
-            // `startWhenRouteIsReady` starts it.
-            await services.trip.endTrip()
-            directions.retryRoute()
-        }
+        guard let services else { return }
+        Task { await services.trip.reroute() }
     }
 
     /// Ends the trip for good (Exit Trip).

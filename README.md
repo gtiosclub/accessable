@@ -7,6 +7,8 @@ GT iOS Club Fall 2026 - AccessAble app
 AccessAble/                              Xcode project folder
 ├── AccessAble.xcodeproj                 open this
 ├── Info.plist                           usage strings + background modes (merged with the generated plist)
+├── AccessAbleWidgets/                   widget extension: the trip Live Activity on the lock screen and Dynamic Island
+├── TripActivity/                        Live Activity attributes, shared by the app and the widget extension
 └── AccessAble/                          all app source (synced folder: new files are added automatically)
     ├── AccessAbleApp.swift              @main entry point
     ├── PrivacyInfo.xcprivacy            privacy manifest

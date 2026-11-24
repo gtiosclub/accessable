@@ -7,7 +7,13 @@ struct OnboardingViewModelTests {
     @Test
     func walksThroughEveryStepInOrder() {
         let viewModel = OnboardingViewModel()
+        #expect(viewModel.step == .accountRole)
+        viewModel.chooseAccountRole(.volunteer)
+        #expect(viewModel.step == .accountDetails)
+        viewModel.displayName = "Alex"
+        viewModel.finishAccountDetails()
         #expect(viewModel.step == .role)
+        #expect(viewModel.accountRole == .volunteer)
 
         viewModel.chooseRole(.sighted)
         #expect(viewModel.step == .voiceOver)
@@ -82,6 +88,60 @@ struct TripSessionViewModelTests {
         #expect(TripSessionViewModel.asksToRepeat("Is there a warning sign?") == nil)
     }
 
+    @Test(arguments: [
+        ("Report construction.", ReportKind.construction),
+        ("report a work zone", .construction),
+        ("Report road work", .construction),
+        ("report roadwork, please", .construction),
+        ("Report blocked path", .blockedPath),
+        ("report something blocking the sidewalk", .blockedPath),
+        ("Report an obstruction", .blockedPath),
+        ("report obstacle", .blockedPath),
+        ("Report closed entrance", .closedEntrance),
+        ("report the door is locked", .closedEntrance),
+        ("Report doorway closed", .closedEntrance),
+        ("Report elevator", .elevatorOut),
+        ("report the lift is out", .elevatorOut),
+        ("Report other.", .other),
+        ("report other problem", .other),
+        ("Report something else", .other),
+        ("I want to report construction", .construction),
+        ("Please report blocked path", .blockedPath),
+        ("I\u{2019}d like to report a closed entrance.", .closedEntrance),
+        ("i need to report the elevator", .elevatorOut),
+        ("Can I report something else?", .other),
+        ("REPORT   construction", .construction),
+        ("Okay, report construction", .construction),
+        ("I would like to report a blocked path", .blockedPath),
+        ("Report the elevator door is closed", .elevatorOut),
+    ])
+    func reportCommandsNameTheirKind(_ text: String, kind: ReportKind) {
+        #expect(TripSessionViewModel.reportCommand(for: text) == .kind(kind))
+    }
+
+    /// A closed entrance is often blocked too; it is reported as the closed entrance.
+    @Test
+    func aClosedEntranceIsNotABlockedPath() {
+        #expect(TripSessionViewModel.reportCommand(for: "Report blocked entrance, it's closed") == .kind(.closedEntrance))
+        #expect(TripSessionViewModel.reportCommand(for: "Report blocked entrance") == .kind(.blockedPath))
+    }
+
+    @Test(arguments: ["Report a problem", "Report.", "report", "I want to report"])
+    func aReportWithoutAKindIsUnknown(_ text: String) {
+        #expect(TripSessionViewModel.reportCommand(for: text) == .unknown)
+    }
+
+    @Test(arguments: [
+        "What does this report say?",
+        "Is there a construction sign?",
+        "reporter on the corner",
+        "Describe surroundings",
+        "",
+    ])
+    func otherWordsAreNotAReport(_ text: String) {
+        #expect(TripSessionViewModel.reportCommand(for: text) == nil)
+    }
+
     @Test
     func frontEndMicOnlyFlipsTheButton() async {
         let session = TripSessionViewModel(plan: plan)
@@ -131,12 +191,13 @@ struct TripSessionViewModelTests {
     }
 
     @Test
-    func rerouteClearsTheBlockAndAnnouncesTheNewRoute() {
+    func rerouteClearsTheBlockWithoutScriptedDirections() {
         let session = TripSessionViewModel(plan: plan, announcements: [])
         session.simulateBlockedRoute()
         session.reroute()
         #expect(!session.isRouteBlocked)
-        #expect(session.latestAnnouncement?.kind == .info)
+        // directions come only from TripManager; front end only has none
+        #expect(session.announcements.isEmpty)
     }
 }
 
@@ -213,33 +274,152 @@ struct PlaceSearchViewModelTests {
         #expect(names("Anything", "  ").isEmpty)
     }
 
-    @Test
-    func resultsSettleAfterAPauseInTyping() async throws {
-        let search = PlaceSearchViewModel()
-        search.query = "CULC"
-        #expect(search.isSearching)
-        #expect(search.results.isEmpty)
-        // Settles after the debounce; a busy test machine can take longer, so wait up to 3 s.
+    /// Polls until `condition` holds; a busy test machine can take a while, so up to 3 s.
+    private func waitUntil(_ condition: () -> Bool) async throws {
         let deadline = ContinuousClock.now + .seconds(3)
-        while search.isSearching, ContinuousClock.now < deadline {
+        while !condition(), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(20))
         }
-        #expect(!search.isSearching)
-        #expect(search.results.map(\.name).contains("CULC Room 152"))
-        #expect(search.resultsSummary == "Showing \(search.results.count) of \(SampleContent.places.count) places")
     }
 
     @Test
-    func categoriesCountWhatWasTyped() {
+    func resultsSettleAfterAPauseInTyping() async throws {
         let search = PlaceSearchViewModel()
-        let parks = SampleContent.places.filter { $0.category == .parks }.count
-        #expect(search.count(of: .parks) == parks)
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+
+        search.query = "library"
+        #expect(search.isSearching)
+        #expect(search.suggestions.isEmpty)
+        try await waitUntil { !search.isSearching }
+        #expect(search.suggestions.map(\.title) == ["Georgia Tech Library"])
+        #expect(search.destinationSearch.resultsAnnouncement == "1 result for library")
+        #expect(search.resultsSummary == "1 result for library")
+    }
+
+    @Test
+    func saysWhenNothingMatches() async throws {
+        let search = PlaceSearchViewModel()
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+
+        search.query = "zzzz"
+        try await waitUntil { !search.isSearching }
+        #expect(search.showsNoResults)
+        #expect(search.destinationSearch.resultsAnnouncement == "No results for zzzz")
+    }
+
+    @Test
+    func saysWhenSuggestionsCantLoad() async throws {
+        let search = PlaceSearchViewModel(search: FailingDestinationSearch())
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+
+        search.query = "Clough"
+        try await waitUntil { !search.isSearching }
+        #expect(search.problem == .suggestionsUnavailable)
+        #expect(!search.showsNoResults)
+        #expect(search.destinationSearch.resultsAnnouncement == nil)
+        #expect(search.resultsSummary == "No results")
+    }
+
+    @Test
+    func pickingAResultResolvesARealDestination() async throws {
+        let search = PlaceSearchViewModel()
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+
+        search.query = "student"
+        try await waitUntil { !search.suggestions.isEmpty }
+        let suggestion = try #require(search.suggestions.first)
+        search.select(suggestion)
+        try await waitUntil { search.selectedDestination != nil }
+        #expect(search.selectedDestination?.name == "John Lewis Student Center")
+        #expect(search.selectedDestination?.address == "351 Ferst Dr NW, Atlanta, GA")
+    }
+
+    @Test
+    func categoriesSearchForThatKindOfPlace() {
+        let search = PlaceSearchViewModel()
         search.category = .parks
         #expect(search.isFiltering)
-        #expect(search.results.allSatisfy { $0.category == .parks })
+        #expect(search.searchText == "parks")
+        #expect(search.destinationSearch.query == "parks")
+        search.query = "Clough"
+        search.search()
+        #expect(search.searchText == "Clough parks")
         search.clearFilters()
         #expect(!search.isFiltering)
-        #expect(search.resultsSummary == "No places match")
+        #expect(search.destinationSearch.query.isEmpty)
+    }
+
+    @Test
+    func resultsThatArriveWhileTheScreenIsHiddenShowOnReturn() async throws {
+        let search = PlaceSearchViewModel()
+        search.query = "library"
+        search.search()
+        #expect(search.isSearching)
+
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+        try await waitUntil { !search.isSearching }
+        #expect(search.suggestions.map(\.title) == ["Georgia Tech Library"])
+    }
+
+    @Test
+    func aNewSearchScreenDoesntShowAnEarlierScreensResults() async throws {
+        let service = PlaceholderDestinationSearch()
+        service.update(query: "library")
+
+        let search = PlaceSearchViewModel(search: service)
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(search.suggestions.isEmpty)
+        #expect(!search.showsNoResults)
+    }
+
+    @Test
+    func typingAStartingPointDoesntMarkTheResultsAsSearching() {
+        let search = PlaceSearchViewModel()
+        search.originQuery = "CULC"
+        #expect(!search.isSearching)
+    }
+
+    @Test
+    func leavingMidTypingDoesntLeaveTheResultsSearching() {
+        let search = PlaceSearchViewModel()
+        search.query = "Clough"
+        #expect(search.isSearching)
+        search.stop()
+        #expect(!search.isSearching)
+    }
+
+    @Test
+    func leavingDropsALookupStillInFlight() async throws {
+        let search = PlaceSearchViewModel(search: SlowLookupSearch())
+        let suggestion = SearchSuggestion(title: "Clough", subtitle: "")
+        search.select(suggestion)
+        #expect(search.isResolving(suggestion))
+        search.stop()
+        #expect(!search.isResolving(suggestion))
+        // Long enough for the lookup to have finished had it not been dropped.
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(search.selectedDestination == nil)
+    }
+
+    @Test
+    func searchedPlacesCarryTheirDestinationToTheTrip() {
+        let destination = Destination(
+            name: "Clough Undergraduate Learning Commons",
+            coordinate: GeoCoordinate(latitude: 33.7746, longitude: -84.3964)
+        )
+        let place = SamplePlace(destination: destination)
+        #expect(place.name == destination.name)
+        #expect(place.latitude == 33.7746)
+        #expect(place.longitude == -84.3964)
+        #expect(place.address.isEmpty)
+        #expect(place.recordedRouteCount == 0)
     }
 
     @Test
@@ -262,8 +442,46 @@ struct PlaceSearchViewModelTests {
 
     @Test
     func distancesReadAsAWalk() {
-        #expect(PlaceSearchViewModel.distanceText(metres: 352) == "350 m · about 5 min walk")
-        #expect(PlaceSearchViewModel.distanceText(metres: 3) == "10 m · about 1 min walk")
-        #expect(PlaceSearchViewModel.distanceText(metres: 1840) == "1.8 km · about 26 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 352, distances: .metric) == "350 m · about 5 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 3, distances: .metric) == "10 m · about 1 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 1840, distances: .metric) == "1.8 km · about 26 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 3, distances: .imperial) == "25 ft · about 1 min walk")
+        #expect(PlaceSearchViewModel.distanceText(metres: 1840, distances: .imperial) == "1.1 mi · about 26 min walk")
+    }
+}
+
+/// Suggestions that never load, as when the phone is offline. Replays the failure, so a
+/// listener that subscribes after the query still gets it.
+@MainActor
+private struct FailingDestinationSearch: DestinationSearching {
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>(replaysLatest: true)
+
+    func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
+        results.stream()
+    }
+
+    func update(query: String) {
+        results.send(.failure(.suggestionsUnavailable))
+    }
+
+    func resolve(_ suggestion: SearchSuggestion) async throws -> Destination {
+        throw DestinationSearchError.noMatch
+    }
+}
+
+/// Finds every place after a short wait, even when the lookup is cancelled.
+@MainActor
+private struct SlowLookupSearch: DestinationSearching {
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
+
+    func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
+        results.stream()
+    }
+
+    func update(query: String) {}
+
+    func resolve(_ suggestion: SearchSuggestion) async throws -> Destination {
+        try? await Task.sleep(for: .milliseconds(50))
+        return Destination(name: suggestion.title, coordinate: GeoCoordinate(latitude: 33.7746, longitude: -84.3964))
     }
 }

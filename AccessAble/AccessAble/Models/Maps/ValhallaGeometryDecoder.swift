@@ -62,8 +62,8 @@ enum ValhallaGeometryDecoder {
                     kind: try maneuverKind(for: maneuver.type),
                     coordinateIndex: maneuver.beginShapeIndex,
                     instruction: maneuver.instruction,
-                    spokenInstruction: verbal.flatMap { $0.isEmpty ? nil : $0 }
-                        ?? maneuver.instruction,
+                    spokenInstruction: RouteStep.withLowercaseThen(verbal.flatMap { $0.isEmpty ? nil : $0 }
+                        ?? maneuver.instruction),
                     announcesNextStep: maneuver.verbalMultiCue ?? false
                 )
             }
@@ -142,16 +142,21 @@ enum ValhallaGeometryDecoder {
         return Metrics(distanceMetres: metres, durationSeconds: time)
     }
 
-    /// Collapse directional variants into the shared vocabulary. Stairs, elevators, escalators, buildings and
-    /// roundabouts have no ManeuverKind yet, so they map to straight; their instruction text still names them.
+    /// Collapse directional variants into the shared vocabulary. Merges and roundabouts have no ManeuverKind, so they
+    /// map to straight; their instruction text still names them.
     /// Anything else is rejected rather than guessed.
     private static func maneuverKind(for type: Int) throws -> ManeuverKind {
         switch type {
         case 1, 2, 3: return .depart
         case 4, 5, 6: return .arrive
         case 7, 8, 17, 22: return .straight
-        // No ManeuverKind for these yet; the instruction text still names them (e.g. "Take the stairs").
-        case 25, 26, 27, 39, 40, 41, 42, 43: return .straight
+        // Merge and roundabout enter/exit; the instruction text still names them (e.g. "Enter the roundabout").
+        case 25, 26, 27: return .straight
+        case 39: return .elevator
+        case 40: return .stairs
+        case 41: return .escalator
+        case 42: return .enterBuilding
+        case 43: return .exitBuilding
         case 9, 23: return .slightRight
         case 10, 11, 18, 20, 37: return .turnRight
         case 12, 13: return .uTurn

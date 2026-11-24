@@ -45,6 +45,19 @@ struct PlaceholderHaptics: HapticRendering {
     }
 }
 
+/// Sends the given landmarks, then finishes. Empty by default, which is what the app gets until CV's
+/// implementation lands. Replaced by CV (LAND-1).
+struct PlaceholderLandmarkProvider: LandmarkObserving {
+    var observations: [LandmarkObservation] = []
+
+    func landmarkObservations() -> AsyncStream<LandmarkObservation> {
+        AsyncStream { continuation in
+            observations.forEach { continuation.yield($0) }
+            continuation.finish()
+        }
+    }
+}
+
 /// Emits one hard-coded scene so UI work can proceed without a camera.
 struct PlaceholderSceneProvider: SceneObservationProviding, SceneDescribing {
     static let sample = SceneObservation(
@@ -131,7 +144,8 @@ struct PlaceholderDestinationSearch: DestinationSearching {
         SearchSuggestion(title: "Campus Recreation Center", subtitle: "750 Ferst Dr NW, Atlanta, GA"),
     ]
 
-    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>()
+    /// Replays the latest results, so a listener that subscribes after a query still gets them.
+    private let results = Broadcaster<Result<[SearchSuggestion], DestinationSearchError>>(replaysLatest: true)
 
     func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
         results.stream()
@@ -163,8 +177,19 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
+    func reroute() async {}
 
     func currentLocationDescription() async -> String? { nil }
+}
+
+/// Shows nothing, so previews and tests never put an activity on the lock screen.
+struct PlaceholderTripActivityClient: TripActivityClient {
+    func start(
+        _ attributes: TripActivityAttributes, state: TripActivityAttributes.ContentState, staleDate: Date?
+    ) async throws {}
+    func update(_ state: TripActivityAttributes.ContentState, staleDate: Date?) async {}
+    func end(_ state: TripActivityAttributes.ContentState, immediately: Bool) async {}
+    func endAll() async {}
 }
 
 /// Publishes one fixed state, so previews can show a trip in progress or arrived.
@@ -186,4 +211,179 @@ struct PreviewTripProvider: TripStateProviding {
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
+    func reroute() async {}
+}
+
+actor PlaceholderAuthService: AuthService {
+    static let sampleUser = AuthUser(id: "preview-user")
+    private nonisolated let users = Broadcaster<AuthUser?>(replaysLatest: true)
+    private var user: AuthUser?
+    
+    init(signedIn: Bool = true) {
+        let user = signedIn ? Self.sampleUser : nil
+        self.user = user
+        users.send(user)
+    }
+    
+    nonisolated func userChanges() -> AsyncStream<AuthUser?> { users.stream() }
+    func currentUser() async -> AuthUser? { user }
+    
+    func signIn(email: String, password: String) async throws -> AuthUser { setUser(Self.sampleUser)}
+    
+    func createAccount(email: String, password: String) async throws -> AuthUser {
+        setUser(Self.sampleUser)
+    }
+    
+    func signOut() async throws {
+        user = nil
+        users.send(nil)
+    }
+    
+    private func setUser(_ newUser: AuthUser) -> AuthUser {
+        user = newUser
+        users.send(newUser)
+        return newUser
+    }
+}
+
+// MARK: - Calls
+
+/// Fixed sample volunteers so the Calls screen works with no backend. Replaced by MATCH-x.
+struct PlaceholderVolunteerDirectory: VolunteerDirectory {
+    var volunteers: [Volunteer] = SampleContent.activeVolunteers
+
+    func allVolunteers() -> AsyncStream<[Volunteer]> {
+        AsyncStream { continuation in
+            continuation.yield(volunteers.sortedForDirectory())
+            continuation.finish()
+        }
+    }
+    func onlineVolunteers() -> AsyncStream<[Volunteer]> {
+        AsyncStream { continuation in
+            continuation.yield(volunteers)
+            continuation.finish()
+        }
+    }
+}
+
+/// Remembers the toggle in memory only. Replaced by MATCH-x.
+actor PlaceholderPresenceService: PresenceService {
+    private nonisolated let states = Broadcaster<Bool>(replaysLatest: true)
+
+    init() { states.send(false) }
+
+    nonisolated func onlineStates() -> AsyncStream<Bool> { states.stream() }
+
+    func setOnline(_ isOnline: Bool) async throws {
+        log.info("presence online=\(isOnline)")
+        states.send(isOnline)
+    }
+}
+
+/// Hands back a fake ticket and never rings anyone. Replaced by MATCH-x.
+struct PlaceholderCallSignaling: CallSignaling {
+    func incomingCalls() -> AsyncStream<CallTicket> {
+        AsyncStream { $0.finish() }
+    }
+
+    func startCall(to volunteerID: String) async throws -> CallTicket {
+        CallTicket(
+            callID: UUID().uuidString, roomName: "placeholder-room", token: "placeholder-token",
+            callerID: "placeholder-caller", volunteerID: volunteerID,
+            expiresAt: Date().addingTimeInterval(60)
+        )
+    }
+
+    func accept(_ ticket: CallTicket) async throws {}
+    func decline(_ ticket: CallTicket) async throws {}
+    func end(_ ticket: CallTicket) async {}
+}
+
+/// Walks through the states without touching LiveKit or the camera. Replaced by MATCH-x.
+actor PlaceholderVideoCallSession: VideoCallSession {
+    private nonisolated let broadcaster = Broadcaster<CallState>(replaysLatest: true)
+
+    init() { broadcaster.send(.idle) }
+
+    nonisolated func states() -> AsyncStream<CallState> { broadcaster.stream() }
+
+    func connect(with ticket: CallTicket) async throws {
+        broadcaster.send(.connecting)
+        broadcaster.send(.connected)
+    }
+
+    func disconnect() async {
+        broadcaster.send(.ended(.hungUp))
+    }
+}
+
+/// In-memory profiles for tests and previews, keyed by the shared auth UID.
+actor PlaceholderUserProfileStore: UserProfileStore {
+    private var profiles: [String: UserProfile]
+
+    init(profiles: [UserProfile] = []) {
+        self.profiles = Dictionary(uniqueKeysWithValues: profiles.map { ($0.userID, $0) })
+    }
+
+    func load(userID: String) async throws -> UserProfile? { profiles[userID] }
+
+    func save(userID: String, role: UserRole, displayName: String,
+              languages: [String]) async throws -> UserProfile {
+        guard UserProfileValidation.isValid(displayName: displayName, languages: languages) else {
+            throw UserProfileError.invalidProfile
+        }
+        let profile = UserProfile(userID: userID, role: role, displayName: displayName,
+                                  languages: languages, createdAt: profiles[userID]?.createdAt ?? .now)
+        profiles[userID] = profile
+        return profile
+    }
+}
+
+/// The in-memory stand-in for reports, used in previews and tests until REPORT-3's Firestore service.
+actor PlaceholderReportService: ReportService {
+    private var storedReports: [Report] = []
+    private nonisolated let changes = Broadcaster<[Report]>(replaysLatest: true)
+
+    init() {
+        changes.send([])
+    }
+
+    func submit(_ report: Report) async throws {
+        storedReports.removeAll { $0.id == report.id }
+        storedReports.append(report)
+        changes.send(storedReports)
+    }
+
+    func reports(
+        near coordinate: GeoCoordinate,
+        radius: Double
+    ) async throws -> [Report] {
+        storedReports.filter {
+            $0.expiresAt > .now
+                && GeoMath.distance(from: coordinate, to: $0.coordinate) <= radius
+        }
+    }
+
+    nonisolated func reportChanges(
+        near coordinate: GeoCoordinate,
+        radius: Double
+    ) -> AsyncStream<[Report]> {
+        let source = changes.stream()
+
+        return AsyncStream { continuation in
+            let task = Task {
+                for await reports in source {
+                    continuation.yield(reports.filter {
+                        $0.expiresAt > .now
+                            && GeoMath.distance(
+                                from: coordinate,
+                                to: $0.coordinate
+                            ) <= radius
+                    })
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
 }

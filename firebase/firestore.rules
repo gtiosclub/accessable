@@ -1,0 +1,156 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isValidCoordinate(c) {
+      return c is map
+        && c.keys().hasAll(['latitude', 'longitude'])
+        && c.keys().hasOnly(['latitude', 'longitude'])
+        && c.latitude is number && c.latitude >= -90 && c.latitude <= 90
+        && c.longitude is number && c.longitude >= -180 && c.longitude <= 180;
+    }
+
+    function isValidPointAt(area, i) {
+      return i >= area.size() || isValidCoordinate(area[i]);
+    }
+
+
+    function isValidArea(area) {
+      return area is list && area.size() >= 3 && area.size() <= 10
+        && isValidPointAt(area, 0) && isValidPointAt(area, 1) && isValidPointAt(area, 2)
+        && isValidPointAt(area, 3) && isValidPointAt(area, 4) && isValidPointAt(area, 5)
+        && isValidPointAt(area, 6) && isValidPointAt(area, 7) && isValidPointAt(area, 8)
+        && isValidPointAt(area, 9);
+    }
+
+
+    function isValidReport(data) {
+      return data.keys().hasAll(['id', 'kind', 'coordinate', 'createdAt', 'expiresAt', 'confirmations', 'reporterID'])
+        && data.keys().hasOnly(['id', 'kind', 'coordinate', 'area', 'createdAt', 'expiresAt', 'confirmations', 'reporterID'])
+        && data.kind in ['construction', 'blockedPath', 'closedEntrance', 'elevatorOut', 'other']
+        && isValidCoordinate(data.coordinate)
+        && (!('area' in data) || data.area == null || isValidArea(data.area))
+        && data.expiresAt is timestamp
+        && data.expiresAt <= data.createdAt + duration.value(30, 'd');
+    }
+
+    function rateLimitPath() {
+      return /databases/$(database)/documents/rateLimits/$(request.auth.uid);
+    }
+
+    // VOLUNTEER-2: private account profiles. Directory/presence data belongs
+    // in a separate collection; callers must not list other users' private profiles.
+    function validLanguageAt(languages, i) {
+      return i >= languages.size()
+        || (languages[i] is string && languages[i].size() >= 1
+            && languages[i].size() <= 40 && languages[i].matches('.*[^ ].*'));
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['role', 'displayName', 'languages', 'createdAt'])
+        && data.keys().hasOnly(['role', 'displayName', 'languages', 'createdAt'])
+        && data.role in ['caller', 'volunteer']
+        && data.displayName is string && data.displayName.size() >= 1
+        && data.displayName.size() <= 80 && data.displayName.matches('.*[^ ].*')
+        && data.createdAt is timestamp
+        && data.languages is list && data.languages.size() >= 1 && data.languages.size() <= 10
+        && validLanguageAt(data.languages, 0) && validLanguageAt(data.languages, 1)
+        && validLanguageAt(data.languages, 2) && validLanguageAt(data.languages, 3)
+        && validLanguageAt(data.languages, 4) && validLanguageAt(data.languages, 5)
+        && validLanguageAt(data.languages, 6) && validLanguageAt(data.languages, 7)
+        && validLanguageAt(data.languages, 8) && validLanguageAt(data.languages, 9);
+    }
+
+    match /users/{userId} {
+      allow get: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && request.auth.uid == userId
+        && isValidUser(request.resource.data)
+        && request.resource.data.createdAt == request.time;
+      allow update: if signedIn() && request.auth.uid == userId
+        && isValidUser(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['role', 'displayName', 'languages']);
+      allow delete: if signedIn() && request.auth.uid == userId;
+    }
+    
+    function isValidVolunteer(data) {
+        return data.keys().hasAll(['displayName', 'languages', 'bio', 'isOnline', 'inCall', 'lastSeen'])
+            && data.keys().hasOnly(['displayName', 'languages', 'bio', 'isOnline', 'inCall',
+                                'ringingCallId', 'ringingSince', 'lastSeen'])
+            && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80
+            && data.languages is list && data.languages.size() >= 1 && data.languages.size() <= 10
+            && validLanguageAt(data.languages, 0) && validLanguageAt(data.languages, 1)
+            && validLanguageAt(data.languages, 2) && validLanguageAt(data.languages, 3)
+            && validLanguageAt(data.languages, 4) && validLanguageAt(data.languages, 5)
+            && validLanguageAt(data.languages, 6) && validLanguageAt(data.languages, 7)
+            && validLanguageAt(data.languages, 8) && validLanguageAt(data.languages, 9)
+            && data.bio is string && data.bio.size() <= 300
+            && data.isOnline is bool
+            && data.inCall is bool
+            && (!('ringingCallId' in data) || data.ringingCallId == null
+                || (data.ringingCallId is string && data.ringingCallId.size() <= 128))
+            && (!('ringingSince' in data) || data.ringingSince == null || data.ringingSince is timestamp)
+            && data.lastSeen is timestamp;
+    }
+
+    match /volunteers/{uid} {
+      allow get: if signedIn();
+      allow list: if signedIn() && request.query.limit <= 100;
+      allow create: if signedIn() && request.auth.uid == uid
+        && isValidVolunteer(request.resource.data)
+        && request.resource.data.lastSeen == request.time
+        && get(/databases/$(database)/documents/users/$(uid)).data.role == 'volunteer';
+      allow update: if signedIn() && request.auth.uid == uid
+        && isValidVolunteer(request.resource.data)
+        && request.resource.data.lastSeen == request.time
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeen'])
+            || request.time >= resource.data.lastSeen + duration.value(20, 's'));
+
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    match /reports/{reportId} {
+      allow get: if signedIn();
+      allow list: if signedIn() && request.query.limit <= 200;
+
+      allow create: if signedIn()
+        && isValidReport(request.resource.data)
+        && request.resource.data.id == reportId
+        && request.resource.data.reporterID == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.expiresAt > request.time
+        && request.resource.data.confirmations == 0
+        // The stamp names this report, so one stamp can't cover a batch of many reports.
+        && getAfter(rateLimitPath()).data.lastReportAt == request.time
+        && getAfter(rateLimitPath()).data.lastReportId == reportId;
+
+
+      allow update: if signedIn()
+        && resource.data.reporterID == request.auth.uid
+        && isValidReport(request.resource.data)
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['kind', 'coordinate', 'area', 'expiresAt']);
+
+      allow delete: if signedIn() && resource.data.reporterID == request.auth.uid;
+    }
+
+    match /rateLimits/{userId} {
+      function isOwnStamp() {
+        return request.auth.uid == userId
+          && request.resource.data.keys().hasAll(['lastReportAt', 'lastReportId'])
+          && request.resource.data.keys().hasOnly(['lastReportAt', 'lastReportId'])
+          && request.resource.data.lastReportAt == request.time
+          && request.resource.data.lastReportId is string;
+      }
+
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && isOwnStamp();
+      allow update: if signedIn() && isOwnStamp()
+        && request.time >= resource.data.lastReportAt + duration.value(60, 's');
+    }
+  }
+}

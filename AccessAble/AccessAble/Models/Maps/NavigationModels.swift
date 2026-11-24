@@ -17,6 +17,14 @@ struct LocationSample: Codable, Equatable, Sendable {
     var course: Double? = nil
     /// Degrees. `nil` when unknown; the simulator often reports none, so don't require it to use `course`.
     var courseAccuracy: Double? = nil
+    /// Where the reading came from (AR-3).
+    var source: LocationSource = .gps
+}
+
+enum LocationSource: String, Codable, Sendable {
+    case gps
+    /// ARKit geo-tracking, matching what the camera sees to Apple's street imagery.
+    case ar
 }
 
 extension LocationSample {
@@ -35,8 +43,8 @@ extension LocationSample {
     }
 }
 
-/// Where the top of the phone points.
-struct HeadingSample: Codable, Equatable, Sendable {
+/// Where the top of the phone points, from the compass; or, from AR, where the back camera faces.
+struct HeadingSample: Equatable, Sendable {
     /// Degrees clockwise from true north, 0..<360. `nil` when true north is unavailable.
     var trueHeading: Double?
     /// Degrees clockwise from magnetic north, 0..<360.
@@ -44,6 +52,14 @@ struct HeadingSample: Codable, Equatable, Sendable {
     /// Maximum deviation in degrees.
     var accuracy: Double
     var timestamp: Date
+    /// Where the reading came from (AR-4).
+    var source: HeadingSource = .compass
+}
+
+enum HeadingSource: String, Sendable {
+    case compass
+    /// The way the camera faces, from ARKit geo-tracking. True north only, so `magneticHeading` repeats it.
+    case ar
 }
 
 extension HeadingSample {
@@ -90,7 +106,7 @@ extension LocationAuthorization {
     }
 }
 
-struct Destination: Codable, Equatable, Sendable {
+struct Destination: Codable, Hashable, Sendable {
     var name: String
     var coordinate: GeoCoordinate
     var address: String? = nil
@@ -109,6 +125,14 @@ enum DestinationSearchError: Error, Equatable, Sendable {
     case suggestionsUnavailable
 }
 
+/// A route found before the trip, handed on so the trip walks that exact route.
+struct PlannedRoute: Hashable, Sendable {
+    var destination: Destination
+    var route: NavigationRoute
+    /// When it was requested, so the trip can tell if it is too old to start on.
+    var requestedAt: Date
+}
+
 struct RouteOptions: Equatable, Sendable {
     /// Metres per second, greater than 0. Valhalla takes km/h, so its client converts.
     var walkingSpeed: Double = 1.2
@@ -122,7 +146,7 @@ enum RoutingError: Error, Equatable, Sendable {
     case invalidResponse
 }
 
-struct RouteStep: Codable, Equatable, Sendable {
+struct RouteStep: Codable, Hashable, Sendable {
     var kind: ManeuverKind
     /// Index into `NavigationRoute.coordinates` where this maneuver begins.
     var coordinateIndex: Int
@@ -144,10 +168,43 @@ extension RouteStep {
         spokenInstruction = try container.decode(String.self, forKey: .spokenInstruction)
         announcesNextStep = try container.decodeIfPresent(Bool.self, forKey: .announcesNextStep) ?? false
     }
+
+    /// "stairs going up" or "stairs going down" when the instruction text says which way, otherwise "stairs". Only
+    /// wording about the stairs themselves counts: a wrong direction is worse than none, and "down" can be a street.
+    var stairsPhrase: String {
+        let text = (instruction + " " + spokenInstruction).lowercased()
+            .split(whereSeparator: { !$0.isLetter }).joined(separator: " ")
+        let padded = " \(text) "
+        func says(_ phrases: [String]) -> Bool { phrases.contains { padded.contains(" \($0) ") } }
+        if says(["stairs up", "up the stairs", "upstairs"]) { return "stairs going up" }
+        if says(["stairs down", "down the stairs", "downstairs"]) { return "stairs going down" }
+        return "stairs"
+    }
+
+    /// Valhalla capitalizes the step it joins on, "Turn left. Then Turn right.", which reads oddly on screen.
+    static func withLowercaseThen(_ text: String) -> String {
+        text.replacing(/\. Then (\p{Lu})/) { ". Then " + $0.output.1.lowercased() }
+    }
+
+    /// The instruction without the compass direction Valhalla starts a route with, which a blind user can't act on:
+    /// "Walk north on Ferst Drive." becomes "Follow Ferst Drive.", and "Walk north for 50 meters." becomes "Follow the
+    /// path for 50 meters.". Any other instruction is returned as it is.
+    static func withoutCompassDirection(_ text: String) -> String {
+        // Valhalla's start phrases, "Head <direction>", "Walk <direction>" and the like, in its eight directions
+        let start = /(?i)(?:head|walk|drive|bike|go)\s+(?:(?:north|south)(?:east|west)?|east|west)\b/
+        guard let match = text.prefixMatch(of: start) else { return text }
+        let rest = text[match.range.upperBound...]
+        if let street = rest.prefixMatch(of: /\s+on\s+/) {
+            return "Follow " + rest[street.range.upperBound...]
+        }
+        // only where the direction ends the phrase, so "Walk North Avenue." is a street, not a direction
+        guard rest.isEmpty || rest.prefixMatch(of: /[.,;]|\s+(?:for|to|toward)\s/) != nil else { return text }
+        return "Follow the path" + rest
+    }
 }
 
 /// Always valid: created and decoded only through the validating init, which derives the distances.
-struct NavigationRoute: Codable, Equatable, Sendable {
+struct NavigationRoute: Codable, Hashable, Sendable {
     let coordinates: [GeoCoordinate]
     let steps: [RouteStep]
     /// Seconds.

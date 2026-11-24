@@ -3,10 +3,11 @@ import Foundation
 import Testing
 @testable import AccessAble
 
-/// Reports fixed authorizations and samples, then finishes, so `LocationDebugViewModel.start()` returns.
+/// Reports fixed authorizations, samples and headings, then finishes, so `LocationDebugViewModel.start()` returns.
 private struct FixedLocationProvider: LocationProvider {
     var authorizations: [LocationAuthorization] = [.authorized(preciseAccuracy: true)]
     var samples: [LocationSample] = []
+    var headings: [HeadingSample] = []
 
     func locationSamples() -> AsyncStream<LocationSample> {
         AsyncStream { continuation in
@@ -18,7 +19,12 @@ private struct FixedLocationProvider: LocationProvider {
     }
 
     func headingSamples() -> AsyncStream<HeadingSample> {
-        AsyncStream { continuation in continuation.finish() }
+        AsyncStream { continuation in
+            for heading in headings {
+                continuation.yield(heading)
+            }
+            continuation.finish()
+        }
     }
 
     func authorizationStates() -> AsyncStream<LocationAuthorization> {
@@ -66,6 +72,7 @@ struct LocationDebugViewModelTests {
 
         #expect(LocationDebugViewModel.fields(of: fullSample) == [
             .init(label: "Time", value: time, spokenValue: time),
+            .init(label: "Source", value: "GPS", spokenValue: "GPS"),
             .init(label: "Coordinate", value: "33.777123, -84.396457",
                   spokenValue: "latitude 33.777123, longitude -84.396457"),
             .init(label: "Horizontal accuracy", value: "4.5 m", spokenValue: "4.5 metres"),
@@ -137,6 +144,58 @@ struct LocationDebugViewModelTests {
 
         #expect(viewModel.authorization == .authorized(preciseAccuracy: false))
         #expect(viewModel.permissionField.value == "Allowed, approximate")
+    }
+
+    @Test func headingFollowsTheWalkingDirectionWhileMoving() async {
+        let compass = HeadingSample(trueHeading: 87, magneticHeading: 92, accuracy: 10, timestamp: fixTime)
+        let viewModel = await startedViewModel(FixedLocationProvider(samples: [fullSample], headings: [compass]))
+
+        #expect(viewModel.heading?.source == .walkingDirection)
+        #expect(viewModel.headingField == .init(label: "Heading", value: "90° · walking direction",
+                                                spokenValue: "90 degrees, walking direction"))
+    }
+
+    @Test func headingUsesTheCompassStandingStill() async {
+        let compass = HeadingSample(trueHeading: 86.6, magneticHeading: 92, accuracy: 10, timestamp: fixTime)
+        let viewModel = await startedViewModel(FixedLocationProvider(headings: [compass]))
+
+        #expect(viewModel.headingField == .init(label: "Heading", value: "87° · compass",
+                                                spokenValue: "87 degrees, compass"))
+    }
+
+    @Test func headingSaysWhenItIsFromARGeoTracking() async {
+        // standing still, with a speed lent by fresh GPS
+        let fix = LocationSample(coordinate: fullSample.coordinate, horizontalAccuracy: 5, timestamp: fixTime,
+                                 speed: 0.2, source: .ar)
+        let camera = HeadingSample(trueHeading: 180, magneticHeading: 180, accuracy: 5, timestamp: fixTime,
+                                   source: .ar)
+        let viewModel = await startedViewModel(FixedLocationProvider(samples: [fix], headings: [camera]))
+
+        #expect(viewModel.headingField == .init(label: "Heading", value: "180° · AR geo-tracking",
+                                                spokenValue: "180 degrees, AR geo-tracking"))
+    }
+
+    @Test func headingNeverReads360() async {
+        let compass = HeadingSample(trueHeading: 359.7, magneticHeading: 5, accuracy: 10, timestamp: fixTime)
+        let viewModel = await startedViewModel(FixedLocationProvider(headings: [compass]))
+
+        #expect(viewModel.headingField.value == "0° · compass")
+    }
+
+    @Test func headingIsUnknownWithoutReadings() async {
+        let viewModel = await startedViewModel(FixedLocationProvider())
+
+        #expect(viewModel.heading == nil)
+        #expect(viewModel.headingField == .init(label: "Heading", value: "Unknown", spokenValue: "Unknown"))
+    }
+
+    @Test func staleCompassIsUnknownOnceANewerFixArrives() async {
+        let compass = HeadingSample(trueHeading: 87, magneticHeading: 92, accuracy: 10, timestamp: fixTime)
+        let standing = LocationSample(coordinate: fullSample.coordinate, horizontalAccuracy: 5,
+                                      timestamp: fixTime.addingTimeInterval(10))
+        let viewModel = await startedViewModel(FixedLocationProvider(samples: [standing], headings: [compass]))
+
+        #expect(viewModel.headingField.value == "Unknown")
     }
 
     @Test(arguments: [

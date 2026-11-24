@@ -5,7 +5,9 @@ import SwiftUI
 struct SettingsView: View {
     @State private var viewModel: SettingsViewModel
     @State private var isConfirmingReset = false
+    @State private var signOutError: String?
     @Environment(\.dismiss) private var dismiss
+    @Environment(AppViewModel.self) private var app
 
     init(app: AppViewModel) {
         _viewModel = State(initialValue: SettingsViewModel(app: app))
@@ -66,6 +68,25 @@ struct SettingsView: View {
 
                 resetCard
 
+                if app.services.accountsAvailable {
+                    Button {
+                        Task {
+                            do { try await app.services.auth.signOut() }
+                            catch { signOutError = "Couldn't sign out. Please try again." }
+                        }
+                    } label: {
+                        HStack {
+                            Text("Sign out")
+                            Spacer()
+                        }
+                        .font(.body)
+                        .foregroundStyle(.white)
+                        .minimumTapTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 8)
+                }
+
                 NavigationLink {
                     DeveloperToolsView()
                 } label: {
@@ -102,6 +123,11 @@ struct SettingsView: View {
                 AccessibilityNotification.Announcement("Settings reset to defaults").post()
             }
             Button("Cancel", role: .cancel) {}
+        }
+        .alert("Account", isPresented: Binding(
+            get: { signOutError != nil }, set: { if !$0 { signOutError = nil } }
+        )) { Button("OK") { signOutError = nil } } message: {
+            Text(signOutError ?? "")
         }
     }
 
@@ -144,6 +170,9 @@ struct SettingsView: View {
         SettingsPickerRow("Announcement Detail", selection: $viewModel.profile.verbosity) {
             Text("Important only").tag(Verbosity.passive)
             Text("Everything").tag(Verbosity.active)
+        }
+        SettingsPickerRow("Distance Units", selection: $viewModel.profile.distanceUnits) {
+            ForEach(DistanceUnits.allCases, id: \.self) { Text($0.displayName) }
         }
         SettingsSliderRow("Speech Rate", value: $viewModel.profile.speechRate, in: 0.3...0.7)
         SettingsSliderRow("Haptic Strength", value: $viewModel.profile.hapticIntensity, in: 0...1)
@@ -489,4 +518,5 @@ private struct SettingsOptionRow: View {
     NavigationStack {
         SettingsView(app: .preview)
     }
+    .environment(AppViewModel.preview)
 }

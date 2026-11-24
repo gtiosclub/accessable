@@ -38,10 +38,18 @@ struct DeveloperToolsView: View {
                      hint: "Search a destination and walk a real route") {
                     TripView(services: app.services)
                 }
+                link("Trip recorder", systemImage: "record.circle",
+                     hint: "Records each trip's location fixes and announcements to a file you can share") {
+                    TripRecorderView(recorder: app.services.tripRecorder)
+                }
                 #if DEBUG
                 link("Location readings", systemImage: "location",
                      hint: "Shows the location permission and the latest GPS readings") {
                     LocationDebugView(services: app.services)
+                }
+                link("Geo tracking spike", systemImage: "scope",
+                     hint: "Logs ARKit geo-tracking next to GPS for the AR feasibility walk") {
+                    GeoTrackingSpikeView()
                 }
                 #endif
             }
@@ -50,6 +58,13 @@ struct DeveloperToolsView: View {
                 link("Haptic patterns", systemImage: "iphone.radiowaves.left.and.right",
                      hint: "Plays each haptic pattern") {
                     HapticsPracticeView(services: app.services)
+                }
+            }
+
+            Section("Calls") {
+                link("Calls (stub)", systemImage: "video",
+                     hint: "Lists placeholder volunteers until the calling backend exists") {
+                    CallsView(services: app.services)
                 }
             }
 
