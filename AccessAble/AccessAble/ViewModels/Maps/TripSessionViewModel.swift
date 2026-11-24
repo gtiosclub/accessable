@@ -46,8 +46,12 @@ final class TripSessionViewModel {
     /// While something asked about isn't in view, Ask AI looks again this often, for this long.
     static let lookAgainEvery: Duration = .seconds(2)
     static let keepLookingFor: Duration = .seconds(20)
+    /// How far ahead on the route a report from Route Blocked Ahead goes: the blockage it
+    /// answers is at most this far ahead.
+    static let reportAheadDistance = Double(RouteBlockDetector().blockedWithin)
 
     @ObservationIgnored private let services: AppServices?
+    @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let warningLifetime: Duration
     @ObservationIgnored private let infoLifetime: Duration
     @ObservationIgnored private var blockDetector = RouteBlockDetector()
@@ -70,16 +74,19 @@ final class TripSessionViewModel {
     /// - Parameters:
     ///   - services: The app's services, for a real trip; nil for front end only.
     ///   - warningLifetime, infoLifetime: How long a red or blue bar stays before it fades.
+    ///   - now: The time, for how old a location fix is and when a report is made.
     init(
         plan: TripPlan,
         services: AppServices? = nil,
         announcements: [TripAnnouncement] = [],
         warningLifetime: Duration = .seconds(8),
-        infoLifetime: Duration = .seconds(12)
+        infoLifetime: Duration = .seconds(12),
+        now: @escaping () -> Date = { .now }
     ) {
         self.plan = plan
         self.services = services
-        self.directions = services.map { TripViewModel(services: $0) }
+        self.now = now
+        self.directions = services.map { TripViewModel(services: $0, now: now) }
         self.warningLifetime = warningLifetime
         self.infoLifetime = infoLifetime
         self.announcements = []
@@ -375,37 +382,18 @@ final class TripSessionViewModel {
             return
         }
 
-        guard let location = directions?.lastLocation else {
-            await say(
-                "I couldn't determine your location. Try again when location is available.",
-                category: .system
-            )
+        guard let location = directions?.reportableLocation else {
+            await say("Your location isn't precise enough to report yet. Try again in a moment.", category: .system)
             return
         }
 
-        let coordinate: GeoCoordinate
-        if useRouteAhead, let route = directions?.route {
-            let projection = route.projection(of: location)
-            if projection.distanceAlongRoute.isFinite {
-                coordinate = GeoMath.coordinate(
-                    atDistance: min(projection.distanceAlongRoute + 12, route.totalDistance),
-                    along: route.coordinates,
-                    cumulativeDistances: route.cumulativeDistances
-                )
-            } else {
-                coordinate = location
-            }
-        } else {
-            coordinate = location
-        }
-
-        let now = Date.now
+        let createdAt = now()
         let report = Report(
             id: UUID().uuidString,
             kind: kind,
-            coordinate: coordinate,
-            createdAt: now,
-            expiresAt: now.addingTimeInterval(kind.lifetime),
+            coordinate: useRouteAhead ? pointAhead(of: location) : location,
+            createdAt: createdAt,
+            expiresAt: createdAt.addingTimeInterval(kind.lifetime),
             reporterID: user.id
         )
 
@@ -418,6 +406,20 @@ final class TripSessionViewModel {
                 category: .system
             )
         }
+    }
+
+    /// `reportAheadDistance` on from how far along the route the trip is; `location` while the
+    /// trip has no progress to go by.
+    private func pointAhead(of location: GeoCoordinate) -> GeoCoordinate {
+        guard let route = directions?.route, let remaining = directions?.tripState.distanceRemaining else {
+            return location
+        }
+        let walked = max(0, route.totalDistance - remaining)
+        return GeoMath.coordinate(
+            atDistance: min(walked + Self.reportAheadDistance, route.totalDistance),
+            along: route.coordinates,
+            cumulativeDistances: route.cumulativeDistances
+        )
     }
 
     private func armSilenceTimer() {

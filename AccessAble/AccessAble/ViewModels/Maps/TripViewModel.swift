@@ -38,6 +38,8 @@ final class TripViewModel {
     private static let maximumRouteAge: TimeInterval = 120
     private static let maximumStartFixAccuracy: Double = 20
     private static let maximumStartOffset: Double = 20
+    // older than this, the user has likely walked on from where the fix puts them
+    private static let maximumReportFixAge: TimeInterval = 10
 
     init(services: AppServices, now: @escaping () -> Date = { .now }) {
         self.services = services
@@ -60,6 +62,13 @@ final class TripViewModel {
         route = planned.route
         routeRequestedAt = planned.requestedAt
         routeError = nil
+    }
+
+    /// Where a report goes: the latest precise fix, while it is recent enough to be where the user is.
+    var reportableLocation: GeoCoordinate? {
+        guard let latestPreciseFix,
+              now().timeIntervalSince(latestPreciseFix.timestamp) <= Self.maximumReportFixAge else { return nil }
+        return latestPreciseFix.coordinate
     }
 
     /// The route found so far, to hand on to the next screen.
