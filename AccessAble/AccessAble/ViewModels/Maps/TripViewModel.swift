@@ -274,6 +274,15 @@ final class TripViewModel {
                 guard !Task.isCancelled else { return }
                 self.route = route
                 routeRequestedAt = requestedAt
+                if !route.unavoidedReports.isEmpty {
+                    await services.announcements.submit(AnnouncementEvent(
+                        category: .hazard,
+                        priority: .high,
+                        text: "A reported obstacle is on this route.",
+                        source: .navigation,
+                        dedupKey: "route-report-fallback"
+                    ))
+                }
             } catch {
                 guard !Task.isCancelled else { return }
                 log.error("Routing failed: \(error.localizedDescription, privacy: .public)")

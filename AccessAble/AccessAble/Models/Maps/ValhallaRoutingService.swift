@@ -108,7 +108,19 @@ struct ValhallaRoutingService: RoutingService {
         let walkingSpeed = min(max(options.walkingSpeed * 3.6, 0.5), 25)
         let body = RouteRequest(
             locations: [Location(origin), Location(destination)],
-            costingOptions: CostingOptions(pedestrian: Pedestrian(walkingSpeed: walkingSpeed))
+            costingOptions: CostingOptions(pedestrian: Pedestrian(walkingSpeed: walkingSpeed)),
+            excludeLocations: options.excludeLocations.isEmpty
+                ? nil
+                : options.excludeLocations.map(Location.init),
+            excludePolygons: options.excludePolygons.isEmpty
+                ? nil
+                : options.excludePolygons.map { polygon in
+                    var ring = polygon.map { [$0.longitude, $0.latitude] }
+                    if let first = ring.first, ring.last != first {
+                        ring.append(first)
+                    }
+                    return ring
+                }
         )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -133,6 +145,8 @@ struct ValhallaRoutingService: RoutingService {
         let locations: [Location]
         let costing = "pedestrian"
         let costingOptions: CostingOptions
+        let excludeLocations: [Location]?
+        let excludePolygons: [[[Double]]]?
         // The decoder converts either unit; kilometres keeps the response metric.
         let units = "kilometers"
         let language = "en-US"
