@@ -40,6 +40,10 @@ private struct ScriptedGeoTracking: GeoTrackingProviding {
     let updates: [GeoTrackingUpdate]
     /// Holds the updates back until it opens.
     var gate: Gate?
+    /// Whether the stream ends after the updates, rather than staying open like ARKit's.
+    var finishes = false
+    /// Called when the stream ends, however it ends.
+    var onEnd: @Sendable () -> Void = {}
 
     func setGeoTrackingWanted(_ wanted: Bool) async {}
     func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> {
@@ -47,18 +51,29 @@ private struct ScriptedGeoTracking: GeoTrackingProviding {
             let task = Task {
                 await gate?.opened()
                 updates.forEach { continuation.yield($0) }
+                if finishes { continuation.finish() }
             }
-            continuation.onTermination = { _ in task.cancel() }
+            continuation.onTermination = { _ in
+                task.cancel()
+                onEnd()
+            }
         }
     }
 }
 
-/// Sends `samples`, then stays open like Core Location does.
+/// Sends `samples`, then stays open like Core Location does unless it `finishes`.
 private struct ScriptedGPS: LocationProvider {
     let samples: [LocationSample]
+    var finishes = false
+    /// Called when the stream ends, however it ends.
+    var onEnd: @Sendable () -> Void = {}
 
     func locationSamples() -> AsyncStream<LocationSample> {
-        AsyncStream { continuation in samples.forEach { continuation.yield($0) } }
+        AsyncStream { continuation in
+            samples.forEach { continuation.yield($0) }
+            if finishes { continuation.finish() }
+            continuation.onTermination = { _ in onEnd() }
+        }
     }
     func headingSamples() -> AsyncStream<HeadingSample> { AsyncStream { _ in } }
     func authorizationStates() -> AsyncStream<LocationAuthorization> { AsyncStream { _ in } }
@@ -298,24 +313,25 @@ struct LocationFusionTests {
     }
 }
 
+// each stream test has a time limit, so a stream that never sends fails instead of hanging the run
 struct FusedLocationProviderTests {
-    @Test
+    @Test(.timeLimit(.minutes(1)))
     func withoutGeoTrackingItIsGPS() async {
-        let fused = FusedLocationProvider(gps: ScriptedGPS(samples: [gps(0)]), geoTracking: nil)
+        let fused = FusedLocationProvider(gps: ScriptedGPS(samples: [gps(0)], finishes: true), geoTracking: nil)
 
-        for await sample in fused.locationSamples() {
-            #expect(sample == gps(0))
-            break
-        }
+        var received: [LocationSample] = []
+        for await sample in fused.locationSamples() { received.append(sample) }
+        #expect(received == [gps(0)])
     }
 
-    @Test
+    @Test(.timeLimit(.minutes(1)))
     func geoTrackingReadingsComeThroughMarkedAR() async {
         // AR is checked against GPS, so its readings wait until the GPS fix has come through
         let gate = Gate()
         let updates = [update(0.2, accuracy: .low), update(0.5), update(1.5), update(2.5)]
         let fused = FusedLocationProvider(
-            gps: ScriptedGPS(samples: [gps(0)]), geoTracking: ScriptedGeoTracking(updates: updates, gate: gate)
+            gps: ScriptedGPS(samples: [gps(0)]),
+            geoTracking: ScriptedGeoTracking(updates: updates, gate: gate, finishes: true)
         )
 
         var received: [LocationSample] = []
@@ -326,5 +342,42 @@ struct FusedLocationProviderTests {
         }
         #expect(received.map(\.source) == [.gps, .ar])
         #expect(received.last?.timestamp == start + 2.5)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func gpsFinishingEndsTheFusedStreamAndGeoTracking() async {
+        let (ended, end) = AsyncStream.makeStream(of: String.self)
+        let fused = FusedLocationProvider(
+            gps: ScriptedGPS(samples: [gps(0)], finishes: true),
+            geoTracking: ScriptedGeoTracking(updates: [], onEnd: { end.yield("ar") })
+        )
+
+        var received: [LocationSample] = []
+        for await sample in fused.locationSamples() { received.append(sample) }
+        #expect(received == [gps(0)])
+        for await name in ended {
+            #expect(name == "ar")
+            break
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func cancellingTheSubscriberEndsBothSources() async {
+        let (ended, end) = AsyncStream.makeStream(of: String.self)
+        let fused = FusedLocationProvider(
+            gps: ScriptedGPS(samples: [], onEnd: { end.yield("gps") }),
+            geoTracking: ScriptedGeoTracking(updates: [], onEnd: { end.yield("ar") })
+        )
+        let samples = fused.locationSamples()
+
+        let subscriber = Task { for await _ in samples {} }
+        subscriber.cancel()
+
+        var names: Set<String> = []
+        for await name in ended {
+            names.insert(name)
+            if names.count == 2 { break }
+        }
+        #expect(names == ["gps", "ar"])
     }
 }
