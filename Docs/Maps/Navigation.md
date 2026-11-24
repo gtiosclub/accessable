@@ -246,6 +246,7 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 ## Known limits
 
 - **The compass says where the phone points, not where the user faces.** Standing still with the phone in a pocket or a bag, a compass reading that looks accurate can still give the wrong "ahead". Once the user is walking, the walking direction takes over.
+- **The AR heading's rules are unmeasured until AR-6.** Within 30° of the course it replaces the course rather than blending with it; there is no hysteresis, so a heading near the limit can flip between AR and the course from one reading to the next; and the change from walking to standing switches from the course to the camera at once.
 - **Not checked on a device yet:** navigation-grade accuracy, the compass, the heading-up trip map, the faster off-route rule and the crosswalk callouts have only run in tests and the simulator, which has no compass.
 - **Crosswalk callouts only exist on campus,** inside the area the bundled export covers, and are as good as OpenStreetMap's tagging there. Only 5 crossings are tagged with an audible signal.
 - **A crossing near the destination can go unannounced.** A fix accurate to 15 m near the last vertex arrives once progress is within 50 m of the end, so progress can still be short of the callout point, 20 m before the crossing, of one up to about 30 m before the destination.
