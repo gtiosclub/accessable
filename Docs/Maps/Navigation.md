@@ -123,7 +123,7 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 | --- | --- |
 | Moving at 0.7 m/s or more, with a course accurate to 45° (or of unknown accuracy), from a fix at most 3 s old | the walking direction, or the AR heading if trusted and within 30° of it |
 | Moving, but with no usable course | unknown, since a phone swinging in a pocket, or a camera pointed aside, points anywhere |
-| Standing still or speed unknown, with a trusted AR heading | the AR heading |
+| Standing still (speed known and under 0.7 m/s), with a trusted AR heading | the AR heading |
 | Standing still, speed unknown, or no fix in the last 3 s | the compass, if accurate to 25° and at most 3 s old |
 | Anything else | unknown |
 
@@ -132,6 +132,7 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 - **Trusted** only while the latest location fix is AR's and at most 3 s old, so exactly while the trip's own `LocationFusion` trusts the lock; no second fusion runs for headings. The reading itself must be at most 3 s old (`LocationFusion.arLifetime`, so one dropped reading doesn't flip the source) and accurate to 25°, as for the compass.
 - **Accuracy:** ARKit grades the position, not the heading, so high 5°, medium 10°, low 30° are guesses until the AR-6 walk measures them. Low is past the 25° limit, a second guard for a low reading that arrives while an earlier one's trust lasts.
 - **Walking, the course wins.** Geo-tracking needs building façades in view, so the camera often faces a building beside the path, not the way the user walks; ranked first, a camera pointed east while walking north said "The path is on your left" for a path ahead, and "It is on your right" for a missed turn behind. So the AR heading only refines a course it is within 30° of (`maximumARCourseDisagreement`, also unmeasured until AR-6). This departs from issue #239, which ranks AR as most trusted, for safety.
+- **Standing still needs a known speed.** An AR fix has a speed only when a GPS fix at most 3 s from it lends one, and AR stays trusted with older GPS or none. Then the user may be walking with the camera pointed aside, so the compass rules apply instead.
 
 - The compass runs only while something is subscribed to `headingSamples()`: a trip, until it arrives or ends, and the location debug screen.
 - Core Location sends every compass reading (`kCLHeadingFilterNone`), not only changes, so a phone held still keeps a reading under 3 s old.

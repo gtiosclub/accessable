@@ -435,13 +435,14 @@ private struct Harness {
 
     /// Feeds one fix on the current trip's stream and waits until it is handled, then moves the clock on. A
     /// quarter-second offset keeps fix times apart from the clock times other state changes use. A `course` comes
-    /// with a walking speed, so the fix gives the heading. A `timestamp` stands for a fix that arrives late.
+    /// with a walking speed, so the fix gives the heading, unless a `speed` is given. A `timestamp` stands for a fix
+    /// that arrives late.
     @discardableResult
-    func fix(_ coordinate: GeoCoordinate, accuracy: Double = 5, course: Double? = nil, timestamp: Date? = nil,
-             source: LocationSource = .gps, then seconds: TimeInterval = 1) async -> TripState {
+    func fix(_ coordinate: GeoCoordinate, accuracy: Double = 5, course: Double? = nil, speed: Double? = nil,
+             timestamp: Date? = nil, source: LocationSource = .gps, then seconds: TimeInterval = 1) async -> TripState {
         let time = timestamp ?? clock.now().addingTimeInterval(0.25)
         location.yield(LocationSample(coordinate: coordinate, horizontalAccuracy: accuracy, timestamp: time,
-                                      speed: course.map { _ in 1.4 }, course: course, source: source),
+                                      speed: speed ?? course.map { _ in 1.4 }, course: course, source: source),
                        toStream: location.streamCount - 1)
         let state = await states.waitFor { $0.updatedAt == time || $0.phase == .arrived }
         clock.advance(by: seconds)
@@ -1447,8 +1448,8 @@ struct TripManagerDirectionTests {
         harness.location.headings.yield(HeadingSample(trueHeading: 180, magneticHeading: 180, accuracy: 5,
                                                       timestamp: harness.clock.now(), source: .ar))
         await harness.location.headings.waitUntilHandled()
-        // standing at the start, with the trip's position from AR
-        await harness.fix(harness.point(0), source: .ar)
+        // standing at the start, with the trip's position from AR and a speed from fresh GPS
+        await harness.fix(harness.point(0), speed: 0.2, source: .ar)
         let start = try #require(await harness.engine.waitForCount(1).first)
         #expect(start.text == "Starting directions to Library, about 160 metres. Turn around, the path is behind you.")
     }

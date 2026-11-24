@@ -67,8 +67,9 @@ struct HeadingEstimator {
             }
             return UserHeading(degrees: course, source: .walkingDirection, timestamp: location.timestamp)
         }
-        // standing still, the phone is all there is to go by, and the camera's heading is sharper than the compass
-        if let ar { return ar }
+        // standing still, the phone is all there is to go by, and the camera's heading is sharper than the compass;
+        // with the speed unknown, as when AR has no fresh GPS fix to lend one, the user may be walking
+        if let ar, let speed = location?.speed, speed < Self.minimumWalkingSpeed { return ar }
         guard let compass, compass.accuracy <= Self.maximumCompassError, isFresh(compass.timestamp, at: time) else {
             return nil
         }
