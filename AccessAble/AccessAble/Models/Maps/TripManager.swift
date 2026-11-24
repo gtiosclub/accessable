@@ -11,10 +11,12 @@ private let log = Logger(subsystem: "AccessAble", category: "TripManager")
 actor TripManager: TripStateProviding {
     private nonisolated let states = Broadcaster<TripState>(replaysLatest: true)
     private nonisolated let routes = Broadcaster<NavigationRoute?>(replaysLatest: true)
+    private nonisolated let reportLists = Broadcaster<[Report]>(replaysLatest: true)
 
     private let location: any LocationProvider
     private let routing: any RoutingService
     private let announcements: any AnnouncementEngineProtocol
+    private let reports: any ReportService
     private let landmarks: any LandmarkObserving
     /// Read when a trip starts, not at launch: loading them parses a large bundled file.
     private let campusBuildings: @Sendable () -> [CampusBuilding]
@@ -50,6 +52,7 @@ actor TripManager: TripStateProviding {
     private var rerouteTask: Task<Void, Never>?
     private var landmarkTask: Task<Void, Never>?
     private var headingTask: Task<Void, Never>?
+    private var reportTask: Task<Void, Never>?
     private var cueChecks: [Task<Void, Never>] = []
 
     /// Turn cues submitted and waiting for their delivery check, and those of them the engine has delivered.
@@ -67,6 +70,9 @@ actor TripManager: TripStateProviding {
     private var tripStartedAt = Date.distantPast
     private var lastGoodFixAt: Date?
     private var isSignalWeak = false
+    private var currentReports: [Report] = []
+    private var hasInitialReportSnapshot = false
+    private var seenReportIDs: Set<String> = []
 
     // the public routing server is shared and slow to recover; this spaces requests and bounds a bad walk
     private static let rerouteInterval: TimeInterval = 30
@@ -103,6 +109,7 @@ actor TripManager: TripStateProviding {
         location: any LocationProvider,
         routing: any RoutingService,
         announcements: any AnnouncementEngineProtocol,
+        reports: any ReportService = PlaceholderReportService(),
         landmarks: any LandmarkObserving = PlaceholderLandmarkProvider(),
         campusBuildings: @escaping @Sendable () -> [CampusBuilding] = { CampusLandmarks.buildings },
         campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all },
@@ -115,6 +122,7 @@ actor TripManager: TripStateProviding {
         self.location = location
         self.routing = routing
         self.announcements = announcements
+        self.reports = reports
         self.landmarks = landmarks
         self.campusBuildings = campusBuildings
         self.campusCrossings = campusCrossings
@@ -132,6 +140,10 @@ actor TripManager: TripStateProviding {
 
     nonisolated func tripRoutes() -> AsyncStream<NavigationRoute?> {
         routes.stream()
+    }
+
+    nonisolated func tripReports() -> AsyncStream<[Report]> {
+        reportLists.stream()
     }
 
     func startTrip(route: NavigationRoute, destination: Destination) async {
@@ -165,6 +177,10 @@ actor TripManager: TripStateProviding {
         tripStartedAt = now()
         lastGoodFixAt = nil
         isSignalWeak = false
+        currentReports = []
+        hasInitialReportSnapshot = false
+        seenReportIDs = []
+        reportLists.send([])
         routes.send(route)
         publish(at: now())
         recorder?.tripStarted(at: now())
@@ -174,6 +190,7 @@ actor TripManager: TripStateProviding {
         let headings = location.headingSamples()
         let delivered = announcements.deliveredEvents()
         let sightings = landmarks.landmarkObservations()
+        await observeReports(along: route, generation: generation)
         headingTask = Task {
             for await sample in headings { self.handle(sample, generation: generation) }
         }
@@ -245,7 +262,7 @@ actor TripManager: TripStateProviding {
     }
 
     private func cancelTasks() {
-        for task in [trackingTask, deliveryTask, startTask, watchdogTask, rerouteTask, landmarkTask, headingTask] {
+        for task in [trackingTask, deliveryTask, startTask, watchdogTask, rerouteTask, landmarkTask, headingTask, reportTask] {
             task?.cancel()
         }
         for task in cueChecks {
@@ -253,6 +270,7 @@ actor TripManager: TripStateProviding {
         }
         landmarkTask = nil
         headingTask = nil
+        reportTask = nil
         trackingTask = nil
         deliveryTask = nil
         startTask = nil
@@ -295,6 +313,9 @@ actor TripManager: TripStateProviding {
         for case let .missedTurn(step, _) in update.events { missedTurnStep = step }
         if update.events.contains(.backOnRoute) { missedTurnStep = nil }
         publish(at: sample.timestamp)
+        if await considerNewReportsAhead(generation: generation) {
+            return
+        }
         // from this fix when it is precise enough, even the one that found the user off the route: the public server
         // is slow, so waiting for the next fix only adds to it
         if wantsReroute, sample.horizontalAccuracy <= Self.rerouteAccuracy {
@@ -445,6 +466,104 @@ actor TripManager: TripStateProviding {
         }
     }
 
+    // MARK: Community reports
+
+    private func observeReports(
+        along route: NavigationRoute,
+        generation: Int
+    ) async {
+        reportTask?.cancel()
+        hasInitialReportSnapshot = false
+
+        let center = GeoMath.coordinate(
+            atDistance: route.totalDistance / 2,
+            along: route.coordinates,
+            cumulativeDistances: route.cumulativeDistances
+        )
+        let radius = route.totalDistance / 2 + 250
+        let updates = reports.reportChanges(near: center, radius: radius)
+
+        reportTask = Task {
+            for await snapshot in updates {
+                await self.receive(snapshot, generation: generation)
+            }
+        }
+    }
+
+    private func receive(
+        _ reports: [Report],
+        generation: Int
+    ) async {
+        guard self.generation == generation else { return }
+
+        let active = reports.filter { $0.expiresAt > now() }
+        currentReports = active
+        reportLists.send(active)
+
+        // Reports present when the trip starts are not newly reported obstacles.
+        if !hasInitialReportSnapshot {
+            hasInitialReportSnapshot = true
+            seenReportIDs = Set(active.map(\.id))
+            return
+        }
+
+        _ = await considerNewReportsAhead(generation: generation)
+    }
+
+    @discardableResult
+    private func considerNewReportsAhead(generation: Int) async -> Bool {
+        guard self.generation == generation,
+              phase == .active,
+              let route,
+              let progress,
+              let origin = lastPreciseFix,
+              canRequestReroute else {
+            return false
+        }
+
+        let walked = route.totalDistance - progress.distanceRemaining
+
+        for report in currentReports where !seenReportIDs.contains(report.id) {
+            let routePoints = report.area?.isEmpty == false
+                ? report.area!
+                : [report.coordinate]
+
+            let affectsRouteAhead = routePoints.contains { point in
+                let projection = route.projection(of: point)
+                return projection.distanceAlongRoute.isFinite
+                    && projection.distanceAlongRoute >= walked
+                    && projection.distanceAlongRoute <= route.totalDistance
+                    && abs(projection.sideOffset) <= 15
+            }
+
+            if !affectsRouteAhead {
+                seenReportIDs.insert(report.id)
+                continue
+            }
+
+            seenReportIDs.insert(report.id)
+            await submit(maneuver(
+                "New obstacle reported ahead. Finding a new route.",
+                .high,
+                haptic: .attention,
+                expiresIn: 15,
+                key: "new-report-\(report.id)"
+            ))
+
+            guard self.generation == generation,
+                  phase == .active,
+                  rerouteTask == nil,
+                  canRequestReroute else {
+                return false
+            }
+
+            // `requested` lets a report-triggered reroute land even if the user is still on route.
+            requestReroute(from: origin, generation: generation, requested: true)
+            return true
+        }
+        return false
+    }
+
     // MARK: Rerouting
 
     private var needsReroute: Bool {
@@ -522,6 +641,7 @@ actor TripManager: TripStateProviding {
             )
             routes.send(newRoute)
             publish(at: now())
+            await observeReports(along: newRoute, generation: generation)
             guard phase == .active else { return }
             await submit(maneuver("New route. " + departure(on: newRoute), .high, expiresIn: 15, key: "reroute"))
         case .failure(let error):

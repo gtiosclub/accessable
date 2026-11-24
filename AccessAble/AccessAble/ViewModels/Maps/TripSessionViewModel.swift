@@ -36,6 +36,7 @@ final class TripSessionViewModel {
     private(set) var isAnswering = false
     /// True while Ask AI re-checks fresh frames for something not in view yet.
     private(set) var isLookingAgain = false
+    private(set) var activeReports: [Report] = []
     let dictation = SpeechDictation()
     /// Opens Call Help; set by the screen, which owns navigation.
     @ObservationIgnored var onCallHelp: (() -> Void)?
@@ -149,6 +150,11 @@ final class TripSessionViewModel {
             group.addTask { await self.startWhenRouteIsReady() }
             group.addTask { await self.showAnnouncements(from: services.announcements) }
             group.addTask { await self.watchForBlockedPath(services.scene) }
+            group.addTask {
+                for await reports in services.trip.tripReports() {
+                    await self.receiveReports(reports)
+                }
+            }
         }
         stopListening()
         await closeCamera(camera)
@@ -223,6 +229,10 @@ final class TripSessionViewModel {
                 await say("Route blocked ahead. Something is in the way with no way round.", category: .hazard)
             }
         }
+    }
+
+    private func receiveReports(_ reports: [Report]) {
+        activeReports = reports.filter { $0.expiresAt > .now }
     }
 
     // MARK: - Commands

@@ -160,6 +160,10 @@ private final class ManualFeed<Element: Sendable>: Sendable {
         return AsyncStream(unfolding: { [self] in await next(on: index) })
     }
 
+    var streamCount: Int {
+        feeds.withLock { $0.count }
+    }
+
     func yield(_ element: Element) {
         let waiter = feeds.withLock { feeds -> CheckedContinuation<Element?, Never>? in
             guard let last = feeds.indices.last else { return nil }
@@ -211,6 +215,51 @@ extension ManualFeed: LandmarkObserving where Element == LandmarkObservation {
     func landmarkObservations() -> AsyncStream<LandmarkObservation> {
         stream()
     }
+}
+
+private actor ManualReportService: ReportService {
+    private var stored: [Report] = []
+    private nonisolated let changes = ManualFeed<[Report]>()
+
+    func submit(_ report: Report) async throws {
+        stored.removeAll { $0.id == report.id }
+        stored.append(report)
+        changes.yield(stored)
+    }
+
+    func reports(
+        near coordinate: GeoCoordinate,
+        radius: Double
+    ) async throws -> [Report] {
+        stored
+    }
+
+    nonisolated func reportChanges(
+        near coordinate: GeoCoordinate,
+        radius: Double
+    ) -> AsyncStream<[Report]> {
+        changes.stream()
+    }
+
+    func publish(_ reports: [Report]) {
+        stored = reports
+        changes.yield(reports)
+    }
+
+    func waitForSubscriber() async {
+        await waitUntil { changes.streamCount > 0 }
+    }
+
+    func waitUntilHandled() async {
+        await changes.waitUntilHandled()
+    }
+
+    // REPORT-6 uses this to record one response from each nearby user.
+    func confirm(
+        _ reportID: String,
+        isStillPresent: Bool,
+        userID: String
+    ) async throws {}
 }
 
 /// Records submissions in order. Delivers each one at once unless `autoDelivers` is off, and can hold one
@@ -396,6 +445,7 @@ private struct Harness {
     let location = ManualLocationProvider()
     let engine = RecordingEngine()
     let router: ScriptedRouter
+    let reportService: ManualReportService
     let background = BackgroundRecorder()
     let landmarks = ManualFeed<LandmarkObservation>()
     let states = StateRecorder()
@@ -409,13 +459,16 @@ private struct Harness {
         buildings: [CampusBuilding] = [],
         crossings: [CampusCrossing] = [],
         distances: DistanceSettings = DistanceSettings(units: .metres),
-        recorder: TripRecorder? = nil
+        recorder: TripRecorder? = nil,
+        reportService: ManualReportService = ManualReportService()
     ) throws {
         let route = try route ?? cornerRoute()
         self.route = route
+        self.reportService = reportService
         router = ScriptedRouter(reroutes)
         manager = TripManager(
             location: location, routing: router, announcements: engine,
+            reports: reportService,
             landmarks: landmarks, campusBuildings: { buildings }, campusCrossings: { crossings },
             setTripTracking: { [background] in background.record($0) },
             distances: distances,
@@ -486,6 +539,51 @@ private struct Harness {
 // any hand-shake that never completes fails the test instead of hanging the run
 @Suite(.timeLimit(.minutes(1)))
 struct TripManagerTests {
+    @Test
+    func newReportAheadTriggersReroute() async throws {
+        let initialRoute = try cornerRoute()
+        let reportService = ManualReportService()
+        let newRoute = try eastRoute(
+            from: TripWalk.point(on: initialRoute, along: 10)
+        )
+        let harness = try Harness(
+            reroutes: [.success(newRoute)],
+            reportService: reportService
+        )
+
+        await harness.start()
+        await harness.fix(harness.point(10))
+
+        // The first snapshot contains reports that existed before this trip began.
+        await reportService.waitForSubscriber()
+        await reportService.publish([])
+        await reportService.waitUntilHandled()
+
+        let report = Report(
+            id: "new-blocked-path",
+            kind: .blockedPath,
+            coordinate: harness.point(40),
+            createdAt: .now,
+            expiresAt: .now.addingTimeInterval(4 * 60 * 60),
+            reporterID: "another-user"
+        )
+        await reportService.publish([report])
+        await reportService.waitUntilHandled()
+
+        await harness.router.waitForRequests(1)
+        #expect(
+            await harness.engine.texts.contains(
+                "New obstacle reported ahead. Finding a new route."
+            )
+        )
+
+        await harness.router.respond()
+        let updated = await harness.states.waitFor {
+            abs(($0.distanceRemaining ?? 0) - 80) < 0.01
+        }
+        #expect(abs((updated.distanceRemaining ?? 0) - 80) < 0.01)
+    }
+
     @Test
     func startPublishesTheFirstTurnAndAnnouncesTheTrip() async throws {
         let harness = try Harness()
