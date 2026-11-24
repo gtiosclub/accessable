@@ -46,6 +46,11 @@ struct GeoTrackingUpdate: Equatable, Sendable {
 
 /// Lets a trip ask the shared camera session for geo-tracking (AR-2).
 protocol GeoTrackingProviding: Sendable {
+    /// Starts asking Apple in the background whether geo-tracking is available here, and returns at once. Called
+    /// while no trip is walked, so the answer is in by the time a trip opens the camera.
+    func prepareGeoTracking() async
+    /// What `prepareGeoTracking()` found, while recent; nil before it answers.
+    func knownGeoAvailability() async -> Bool?
     /// Asks for geo-tracking from the session's next start (true), or gives it back (false). Calls nest like the
     /// scene's `start()`/`stop()`. Ask only where `ARSessionManager.isGeoTrackingAvailableHere` said yes; the
     /// session doesn't check again. A session already running keeps its tracking, so the world CV has mapped isn't
@@ -90,6 +95,17 @@ struct GeoSession: Equatable, Sendable {
     func accepts(frameTimestamp: TimeInterval) -> Bool {
         isGeoTracking && frameTimestamp >= startedAt
     }
+}
+
+/// Apple's answer to "is there geo-tracking imagery here", kept so the camera never waits on it.
+struct GeoAvailability: Equatable, Sendable {
+    var isAvailable: Bool
+    var checkedAt: Date
+
+    /// Coverage is by city, so an answer holds for a walk; past this it is checked again.
+    static let lifetime: TimeInterval = 10 * 60
+
+    func isFresh(at now: Date) -> Bool { now.timeIntervalSince(checkedAt) < Self.lifetime }
 }
 
 extension GeoTrackingUpdate {

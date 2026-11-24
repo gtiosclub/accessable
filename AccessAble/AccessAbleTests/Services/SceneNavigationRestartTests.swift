@@ -12,6 +12,8 @@ private final class RestartingMeshSwitch: Sendable {
         (switches, switched) = AsyncStream.makeStream()
     }
 
+    func finish() { switched.finish() }
+
     @MainActor
     func set(_ enabled: Bool) -> Bool {
         switched.yield(enabled)
@@ -54,13 +56,15 @@ struct SceneNavigationRestartTests {
         let analyzer = analyzer(meshSwitch, perception: perception)
 
         analyzer.navigate(to: "the door")
-        analyzer.navigate(to: nil)
-        var switches = 0
-        for await _ in meshSwitch.switches {
-            switches += 1
-            if switches == 2 { break }
+        var switches: [Bool] = []
+        for await enabled in meshSwitch.switches {
+            switches.append(enabled)
+            // cancel once the restart for the mesh has happened; sooner, the debounce drops the switch on
+            if switches.count == 1 { analyzer.navigate(to: nil) }
+            if switches.count == 2 { break }
         }
 
+        #expect(switches == [true, false])
         #expect(perception.navigationQuery == nil)
     }
 
@@ -82,5 +86,26 @@ struct SceneNavigationRestartTests {
 
         #expect(perception.navigationQuery == "the door")
         await analyzer.stop()
+    }
+
+    // quick changes re-run the session once, for the latest
+    @Test(.timeLimit(.minutes(1)))
+    func quickMeshChangesCollapseIntoTheLatest() async {
+        let meshSwitch = RestartingMeshSwitch()
+        let analyzer = analyzer(meshSwitch, perception: ScenePerception())
+
+        analyzer.navigate(to: "the door")
+        analyzer.navigate(to: nil)
+        analyzer.navigate(to: "the stairs")
+        for await enabled in meshSwitch.switches {
+            #expect(enabled)
+            break
+        }
+        try? await Task.sleep(for: .milliseconds(600))
+        meshSwitch.finish()
+
+        var later: [Bool] = []
+        for await enabled in meshSwitch.switches { later.append(enabled) }
+        #expect(later.isEmpty)
     }
 }

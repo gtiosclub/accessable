@@ -41,9 +41,15 @@ private actor RecordingScene: SceneObservationProviding {
 
 private actor GeoScene: SceneObservationProviding, GeoTrackingProviding {
     private(set) var calls: [String] = []
+    /// Background availability checks started, kept out of `calls` since they don't touch the camera.
+    private(set) var timesPrepared = 0
     private let startFails: Bool
+    private let known: Bool?
 
-    init(startFails: Bool = false) { self.startFails = startFails }
+    init(startFails: Bool = false, known: Bool? = nil) {
+        self.startFails = startFails
+        self.known = known
+    }
 
     nonisolated func observations() -> AsyncStream<SceneObservation> { AsyncStream { $0.finish() } }
     nonisolated func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> { AsyncStream { $0.finish() } }
@@ -54,6 +60,8 @@ private actor GeoScene: SceneObservationProviding, GeoTrackingProviding {
     }
 
     func stop() async { calls.append("stop") }
+    func prepareGeoTracking() async { timesPrepared += 1 }
+    func knownGeoAvailability() async -> Bool? { known }
     func setGeoTrackingWanted(_ wanted: Bool) async { calls.append(wanted ? "geo" : "no geo") }
 }
 
@@ -131,6 +139,24 @@ struct TripCameraCoordinatorTests {
     func aFailedStartGivesGeoTrackingBack() async {
         let calls = await run([.active, .planning], scene: GeoScene(startFails: true))
         #expect(calls == ["geo", "start", "no geo"])
+    }
+
+    @Test
+    func betweenTripsItAsksAppleAheadOfTime() async {
+        let scene = GeoScene()
+        _ = await run([.planning, .active, .arrived, .planning], scene: scene)
+
+        #expect(await scene.timesPrepared == 2)
+    }
+
+    // the answer found ahead of time stands in for the capped check, so the camera starts at once
+    @Test(arguments: [true, false])
+    func aKnownAnswerSkipsTheWait(known: Bool) async {
+        let availability = AvailabilityCheck(available: !known)
+        let calls = await run([.active, .planning], scene: GeoScene(known: known), availability: availability)
+
+        #expect(availability.timesAsked == 0)
+        #expect(calls == (known ? ["geo", "start", "stop", "no geo"] : ["start", "stop"]))
     }
 
     @Test

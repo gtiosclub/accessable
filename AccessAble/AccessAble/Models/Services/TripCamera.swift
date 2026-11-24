@@ -10,9 +10,16 @@ struct TripCamera: Sendable {
     /// Whether Apple has geo-tracking imagery here. Capped, since the camera waits on it.
     let isGeoTrackingAvailableHere: @Sendable () async -> Bool
 
+    /// Starts Apple's availability check in the background, so `canGeoTrack()` needn't wait on it.
+    func prepare() async {
+        await geoTracking?.prepareGeoTracking()
+    }
+
     /// Whether this trip can geo-track. Ask once per trip and pass the answer to `start(geoTracking:)`.
     func canGeoTrack() async -> Bool {
-        guard geoTracking != nil else { return false }
+        guard let geoTracking else { return false }
+        // found by prepare() before the trip, so obstacle warnings don't wait on Apple
+        if let known = await geoTracking.knownGeoAvailability() { return known }
         return await isGeoTrackingAvailableHere()
     }
 

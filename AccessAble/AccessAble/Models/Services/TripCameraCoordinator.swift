@@ -16,6 +16,8 @@ struct TripCameraCoordinator: Sendable {
         /// Asked once per trip, so resuming from a pause doesn't wait on Apple again.
         var canGeoTrack: Bool?
         for await state in trip.tripStates() {
+            // between trips, so the answer is in before the next one opens the camera
+            if state.phase == .planning { await camera.prepare() }
             let wantsCamera = state.phase == .active
             if wantsCamera, held == nil {
                 let geoTracking: Bool

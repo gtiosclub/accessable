@@ -230,4 +230,31 @@ struct GeoTrackingTests {
         #expect(await available.value == false)
         held.answer(true)
     }
+
+    @Test
+    func anAvailabilityAnswerIsKeptForAWalk() {
+        let checked = Date(timeIntervalSince1970: 1_000_000)
+        let answer = GeoAvailability(isAvailable: true, checkedAt: checked)
+
+        #expect(answer.isFresh(at: checked.addingTimeInterval(5 * 60)))
+        #expect(!answer.isFresh(at: checked.addingTimeInterval(GeoAvailability.lifetime + 1)))
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func theBackgroundCheckIsAskedOnceAndKept() async throws {
+        let manager = ARSessionManager()
+        let asked = Mutex(0)
+        let check: ARSessionManager.GeoAvailabilityCheck = { completion in
+            asked.withLock { $0 += 1 }
+            completion(true, nil)
+        }
+        #expect(manager.knownGeoAvailability == nil)
+
+        manager.refreshGeoAvailability(check: check)
+        while manager.knownGeoAvailability == nil { try await Task.sleep(for: .milliseconds(5)) }
+        manager.refreshGeoAvailability(check: check)
+
+        #expect(manager.knownGeoAvailability == true)
+        #expect(asked.withLock { $0 } == 1)
+    }
 }

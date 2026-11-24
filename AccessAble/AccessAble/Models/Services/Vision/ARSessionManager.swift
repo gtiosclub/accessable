@@ -13,7 +13,8 @@ import os
 /// east-up-south world keeps +Y up too; the floor fit and walking corridor assume it. On LiDAR
 /// devices it adds `sceneDepth` (T2). Smoothed scene depth
 /// is deliberately not requested: it averages several frames, so it lags behind anything
-/// moving toward the user, and nothing in the pipeline needs it.
+/// moving toward the user, and nothing in the pipeline needs it. During trips, where Apple
+/// has imagery, it geo-tracks instead (AR-2); +Y is still up there.
 ///
 /// Threading: frames arrive on a private serial queue, one at a time and in order, and
 /// handlers run on that queue. Handlers must return quickly and must not keep the `ARFrame`
@@ -61,6 +62,10 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// How many trip holders want the next `start()` to geo-track (AR-2); each asks only where
     /// geo-tracking is available.
     private let geoTrackingRequests = Mutex(0)
+    /// Apple's last availability answer, found in the background so a trip's camera needn't wait on it.
+    private let geoAvailability = Mutex<GeoAvailability?>(nil)
+    /// The background check in flight, so overlapping requests share it.
+    private let geoAvailabilityCheck = Mutex<Task<Void, Never>?>(nil)
     /// What the running session uses; nil while stopped or a call has the camera.
     private let runningTracking = Mutex<SessionTracking?>(nil)
     private let geoBroadcaster = Broadcaster<GeoTrackingUpdate>()
@@ -119,6 +124,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         let configuration = ARWorldTrackingConfiguration()
         configuration.worldAlignment = .gravity
         configuration.planeDetection = []
+        pinWideCamera(configuration, from: ARWorldTrackingConfiguration.supportedVideoFormats)
         if isDepthSupported {
             configuration.frameSemantics.insert(.sceneDepth)
         } else {
@@ -134,6 +140,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     private func geoTrackingConfiguration() -> ARGeoTrackingConfiguration {
         let configuration = ARGeoTrackingConfiguration()
         configuration.planeDetection = []
+        pinWideCamera(configuration, from: ARGeoTrackingConfiguration.supportedVideoFormats)
         if ARGeoTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
             configuration.frameSemantics.insert(.sceneDepth)
         } else {
@@ -142,8 +149,27 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         return configuration
     }
 
-    /// Turns the classified mesh on or off without restarting tracking. Takes effect at the
-    /// next `start()` when the session isn't running.
+    /// The back wide-angle camera's format, pinned so the preview never changes lens.
+    /// ARKit's default is usually this camera already; pinning it makes that a guarantee,
+    /// and the wide camera is the one LiDAR depth is registered to. Prefers ARKit's default
+    /// format when it is on that camera, so resolution and frame rate stay the same.
+    static func primaryVideoFormat(in formats: [ARConfiguration.VideoFormat]) -> ARConfiguration.VideoFormat? {
+        let isWideBack = { (format: ARConfiguration.VideoFormat) in
+            format.captureDeviceType == .builtInWideAngleCamera && format.captureDevicePosition == .back
+        }
+        if let first = formats.first, isWideBack(first) { return first }
+        return formats.first(where: isWideBack)
+    }
+
+    private func pinWideCamera(_ configuration: ARConfiguration, from formats: [ARConfiguration.VideoFormat]) {
+        guard let format = Self.primaryVideoFormat(in: formats) else { return }
+        configuration.videoFormat = format
+        log.notice("camera: back wide-angle, \(Int(format.imageResolution.width), privacy: .public)x\(Int(format.imageResolution.height), privacy: .public) at \(format.framesPerSecond, privacy: .public) fps")
+    }
+
+    /// Turns the classified mesh on or off without restarting tracking. While the session
+    /// isn't running it only records the wish, and the next `start()` applies it: re-running
+    /// a paused session here and again in `start()` made the preview visibly jump.
     ///
     /// - Returns: true when tracking had to restart from scratch: the mesh was wanted while
     ///   geo-tracking, which can't build one, on a device that can, so the session went back
@@ -155,8 +181,10 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             defer { wanted = enabled }
             return wanted != enabled
         }
-        guard cameraOwnership.callOwner == nil, changed else { return false }
-        if enabled, isMeshSupported, runningTracking.withLock({ $0 }) == .geo {
+        guard cameraOwnership.callOwner == nil, changed,
+              let running = runningTracking.withLock({ $0 })
+        else { return false }
+        if enabled, isMeshSupported, running == .geo {
             log.notice("mesh wanted while geo-tracking; switching to world tracking")
             // Geo-tracking was running, so world tracking is supported, and no call has the camera.
             runSession()
@@ -271,6 +299,30 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             }
         } onCancel: {
             answer.send(false)
+        }
+    }
+
+    /// The answer `refreshGeoAvailability()` found, while it is fresh; nil before then.
+    var knownGeoAvailability: Bool? {
+        geoAvailability.withLock { known in known.flatMap { $0.isFresh(at: .now) ? $0.isAvailable : nil } }
+    }
+
+    /// Asks Apple in the background whether geo-tracking is available here, unless a fresh answer
+    /// is kept or a check is running. Returns at once. Not capped like `isGeoTrackingAvailableHere`,
+    /// since nothing waits on it; a check that never answers leaves `canGeoTrack()` on the capped one.
+    func refreshGeoAvailability(check: @escaping GeoAvailabilityCheck = checkGeoAvailabilityWithARKit) {
+        guard knownGeoAvailability == nil else { return }
+        geoAvailabilityCheck.withLock { running in
+            guard running == nil else { return }
+            running = Task { [weak self] in
+                let available = await withCheckedContinuation { continuation in
+                    check { available, _ in continuation.resume(returning: available) }
+                }
+                guard let self else { return }
+                geoAvailability.withLock { $0 = GeoAvailability(isAvailable: available, checkedAt: .now) }
+                geoAvailabilityCheck.withLock { $0 = nil }
+                log.notice("geo-tracking available here: \(available, privacy: .public)")
+            }
         }
     }
 
