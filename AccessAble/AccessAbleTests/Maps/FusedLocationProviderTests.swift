@@ -327,14 +327,4 @@ struct FusedLocationProviderTests {
         #expect(received.map(\.source) == [.gps, .ar])
         #expect(received.last?.timestamp == start + 2.5)
     }
-
-    @Test
-    func recordingsFromBeforeSourceDecodeAsGPS() throws {
-        let old = #"{"coordinate":{"latitude":33.7745,"longitude":-84.3974},"horizontalAccuracy":5,"timestamp":0}"#
-        let sample = try JSONDecoder().decode(LocationSample.self, from: Data(old.utf8))
-
-        #expect(sample.source == .gps)
-        let arSample = LocationSample(coordinate: techGreen, horizontalAccuracy: 3, timestamp: start, source: .ar)
-        #expect(try JSONDecoder().decode(LocationSample.self, from: JSONEncoder().encode(arSample)) == arSample)
-    }
 }

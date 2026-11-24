@@ -28,21 +28,6 @@ enum LocationSource: String, Codable, Sendable {
 }
 
 extension LocationSample {
-    /// Trip recordings made before `source` existed decode as GPS.
-    init(from decoder: any Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        coordinate = try container.decode(GeoCoordinate.self, forKey: .coordinate)
-        horizontalAccuracy = try container.decode(Double.self, forKey: .horizontalAccuracy)
-        timestamp = try container.decode(Date.self, forKey: .timestamp)
-        speed = try container.decodeIfPresent(Double.self, forKey: .speed)
-        speedAccuracy = try container.decodeIfPresent(Double.self, forKey: .speedAccuracy)
-        course = try container.decodeIfPresent(Double.self, forKey: .course)
-        courseAccuracy = try container.decodeIfPresent(Double.self, forKey: .courseAccuracy)
-        source = try container.decodeIfPresent(LocationSource.self, forKey: .source) ?? .gps
-    }
-}
-
-extension LocationSample {
     /// Fails when the fix itself is invalid.
     init?(_ location: CLLocation) {
         guard location.horizontalAccuracy >= 0 else { return nil }
