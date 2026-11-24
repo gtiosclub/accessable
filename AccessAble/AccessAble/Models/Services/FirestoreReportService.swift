@@ -68,7 +68,10 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
             "createdAt": FieldValue.serverTimestamp(),
             "expiresAt": Timestamp(date: report.expiresAt),
             "confirmations": 0,
-            "reporterID": user.id
+            "reporterID": user.id,
+            "negativeConfirmations": 0,
+            "isRemoved": false,
+            "confirmationResponses": [String: Bool]()
         ]
 
         if let area = report.area {
@@ -118,6 +121,7 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         return snapshot.documents.compactMap(Self.decode)
             .filter {
                 $0.expiresAt > .now
+                    && !$0.isRemoved
                     && Self.isNear($0, coordinate: coordinate, radius: radius)
             }
     }
@@ -142,6 +146,7 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
                 let reports = snapshot.documents.compactMap(Self.decode)
                     .filter {
                         $0.expiresAt > .now
+                            && !$0.isRemoved
                             && Self.isNear($0, coordinate: coordinate, radius: radius)
                     }
                 continuation.yield(reports)
@@ -149,6 +154,72 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
 
             holder.set(registration)
             continuation.onTermination = { @Sendable _ in holder.remove() }
+        }
+    }
+
+    func confirm(
+        _ reportID: String,
+        isStillPresent: Bool,
+        userID: String
+    ) async throws {
+        guard let user = await auth.currentUser() else {
+            throw ReportServiceConfigurationError(reason: .notSignedIn)
+        }
+        guard user.id == userID else {
+            throw ReportServiceConfigurationError(reason: .invalidReport)
+        }
+
+        let reference = database.collection("reports").document(reportID)
+        do {
+            _ = try await database.runTransaction { transaction, errorPointer -> Any? in
+                let snapshot: DocumentSnapshot
+                do {
+                    snapshot = try transaction.getDocument(reference)
+                } catch let error as NSError {
+                    errorPointer?.pointee = error
+                    return false
+                }
+
+                guard let data = snapshot.data(),
+                      let rawKind = data["kind"] as? String,
+                      let kind = ReportKind(rawValue: rawKind),
+                      (data["isRemoved"] as? Bool ?? false) == false,
+                      data["reporterID"] as? String != userID,
+                      let expiry = data["expiresAt"] as? Timestamp,
+                      expiry.dateValue() > .now else {
+                    errorPointer?.pointee = NSError(domain: "AccessAbleReports", code: 1)
+                    return false
+                }
+
+                var responses = data["confirmationResponses"] as? [String: Bool] ?? [:]
+                guard responses[userID] == nil else {
+                    errorPointer?.pointee = NSError(domain: "AccessAbleReports", code: 2)
+                    return false
+                }
+                responses[userID] = isStillPresent
+
+                let negatives = (data["negativeConfirmations"] as? Int ?? 0)
+                    + (isStillPresent ? 0 : 1)
+                var updates: [String: Any] = [
+                    "confirmationResponses": responses,
+                    "confirmations": (data["confirmations"] as? Int ?? 0)
+                        + (isStillPresent ? 1 : 0),
+                    "negativeConfirmations": negatives,
+                    "isRemoved": negatives >= 2,
+                    "lastConfirmedAt": FieldValue.serverTimestamp()
+                ]
+
+                if isStillPresent {
+                    updates["expiresAt"] = Timestamp(
+                        date: Date.now.addingTimeInterval(kind.lifetime)
+                    )
+                }
+
+                transaction.updateData(updates, forDocument: reference)
+                return true
+            }
+        } catch {
+            throw ReportServiceConfigurationError(reason: .unavailable)
         }
     }
 
@@ -189,7 +260,10 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
             createdAt: createdAt.dateValue(),
             expiresAt: expiresAt.dateValue(),
             confirmations: data["confirmations"] as? Int ?? 0,
-            reporterID: reporterID
+            reporterID: reporterID,
+            negativeConfirmations: data["negativeConfirmations"] as? Int ?? 0,
+            isRemoved: data["isRemoved"] as? Bool ?? false,
+            confirmationResponses: data["confirmationResponses"] as? [String: Bool] ?? [:]
         )
     }
 

@@ -12,6 +12,7 @@ actor TripManager: TripStateProviding {
     private nonisolated let states = Broadcaster<TripState>(replaysLatest: true)
     private nonisolated let routes = Broadcaster<NavigationRoute?>(replaysLatest: true)
     private nonisolated let reportLists = Broadcaster<[Report]>(replaysLatest: true)
+    private nonisolated let confirmationRequests = Broadcaster<Report>(replaysLatest: true)
 
     private let location: any LocationProvider
     private let routing: any RoutingService
@@ -73,6 +74,7 @@ actor TripManager: TripStateProviding {
     private var currentReports: [Report] = []
     private var hasInitialReportSnapshot = false
     private var seenReportIDs: Set<String> = []
+    private var promptedReportIDs: Set<String> = []
 
     // the public routing server is shared and slow to recover; this spaces requests and bounds a bad walk
     private static let rerouteInterval: TimeInterval = 30
@@ -146,6 +148,10 @@ actor TripManager: TripStateProviding {
         reportLists.stream()
     }
 
+    nonisolated func reportConfirmationRequests() -> AsyncStream<Report> {
+        confirmationRequests.stream()
+    }
+
     func startTrip(route: NavigationRoute, destination: Destination) async {
         generation += 1
         let generation = generation
@@ -180,6 +186,7 @@ actor TripManager: TripStateProviding {
         currentReports = []
         hasInitialReportSnapshot = false
         seenReportIDs = []
+        promptedReportIDs = []
         reportLists.send([])
         routes.send(route)
         publish(at: now())
@@ -300,6 +307,9 @@ actor TripManager: TripStateProviding {
             lastFix = sample
         }
         headingEstimator.update(with: sample)
+        if phase == .active {
+            await checkNearbyReports(at: sample.coordinate, generation: generation)
+        }
 
         let update = tracker.update(with: sample, emitsCues: phase == .active)
         self.tracker = tracker
@@ -496,7 +506,7 @@ actor TripManager: TripStateProviding {
     ) async {
         guard self.generation == generation else { return }
 
-        let active = reports.filter { $0.expiresAt > now() }
+        let active = reports.filter { $0.expiresAt > now() && !$0.isRemoved }
         currentReports = active
         reportLists.send(active)
 
@@ -508,6 +518,25 @@ actor TripManager: TripStateProviding {
         }
 
         _ = await considerNewReportsAhead(generation: generation)
+    }
+
+    private func checkNearbyReports(
+        at coordinate: GeoCoordinate,
+        generation: Int
+    ) async {
+        guard self.generation == generation else { return }
+
+        for report in currentReports
+        where !promptedReportIDs.contains(report.id)
+            && report.expiresAt > now()
+            && !report.isRemoved {
+            guard GeoMath.distance(from: coordinate, to: report.coordinate) <= 10 else {
+                continue
+            }
+            promptedReportIDs.insert(report.id)
+            confirmationRequests.send(report)
+            return
+        }
     }
 
     @discardableResult

@@ -360,6 +360,7 @@ actor PlaceholderReportService: ReportService {
     ) async throws -> [Report] {
         storedReports.filter {
             $0.expiresAt > .now
+                && !$0.isRemoved
                 && GeoMath.distance(from: coordinate, to: $0.coordinate) <= radius
         }
     }
@@ -375,6 +376,7 @@ actor PlaceholderReportService: ReportService {
                 for await reports in source {
                     continuation.yield(reports.filter {
                         $0.expiresAt > .now
+                            && !$0.isRemoved
                             && GeoMath.distance(
                                 from: coordinate,
                                 to: $0.coordinate
@@ -385,5 +387,33 @@ actor PlaceholderReportService: ReportService {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    func confirm(
+        _ reportID: String,
+        isStillPresent: Bool,
+        userID: String
+    ) async throws {
+        guard let index = storedReports.firstIndex(where: { $0.id == reportID }),
+              storedReports[index].reporterID != userID,
+              storedReports[index].expiresAt > .now,
+              !storedReports[index].isRemoved,
+              storedReports[index].confirmationResponses[userID] == nil else {
+            return
+        }
+
+        storedReports[index].confirmationResponses[userID] = isStillPresent
+
+        if isStillPresent {
+            storedReports[index].confirmations += 1
+            storedReports[index].expiresAt = .now.addingTimeInterval(
+                storedReports[index].kind.lifetime
+            )
+        } else {
+            storedReports[index].negativeConfirmations += 1
+            storedReports[index].isRemoved =
+                storedReports[index].negativeConfirmations >= 2
+        }
+        changes.send(storedReports)
     }
 }

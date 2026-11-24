@@ -14,6 +14,12 @@ service cloud.firestore {
         && c.longitude is number && c.longitude >= -180 && c.longitude <= 180;
     }
 
+    function reportLifetime(kind) {
+      return kind == 'construction' ? duration.value(7, 'd')
+        : kind == 'elevatorOut' ? duration.value(24, 'h')
+        : duration.value(4, 'h');
+    }
+
     function isValidPointAt(area, i) {
       return i >= area.size() || isValidCoordinate(area[i]);
     }
@@ -30,12 +36,53 @@ service cloud.firestore {
 
     function isValidReport(data) {
       return data.keys().hasAll(['id', 'kind', 'coordinate', 'createdAt', 'expiresAt', 'confirmations', 'reporterID'])
-        && data.keys().hasOnly(['id', 'kind', 'coordinate', 'area', 'createdAt', 'expiresAt', 'confirmations', 'reporterID'])
+        && data.keys().hasOnly([
+          'id', 'kind', 'coordinate', 'area', 'createdAt', 'expiresAt', 'confirmations', 'reporterID',
+          'negativeConfirmations', 'isRemoved', 'confirmationResponses', 'lastConfirmedAt'
+        ])
         && data.kind in ['construction', 'blockedPath', 'closedEntrance', 'elevatorOut', 'other']
         && isValidCoordinate(data.coordinate)
         && (!('area' in data) || data.area == null || isValidArea(data.area))
         && data.expiresAt is timestamp
-        && data.expiresAt <= data.createdAt + duration.value(30, 'd');
+        && data.expiresAt <= data.createdAt + duration.value(30, 'd')
+        && (!('negativeConfirmations' in data)
+            || (data.negativeConfirmations is int && data.negativeConfirmations >= 0))
+        && (!('isRemoved' in data) || data.isRemoved is bool)
+        && (!('confirmationResponses' in data)
+            || (data.confirmationResponses is map && data.confirmationResponses.size() <= 1000))
+        && (!('lastConfirmedAt' in data) || data.lastConfirmedAt is timestamp);
+    }
+
+    function isValidConfirmationUpdate() {
+      let previousResponses = resource.data.get('confirmationResponses', {});
+      let nextResponses = request.resource.data.get('confirmationResponses', {});
+      let response = nextResponses[request.auth.uid];
+      let nextNegativeCount = resource.data.get('negativeConfirmations', 0)
+        + (response ? 0 : 1);
+
+      return signedIn()
+        && resource.data.get('isRemoved', false) == false
+        && request.auth.uid != resource.data.reporterID
+        && resource.data.expiresAt > request.time
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'confirmationResponses', 'confirmations', 'negativeConfirmations',
+          'isRemoved', 'expiresAt', 'lastConfirmedAt'
+        ])
+        && nextResponses is map
+        && !(request.auth.uid in previousResponses)
+        && nextResponses.diff(previousResponses).affectedKeys().hasOnly([request.auth.uid])
+        && nextResponses.diff(previousResponses).affectedKeys().hasAll([request.auth.uid])
+        && response is bool
+        && request.resource.data.confirmations
+          == resource.data.confirmations + (response ? 1 : 0)
+        && request.resource.data.negativeConfirmations == nextNegativeCount
+        && request.resource.data.isRemoved == (nextNegativeCount >= 2)
+        && request.resource.data.lastConfirmedAt == request.time
+        && (response
+          ? (request.resource.data.expiresAt > request.time
+              && request.resource.data.expiresAt
+                <= request.time + reportLifetime(resource.data.kind) + duration.value(2, 'm'))
+          : request.resource.data.expiresAt == resource.data.expiresAt);
     }
 
     function rateLimitPath() {
@@ -124,16 +171,22 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && request.resource.data.expiresAt > request.time
         && request.resource.data.confirmations == 0
+        && request.resource.data.negativeConfirmations == 0
+        && request.resource.data.isRemoved == false
+        && request.resource.data.confirmationResponses.size() == 0
         // The stamp names this report, so one stamp can't cover a batch of many reports.
         && getAfter(rateLimitPath()).data.lastReportAt == request.time
         && getAfter(rateLimitPath()).data.lastReportId == reportId;
 
 
       allow update: if signedIn()
-        && resource.data.reporterID == request.auth.uid
-        && isValidReport(request.resource.data)
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['kind', 'coordinate', 'area', 'expiresAt']);
+        && (
+          (resource.data.reporterID == request.auth.uid
+            && isValidReport(request.resource.data)
+            && request.resource.data.diff(resource.data).affectedKeys()
+                 .hasOnly(['kind', 'coordinate', 'area', 'expiresAt']))
+          || isValidConfirmationUpdate()
+        );
 
       allow delete: if signedIn() && resource.data.reporterID == request.auth.uid;
     }

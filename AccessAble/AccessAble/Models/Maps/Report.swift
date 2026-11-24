@@ -36,5 +36,8 @@ struct Report: Codable, Hashable, Identifiable, Sendable {
     var expiresAt: Date
     var confirmations: Int = 0
     var reporterID: String
+    var negativeConfirmations: Int = 0
+    var isRemoved: Bool = false
+    var confirmationResponses: [String: Bool] = [:]
     
 }

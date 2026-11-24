@@ -20,6 +20,9 @@ export function reportData(uid, id, overrides = {}) {
     expiresAt: Timestamp.fromMillis(Date.now() + DAY),
     confirmations: 0,
     reporterID: uid,
+    negativeConfirmations: 0,
+    isRemoved: false,
+    confirmationResponses: {},
     ...overrides,
   };
 }

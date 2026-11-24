@@ -37,6 +37,7 @@ final class TripSessionViewModel {
     /// True while Ask AI re-checks fresh frames for something not in view yet.
     private(set) var isLookingAgain = false
     private(set) var activeReports: [Report] = []
+    private(set) var pendingReportConfirmation: Report?
     let dictation = SpeechDictation()
     /// Opens Call Help; set by the screen, which owns navigation.
     @ObservationIgnored var onCallHelp: (() -> Void)?
@@ -64,6 +65,7 @@ final class TripSessionViewModel {
     /// Whether this trip can geo-track, asked once: the view model lives for one trip, so the
     /// screen coming back doesn't wait on Apple again.
     @ObservationIgnored private var canGeoTrack: Bool?
+    @ObservationIgnored private var presentedReportConfirmationIDs: Set<String> = []
 
     /// - Parameters:
     ///   - services: The app's services, for a real trip; nil for front end only.
@@ -155,6 +157,11 @@ final class TripSessionViewModel {
                     await self.receiveReports(reports)
                 }
             }
+            group.addTask {
+                for await report in services.trip.reportConfirmationRequests() {
+                    await self.receiveReportConfirmation(report)
+                }
+            }
         }
         stopListening()
         await closeCamera(camera)
@@ -232,7 +239,58 @@ final class TripSessionViewModel {
     }
 
     private func receiveReports(_ reports: [Report]) {
-        activeReports = reports.filter { $0.expiresAt > .now }
+        activeReports = reports.filter { $0.expiresAt > .now && !$0.isRemoved }
+    }
+
+    private func receiveReportConfirmation(_ report: Report) async {
+        guard pendingReportConfirmation == nil,
+              !presentedReportConfirmationIDs.contains(report.id),
+              let services,
+              let user = await services.auth.currentUser(),
+              user.id != report.reporterID,
+              report.confirmationResponses[user.id] == nil,
+              report.expiresAt > .now,
+              !report.isRemoved else {
+            return
+        }
+
+        presentedReportConfirmationIDs.insert(report.id)
+        pendingReportConfirmation = report
+        await say("Is the path still blocked here?", category: .system)
+    }
+
+    func confirmPendingReport(isStillPresent: Bool) async {
+        guard let report = pendingReportConfirmation,
+              let services else { return }
+
+        guard let user = await services.auth.currentUser() else {
+            await say("Sign in to confirm this report.", category: .system)
+            return
+        }
+
+        do {
+            try await services.reports.confirm(
+                report.id,
+                isStillPresent: isStillPresent,
+                userID: user.id
+            )
+            pendingReportConfirmation = nil
+            await say(
+                isStillPresent
+                    ? "Thanks. The report has been extended."
+                    : "Thanks. Your confirmation has been recorded.",
+                category: .system
+            )
+        } catch {
+            await say(
+                "I couldn't record that confirmation. Please try again later.",
+                category: .system
+            )
+        }
+    }
+
+    func dismissPendingReportConfirmation() {
+        pendingReportConfirmation = nil
     }
 
     // MARK: - Commands
@@ -431,6 +489,22 @@ final class TripSessionViewModel {
     private func respond(to text: String) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let services, !text.isEmpty else { return }
+        if pendingReportConfirmation != nil {
+            let answer = text.lowercased()
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+
+            if ["yes", "yeah", "yep", "still blocked", "it is"].contains(answer)
+                || answer.hasPrefix("yes ") || answer.hasPrefix("yeah ") {
+                await confirmPendingReport(isStillPresent: true)
+                return
+            }
+
+            if ["no", "nope", "not blocked", "it is clear", "clear"].contains(answer)
+                || answer.hasPrefix("no ") || answer.hasPrefix("nope ") {
+                await confirmPendingReport(isStillPresent: false)
+                return
+            }
+        }
         if let kind = Self.reportKind(for: text) {
             await submitReport(kind: kind)
             return

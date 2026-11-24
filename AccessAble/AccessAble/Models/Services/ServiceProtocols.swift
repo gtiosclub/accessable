@@ -112,10 +112,16 @@ protocol TripStateProviding: Sendable {
     func reroute() async
     /// Active reports received during the current trip.
     func tripReports() -> AsyncStream<[Report]>
+    /// Reports passed nearby that need a one-time confirmation prompt.
+    func reportConfirmationRequests() -> AsyncStream<Report>
 }
 
 extension TripStateProviding {
     func tripReports() -> AsyncStream<[Report]> {
+        AsyncStream { $0.finish() }
+    }
+
+    func reportConfirmationRequests() -> AsyncStream<Report> {
         AsyncStream { $0.finish() }
     }
 }
@@ -153,6 +159,7 @@ protocol LocationContextProviding: Sendable {
 protocol ReportService: Sendable {
     func submit(_ report: Report) async throws
     func reports(near coordinate: GeoCoordinate, radius: Double) async throws -> [Report]
+    func confirm(_ reportID: String, isStillPresent: Bool, userID: String) async throws
     func reportChanges(near coordinate: GeoCoordinate, radius: Double) -> AsyncStream<[Report]>
 }
 

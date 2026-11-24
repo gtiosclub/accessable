@@ -30,7 +30,7 @@ struct ReportAwareRoutingService: RoutingService {
         ]
 
         let active = nearby.filter { report in
-            guard report.expiresAt > .now else { return false }
+            guard report.expiresAt > .now, !report.isRemoved else { return false }
             let points = report.area?.isEmpty == false
                 ? report.area!
                 : [report.coordinate]

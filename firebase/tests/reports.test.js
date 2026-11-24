@@ -148,6 +148,78 @@ test("a user cannot edit or delete someone else's report", async () => {
   await assertFails(deleteDoc(report));
 });
 
+test('a signed-in user can confirm another user report once', async () => {
+  await seedReport(env, 'alice', 'r1');
+
+  await assertSucceeds(updateDoc(doc(bob(), 'reports', 'r1'), {
+    confirmationResponses: { bob: true },
+    confirmations: 1,
+    negativeConfirmations: 0,
+    isRemoved: false,
+    expiresAt: Timestamp.fromMillis(Date.now() + 6 * DAY),
+    lastConfirmedAt: serverTimestamp()
+  }));
+
+  await assertFails(updateDoc(doc(bob(), 'reports', 'r1'), {
+    confirmationResponses: { bob: true },
+    confirmations: 2,
+    negativeConfirmations: 0,
+    isRemoved: false,
+    expiresAt: Timestamp.fromMillis(Date.now() + 6 * DAY),
+    lastConfirmedAt: serverTimestamp()
+  }));
+});
+
+test('two different negative confirmations remove a report', async () => {
+  await seedReport(env, 'alice', 'r1');
+  const report = doc(bob(), 'reports', 'r1');
+
+  await assertSucceeds(updateDoc(report, {
+    confirmationResponses: { bob: false },
+    confirmations: 0,
+    negativeConfirmations: 1,
+    isRemoved: false,
+    expiresAt: (await getDoc(report)).data().expiresAt,
+    lastConfirmedAt: serverTimestamp()
+  }));
+
+  const carol = env.authenticatedContext('carol').firestore();
+  await assertSucceeds(updateDoc(doc(carol, 'reports', 'r1'), {
+    confirmationResponses: { bob: false, carol: false },
+    confirmations: 0,
+    negativeConfirmations: 2,
+    isRemoved: true,
+    expiresAt: (await getDoc(report)).data().expiresAt,
+    lastConfirmedAt: serverTimestamp()
+  }));
+});
+
+test('confirmation counts and responses cannot be forged', async () => {
+  await seedReport(env, 'alice', 'r1');
+
+  await assertFails(updateDoc(doc(bob(), 'reports', 'r1'), {
+    confirmationResponses: { bob: true },
+    confirmations: 99,
+    negativeConfirmations: 0,
+    isRemoved: false,
+    expiresAt: Timestamp.fromMillis(Date.now() + 6 * DAY),
+    lastConfirmedAt: serverTimestamp()
+  }));
+});
+
+test('a report owner cannot confirm their own report', async () => {
+  await seedReport(env, 'alice', 'r1');
+
+  await assertFails(updateDoc(doc(alice(), 'reports', 'r1'), {
+    confirmationResponses: { alice: true },
+    confirmations: 1,
+    negativeConfirmations: 0,
+    isRemoved: false,
+    expiresAt: Timestamp.fromMillis(Date.now() + 6 * DAY),
+    lastConfirmedAt: serverTimestamp()
+  }));
+});
+
 test('the reporter can delete their own report', async () => {
   await seedReport(env, 'alice', 'r1');
   await assertSucceeds(deleteDoc(doc(alice(), 'reports', 'r1')));

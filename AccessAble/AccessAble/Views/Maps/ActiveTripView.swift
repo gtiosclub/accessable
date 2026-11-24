@@ -114,6 +114,28 @@ struct ActiveTripView: View {
             AccessibilityNotification.Announcement(announcement.text).post()
         }
         .confirmationDialog(
+            "Is the path still blocked here?",
+            isPresented: Binding(
+                get: { session.pendingReportConfirmation != nil },
+                set: { shown in
+                    if !shown { session.dismissPendingReportConfirmation() }
+                }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Yes, it is still blocked") {
+                Task { await session.confirmPendingReport(isStillPresent: true) }
+            }
+            Button("No, the path is clear", role: .destructive) {
+                Task { await session.confirmPendingReport(isStillPresent: false) }
+            }
+            Button("Not now", role: .cancel) {
+                session.dismissPendingReportConfirmation()
+            }
+        } message: {
+            Text("Your answer helps keep route reports accurate.")
+        }
+        .confirmationDialog(
             "What kind of problem?",
             isPresented: $showsReportOptions,
             titleVisibility: .visible
