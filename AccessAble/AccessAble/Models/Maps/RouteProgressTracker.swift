@@ -55,6 +55,8 @@ struct RouteProgressTracker {
     /// straight on misses it.
     private let straightOnBearings: [Double?]
     private var lastFixTime: Date?
+    /// Where the last fix the tracker used came from.
+    private var lastSource: LocationSource?
     /// Metres along the route of the last projection that passed the progress gate.
     private var progress = 0.0
     /// Progress from the accepted fix before the latest, so a step passes only when two fixes in a row are past it.
@@ -213,6 +215,8 @@ struct RouteProgressTracker {
             return Update(state: state, events: [])
         }
         lastFixTime = sample.timestamp
+        if let lastSource, sample.source != lastSource { forgetMovement() }
+        lastSource = sample.source
 
         var events: [GuidanceEvent] = []
         if isOffRoute {
@@ -462,6 +466,17 @@ struct RouteProgressTracker {
               offset >= run.offset else { return false }
         markOffRoute()
         return true
+    }
+
+    /// GPS and AR can place a user standing still metres apart, so the step from one source to the other isn't
+    /// movement. Forgets every run and origin that measures movement across fixes; progress is kept, since its
+    /// gate already holds off a jump.
+    private mutating func forgetMovement() {
+        wrongWayOrigin = nil
+        offRouteRun = nil
+        walkingAwayRun = nil
+        missedTurnRun = nil
+        rejoinSince = nil
     }
 
     private mutating func markOffRoute() {
