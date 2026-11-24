@@ -55,6 +55,9 @@ struct RouteProgressTracker {
     /// straight on misses it.
     private let straightOnBearings: [Double?]
     private var lastFixTime: Date?
+    /// A fix the tracker used: where and when it was, how far from the route, and where it came from.
+    private typealias UsedFix = (coordinate: GeoCoordinate, time: Date, offset: Double, source: LocationSource)
+    private var lastUsedFix: UsedFix?
     /// Metres along the route of the last projection that passed the progress gate.
     private var progress = 0.0
     /// Progress from the accepted fix before the latest, so a step passes only when two fixes in a row are past it.
@@ -70,7 +73,7 @@ struct RouteProgressTracker {
     private var crossingDone: [Bool]
     /// The highest step a cue check has looked at, so a short leg's cue fires only on the first fix that sees it.
     private var sightedStep = -1
-    private var missedTurnRun: (since: Date, misses: Int)?
+    private var missedTurnRun: (since: Date, misses: Int, source: LocationSource)?
     private var offRouteRun: (first: LocationSample, count: Int)?
     private var walkingAwayRun: (since: Date, offset: Double, count: Int, isShort: Bool)?
     private var rejoinSince: Date?
@@ -143,6 +146,10 @@ struct RouteProgressTracker {
     private static let missedTurnMinimumAngle: Double = 60
     // clearly past the corner, beyond noise around it
     private static let missedTurnDistance: Double = 15
+    /// Seconds between the last fix of one source and the first of the other within which the step between them is
+    /// taken as the sources' difference alone: the fusion switches within `LocationFusion.arLifetime` of the last
+    /// fix it passed on, during which the user walks only a few metres.
+    private static let maximumSwitchGap = LocationFusion.arLifetime + 1
     // without a compass, starting in the wrong direction shows only as movement away from the route without progress
     private static let wrongWayMovement: Double = 10
     // both ends of that movement must be precise, since a rough fix moves by its own error. With no such fix in the
@@ -213,6 +220,14 @@ struct RouteProgressTracker {
             return Update(state: state, events: [])
         }
         lastFixTime = sample.timestamp
+        if let lastUsedFix, sample.source != lastUsedFix.source {
+            if sample.timestamp.timeIntervalSince(lastUsedFix.time) <= Self.maximumSwitchGap {
+                shiftBaselines(from: lastUsedFix, to: sample.coordinate, offset: abs(projection.sideOffset))
+            } else {
+                restartMovementRuns()
+            }
+        }
+        lastUsedFix = (sample.coordinate, sample.timestamp, abs(projection.sideOffset), sample.source)
 
         var events: [GuidanceEvent] = []
         if isOffRoute {
@@ -376,23 +391,25 @@ struct RouteProgressTracker {
         return (along, distance)
     }
 
-    /// Needs the user clearly off the route as well as past the vertex. A single fix that falls short doesn't reset
-    /// the confirmation, since noise around the line is expected.
+    /// Needs the user clearly off the route as well as past the vertex. A single fix from the run's source that falls
+    /// short doesn't reset the confirmation, since noise around the line is expected; one from the other source does.
     private mutating func missedTurn(_ sample: LocationSample, at projection: RouteProjection) -> GuidanceEvent? {
         guard !missedTurnDone[nextStepIndex], let overshoot = straightOnOvershoot(of: sample, at: projection),
               overshoot.along >= Self.missedTurnDistance,
               abs(projection.sideOffset) >= Self.missedTurnDistance else {
+            // one fix short of it is noise, but the other source placing the user short of it is a disagreement
             if let run = missedTurnRun {
-                missedTurnRun = run.misses == 0 ? (run.since, 1) : nil
+                missedTurnRun = run.misses == 0 && sample.source == run.source ? (run.since, 1, run.source) : nil
             }
             return nil
         }
-        guard let run = missedTurnRun else {
-            missedTurnRun = (sample.timestamp, 0)
+        // the noise a short fix was forgiven as is the run's source's; the other source can't confirm past it
+        guard let run = missedTurnRun, run.misses == 0 || sample.source == run.source else {
+            missedTurnRun = (sample.timestamp, 0, sample.source)
             return nil
         }
         guard sample.timestamp.timeIntervalSince(run.since) >= Self.confirmationSpacing else {
-            missedTurnRun = (run.since, 0)
+            missedTurnRun = (run.since, 0, sample.source)
             return nil
         }
         missedTurnDone[nextStepIndex] = true
@@ -462,6 +479,38 @@ struct RouteProgressTracker {
               offset >= run.offset else { return false }
         markOffRoute()
         return true
+    }
+
+    /// GPS and AR can place a user standing still metres apart, so the step from one source's fix to the other's
+    /// isn't movement. Every baseline that movement is measured from, the wrong-way origin and the off-route and
+    /// walking-away runs' first fix, moves by that step, so movement before and after the switch still adds up while
+    /// the step itself counts for nothing. The runs keep their start times and counts, so a source that keeps
+    /// switching can't hold off a warning. Progress is kept, since its gate already holds off a jump, and so are a
+    /// rejoin and a missed turn's run, which judge each fix on where it is rather than on movement.
+    ///
+    /// Only for a step within `maximumSwitchGap`, which holds little walking; after a longer gap see
+    /// `restartMovementRuns`.
+    private mutating func shiftBaselines(from previous: UsedFix, to coordinate: GeoCoordinate, offset: Double) {
+        // planar is exact enough over the tens of metres the sources differ by
+        let shift = { (baseline: GeoCoordinate) in
+            GeoCoordinate(latitude: baseline.latitude + coordinate.latitude - previous.coordinate.latitude,
+                          longitude: baseline.longitude + coordinate.longitude - previous.coordinate.longitude)
+        }
+        let offsetStep = offset - previous.offset
+        if let origin = wrongWayOrigin {
+            wrongWayOrigin = (shift(origin.coordinate), origin.progress, origin.offset + offsetStep)
+        }
+        if let first = offRouteRun?.first { offRouteRun?.first.coordinate = shift(first.coordinate) }
+        walkingAwayRun?.offset += offsetStep
+    }
+
+    /// After a gap longer than `maximumSwitchGap`, the step to the other source holds walking as well as the sources'
+    /// difference, and shifting by it would erase that walking. The runs measuring movement start over from this fix
+    /// instead, so off route, walking away and the wrong way each take their usual time from it.
+    private mutating func restartMovementRuns() {
+        wrongWayOrigin = nil
+        offRouteRun = nil
+        walkingAwayRun = nil
     }
 
     private mutating func markOffRoute() {

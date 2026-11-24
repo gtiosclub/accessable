@@ -72,6 +72,7 @@ struct LocationDebugViewModelTests {
 
         #expect(LocationDebugViewModel.fields(of: fullSample) == [
             .init(label: "Time", value: time, spokenValue: time),
+            .init(label: "Source", value: "GPS", spokenValue: "GPS"),
             .init(label: "Coordinate", value: "33.777123, -84.396457",
                   spokenValue: "latitude 33.777123, longitude -84.396457"),
             .init(label: "Horizontal accuracy", value: "4.5 m", spokenValue: "4.5 metres"),

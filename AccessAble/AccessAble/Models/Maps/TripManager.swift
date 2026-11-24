@@ -272,7 +272,7 @@ actor TripManager: TripStateProviding {
             lastGoodFixAt = max(lastGoodFixAt ?? .distantPast, sample.timestamp)
             if isSignalWeak {
                 isSignalWeak = false
-                if phase == .active { pending.append((signalAnnouncement("GPS signal is back.", .normal, 6), nil)) }
+                if phase == .active { pending.append((signalAnnouncement("Location signal is back.", .normal, 6), nil)) }
             }
         }
         if sample.horizontalAccuracy <= Self.rerouteAccuracy { lastPreciseFix = sample.coordinate }
@@ -558,7 +558,7 @@ actor TripManager: TripStateProviding {
             guard phase == .active, !isSignalWeak, time.timeIntervalSince(tripStartedAt) >= Self.watchdogGrace,
                   time.timeIntervalSince(lastGoodFixAt ?? tripStartedAt) >= Self.weakSignalWait else { continue }
             isSignalWeak = true
-            await submit(signalAnnouncement("GPS signal is weak. Directions may be delayed.", .high, 10))
+            await submit(signalAnnouncement("Location signal is weak. Directions may be delayed.", .high, 10))
         }
     }
 

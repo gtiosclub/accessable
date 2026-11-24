@@ -319,7 +319,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         let session = geoSession.withLock { $0 }
         guard session.accepts(frameTimestamp: frameTimestamp) else { return }
         let due = lastGeoUpdate.withLock { last in
-            guard frameTimestamp - last >= 1 else { return false }
+            guard frameTimestamp - last >= GeoTrackingUpdate.interval else { return false }
             last = frameTimestamp
             return true
         }

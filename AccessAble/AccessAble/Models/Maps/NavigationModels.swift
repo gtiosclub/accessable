@@ -17,6 +17,14 @@ struct LocationSample: Codable, Equatable, Sendable {
     var course: Double? = nil
     /// Degrees. `nil` when unknown; the simulator often reports none, so don't require it to use `course`.
     var courseAccuracy: Double? = nil
+    /// Where the reading came from (AR-3).
+    var source: LocationSource = .gps
+}
+
+enum LocationSource: String, Codable, Sendable {
+    case gps
+    /// ARKit geo-tracking, matching what the camera sees to Apple's street imagery.
+    case ar
 }
 
 extension LocationSample {
