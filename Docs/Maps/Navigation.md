@@ -93,6 +93,19 @@ The events are `prepare`, `now`, `passedTurnConfirmation`, `missedTurn`, `crossi
 
 Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, stairs, escalator, enter building and exit building, each with the attention haptic. Merges and roundabouts (25 to 27) are treated as straight; their instruction still names them.
 
+## Location source
+
+`FusedLocationProvider` (AR-3) passes on GPS, or ARKit geo-tracking's position while it is locked on, never both, and marks each fix's `source`. Outside trips the camera doesn't geo-track, so it is GPS alone. `LocationFusion` decides, from reading timestamps only:
+
+- **Into AR:** 3 AR readings in a row (`arEntryReadings`), spanning at least 2 s (`arEntrySpan`), each graded medium or better and within GPS's accuracy + 20 m (`disagreementAllowance`) of a GPS fix at most 5 s from it (`gpsFreshness`). With no fresh GPS fix, AR can't be checked for a lock on the wrong street, so it isn't trusted.
+- **Staying on AR:** each such reading trusts AR for 2 s more (`arLifetime`), and GPS fixes in that time are held back. If GPS goes stale meanwhile, AR stays: it was checked on the way in. A fresh GPS fix still checks every reading.
+- **Back to GPS:** at once on a reading that disagrees with fresh GPS, or on any geo-tracking update without a usable position (stopped, localizing, not available); after 2 low readings in a row (`arCoarseReadingsToLeave`), so one grade flicker doesn't switch; or when 2 s pass with no good reading. The next GPS fix comes through, and returning to AR takes a whole new run.
+- **Speed and course:** geo-tracking has none, so an AR fix borrows them from a GPS fix at most 3 s from it (`HeadingEstimator.maximumSampleAge`); an older one may be from before a turn.
+- **Accuracy:** ARKit gives only a grade, mapped to high 5 m, medium 10 m, low 20 m. These are guesses until the AR-6 walk measures them, chosen no sharper than a good GPS fix so a guess doesn't pass gates tuned on GPS (the tracker's 10 m wrong-way limit, rerouting's 20 m) that GPS itself would not.
+- **Each subscriber runs its own fusion.** `TripManager`, the trip screen, place search and the debug screen each subscribe and each get their own `LocationFusion`, so their switches can land on slightly different fixes.
+- **"Where am I" uses GPS only.** `LocationDescriber` is given the GPS provider, since it is asked outside trips too, where there is no AR.
+- The tracker treats a switch of source as no movement; see step 5 of [Each fix](#each-fix).
+
 ## Heading
 
 `HeadingEstimator` gives a heading in degrees from true north, or nothing. No direction beats a wrong one.
