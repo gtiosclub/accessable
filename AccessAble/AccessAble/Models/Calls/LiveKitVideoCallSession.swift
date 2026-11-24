@@ -36,7 +36,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
 
     nonisolated func states() -> AsyncStream<CallState> { broadcaster.stream() }
     nonisolated func connect(with ticket: CallTicket) async throws { try await join(ticket) }
-    nonisolated func disconnect() async { await leave(.hungUp) }
+    nonisolated func disconnect() aworkesync { await leave(.hungUp) }
     nonisolated func setMicrophoneMuted(_ muted: Bool) async throws { try await setMuted(muted) }
     nonisolated func flipCamera() async throws { try await switchCamera() }
     nonisolated func setFlashlight(_ on: Bool) async throws { try await setTorch(on) }
