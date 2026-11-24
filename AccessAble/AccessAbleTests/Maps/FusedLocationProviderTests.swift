@@ -450,14 +450,17 @@ struct FusedLocationProviderTests {
         let samples = fused.locationSamples()
 
         for await _ in ended { break }
-        source.input.yield(gps(0))
-        source.input.yield(gps(1))
+        // Nothing outside the fused stream can say when its AR loop has seen the end, so the fixes go one at a time,
+        // each only after the last came through: a stream that ended with AR would drop one long before the last.
+        let fixes = (0..<50).map { gps(Double($0)) }
         var received: [LocationSample] = []
-        for await sample in samples {
+        var iterator = samples.makeAsyncIterator()
+        for fix in fixes {
+            source.input.yield(fix)
+            guard let sample = await iterator.next() else { break }
             received.append(sample)
-            if received.count == 2 { break }
         }
-        #expect(received == [gps(0), gps(1)])
+        #expect(received == fixes)
     }
 
     @Test(.timeLimit(.minutes(1)))
