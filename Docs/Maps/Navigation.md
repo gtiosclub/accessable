@@ -121,10 +121,17 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 
 | Situation | Heading |
 | --- | --- |
-| Moving at 0.7 m/s or more, with a course accurate to 45° (or of unknown accuracy), from a fix at most 3 s old | the walking direction |
-| Moving, but with no usable course | unknown, since a phone swinging in a pocket points anywhere |
+| Moving at 0.7 m/s or more, with a course accurate to 45° (or of unknown accuracy), from a fix at most 3 s old | the walking direction, or the AR heading if trusted and within 30° of it |
+| Moving, but with no usable course | unknown, since a phone swinging in a pocket, or a camera pointed aside, points anywhere |
+| Standing still or speed unknown, with a trusted AR heading | the AR heading |
 | Standing still, speed unknown, or no fix in the last 3 s | the compass, if accurate to 25° and at most 3 s old |
 | Anything else | unknown |
+
+**AR heading (AR-4).** During a trip `FusedLocationProvider.headingSamples()` passes on the compass plus the heading of each geo-tracking update that is localized with a known grade: where the back camera faces, from true north. It ends only when the compass does; geo-tracking ending leaves the compass coming.
+
+- **Trusted** only while the latest location fix is AR's and at most 3 s old, so exactly while the trip's own `LocationFusion` trusts the lock; no second fusion runs for headings. The reading itself must be at most 3 s old (`LocationFusion.arLifetime`, so one dropped reading doesn't flip the source) and accurate to 25°, as for the compass.
+- **Accuracy:** ARKit grades the position, not the heading, so high 5°, medium 10°, low 30° are guesses until the AR-6 walk measures them. Low is past the 25° limit, a second guard for a low reading that arrives while an earlier one's trust lasts.
+- **Walking, the course wins.** Geo-tracking needs building façades in view, so the camera often faces a building beside the path, not the way the user walks; ranked first, a camera pointed east while walking north said "The path is on your left" for a path ahead, and "It is on your right" for a missed turn behind. So the AR heading only refines a course it is within 30° of (`maximumARCourseDisagreement`, also unmeasured until AR-6). This departs from issue #239, which ranks AR as most trusted, for safety.
 
 - The compass runs only while something is subscribed to `headingSamples()`: a trip, until it arrives or ends, and the location debug screen.
 - Core Location sends every compass reading (`kCLHeadingFilterNone`), not only changes, so a phone held still keeps a reading under 3 s old.
@@ -140,7 +147,7 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 
 Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at every launch. While it is on, each trip writes one CSV file to `Documents/TripRecordings/`, which is excluded from backups, so recordings stay on the phone until shared from that screen. The screen can also delete them all.
 
-- A `fix` row for every location fix: time, position, accuracy, where the fix came from (`gps` or `ar`), speed, course and its accuracy, the heading used and where it came from, the compass accuracy, progress along the route, the tracker's side offset, the next step, whether off route, and the tracker's events.
+- A `fix` row for every location fix: time, position, accuracy, where the fix came from (`gps` or `ar`), speed, course and its accuracy, the heading used and where it came from (`ar`, `walkingDirection` or `compass`), the compass accuracy, progress along the route, the tracker's side offset, the next step, whether off route, and the tracker's events.
 - An `announcement` row for everything submitted to the announcement engine, whether or not it was then spoken.
 - `TripManager` builds no fix row unless the recorder is recording, so it costs nothing while off. Rows are written as they happen, under the recorder's lock. A file that can't be written is logged, stops, and its error shows on the recorder screen; the trip carries on.
 
