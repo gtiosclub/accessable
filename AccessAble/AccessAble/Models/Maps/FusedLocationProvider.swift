@@ -38,7 +38,35 @@ struct FusedLocationProvider: LocationProvider {
         }
     }
 
-    func headingSamples() -> AsyncStream<HeadingSample> { gps.headingSamples() }
+    /// The compass, plus the camera's heading from each geo-tracking update that has one (AR-4). `HeadingEstimator`
+    /// uses the camera's only from a reading `LocationFusion` passed on as the trip's position, so no second fusion
+    /// is needed here. Ends when the compass ends; geo-tracking ending leaves the compass coming.
+    func headingSamples() -> AsyncStream<HeadingSample> {
+        guard let geoTracking else { return gps.headingSamples() }
+        // subscribed here, not in the task, as for locations
+        let compass = gps.headingSamples()
+        let updates = geoTracking.geoTrackingUpdates()
+        return AsyncStream(bufferingPolicy: .bufferingNewest(8)) { continuation in
+            let task = Task {
+                await withDiscardingTaskGroup { group in
+                    group.addTask {
+                        for await sample in compass { continuation.yield(sample) }
+                        // ends the AR loop too, through onTermination
+                        continuation.finish()
+                    }
+                    group.addTask {
+                        for await update in updates {
+                            if let sample = ARGeoLocationProvider.headingSample(from: update) {
+                                continuation.yield(sample)
+                            }
+                        }
+                    }
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
     func authorizationStates() -> AsyncStream<LocationAuthorization> { gps.authorizationStates() }
     func requestAuthorization() async { await gps.requestAuthorization() }
 }

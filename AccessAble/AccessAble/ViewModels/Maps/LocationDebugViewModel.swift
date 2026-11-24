@@ -55,6 +55,7 @@ final class LocationDebugViewModel {
         guard let heading else { return Field(label: "Heading", value: "Unknown", spokenValue: "Unknown") }
         let degrees = Int(heading.degrees.rounded()) % 360
         let source = switch heading.source {
+        case .ar: "AR geo-tracking"
         case .walkingDirection: "walking direction"
         case .compass: "compass"
         }

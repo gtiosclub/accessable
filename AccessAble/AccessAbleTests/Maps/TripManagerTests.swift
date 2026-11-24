@@ -435,13 +435,14 @@ private struct Harness {
 
     /// Feeds one fix on the current trip's stream and waits until it is handled, then moves the clock on. A
     /// quarter-second offset keeps fix times apart from the clock times other state changes use. A `course` comes
-    /// with a walking speed, so the fix gives the heading. A `timestamp` stands for a fix that arrives late.
+    /// with a walking speed, so the fix gives the heading, unless a `speed` is given. A `timestamp` stands for a fix
+    /// that arrives late.
     @discardableResult
-    func fix(_ coordinate: GeoCoordinate, accuracy: Double = 5, course: Double? = nil, timestamp: Date? = nil,
-             then seconds: TimeInterval = 1) async -> TripState {
+    func fix(_ coordinate: GeoCoordinate, accuracy: Double = 5, course: Double? = nil, speed: Double? = nil,
+             timestamp: Date? = nil, source: LocationSource = .gps, then seconds: TimeInterval = 1) async -> TripState {
         let time = timestamp ?? clock.now().addingTimeInterval(0.25)
         location.yield(LocationSample(coordinate: coordinate, horizontalAccuracy: accuracy, timestamp: time,
-                                      speed: course.map { _ in 1.4 }, course: course),
+                                      speed: speed ?? course.map { _ in 1.4 }, course: course, source: source),
                        toStream: location.streamCount - 1)
         let state = await states.waitFor { $0.updatedAt == time || $0.phase == .arrived }
         clock.advance(by: seconds)
@@ -1436,6 +1437,38 @@ struct TripManagerDirectionTests {
         #expect(start.text == "Starting directions to Library, about 160 metres. Turn around, the path is behind you.")
     }
 
+    @Test
+    func startUsesTheARHeadingOverTheCompassStandingStill() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.waitForSleepers(2)
+        // the compass says north, but the camera, matched to street imagery, faces south
+        harness.location.headings.yield(HeadingSample(trueHeading: 0, magneticHeading: 4, accuracy: 10,
+                                                      timestamp: harness.clock.now()))
+        harness.location.headings.yield(HeadingSample(trueHeading: 180, magneticHeading: 180, accuracy: 5,
+                                                      timestamp: harness.clock.now(), source: .ar))
+        await harness.location.headings.waitUntilHandled()
+        // standing at the start, with the trip's position from AR and a speed from fresh GPS
+        await harness.fix(harness.point(0), speed: 0.2, source: .ar)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 160 metres. Turn around, the path is behind you.")
+    }
+
+    @Test
+    func startSaysWhereThePathIsFromTheCourseWhenTheCameraPointsAside() async throws {
+        let harness = try Harness(route: try shortFirstLegRoute())
+        await harness.start()
+        await harness.waitForSleepers(2)
+        // walking north up the path on AR, the camera pointed at a building on the right
+        harness.location.headings.yield(HeadingSample(trueHeading: 90, magneticHeading: 90, accuracy: 5,
+                                                      timestamp: harness.clock.now(), source: .ar))
+        await harness.location.headings.waitUntilHandled()
+        await harness.fix(harness.point(0), course: 0, source: .ar)
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 90 metres. The path is ahead. "
+            + "In about 30 metres, turn right onto Ferst Drive.")
+    }
+
     @Test(arguments: [
         (151.2, -20.0, "Arriving at Library. Library is on your left."),
         (151.2, 20, "Arriving at Library. Library is on your right."),
@@ -1505,6 +1538,29 @@ struct TripManagerDirectionTests {
         }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("You may have passed the turn") } == [expected])
+    }
+
+    @Test
+    func missedTurnSaysWhereTheTurnIsFromTheCourseWhenTheCameraPointsAside() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 100, course: { _ in 0 })
+        await harness.manager.reroute()
+        await waitUntil {
+            await harness.engine.texts.contains("Couldn't get a new route. Keep following the current one.")
+        }
+        // straight on north past the corner on AR, the camera pointed east at the buildings
+        let corner = harness.route.coordinates[1]
+        for metres in TripWalk.distances(from: 1, to: 25) {
+            harness.location.headings.yield(HeadingSample(trueHeading: 90, magneticHeading: 90, accuracy: 5,
+                                                          timestamp: harness.clock.now(), source: .ar))
+            await harness.location.headings.waitUntilHandled()
+            await harness.fix(TripWalk.destination(from: corner, bearing: 0, distance: metres), course: 0,
+                              source: .ar)
+        }
+        let texts = await harness.engine.texts
+        #expect(texts.filter { $0.hasPrefix("You may have passed the turn") }
+            == ["You may have passed the turn. It is behind you, about 20 metres away."])
     }
 
     @Test(arguments: [

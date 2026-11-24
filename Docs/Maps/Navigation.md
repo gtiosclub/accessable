@@ -121,10 +121,18 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 
 | Situation | Heading |
 | --- | --- |
-| Moving at 0.7 m/s or more, with a course accurate to 45° (or of unknown accuracy), from a fix at most 3 s old | the walking direction |
-| Moving, but with no usable course | unknown, since a phone swinging in a pocket points anywhere |
+| Moving at 0.7 m/s or more, with a course accurate to 45° (or of unknown accuracy), from a fix at most 3 s old | the walking direction, or the AR heading if trusted and within 30° of it |
+| Moving, but with no usable course | unknown, since a phone swinging in a pocket, or a camera pointed aside, points anywhere |
+| Standing still (speed known and under 0.7 m/s), with a trusted AR heading | the AR heading |
 | Standing still, speed unknown, or no fix in the last 3 s | the compass, if accurate to 25° and at most 3 s old |
 | Anything else | unknown |
+
+**AR heading (AR-4).** During a trip `FusedLocationProvider.headingSamples()` passes on the compass plus the heading of each geo-tracking update that is localized with a known grade: where the back camera faces, from true north. It ends only when the compass does; geo-tracking ending leaves the compass coming.
+
+- **Trusted** only from a reading the trip's own `LocationFusion` passed on: the latest location fix is AR's and at most 3 s old, and the heading is no newer than it. A heading and its fix share their geo-tracking update's timestamp, so a newer heading is from a reading the fusion turned down, such as one disagreeing with GPS. No second fusion runs for headings. The reading itself must be at most 3 s old (`LocationFusion.arLifetime`, so one dropped reading doesn't flip the source) and accurate to 25°, as for the compass.
+- **Accuracy:** ARKit grades the position, not the heading, so high 5°, medium 10°, low 30° are guesses until the AR-6 walk measures them. Low is past the 25° limit, a second guard for a low reading that arrives while an earlier one's trust lasts.
+- **Walking, the course wins.** Geo-tracking needs building façades in view, so the camera often faces a building beside the path, not the way the user walks; ranked first, a camera pointed east while walking north said "The path is on your left" for a path ahead, and "It is on your right" for a missed turn behind. So the AR heading only refines a course it is within 30° of (`maximumARCourseDisagreement`, also unmeasured until AR-6). This departs from issue #239, which ranks AR as most trusted, for safety.
+- **Standing still needs a known speed.** An AR fix has a speed only when a GPS fix at most 3 s from it lends one, and AR stays trusted with older GPS or none. Then the user may be walking with the camera pointed aside, so the compass rules apply instead.
 
 - The compass runs only while something is subscribed to `headingSamples()`: a trip, until it arrives or ends, and the location debug screen.
 - Core Location sends every compass reading (`kCLHeadingFilterNone`), not only changes, so a phone held still keeps a reading under 3 s old.
@@ -140,7 +148,7 @@ Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, 
 
 Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at every launch. While it is on, each trip writes one CSV file to `Documents/TripRecordings/`, which is excluded from backups, so recordings stay on the phone until shared from that screen. The screen can also delete them all.
 
-- A `fix` row for every location fix: time, position, accuracy, where the fix came from (`gps` or `ar`), speed, course and its accuracy, the heading used and where it came from, the compass accuracy, progress along the route, the tracker's side offset, the next step, whether off route, and the tracker's events.
+- A `fix` row for every location fix: time, position, accuracy, where the fix came from (`gps` or `ar`), speed, course and its accuracy, the heading used and where it came from (`ar`, `walkingDirection` or `compass`), the compass accuracy, progress along the route, the tracker's side offset, the next step, whether off route, and the tracker's events.
 - An `announcement` row for everything submitted to the announcement engine, whether or not it was then spoken.
 - `TripManager` builds no fix row unless the recorder is recording, so it costs nothing while off. Rows are written as they happen, under the recorder's lock. A file that can't be written is logged, stops, and its error shows on the recorder screen; the trip carries on.
 
@@ -238,6 +246,7 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 ## Known limits
 
 - **The compass says where the phone points, not where the user faces.** Standing still with the phone in a pocket or a bag, a compass reading that looks accurate can still give the wrong "ahead". Once the user is walking, the walking direction takes over.
+- **The AR heading's rules are unmeasured until AR-6.** Within 30° of the course it replaces the course rather than blending with it; there is no hysteresis, so a heading near the limit can flip between AR and the course from one reading to the next; and the change from walking to standing switches from the course to the camera at once.
 - **Not checked on a device yet:** navigation-grade accuracy, the compass, the heading-up trip map, the faster off-route rule and the crosswalk callouts have only run in tests and the simulator, which has no compass.
 - **Crosswalk callouts only exist on campus,** inside the area the bundled export covers, and are as good as OpenStreetMap's tagging there. Only 5 crossings are tagged with an audible signal.
 - **A crossing near the destination can go unannounced.** A fix accurate to 15 m near the last vertex arrives once progress is within 50 m of the end, so progress can still be short of the callout point, 20 m before the crossing, of one up to about 30 m before the destination.
