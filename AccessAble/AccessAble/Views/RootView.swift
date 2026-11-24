@@ -85,6 +85,8 @@ private struct AccountGateView: View {
 struct MainFlowView: View {
     @Environment(AppViewModel.self) private var app
     @State private var router = AppRouter()
+    /// A trip the app was closed in the middle of, offered once at launch.
+    @State private var tripToResume: SavedTrip?
     private let intents = IntentsModel.shared
 
     var body: some View {
@@ -96,6 +98,23 @@ struct MainFlowView: View {
                 }
         }
         .environment(router)
+        .task { tripToResume = app.services.savedTrips.load() }
+        .alert(
+            "Resume your trip to \(tripToResume?.destination.name ?? "your destination")?",
+            isPresented: Binding(get: { tripToResume != nil }, set: { if !$0 { tripToResume = nil } }),
+            presenting: tripToResume
+        ) { trip in
+            Button("Resume") {
+                Task {
+                    // a fresh tracker: the first location reading places the user, and a far-off one reroutes
+                    await app.services.trip.startTrip(route: trip.route, destination: trip.destination)
+                    router.path = [.feature(.trip)]
+                }
+            }
+            Button("No thanks", role: .cancel) {
+                app.services.savedTrips.clear()
+            }
+        }
         .onChange(of: intents.pending, initial: true) { _, destination in
             guard let destination else { return }
             router.path = [.feature(destination)]

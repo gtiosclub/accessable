@@ -409,7 +409,8 @@ private struct Harness {
         buildings: [CampusBuilding] = [],
         crossings: [CampusCrossing] = [],
         distances: DistanceSettings = DistanceSettings(units: .metres),
-        recorder: TripRecorder? = nil
+        recorder: TripRecorder? = nil,
+        savedTrips: SavedTripStore? = nil
     ) throws {
         let route = try route ?? cornerRoute()
         self.route = route
@@ -420,6 +421,7 @@ private struct Harness {
             setTripTracking: { [background] in background.record($0) },
             distances: distances,
             recorder: recorder,
+            savedTrips: savedTrips,
             now: { [clock] in clock.now() },
             sleep: { [clock] in try await clock.sleep($0) }
         )
@@ -1762,5 +1764,60 @@ struct TripManagerRecordingTests {
 
         let recordings = try recorder.recordings()
         #expect(recordings.isEmpty)
+    }
+}
+
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerSavedTripTests {
+    private func store() -> (store: SavedTripStore, cleanUp: () -> Void) {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerSavedTripTests-\(UUID())")
+        return (SavedTripStore(fileURL: directory.appending(path: "SavedTrip.json")),
+                { try? FileManager.default.removeItem(at: directory) })
+    }
+
+    @Test
+    func savesWhenTheTripStartsAndEachTimeAStepIsPassed() async throws {
+        let (store, cleanUp) = store()
+        defer { cleanUp() }
+        let harness = try Harness(savedTrips: store)
+        #expect(store.load() == nil)
+
+        await harness.start()
+        let started = try #require(store.load())
+        #expect(started.destination == library)
+        #expect(started.route == harness.route)
+        #expect(started.passedSteps == 1)
+
+        await harness.walk(from: 0, to: 120)
+        #expect(try #require(store.load()).passedSteps == 2)
+        #expect(try #require(store.load()).tripID == started.tripID)
+        await harness.manager.endTrip()
+    }
+
+    @Test
+    func deletesTheSavedTripWhenTheTripEnds() async throws {
+        let (store, cleanUp) = store()
+        defer { cleanUp() }
+        let harness = try Harness(savedTrips: store)
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        #expect(store.load() != nil)
+
+        await harness.manager.endTrip()
+
+        #expect(store.load() == nil)
+    }
+
+    @Test
+    func deletesTheSavedTripOnArrival() async throws {
+        let (store, cleanUp) = store()
+        defer { cleanUp() }
+        let harness = try Harness(savedTrips: store)
+        await harness.start()
+        await harness.walk(from: 0, to: 160)
+        #expect(await harness.states.waitFor { $0.phase == .arrived }.phase == .arrived)
+
+        #expect(store.load() == nil)
+        await harness.manager.endTrip()
     }
 }

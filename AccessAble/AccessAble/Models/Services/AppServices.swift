@@ -38,6 +38,8 @@ struct AppServices: Sendable {
     var distanceSettings = DistanceSettings()
     /// Field-test recording of trips, off until turned on in Developer Tools.
     var tripRecorder = TripRecorder()
+    /// The trip in progress, kept on disk so the app can offer to resume it after closing mid-walk.
+    var savedTrips = SavedTripStore()
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
@@ -63,7 +65,7 @@ struct AppServices: Sendable {
             scene: scene,
             sceneDescriber: scene,
             location: location,
-            routing: ValhallaRoutingService(),
+            routing: FallbackRoutingService.configured(),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
             tripActivity: ActivityKitTripActivityClient(),
@@ -85,7 +87,8 @@ struct AppServices: Sendable {
             landmarks: services.landmarks,
             setTripTracking: { await location.setTripTracking($0) },
             distances: distanceSettings,
-            recorder: services.tripRecorder
+            recorder: services.tripRecorder,
+            savedTrips: services.savedTrips
         )
         return services
     }
@@ -119,6 +122,8 @@ struct AppServices: Sendable {
         services.announcements = PlaceholderAnnouncementEngine()
         // Previews and tests must not reach the network or spend the public server's fair-use budget.
         services.routing = PlaceholderRoutingService()
+        // Nor offer to resume whatever trip the app saved on this machine.
+        services.savedTrips = SavedTripStore(fileURL: .temporaryDirectory.appending(path: "PreviewSavedTrip.json"))
         // A real trip would start GPS tracking and background location from a preview or test.
         services.trip = PlaceholderTripProvider()
         // Nor put a trip on the simulator's lock screen.

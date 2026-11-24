@@ -24,6 +24,8 @@ actor TripManager: TripStateProviding {
     private let distances: DistanceSettings
     /// Writes nothing unless recording is on, and fix rows aren't even built then.
     private let recorder: TripRecorder?
+    /// Keeps the running trip on disk so it can be resumed after the app closes; nil saves nothing.
+    private let savedTrips: SavedTripStore?
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
 
@@ -109,6 +111,7 @@ actor TripManager: TripStateProviding {
         setTripTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
         distances: DistanceSettings = DistanceSettings(units: .metres),
         recorder: TripRecorder? = nil,
+        savedTrips: SavedTripStore? = nil,
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
@@ -121,6 +124,7 @@ actor TripManager: TripStateProviding {
         self.setTripTracking = setTripTracking
         self.distances = distances
         self.recorder = recorder
+        self.savedTrips = savedTrips
         self.now = now
         self.sleep = sleep
         states.send(TripState(phase: .planning, updatedAt: now()))
@@ -168,6 +172,7 @@ actor TripManager: TripStateProviding {
         routes.send(route)
         publish(at: now())
         recorder?.tripStarted(at: now())
+        saveTrip()
 
         // subscribed before any await, so a fix or delivery can't slip past while this trip is set up
         let samples = location.locationSamples()
@@ -228,6 +233,7 @@ actor TripManager: TripStateProviding {
         generation += 1
         let generation = generation
         cancelTasks()
+        savedTrips?.clear()
         phase = .planning
         tracker = nil
         progress = nil
@@ -285,7 +291,9 @@ actor TripManager: TripStateProviding {
 
         let update = tracker.update(with: sample, emitsCues: phase == .active)
         self.tracker = tracker
+        let stepWasPassed = update.state.nextStepIndex != progress?.nextStepIndex
         progress = update.state
+        if stepWasPassed { saveTrip() }
         record(sample, update, on: tracker.route)
         if update.events.contains(.arrived) {
             await arrive(at: sample.timestamp, generation: generation)
@@ -332,7 +340,15 @@ actor TripManager: TripStateProviding {
         if case let .now(step) = event { step } else { nil }
     }
 
+    /// The trip as it is now, for resuming after the app closes mid-walk.
+    private func saveTrip() {
+        guard let savedTrips, let route, let destination, let progress else { return }
+        savedTrips.save(SavedTrip(tripID: tripID, route: route, destination: destination,
+                                  passedSteps: progress.nextStepIndex, startedAt: tripStartedAt))
+    }
+
     private func arrive(at time: Date, generation: Int) async {
+        savedTrips?.clear()
         // the heading only words guidance, and the compass runs while it is subscribed
         for task in [watchdogTask, rerouteTask, deliveryTask, headingTask] {
             task?.cancel()
