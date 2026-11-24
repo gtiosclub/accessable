@@ -80,6 +80,17 @@ private struct ScriptedGPS: LocationProvider {
     func requestAuthorization() async {}
 }
 
+/// Sends whatever the test yields to `input`.
+private struct HandFedGPS: LocationProvider {
+    private let stream = AsyncStream.makeStream(of: LocationSample.self)
+    var input: AsyncStream<LocationSample>.Continuation { stream.continuation }
+
+    func locationSamples() -> AsyncStream<LocationSample> { stream.stream }
+    func headingSamples() -> AsyncStream<HeadingSample> { AsyncStream { _ in } }
+    func authorizationStates() -> AsyncStream<LocationAuthorization> { AsyncStream { _ in } }
+    func requestAuthorization() async {}
+}
+
 struct ARGeoLocationProviderTests {
     @Test
     func readingOnlyOnceLocalizedWithAKnownAccuracy() {
@@ -427,6 +438,26 @@ struct FusedLocationProviderTests {
             #expect(name == "ar")
             break
         }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func geoTrackingEndingLeavesGPSComing() async {
+        let (ended, end) = AsyncStream.makeStream(of: String.self)
+        let source = HandFedGPS()
+        let fused = FusedLocationProvider(
+            gps: source, geoTracking: ScriptedGeoTracking(updates: [], finishes: true, onEnd: { end.yield("ar") })
+        )
+        let samples = fused.locationSamples()
+
+        for await _ in ended { break }
+        source.input.yield(gps(0))
+        source.input.yield(gps(1))
+        var received: [LocationSample] = []
+        for await sample in samples {
+            received.append(sample)
+            if received.count == 2 { break }
+        }
+        #expect(received == [gps(0), gps(1)])
     }
 
     @Test(.timeLimit(.minutes(1)))
