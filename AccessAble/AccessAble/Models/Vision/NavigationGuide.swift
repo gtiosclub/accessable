@@ -31,6 +31,7 @@ struct NavigationStatus: Equatable, Sendable {
     /// Horizontal distance to the target in metres, once it has a position.
     var distance: Float?
     var bearing: RelativeBearing?
+    var usesMetricUnits: Bool = true
 
     /// One line for the readout: "Looking for a chair — turn slowly (120°)".
     var description: String {
@@ -38,7 +39,7 @@ struct NavigationStatus: Equatable, Sendable {
         case .scanning: "Looking for \(query) — turn slowly (\(Int(scannedDegrees))°)"
         case .guiding:
             if let distance, let bearing {
-                "\(query.prefix(1).uppercased() + query.dropFirst()): \(SpokenPhrasing.shortDistance(Double(distance))), \(SpokenPhrasing.direction(bearing))"
+                "\(query.prefix(1).uppercased() + query.dropFirst()): \(SpokenPhrasing.shortDistance(Double(distance), usesMetricUnits: usesMetricUnits)), \(SpokenPhrasing.direction(bearing))"
             } else {
                 "Guiding to \(query)"
             }
@@ -73,6 +74,7 @@ struct NavigationTuning: Sendable {
 /// Finds and steers towards one target. Create one per request; feed it every frame.
 struct NavigationGuide: Sendable {
     let query: String
+    var usesMetricUnits: Bool
     var tuning: NavigationTuning
 
     private let terms: Set<String>
@@ -91,9 +93,10 @@ struct NavigationGuide: Sendable {
     /// - Parameters:
     ///   - query: What the user asked for, e.g. "the chair", "exit", "room 210".
     ///   - time: The current frame time (`ARFrame.timestamp`).
-    init(query: String, at time: TimeInterval, tuning: NavigationTuning = .default) {
+    init(query: String, at time: TimeInterval, tuning: NavigationTuning = .default, usesMetricUnits: Bool = true) {
         self.query = query.trimmingCharacters(in: .whitespacesAndNewlines)
         self.tuning = tuning
+        self.usesMetricUnits = usesMetricUnits
         terms = Self.terms(for: self.query)
         roomNumber = SignInterpreter.roomNumber(in: SignInterpreter.tokens(self.query.uppercased()))?.number
         startTime = time
@@ -177,7 +180,7 @@ struct NavigationGuide: Sendable {
             )
         }
 
-        let (instruction, haptic) = Self.instruction(for: query, distance: distance, bearing: bearing)
+        let (instruction, haptic) = Self.instruction(for: query, distance: distance, bearing: bearing, usesMetricUnits: usesMetricUnits)
         let changed = instruction != lastInstruction
         let due = changed ? time - lastSpoken >= tuning.changeInterval : time - lastSpoken >= tuning.repeatInterval
         guard due else { return (status(heading: heading), nil) }
@@ -237,21 +240,25 @@ struct NavigationGuide: Sendable {
     // MARK: - Phrasing
 
     /// "Chair straight ahead, 3 metres." / "Turn left. Chair is 3 metres away."
-    static func instruction(for query: String, distance: Float, bearing: RelativeBearing) -> (String, HapticID) {
+    static func instruction(for query: String, distance: Float, bearing: RelativeBearing, usesMetricUnits: Bool) -> (String, HapticID) {
         let name = capitalized(query)
-        let metres = SpokenPhrasing.shortDistance(Double(distance))
+        let distanceText = SpokenPhrasing.shortDistance(
+            Double(distance),
+            usesMetricUnits: usesMetricUnits
+        )
         switch bearing.side {
-        case .ahead: return ("\(name) straight ahead, \(metres).", .onRouteHeartbeat)
-        case .slightlyLeft: return ("\(name) slightly left, \(metres).", .turnLeft)
-        case .slightlyRight: return ("\(name) slightly right, \(metres).", .turnRight)
-        case .left: return ("Turn left. \(name) is \(metres) away.", .turnLeft)
-        case .right: return ("Turn right. \(name) is \(metres) away.", .turnRight)
-        case .behind: return ("Turn around. \(name) is behind you, \(metres).", bearing.degrees < 0 ? .turnLeft : .turnRight)
+        case .ahead: return ("\(name) straight ahead, \(distanceText).", .onRouteHeartbeat)
+        case .slightlyLeft: return ("\(name) slightly left, \(distanceText).", .turnLeft)
+        case .slightlyRight: return ("\(name) slightly right, \(distanceText).", .turnRight)
+        case .left: return ("Turn left. \(name) is \(distanceText) away.", .turnLeft)
+        case .right: return ("Turn right. \(name) is \(distanceText) away.", .turnRight)
+        case .behind: return ("Turn around. \(name) is behind you, \(distanceText).", bearing.degrees < 0 ? .turnLeft : .turnRight)
         }
     }
 
     private func status(heading: WalkingCorridor) -> NavigationStatus {
         var status = NavigationStatus(query: query, phase: phase, scannedDegrees: min(scannedDegrees, 360))
+        status.usesMetricUnits = usesMetricUnits
         if let target = estimatedPosition {
             status.distance = horizontalDistance(to: target, heading: heading)
             status.bearing = heading.bearing(to: target)

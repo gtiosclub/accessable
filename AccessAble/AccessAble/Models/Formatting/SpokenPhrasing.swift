@@ -3,30 +3,51 @@ import Foundation
 /// Shared rules for turning numbers into speech so every subteam sounds the same.
 enum SpokenPhrasing {
     /// Rounds to the nearest 0.5 m: "about 2 metres", "about 1.5 metres", "less than half a metre".
-    static func distance(_ metres: Double) -> String {
-        let rounded = (metres * 2).rounded() / 2
-        if rounded < 0.5 { return "less than half a metre" }
-        if rounded == 1 { return "about 1 metre" }
-        let number = rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
-        return "about \(number) metres"
+    static func distance(_ metres: Double, usesMetricUnits: Bool = true) -> String {
+        let distance = usesMetricUnits ? metres : metres * 3.28084
+        let rounded = (distance * 2).rounded() / 2
+        
+        if usesMetricUnits {
+            if rounded < 0.5 { return "less than half a metre" }
+            if rounded == 1 { return "about 1 metre" }
+            let number = rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
+            return "about \(number) metres"
+        }
+        
+        if rounded < 0.5 { return "less than half a foot"}
+        if rounded == 1 { return "about 1 foot" }
+        
+        let number = rounded == rounded.rounded()
+        ? String(Int(rounded))
+        : String(format: "%.1f", rounded)
+        
+        return "about \(number) feet"
     }
 
     /// "2 metres" for a measurement, "about 2 metres" for an estimate (T33). The hedge is
     /// not politeness: a distance that may be out by half a metre must not be read out in
     /// the same words as one that cannot.
-    static func hedgedDistance(_ metres: Double, accuracy: DistanceAccuracy?) -> String {
+    static func hedgedDistance(_ metres: Double, accuracy: DistanceAccuracy?, usesMetricUnits: Bool = true) -> String {
         switch accuracy {
-        case .measured, .none: shortDistance(metres)
-        case .estimated: "about \(shortDistance(metres))"
+        case .measured, .none: shortDistance(metres, usesMetricUnits: usesMetricUnits)
+        case .estimated: "about \(shortDistance(metres, usesMetricUnits: usesMetricUnits))"
         }
     }
 
     /// Short form for scene lists: "2 metres", "1.5 metres".
-    static func shortDistance(_ metres: Double) -> String {
-        let rounded = max((metres * 2).rounded() / 2, 0.5)
-        if rounded == 1 { return "1 metre" }
+    static func shortDistance(_ metres: Double, usesMetricUnits: Bool = true) -> String {
+        let distance = usesMetricUnits ? metres: metres * 3.28084
+        let rounded = max((distance * 2).rounded() / 2, 0.5)
+        
+        if usesMetricUnits {
+            if rounded == 1 { return "1 metre" }
+            let number = rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
+            return "\(number) metres"
+        }
+        
+        if rounded == 1 { return "1 foot" }
         let number = rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.1f", rounded)
-        return "\(number) metres"
+        return "\(number) feet"
     }
 
     /// "12 o'clock" straight ahead, "3 o'clock" to the right: the clock face blind travellers
@@ -48,14 +69,14 @@ enum SpokenPhrasing {
     }
 
     /// "Person 2 metres ahead." / "Chair on your left, 1 metre." — the Tier A sentence template.
-    static func describe(_ detection: Detection) -> String {
+    static func describe(_ detection: Detection, usesMetricUnits: Bool = true) -> String {
         let label = detection.label.prefix(1).uppercased() + detection.label.dropFirst()
         let side = detection.bearing.map { direction($0) } ?? "ahead"
         guard let distance = detection.distance else { return "\(label) \(side)." }
         if side == "ahead" {
-            return "\(label) \(shortDistance(distance)) ahead."
+            return "\(label) \(shortDistance(distance, usesMetricUnits: usesMetricUnits)) ahead."
         }
-        return "\(label) \(side), \(shortDistance(distance))."
+        return "\(label) \(side), \(shortDistance(distance, usesMetricUnits: usesMetricUnits))."
     }
 
     /// "A few people 3 metres ahead." / "About six people, 2 metres to 5 metres ahead,
@@ -65,18 +86,18 @@ enum SpokenPhrasing {
     /// number is a floor on the real one, and reading it out as exact would overstate what
     /// is known. The group's near edge is what gets the distance, since that is what the
     /// user reaches first.
-    static func describe(_ crowd: CrowdRegion) -> String {
+    static func describe(_ crowd: CrowdRegion, usesMetricUnits: Bool = true) -> String {
         let size = crowdSize(crowd.count)
         let side = direction(crowd.bearing)
         let spread = crowd.isSpreadOut ? ", spread out" : ""
         if crowd.spansDistance {
-            let range = "\(shortDistance(crowd.nearestDistance)) to \(shortDistance(crowd.farthestDistance))"
+            let range = "\(shortDistance(crowd.nearestDistance, usesMetricUnits: usesMetricUnits)) to \(shortDistance(crowd.farthestDistance, usesMetricUnits: usesMetricUnits))"
             return "\(size), \(range) \(side)\(spread)."
         }
         if side == "ahead" {
-            return "\(size) \(shortDistance(crowd.nearestDistance)) ahead\(spread)."
+            return "\(size) \(shortDistance(crowd.nearestDistance, usesMetricUnits: usesMetricUnits)) ahead\(spread)."
         }
-        return "\(size) \(side), \(shortDistance(crowd.nearestDistance))\(spread)."
+        return "\(size) \(side), \(shortDistance(crowd.nearestDistance, usesMetricUnits: usesMetricUnits))\(spread)."
     }
 
     /// "A few people" / "About six people" / "A large group" — a count the detector can
@@ -100,8 +121,8 @@ enum SpokenPhrasing {
     }
 
     /// "Drop-off 2 metres ahead."
-    static func describe(_ hazard: ElevationHazard) -> String {
-        "\(name(of: hazard.type)) \(shortDistance(Double(hazard.distance))) ahead."
+    static func describe(_ hazard: ElevationHazard, usesMetricUnits: Bool = true) -> String {
+        "\(name(of: hazard.type)) \(shortDistance(Double(hazard.distance), usesMetricUnits: usesMetricUnits)) ahead."
     }
 
     // MARK: - Guidance (what the announcer says about the path)
@@ -126,7 +147,7 @@ enum SpokenPhrasing {
     /// Short on purpose: a warning is heard while walking, and the band already says how
     /// close. The place is always "ahead" because the thing is in the corridor; the side
     /// says which part of the corridor it occupies.
-    static func guidance(for detection: Detection, priority: AnnouncementPriority, path: PathAssessment?) -> String {
+    static func guidance(for detection: Detection, priority: AnnouncementPriority, path: PathAssessment?, usesMetricUnits: Bool = true) -> String {
         let name = detection.label.prefix(1).uppercased() + detection.label.dropFirst()
         let place = placeInPath(detection.bearing)
         var sentences: [String] = []
@@ -134,7 +155,7 @@ enum SpokenPhrasing {
             let advice = advice(for: path, bearing: detection.bearing, critical: true)
             return advice.map { "Stop. \($0)" } ?? "Stop. \(name) \(place)."
         } else if priority == .normal, let distance = detection.distance {
-            sentences.append("\(name) \(place), \(hedgedDistance(distance, accuracy: detection.distanceAccuracy)).")
+            sentences.append("\(name) \(place), \(hedgedDistance(distance, accuracy: detection.distanceAccuracy, usesMetricUnits: usesMetricUnits)).")
         } else {
             sentences.append("\(name) \(place).")
         }
@@ -169,10 +190,10 @@ enum SpokenPhrasing {
     }
 
     /// "Step down ahead, 2 metres." / "Stop. Drop-off ahead."
-    static func guidance(for hazard: ElevationHazard, priority: AnnouncementPriority) -> String {
+    static func guidance(for hazard: ElevationHazard, priority: AnnouncementPriority, usesMetricUnits: Bool = true) -> String {
         let name = name(of: hazard.type)
         if priority == .critical { return "Stop. \(name) ahead." }
-        return "\(name) ahead, \(shortDistance(Double(hazard.distance)))."
+        return "\(name) ahead, \(shortDistance(Double(hazard.distance), usesMetricUnits: usesMetricUnits))."
     }
 
     /// "One step left." / "Bear right, 2 o'clock." / "Keep right." / "Turn left." / "Narrow gap

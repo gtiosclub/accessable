@@ -427,7 +427,13 @@ struct LiveSceneView: View {
             .pickerStyle(.menu)
             Picker("Warn me within", selection: $app.profile.alertFilter.maximumDistance) {
                 ForEach(AlertFilter.distanceChoices, id: \.self) { distance in
-                    Text(String(format: "%g metres", distance)).tag(distance)
+                    Text(
+                        SpokenPhrasing.shortDistance(
+                            Double(distance),
+                            usesMetricUnits: app.preferences.usesMetricUnits
+                        )
+                    )
+                    .tag(distance)
                 }
             }
             .pickerStyle(.menu)
@@ -447,7 +453,10 @@ struct LiveSceneView: View {
         .accessibilityLabel("Alerts")
         .accessibilityValue(
             "\(app.profile.alertFilter.minimumDanger.displayName), within "
-                + String(format: "%g metres", app.profile.alertFilter.maximumDistance)
+                + SpokenPhrasing.shortDistance(
+                    Double(app.profile.alertFilter.maximumDistance),
+                    usesMetricUnits: app.preferences.usesMetricUnits
+                )
                 + (app.profile.channels.contains(.haptics) ? ", vibration on" : ", vibration off")
                 + (app.profile.channels.contains(.spatialAudio) ? ", sound cues on" : ", sound cues off")
         )

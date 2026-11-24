@@ -241,15 +241,17 @@ struct ObstacleAnnouncer: Sendable {
         blockedAhead: BlockedAhead? = nil,
         at time: TimeInterval,
         isUserMoving: Bool = true,
-        now: Date = .now
+        now: Date = .now,
+        usesMetricUnits: Bool = true
     ) -> [AnnouncementEvent] {
         var events: [AnnouncementEvent] = []
         if let event = pathAnnouncement(
-            for: objects, path: assessment, blockedAhead: blockedAhead, at: time, isUserMoving: isUserMoving, now: now
+            for: objects, path: assessment, blockedAhead: blockedAhead, at: time, isUserMoving: isUserMoving, now: now,
+                usesMetricUnits: usesMetricUnits
         ) {
             events.append(event)
         }
-        events += hazardAnnouncements(for: hazards, at: time, now: now)
+        events += hazardAnnouncements(for: hazards, at: time, now: now, usesMetricUnits: usesMetricUnits)
         currentWarning = warning()
         return events.sorted { $0.priority > $1.priority }
     }
@@ -312,7 +314,8 @@ struct ObstacleAnnouncer: Sendable {
         blockedAhead: BlockedAhead?,
         at time: TimeInterval,
         isUserMoving: Bool,
-        now: Date
+        now: Date,
+        usesMetricUnits: Bool
     ) -> AnnouncementEvent? {
         let bands = self.bands
         let stopDistance = Double(bands.last ?? 0)
@@ -448,7 +451,7 @@ struct ObstacleAnnouncer: Sendable {
         return AnnouncementEvent(
             category: .hazard,
             priority: priority,
-            text: SpokenPhrasing.guidance(for: subject, priority: priority, path: advicePath),
+            text: SpokenPhrasing.guidance(for: subject, priority: priority, path: advicePath, usesMetricUnits: usesMetricUnits),
             haptic: haptic,
             distance: subject.distance,
             bearing: subject.bearing,
@@ -466,7 +469,8 @@ struct ObstacleAnnouncer: Sendable {
     private mutating func hazardAnnouncements(
         for hazards: [ElevationHazard],
         at time: TimeInterval,
-        now: Date
+        now: Date,
+        usesMetricUnits: Bool
     ) -> [AnnouncementEvent] {
         // The ground profile is sampled inside the corridor, so a hazard is always in the
         // path. Only the nearest of each type matters.
@@ -513,7 +517,7 @@ struct ObstacleAnnouncer: Sendable {
             events.append(AnnouncementEvent(
                 category: .hazard,
                 priority: priority,
-                text: SpokenPhrasing.guidance(for: hazard, priority: priority),
+                text: SpokenPhrasing.guidance(for: hazard, priority: priority, usesMetricUnits: usesMetricUnits),
                 haptic: haptic,
                 distance: Double(hazard.distance),
                 bearing: .ahead,

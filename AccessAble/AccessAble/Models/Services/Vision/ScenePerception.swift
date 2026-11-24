@@ -121,6 +121,7 @@ final class ScenePerception: Sendable {
     private let clearanceTuning = PathClearanceTuning.default
     /// The user's danger bar and warning distance, read every frame.
     private let alertSettings: AlertSettings
+    private let runtimeSettings: RuntimeSettings
     /// The filter the announcers were last set up with; a change starts them afresh.
     private let appliedFilter = Mutex<AlertFilter?>(nil)
     /// The single limit on camera speech across every announcer.
@@ -137,9 +138,11 @@ final class ScenePerception: Sendable {
         surfaceReader: SurfaceReader? = SurfaceReader(),
         corridorWidth: Float = WalkingCorridor.default.width,
         corridorDistance: Float = WalkingCorridor.default.maxDistance,
-        alertSettings: AlertSettings = AlertSettings()
+        alertSettings: AlertSettings = AlertSettings(),
+        runtimeSettings: RuntimeSettings = RuntimeSettings()
     ) {
         self.alertSettings = alertSettings
+        self.runtimeSettings = runtimeSettings
         self.peopleDetector = peopleDetector
         self.objectDetector = objectDetector
         self.textReader = textReader
@@ -449,7 +452,9 @@ final class ScenePerception: Sendable {
                 path: path,
                 blockedAhead: blockedAhead,
                 at: frame.timestamp,
-                isUserMoving: isUserMoving
+                isUserMoving: isUserMoving,
+                now: .now,
+                usesMetricUnits: runtimeSettings.usesMetricUnits
             )
             diagnostics.warning = $0.currentWarning
             // Not while reading or describing: the user isn't walking a route, and Describe
@@ -477,15 +482,18 @@ final class ScenePerception: Sendable {
         let crowds = detectCrowds(among: detections.filter { $0.label.lowercased() == "person" })
         diagnostics.crowds = crowds.crowds
         // Crowds and camera hints are only nice to know: below anything but the lowest bar.
-        let crowdEvents = crowdAnnouncer.withLock { $0.announcements(for: crowds.crowds, at: frame.timestamp, now: .now) }
+        let crowdEvents = crowdAnnouncer.withLock { $0.announcements(for: crowds.crowds, at: frame.timestamp, now: .now, usesMetricUnits: runtimeSettings.usesMetricUnits) }
         if filter.allows(.low), mode.watchesStreet { announcements += crowdEvents }
 
         // T32 — camera aiming and image quality. Normal priority, so it never talks over a
         // path warning, and only once a problem has lasted a moment: the phone dips and
         // blurs for an instant with every step.
-        let cameraFeedback = cameraQualityEvaluator.evaluate(cameraQualityInput)
-        if shouldAnnounceCameraQuality(cameraFeedback, at: frame.timestamp), let cameraFeedback,
-           filter.allows(.low), mode.givesCameraHints {
+        let cameraFeedback = runtimeSettings.phoneAimingHelp ? cameraQualityEvaluator.evaluate(cameraQualityInput) : nil
+        
+        if shouldAnnounceCameraQuality(cameraFeedback, at: frame.timestamp),
+           let cameraFeedback,
+           filter.allows(.low),
+           mode.givesCameraHints {
             announcements.append(
                 AnnouncementEvent(
                     category: .system,
@@ -518,12 +526,14 @@ final class ScenePerception: Sendable {
         if mode.announcesSigns {
             announcements += signs.withLock {
                 $0.readsAllText = mode == .read
-                return $0.announcements(for: recognizedText, heading: heading, at: frame.timestamp)
+                return $0.announcements(for: recognizedText, heading: heading, at: frame.timestamp,
+                                        usesMetricUnits: runtimeSettings.usesMetricUnits
+                )
             }
         }
         if mode.watchesStreet {
             announcements += streetSignals.withLock {
-                $0.announcements(for: observed.filter { filter.allows(DangerLevel(of: $0)) }, at: frame.timestamp)
+                $0.announcements(for: observed.filter { filter.allows(DangerLevel(of: $0)) }, at: frame.timestamp, usesMetricUnits: runtimeSettings.usesMetricUnits)
             }
         }
 
@@ -532,12 +542,15 @@ final class ScenePerception: Sendable {
             defer { query = nil }
             return query
         }) {
-            navigation.withLock { $0 = pending.map { NavigationGuide(query: $0, at: frame.timestamp) } }
+            navigation.withLock { $0 = pending.map { NavigationGuide(query: $0, at: frame.timestamp, usesMetricUnits: runtimeSettings.usesMetricUnits) } }
         }
         // Navigation cues hold back for a moment after a path warning; the warning matters more.
         let pathSpokeRecently = frame.timestamp - lastPathAnnouncement.withLock { $0 } < 2.5
         diagnostics.navigation = navigation.withLock { guide -> NavigationStatus? in
             guard guide != nil else { return nil }
+            
+            guide!.usesMetricUnits = runtimeSettings.usesMetricUnits
+            
             // Mesh doors (T36) count too: "take me to the door" is the commonest request.
             let result = guide!.update(
                 detections: detections + structureDetections, text: recognizedText, heading: heading, at: frame.timestamp

@@ -56,6 +56,10 @@ final class PlaceSearchViewModel {
     static let renameDistance: Double = 30
 
     @ObservationIgnored private let services: AppServices?
+    
+    private var usesMetricUnits: Bool {
+        services?.runtimeSettings.usesMetricUnits ?? true
+    }
     @ObservationIgnored private let places: [SamplePlace]
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var namedAt: GeoCoordinate?
@@ -101,16 +105,26 @@ final class PlaceSearchViewModel {
     /// Straight-line distance and an estimated walk, or nil without a location.
     func distanceText(to place: SamplePlace) -> String? {
         guard let metres = distance(to: place) else { return nil }
-        return Self.distanceText(metres: metres)
+        return Self.distanceText(metres: metres, usesMetricUnits: usesMetricUnits)
     }
 
-    static func distanceText(metres: Double) -> String {
-        let distance = metres < 1000
+    static func distanceText(metres: Double, usesMetricUnits: Bool = true) -> String {
+        let distance: String
+        
+        if usesMetricUnits {
+            distance = metres < 1000
             ? "\(max(10, Int((metres / 10).rounded()) * 10)) m"
             : (metres / 1000).formatted(.number.precision(.fractionLength(1))) + " km"
+        } else {
+            let feet = metres * 3.28084
+            
+            distance = feet < 5280
+            ? "\(max(10, Int((feet / 10).rounded()) * 10)) ft"
+            : (feet / 5280).formatted(.number.precision(.fractionLength(1))) + " mi"
+        }
         // Straight line at a walking pace; the route is longer, so this says "about".
         let minutes = max(1, Int((metres / 1.2 / 60).rounded()))
-        return "\(distance) · about \(minutes) min walk"
+        return "\(distance) - about \(minutes) min walk"
     }
 
     private func distance(to place: SamplePlace) -> Double? {
@@ -263,7 +277,15 @@ final class PlaceSearchViewModel {
         case .authorized: break
         }
         guard let location else { return "Finding you…" }
-        let accuracy = "±\(Int(location.horizontalAccuracy.rounded())) m"
+   
+        let accuracy: String
+        if usesMetricUnits {
+            accuracy = "±\(Int(location.horizontalAccuracy.rounded())) m"
+        } else {
+            let feet = location.horizontalAccuracy * 3.28084
+            accuracy = "±\(Int(feet.rounded())) ft"
+        }
+        
         return [locationName, accuracy].compactMap(\.self).joined(separator: " · ")
     }
 

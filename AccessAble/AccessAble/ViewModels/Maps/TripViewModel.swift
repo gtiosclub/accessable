@@ -19,6 +19,11 @@ final class TripViewModel {
     private(set) var isStartingTrip = false
 
     @ObservationIgnored private let services: AppServices
+    
+    private var usesMetricUnits: Bool {
+        services.runtimeSettings.usesMetricUnits
+    }
+    
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var routeRequestedAt: Date?
     @ObservationIgnored private var latestPreciseFix: LocationSample?
@@ -75,7 +80,11 @@ final class TripViewModel {
         // no distance while off route: the instruction says what is happening instead
         guard let distance = tripState.distanceToNextManeuver else { return maneuver.instruction }
         let instruction = maneuver.instruction.prefix(1).lowercased() + maneuver.instruction.dropFirst()
-        return "In about \(Self.roundedMetres(distance)) metres, \(instruction)"
+        let distanceText = SpokenPhrasing.shortDistance(
+            distance, usesMetricUnits: usesMetricUnits
+        )
+        
+        return "In about \(distanceText), \(instruction)"
     }
 
     var canStartTrip: Bool {
@@ -85,7 +94,14 @@ final class TripViewModel {
 
     /// Posted once when a route arrives, since VoiceOver doesn't read the map changing.
     var routeReadyAnnouncement: String? {
-        route.map { "Route ready, about \(Self.roundedMetres($0.totalDistance)) metres." }
+        route.map {
+            let distanceText = SpokenPhrasing.shortDistance(
+                $0.totalDistance,
+                usesMetricUnits: usesMetricUnits
+            )
+            
+            return "Route ready, about \(distanceText)."
+        }
     }
 
     /// Turn-by-turn guidance can't place the user at each turn without Precise Location, so reduced accuracy
@@ -114,10 +130,15 @@ final class TripViewModel {
             case .notDetermined, .authorized: return "Map showing \(name). Finding a walking route."
             }
         }
-        let metres = Self.roundedMetres(route.totalDistance)
+        
+        let distanceText = SpokenPhrasing.shortDistance(
+            route.totalDistance,
+            usesMetricUnits: usesMetricUnits
+        )
+        
         let minutes = max(1, Int((route.estimatedDuration / 60).rounded()))
         let duration = minutes == 1 ? "1 minute" : "\(minutes) minutes"
-        return "Map showing a walking route to \(name), about \(metres) metres, about \(duration)."
+        return "Map showing a walking route to \(name), about \(distanceText), about \(duration)."
     }
 
     /// Reduced accuracy still shows, as an approximate area instead of a dot.
@@ -186,11 +207,6 @@ final class TripViewModel {
         if let routeRequestedAt, now().timeIntervalSince(routeRequestedAt) > Self.maximumRouteAge { return true }
         guard let latestPreciseFix else { return false }
         return abs(route.projection(of: latestPreciseFix.coordinate).sideOffset) > Self.maximumStartOffset
-    }
-
-    // SpokenPhrasing's half-metre precision is noise at these distances
-    private static func roundedMetres(_ distance: Double) -> Int {
-        max(10, Int((distance / 10).rounded()) * 10)
     }
 
     private func receive(_ state: TripState) {

@@ -34,7 +34,8 @@ struct SignAnnouncer: Sendable {
         for texts: [RecognizedText],
         heading: WalkingCorridor?,
         at time: TimeInterval,
-        now: Date = .now
+        now: Date = .now,
+        usesMetricUnits: Bool = true
     ) -> [AnnouncementEvent] {
         reads = reads.filter { time - $0.value.lastSeen <= forgetAfter }
         var events: [AnnouncementEvent] = []
@@ -54,7 +55,7 @@ struct SignAnnouncer: Sendable {
             if let position, let heading {
                 let bearing = heading.bearing(to: position)
                 let distance = Double(heading.distance(to: position))
-                text += " \(SpokenPhrasing.clock(bearing)), \(SpokenPhrasing.shortDistance(distance))."
+                text += " \(SpokenPhrasing.clock(bearing)), \(SpokenPhrasing.shortDistance(distance, usesMetricUnits: usesMetricUnits))."
             }
             events.append(AnnouncementEvent(
                 category: .landmark,

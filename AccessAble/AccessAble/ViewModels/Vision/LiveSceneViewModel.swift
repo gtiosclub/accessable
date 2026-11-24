@@ -107,6 +107,7 @@ final class LiveSceneViewModel {
     private(set) var navigationMessage: String?
 
     @ObservationIgnored private let announcements: any AnnouncementEngineProtocol
+    @ObservationIgnored private let runtimeSettings: RuntimeSettings
     /// Holds the screen awake and speaks up when guidance stops or returns (T27).
     @ObservationIgnored private let guidance: GuidanceStatusMonitor
     @ObservationIgnored private var deliveryTask: Task<Void, Never>?
@@ -160,6 +161,7 @@ final class LiveSceneViewModel {
         self.mode = mode
         analyzer = services.scene as? ARSceneAnalyzer
         announcements = services.announcements
+        runtimeSettings = services.runtimeSettings
         guidance = GuidanceStatusMonitor(announcements: services.announcements)
     }
 
@@ -189,7 +191,7 @@ final class LiveSceneViewModel {
     /// `.userInteraction`: the engine neither filters it by category nor drops a second tap
     /// on the same thing as a duplicate.
     func identifyPointedAt() {
-        let text = pointIdentifier.spokenIdentification(in: observation) ?? "Nothing recognized."
+        let text = pointIdentifier.spokenIdentification(in: observation, usesMetricUnits: runtimeSettings.usesMetricUnits) ?? "Nothing recognized."
         let event = AnnouncementEvent(
             category: .system,
             priority: .normal,
@@ -490,7 +492,13 @@ final class LiveSceneViewModel {
         if warning.isStop {
             return PathStatus(level: .stop, title: "Stop · \(warning.name)", detail: warning.advice)
         }
-        let title = warning.distance.map { String(format: "%@ · %.1f m", warning.name, $0) } ?? warning.name
+        let title = warning.distance.map { distance in
+            let distanceText = SpokenPhrasing.shortDistance(
+                distance, usesMetricUnits: runtimeSettings.usesMetricUnits
+            )
+            return "\(warning.name) - \(distanceText)"
+        } ?? warning.name
+           
         return PathStatus(level: .caution, title: title, detail: warning.advice)
     }
 
@@ -514,7 +522,13 @@ final class LiveSceneViewModel {
     /// What the outline's tag says: "Chair · 1.2 m".
     var focusCaption: String? {
         guard focus != nil, let warning else { return nil }
-        return warning.distance.map { String(format: "%@ · %.1f m", warning.name, $0) } ?? warning.name
+        return warning.distance.map { distance in
+            let distanceText = SpokenPhrasing.shortDistance(
+                distance, usesMetricUnits: runtimeSettings.usesMetricUnits
+            )
+            
+            return "\(warning.name) - \(distanceText)"
+        } ?? warning.name
     }
 
     /// Outlines the object the warning is about, following its track from frame to frame.
@@ -705,7 +719,7 @@ final class LiveSceneViewModel {
 
     /// What VoiceOver reads for the readout; the overlay boxes themselves are purely visual.
     var spokenSummary: String {
-        SceneDescriptionBuilder().describe(observation)
+        SceneDescriptionBuilder().describe(observation, usesMetricUnits: runtimeSettings.usesMetricUnits)
     }
 
     /// "Drop-off at 2.0 m, -0.18 m". A heightChange of 0 means the magnitude was never
