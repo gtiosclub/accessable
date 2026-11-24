@@ -9,8 +9,9 @@ import os
 /// iOS gives the camera to one session at a time, so every module that needs camera frames
 /// or the device pose subscribes here rather than running its own `ARSession`.
 ///
-/// The session runs gravity-aligned world tracking (world +Y is up, which the floor fit and
-/// walking corridor assume) and, on LiDAR devices, `sceneDepth` (T2). Smoothed scene depth
+/// The session runs gravity-aligned world tracking, or during a trip geo-tracking (AR-2), whose
+/// east-up-south world keeps +Y up too; the floor fit and walking corridor assume it. On LiDAR
+/// devices it adds `sceneDepth` (T2). Smoothed scene depth
 /// is deliberately not requested: it averages several frames, so it lags behind anything
 /// moving toward the user, and nothing in the pipeline needs it.
 ///
@@ -39,6 +40,9 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// True on devices with a LiDAR scanner, where frames carry `sceneDepth`.
     let isDepthSupported = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
 
+    /// True on devices that can build the classified mesh (T36), which need LiDAR too.
+    let isMeshSupported = ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification)
+
     private let frameQueue = DispatchQueue(label: "AccessAble.ARSessionManager.frames", qos: .userInteractive)
     private let handlers = Mutex<[UUID: FrameHandler]>([:])
     private let health = Mutex(FrameHealthCheck())
@@ -54,6 +58,19 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     @MainActor private var cameraOwnership = CameraOwnershipState()
     private let pausedForCall = Mutex(false)
     var isPausedForCall: Bool { pausedForCall.withLock { $0 } }
+    /// How many trip holders want the next `start()` to geo-track (AR-2); each asks only where
+    /// geo-tracking is available.
+    private let geoTrackingRequests = Mutex(0)
+    /// What the running session uses; nil while stopped or a call has the camera.
+    private let runningTracking = Mutex<SessionTracking?>(nil)
+    private let geoBroadcaster = Broadcaster<GeoTrackingUpdate>()
+    /// Which run geo updates may come from. A geo update is sent only from a frame captured
+    /// during the current geo-tracking run, and only if no start, stop or call has happened
+    /// since: checked under this lock, which `.stopped` is also sent under, so no update lands
+    /// after the `.stopped` that ended its run.
+    private let geoSession = Mutex(GeoSession())
+    /// Frame timestamp of the last geo update sent.
+    private let lastGeoUpdate = Mutex<TimeInterval>(-.infinity)
     private let log = Logger(subsystem: "AccessAble", category: "ARSessionManager")
 
     /// How long ARKit is given to relocalize after an interruption before guidance is
@@ -63,7 +80,8 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    /// Starts world tracking. Calling it while running restarts tracking from scratch.
+    /// Starts world tracking, or geo-tracking when it is wanted and the mesh isn't. Calling it
+    /// while running restarts tracking from scratch.
     @MainActor
     func start() throws {
         guard ARWorldTrackingConfiguration.isSupported else {
@@ -72,7 +90,32 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         }
         // New AR clients can register during a call, but must not take LiveKit's camera.
         guard cameraOwnership.requestARStart() else { return }
+        runSession()
+    }
 
+    /// Runs tracking from scratch, choosing it afresh. Only where world tracking is supported
+    /// and no call has the camera.
+    @MainActor
+    private func runSession() {
+        let wantsMesh = wantsMesh.withLock { $0 }
+        let geoWanted = geoTrackingRequests.withLock { $0 > 0 } && Self.isGeoTrackingSupported
+        let tracking = SessionTracking.choose(geoWanted: geoWanted, meshWanted: wantsMesh, meshSupported: isMeshSupported)
+        let configuration: ARConfiguration = switch tracking {
+        case .world: worldTrackingConfiguration(mesh: wantsMesh)
+        case .geo: geoTrackingConfiguration()
+        }
+
+        health.withLock { $0.reset() }
+        cancelRecoveryTimeout()
+        setRunningTracking(tracking)
+        lastGeoUpdate.withLock { $0 = -.infinity }
+        session.delegate = self
+        session.delegateQueue = frameQueue
+        session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
+        setStatus(.running)
+    }
+
+    private func worldTrackingConfiguration(mesh: Bool) -> ARWorldTrackingConfiguration {
         let configuration = ARWorldTrackingConfiguration()
         configuration.worldAlignment = .gravity
         configuration.planeDetection = []
@@ -82,36 +125,222 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
             log.notice("sceneDepth unsupported; running without LiDAR depth")
         }
         // T36: classified mesh for doors and windows, only while something needs it
-        configuration.sceneReconstruction = meshReconstruction(wanted: wantsMesh.withLock { $0 })
+        configuration.sceneReconstruction = meshReconstruction(wanted: mesh)
+        return configuration
+    }
 
-        health.withLock { $0.reset() }
-        cancelRecoveryTimeout()
-        session.delegate = self
-        session.delegateQueue = frameQueue
-        session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
-        setStatus(.running)
+    /// World +Y is still up (east-up-south), so the floor fit and corridor hold. It has no
+    /// mesh, which is why `SessionTracking.choose` keeps world tracking while doors are wanted.
+    private func geoTrackingConfiguration() -> ARGeoTrackingConfiguration {
+        let configuration = ARGeoTrackingConfiguration()
+        configuration.planeDetection = []
+        if ARGeoTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
+            configuration.frameSemantics.insert(.sceneDepth)
+        } else {
+            log.notice("sceneDepth unsupported with geo-tracking; running without LiDAR depth")
+        }
+        return configuration
     }
 
     /// Turns the classified mesh on or off without restarting tracking. Takes effect at the
     /// next `start()` when the session isn't running.
+    ///
+    /// - Returns: true when tracking had to restart from scratch: the mesh was wanted while
+    ///   geo-tracking, which can't build one, on a device that can, so the session went back
+    ///   to world tracking.
     @MainActor
-    func setMeshReconstruction(_ enabled: Bool) {
+    @discardableResult
+    func setMeshReconstruction(_ enabled: Bool) -> Bool {
         let changed = wantsMesh.withLock { wanted in
             defer { wanted = enabled }
             return wanted != enabled
         }
-        guard cameraOwnership.callOwner == nil, changed,
-              let configuration = session.configuration?.copy() as? ARWorldTrackingConfiguration
-        else { return }
+        guard cameraOwnership.callOwner == nil, changed else { return false }
+        if enabled, isMeshSupported, runningTracking.withLock({ $0 }) == .geo {
+            log.notice("mesh wanted while geo-tracking; switching to world tracking")
+            // Geo-tracking was running, so world tracking is supported, and no call has the camera.
+            runSession()
+            return true
+        }
+        guard let configuration = session.configuration?.copy() as? ARWorldTrackingConfiguration else { return false }
         configuration.sceneReconstruction = meshReconstruction(wanted: enabled)
         // Re-running without .resetTracking keeps the world; dropping the mesh's anchors
         // stops stale doors from being found after it is switched off.
         session.run(configuration, options: enabled ? [] : [.removeExistingAnchors])
+        return false
+    }
+
+    // MARK: - Geo-tracking (AR-2)
+
+    /// False in the Simulator and on devices without an A12 or later chip and GPS.
+    static var isGeoTrackingSupported: Bool { ARGeoTrackingConfiguration.isSupported }
+
+    /// Asks for, or gives back, geo-tracking from the next `start()`. Calls nest like the
+    /// analyzer's `start()`/`stop()`: the session geo-tracks while any `true` hasn't had its
+    /// `false`. It doesn't restart a running session: that would reset the world CV has
+    /// mapped. A call pauses the session and `endCallCameraOwnership` restarts it, so the
+    /// choice carries over the call.
+    @MainActor
+    func setGeoTracking(_ wanted: Bool) {
+        let balanced = geoTrackingRequests.withLock { requests in
+            if wanted {
+                requests += 1
+                return true
+            }
+            guard requests > 0 else { return false }
+            requests -= 1
+            return true
+        }
+        if !balanced { log.fault("geo-tracking given back more often than it was asked for") }
+    }
+
+    /// What the running session uses; nil while stopped or a call has the camera.
+    var tracking: SessionTracking? { runningTracking.withLock { $0 } }
+
+    /// Records what the session runs now (nil: nothing), telling geo listeners when geo-tracking ends.
+    private func setRunningTracking(_ tracking: SessionTracking?) {
+        let previous = runningTracking.withLock { running in
+            defer { running = tracking }
+            return running
+        }
+        geoSession.withLock { geoSession in
+            geoSession.begin(tracking, at: ProcessInfo.processInfo.systemUptime)
+            guard SessionTracking.endsGeoTracking(from: previous, to: tracking) else { return }
+            geoBroadcaster.send(GeoTrackingUpdate(state: .stopped, accuracy: .undetermined, timestamp: .now))
+        }
+    }
+
+    /// Which session geo updates belong to; see `deliverGeoLocation`.
+    var sessionGeneration: Int { geoSession.withLock { $0.generation } }
+
+    /// Sends `update` unless the session it came from has since stopped, restarted or gone to a call.
+    private func sendGeoUpdate(_ update: GeoTrackingUpdate, fromSession session: Int) {
+        geoSession.withLock { current in
+            guard current.generation == session else { return }
+            geoBroadcaster.send(update)
+        }
+    }
+
+    /// ARKit's answer to `getGeoLocation`, which lands later on a queue of its choosing, maybe
+    /// after the session stopped or a call took the camera.
+    func deliverGeoLocation(
+        _ update: GeoTrackingUpdate,
+        coordinate: CLLocationCoordinate2D,
+        altitude: CLLocationDistance,
+        error: (any Error)?,
+        fromSession session: Int
+    ) {
+        if let error {
+            log.error("getGeoLocation failed: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        var located = update
+        located.coordinate = GeoCoordinate(coordinate)
+        located.altitude = altitude
+        sendGeoUpdate(located, fromSession: session)
+    }
+
+    /// Asks whether geo-tracking is available where the phone is, and calls back once with the
+    /// answer and any error.
+    typealias GeoAvailabilityCheck = @Sendable (_ completion: @escaping @Sendable (Bool, (any Error)?) -> Void) -> Void
+
+    /// Whether Apple has geo-tracking imagery where the phone is. Gives up after `timeout`,
+    /// since the camera waits on it and obstacle warnings shouldn't; false if the task is
+    /// cancelled first. An answer that comes after that is dropped.
+    static func isGeoTrackingAvailableHere(
+        timeout: Duration = .seconds(3),
+        clock: any Clock<Duration> = ContinuousClock(),
+        check: @escaping GeoAvailabilityCheck = checkGeoAvailabilityWithARKit
+    ) async -> Bool {
+        let answer = FirstAnswer()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                answer.wait(continuation)
+                // Not structured: the check can't be cancelled, and nothing should wait on it.
+                answer.setTimer(Task {
+                    do { try await clock.sleep(for: timeout) } catch { return }
+                    availabilityLog.notice("geo-tracking availability check timed out")
+                    answer.send(false)
+                })
+                check { available, error in
+                    if let error {
+                        availabilityLog.error("geo-tracking availability check failed: \(error.localizedDescription, privacy: .public)")
+                    }
+                    answer.send(available)
+                }
+            }
+        } onCancel: {
+            answer.send(false)
+        }
+    }
+
+    /// ARKit's check, where the device can geo-track at all.
+    static func checkGeoAvailabilityWithARKit(_ completion: @escaping @Sendable (Bool, (any Error)?) -> Void) {
+        guard isGeoTrackingSupported else { return completion(false, nil) }
+        ARGeoTrackingConfiguration.checkAvailability(completionHandler: completion)
+    }
+
+    private static let availabilityLog = Logger(subsystem: "AccessAble", category: "ARSessionManager")
+
+    /// Position and heading about once a second while geo-tracking, then `.stopped` when it ends.
+    func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> {
+        geoBroadcaster.stream(bufferingPolicy: .bufferingNewest(4))
+    }
+
+    /// Asks ARKit for the coordinate of a point in the session's world, calling back later.
+    typealias GeoLocate = (
+        _ point: SIMD3<Float>,
+        _ completion: @escaping @Sendable (CLLocationCoordinate2D, CLLocationDistance, (any Error)?) -> Void
+    ) -> Void
+
+    /// Runs on the frame queue. Copies what it needs, so the frame isn't kept.
+    private func publishGeoUpdate(from frame: ARFrame, in arSession: ARSession) {
+        guard let status = frame.geoTrackingStatus else { return }
+        let update = GeoTrackingUpdate(
+            state: GeoTrackingUpdate.State(status.state),
+            accuracy: GeoTrackingUpdate.Accuracy(status.accuracy),
+            timestamp: GeoTrackingUpdate.date(ofFrameTimestamp: frame.timestamp),
+            stateReason: GeoTrackingUpdate.StateReason(status.stateReason)
+        )
+        publishGeoUpdate(update, frameTimestamp: frame.timestamp, cameraTransform: frame.camera.transform) { point, completion in
+            arSession.getGeoLocation(forPoint: point, completionHandler: completion)
+        }
+    }
+
+    /// Sends `update`, from a frame captured at `frameTimestamp`, about once a second and only
+    /// if the frame belongs to the current geo-tracking run. Once localized, `locate` finds its
+    /// coordinate first. Takes no `ARFrame`, so it can be tested.
+    func publishGeoUpdate(
+        _ update: GeoTrackingUpdate,
+        frameTimestamp: TimeInterval,
+        cameraTransform transform: simd_float4x4,
+        locate: GeoLocate
+    ) {
+        let session = geoSession.withLock { $0 }
+        guard session.accepts(frameTimestamp: frameTimestamp) else { return }
+        let due = lastGeoUpdate.withLock { last in
+            guard frameTimestamp - last >= 1 else { return false }
+            last = frameTimestamp
+            return true
+        }
+        guard due else { return }
+
+        guard update.state == .localized else {
+            sendGeoUpdate(update, fromSession: session.generation)
+            return
+        }
+        var update = update
+        update.heading = GeoTrackingUpdate.heading(cameraTransform: transform)
+        let position = SIMD3(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z)
+        locate(position) { [weak self, update] coordinate, altitude, error in
+            self?.deliverGeoLocation(
+                update, coordinate: coordinate, altitude: altitude, error: error, fromSession: session.generation
+            )
+        }
     }
 
     private func meshReconstruction(wanted: Bool) -> ARConfiguration.SceneReconstruction {
-        wanted && ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification)
-            ? .meshWithClassification : []
+        wanted && isMeshSupported ? .meshWithClassification : []
     }
 
     /// Pauses the session. Subscribers stay registered and get frames again after `start()`.
@@ -120,6 +349,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         cameraOwnership.requestARStop()
         cancelRecoveryTimeout()
         session.pause()
+        setRunningTracking(nil)
         setStatus(.idle)
     }
 
@@ -130,6 +360,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         pausedForCall.withLock { $0 = true }
         cancelRecoveryTimeout()
         session.pause()
+        setRunningTracking(nil)
         setStatus(.interrupted)
         return token
     }
@@ -247,6 +478,7 @@ extension ARSessionManager: ARSessionDelegate {
         for handler in current {
             handler(frame)
         }
+        publishGeoUpdate(from: frame, in: session)
     }
 
     func session(_ session: ARSession, cameraDidChangeTrackingState camera: ARCamera) {
@@ -382,5 +614,48 @@ extension GuidanceStatus {
         case .running, .interrupted, .recovering: true
         case .idle, .stopped, .unavailable: false
         }
+    }
+}
+
+/// Resumes one continuation with whichever answer arrives first: ARKit's, the timeout or
+/// cancellation. Later answers are dropped, so the continuation is never resumed twice.
+private final class FirstAnswer: Sendable {
+    private struct State {
+        var continuation: CheckedContinuation<Bool, Never>?
+        var answer: Bool?
+        var timer: Task<Void, Never>?
+    }
+
+    private let state = Mutex(State())
+
+    func wait(_ continuation: CheckedContinuation<Bool, Never>) {
+        let answer = state.withLock { state in
+            if state.answer == nil { state.continuation = continuation }
+            return state.answer
+        }
+        if let answer { continuation.resume(returning: answer) }
+    }
+
+    func setTimer(_ timer: Task<Void, Never>) {
+        let answered = state.withLock { state in
+            if state.answer == nil { state.timer = timer }
+            return state.answer != nil
+        }
+        if answered { timer.cancel() }
+    }
+
+    func send(_ answer: Bool) {
+        let pending = state.withLock { state -> (CheckedContinuation<Bool, Never>?, Task<Void, Never>?)? in
+            guard state.answer == nil else { return nil }
+            state.answer = answer
+            defer {
+                state.continuation = nil
+                state.timer = nil
+            }
+            return (state.continuation, state.timer)
+        }
+        guard let (continuation, timer) = pending else { return }
+        timer?.cancel()
+        continuation?.resume(returning: answer)
     }
 }
