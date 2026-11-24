@@ -164,8 +164,9 @@ struct LocationDebugViewModelTests {
     }
 
     @Test func headingSaysWhenItIsFromARGeoTracking() async {
+        // standing still, with a speed lent by fresh GPS
         let fix = LocationSample(coordinate: fullSample.coordinate, horizontalAccuracy: 5, timestamp: fixTime,
-                                 source: .ar)
+                                 speed: 0.2, source: .ar)
         let camera = HeadingSample(trueHeading: 180, magneticHeading: 180, accuracy: 5, timestamp: fixTime,
                                    source: .ar)
         let viewModel = await startedViewModel(FixedLocationProvider(samples: [fix], headings: [camera]))
