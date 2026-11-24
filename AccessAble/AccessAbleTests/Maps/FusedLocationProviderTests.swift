@@ -324,6 +324,17 @@ struct LocationFusionTests {
     }
 
     @Test
+    func aLateOlderGPSFixDoesNotMakeGPSLookStale() {
+        var fusion = LocationFusion()
+        _ = fusion.receive(.gps(gps(10)))
+        _ = fusion.receive(.gps(gps(4)))
+
+        #expect(fusion.receive(.ar(ar(10))) == nil)
+        #expect(fusion.receive(.ar(ar(11))) == nil)
+        #expect(fusion.receive(.ar(ar(12)))?.source == .ar)
+    }
+
+    @Test
     func noGPSYetMeansNoAR() {
         var fusion = LocationFusion()
 

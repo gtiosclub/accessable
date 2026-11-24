@@ -101,7 +101,8 @@ struct LocationFusion {
     mutating func receive(_ reading: Reading) -> LocationSample? {
         switch reading {
         case .gps(let sample):
-            latestGPS = sample
+            // Core Location can hand over a late fix older than the latest; it would only make GPS look stale
+            if latestGPS.map({ sample.timestamp >= $0.timestamp }) ?? true { latestGPS = sample }
             if let trustedARUntil {
                 if sample.timestamp <= trustedARUntil { return nil }
                 leaveAR()
