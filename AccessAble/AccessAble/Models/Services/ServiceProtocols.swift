@@ -141,6 +141,13 @@ protocol LocationContextProviding: Sendable {
     func currentLocationDescription() async -> String?
 }
 
+/// Stores community reports and streams changes in the requested area.
+protocol ReportService: Sendable {
+    func submit(_ report: Report) async throws
+    func reports(near coordinate: GeoCoordinate, radius: Double) async throws -> [Report]
+    func reportChanges(near coordinate: GeoCoordinate, radius: Double) -> AsyncStream<[Report]>
+}
+
 protocol AuthService: Sendable {
     func userChanges() -> AsyncStream<AuthUser?>
     func currentUser() async -> AuthUser?
