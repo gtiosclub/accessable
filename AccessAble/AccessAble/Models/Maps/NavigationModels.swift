@@ -44,7 +44,7 @@ extension LocationSample {
 }
 
 /// Where the top of the phone points, from the compass; or, from AR, where the back camera faces.
-struct HeadingSample: Codable, Equatable, Sendable {
+struct HeadingSample: Equatable, Sendable {
     /// Degrees clockwise from true north, 0..<360. `nil` when true north is unavailable.
     var trueHeading: Double?
     /// Degrees clockwise from magnetic north, 0..<360.
@@ -56,7 +56,7 @@ struct HeadingSample: Codable, Equatable, Sendable {
     var source: HeadingSource = .compass
 }
 
-enum HeadingSource: String, Codable, Sendable {
+enum HeadingSource: String, Sendable {
     case compass
     /// The way the camera faces, from ARKit geo-tracking. True north only, so `magneticHeading` repeats it.
     case ar
