@@ -2156,6 +2156,33 @@ struct TripManagerReportTests {
         #expect(await spokenAboutReports(harness) == [nearReportWarning])
     }
 
+    /// Too near the destination to route around, but not near the user.
+    @Test
+    func aReportByTheDestinationIsWarnedOfAsAhead() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.reports.publish([report("by the door", at: harness.point(150))])
+
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await spokenAboutReports(harness) == [reportWarning])
+    }
+
+    @Test
+    func aReportByTheDestinationWithARerouteIsWarnedOfAsAhead() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.reports.publish([report("by the door", at: harness.point(150)),
+                                       report("on the way", at: harness.point(60))])
+        await harness.router.waitForRequests(1)
+
+        await waitUntil { await harness.engine.texts.contains(reportReroute) }
+        #expect(await spokenAboutReports(harness) == [reportWarning, reportReroute])
+    }
+
     @Test
     func aReportAfterTheLastReportRerouteIsOnlyWarnedOf() async throws {
         let harness = try Harness(reroutes: [.failure(.serverUnavailable), .failure(.serverUnavailable)])

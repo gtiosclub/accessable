@@ -98,7 +98,6 @@ actor TripManager: TripStateProviding {
     private static let reportRetryDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(60)]
     // metres beyond the route's reach that reports are listened for
     private static let reportSearchMargin: Double = 250
-    private static let nearReportSpeech = "New obstacle reported just ahead."
     private static let unavoidedReportSpeech =
         "Couldn't find a way around the reported obstacle. Keep following the current route carefully."
     // a new route from a rough fix would start on the wrong side of the street, and a direction from one can point
@@ -544,20 +543,23 @@ actor TripManager: TripStateProviding {
         let time = now()
         // warned of when the route was planned
         let planned = Set(route.unavoidedReports.map(\.id))
-        var warned: [Report] = []
+        var nearUser: [Report] = []
+        var nearEnd: [Report] = []
         var avoidable: [Report] = []
         for report in nearbyReports
         where report.expiresAt > time && !actedOnReportIDs.contains(report.id) && !planned.contains(report.id) {
             guard let along = ReportExclusions.distanceAlong(route, passing: report, from: walked) else { continue }
             // the routing drops a report this near either end first, so a new route would pass it anyway
-            if along - walked < ReportAwareRoutingService.endpointClearance
-                || route.totalDistance - along < ReportAwareRoutingService.endpointClearance {
-                warned.append(report)
+            if along - walked < ReportAwareRoutingService.endpointClearance {
+                nearUser.append(report)
+            } else if route.totalDistance - along < ReportAwareRoutingService.endpointClearance {
+                nearEnd.append(report)
             } else {
                 avoidable.append(report)
             }
         }
-        let hasNear = !warned.isEmpty
+        var warned = nearUser + nearEnd
+        let warning = nearUser.isEmpty ? "New obstacle reported ahead." : "New obstacle reported just ahead."
         if !avoidable.isEmpty, rerouteTask == nil {
             if reportRerouteCount >= Self.maximumReportReroutes {
                 warned += avoidable
@@ -566,8 +568,7 @@ actor TripManager: TripStateProviding {
                 // said by the reroute's task before it asks, so its answer can't come first; and in flight from here,
                 // so a fix or snapshot meanwhile waits for it
                 var announcements = warned.first.map { near in
-                    [maneuver(Self.nearReportSpeech, .high, haptic: .attention, expiresIn: 10,
-                              key: "report-warning-\(near.id)")]
+                    [maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(near.id)")]
                 } ?? []
                 announcements.append(maneuver("New obstacle reported ahead. Finding a new route.", .high,
                                               haptic: .attention, expiresIn: 15,
@@ -580,8 +581,7 @@ actor TripManager: TripStateProviding {
         }
         guard let first = warned.first else { return }
         actedOnReportIDs.formUnion(warned.map(\.id))
-        await submit(maneuver(hasNear ? Self.nearReportSpeech : "New obstacle reported ahead.", .high,
-                              haptic: .attention, expiresIn: 10, key: "report-warning-\(first.id)"))
+        await submit(maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(first.id)"))
     }
 
     // MARK: Rerouting
