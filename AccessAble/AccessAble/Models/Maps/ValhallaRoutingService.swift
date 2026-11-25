@@ -94,6 +94,12 @@ struct ValhallaRoutingService: RoutingService {
         442, // no path could be found for input
     ]
 
+    /// Valhalla error codes meaning it refused the request's exclusions.
+    private static let exclusionErrorCodes: Set<Int> = [
+        157, // exceeded max avoid locations
+        167, // exceeded max perimeter of exclude_polygons
+    ]
+
     /// Any other rejection means our request was wrong, which is a bug rather than a missing route.
     private func requestError(_ data: Data) -> RoutingError {
         let body: ErrorResponse
@@ -105,7 +111,9 @@ struct ValhallaRoutingService: RoutingService {
         }
         // Valhalla's message can echo request details, so only the code is logged.
         log.error("Valhalla rejected the request: error_code \(body.errorCode, privacy: .public)")
-        return Self.noRouteErrorCodes.contains(body.errorCode) ? .noRouteFound : .invalidResponse
+        if Self.noRouteErrorCodes.contains(body.errorCode) { return .noRouteFound }
+        if Self.exclusionErrorCodes.contains(body.errorCode) { return .exclusionsRejected }
+        return .invalidResponse
     }
 
     private func makeRequest(
@@ -115,7 +123,19 @@ struct ValhallaRoutingService: RoutingService {
         let walkingSpeed = min(max(options.walkingSpeed * 3.6, 0.5), 25)
         let body = RouteRequest(
             locations: [Location(origin), Location(destination)],
-            costingOptions: CostingOptions(pedestrian: Pedestrian(walkingSpeed: walkingSpeed))
+            costingOptions: CostingOptions(pedestrian: Pedestrian(walkingSpeed: walkingSpeed)),
+            excludeLocations: options.excludeLocations.isEmpty
+                ? nil
+                : options.excludeLocations.map(Location.init),
+            excludePolygons: options.excludePolygons.isEmpty
+                ? nil
+                : options.excludePolygons.map { polygon in
+                    var ring = polygon.map { [$0.longitude, $0.latitude] }
+                    if let first = ring.first, ring.last != first {
+                        ring.append(first)
+                    }
+                    return ring
+                }
         )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
@@ -143,6 +163,8 @@ struct ValhallaRoutingService: RoutingService {
         let locations: [Location]
         let costing = "pedestrian"
         let costingOptions: CostingOptions
+        let excludeLocations: [Location]?
+        let excludePolygons: [[[Double]]]?
         // The decoder converts either unit; kilometres keeps the response metric.
         let units = "kilometers"
         let language = "en-US"

@@ -98,6 +98,32 @@ struct ValhallaRoutingServiceTests {
     }
 
     @Test
+    func encodesPointAndAreaExclusionsForValhalla() async throws {
+        let polygon = [
+            GeoCoordinate(latitude: 33.775, longitude: -84.396),
+            GeoCoordinate(latitude: 33.776, longitude: -84.396),
+            GeoCoordinate(latitude: 33.776, longitude: -84.397)
+        ]
+
+        let request = try await sentRequest(options: RouteOptions(
+            excludeLocations: [
+                GeoCoordinate(latitude: 33.7755, longitude: -84.398)
+            ],
+            excludePolygons: [polygon]
+        ))
+
+        let body = try jsonBody(of: request)
+        let locations = try #require(body["exclude_locations"] as? [[String: Double]])
+        #expect(locations == [["lat": 33.7755, "lon": -84.398]])
+
+        let polygons = try #require(body["exclude_polygons"] as? [[[Double]]])
+        #expect(polygons.count == 1)
+        #expect(polygons[0].count == 4)
+        #expect(polygons[0].first == polygons[0].last)
+        #expect(polygons[0][0] == [-84.396, 33.775])
+    }
+
+    @Test
     func postsPedestrianRouteRequest() async throws {
         let request = try await sentRequest()
         #expect(request.httpMethod == "POST")
@@ -254,6 +280,8 @@ struct ValhallaRoutingServiceTests {
         (400, valhallaError(171), .noRouteFound),
         (400, valhallaError(172), .noRouteFound),
         (400, valhallaError(442), .noRouteFound),
+        (400, valhallaError(157), .exclusionsRejected),
+        (400, valhallaError(167), .exclusionsRejected),
         (400, valhallaError(100), .invalidResponse),
         (400, "Bad Request", .invalidResponse),
         (404, "", .invalidResponse),
