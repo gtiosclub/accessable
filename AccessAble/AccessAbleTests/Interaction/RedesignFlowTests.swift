@@ -7,7 +7,13 @@ struct OnboardingViewModelTests {
     @Test
     func walksThroughEveryStepInOrder() {
         let viewModel = OnboardingViewModel()
+        #expect(viewModel.step == .accountRole)
+        viewModel.chooseAccountRole(.volunteer)
+        #expect(viewModel.step == .accountDetails)
+        viewModel.displayName = "Alex"
+        viewModel.finishAccountDetails()
         #expect(viewModel.step == .role)
+        #expect(viewModel.accountRole == .volunteer)
 
         viewModel.chooseRole(.sighted)
         #expect(viewModel.step == .voiceOver)
@@ -80,6 +86,60 @@ struct TripSessionViewModelTests {
         #expect(TripSessionViewModel.asksToRepeat("Repeat") == false)
         #expect(TripSessionViewModel.asksToRepeat("say that again") == false)
         #expect(TripSessionViewModel.asksToRepeat("Is there a warning sign?") == nil)
+    }
+
+    @Test(arguments: [
+        ("Report construction.", ReportKind.construction),
+        ("report a work zone", .construction),
+        ("Report road work", .construction),
+        ("report roadwork, please", .construction),
+        ("Report blocked path", .blockedPath),
+        ("report something blocking the sidewalk", .blockedPath),
+        ("Report an obstruction", .blockedPath),
+        ("report obstacle", .blockedPath),
+        ("Report closed entrance", .closedEntrance),
+        ("report the door is locked", .closedEntrance),
+        ("Report doorway closed", .closedEntrance),
+        ("Report elevator", .elevatorOut),
+        ("report the lift is out", .elevatorOut),
+        ("Report other.", .other),
+        ("report other problem", .other),
+        ("Report something else", .other),
+        ("I want to report construction", .construction),
+        ("Please report blocked path", .blockedPath),
+        ("I\u{2019}d like to report a closed entrance.", .closedEntrance),
+        ("i need to report the elevator", .elevatorOut),
+        ("Can I report something else?", .other),
+        ("REPORT   construction", .construction),
+        ("Okay, report construction", .construction),
+        ("I would like to report a blocked path", .blockedPath),
+        ("Report the elevator door is closed", .elevatorOut),
+    ])
+    func reportCommandsNameTheirKind(_ text: String, kind: ReportKind) {
+        #expect(TripSessionViewModel.reportCommand(for: text) == .kind(kind))
+    }
+
+    /// A closed entrance is often blocked too; it is reported as the closed entrance.
+    @Test
+    func aClosedEntranceIsNotABlockedPath() {
+        #expect(TripSessionViewModel.reportCommand(for: "Report blocked entrance, it's closed") == .kind(.closedEntrance))
+        #expect(TripSessionViewModel.reportCommand(for: "Report blocked entrance") == .kind(.blockedPath))
+    }
+
+    @Test(arguments: ["Report a problem", "Report.", "report", "I want to report"])
+    func aReportWithoutAKindIsUnknown(_ text: String) {
+        #expect(TripSessionViewModel.reportCommand(for: text) == .unknown)
+    }
+
+    @Test(arguments: [
+        "What does this report say?",
+        "Is there a construction sign?",
+        "reporter on the corner",
+        "Describe surroundings",
+        "",
+    ])
+    func otherWordsAreNotAReport(_ text: String) {
+        #expect(TripSessionViewModel.reportCommand(for: text) == nil)
     }
 
     @Test

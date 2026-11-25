@@ -97,12 +97,7 @@ struct TripPlan: Hashable, Sendable {
     var plannedRoute: PlannedRoute? = nil
 }
 
-struct Volunteer: Identifiable, Hashable, Sendable {
-    let id: String
-    var name: String
-    var availableUntil: String
-    var isOnline: Bool
-}
+// `Volunteer` now lives in Models/Calls/Volunteer.swift.
 
 struct ChatMessage: Identifiable, Hashable, Sendable {
     let id: UUID
@@ -141,6 +136,7 @@ enum VoiceCommandHint: String, CaseIterable, Identifiable, Sendable {
     case describeSurroundings
     case describeLocation
     case pauseTrip
+    case reportProblem
     case callHelp
 
     var id: Self { self }
@@ -151,6 +147,7 @@ enum VoiceCommandHint: String, CaseIterable, Identifiable, Sendable {
         case .describeSurroundings: "Describe surroundings"
         case .describeLocation: "Describe location"
         case .pauseTrip: "Pause trip"
+        case .reportProblem: "Report construction"
         case .callHelp: "Call help"
         }
     }
@@ -161,6 +158,7 @@ enum VoiceCommandHint: String, CaseIterable, Identifiable, Sendable {
         case .describeSurroundings: "Lists what the camera sees around you."
         case .describeLocation: "Tells you the street you're on and what's nearby."
         case .pauseTrip: "Pauses directions until you continue."
+        case .reportProblem: "Reports a problem where you are. Also say report blocked path, report closed entrance, report elevator, or report other."
         case .callHelp: "Starts a video call with an available volunteer."
         }
     }
@@ -171,7 +169,7 @@ enum VoiceCommandHint: String, CaseIterable, Identifiable, Sendable {
         case .repeatWarning: TripAnnouncement(text: SampleContent.pillarWarning, kind: .warning)
         case .describeSurroundings: TripAnnouncement(text: "Lamp post; Open area; Concrete floor; 10 floor building", kind: .info)
         case .describeLocation: TripAnnouncement(text: "Longman Road, next to restaurant Koko Bar, convenient store", kind: .info)
-        case .pauseTrip, .callHelp: nil
+        case .pauseTrip, .reportProblem, .callHelp: nil
         }
     }
 }

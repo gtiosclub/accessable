@@ -17,6 +17,14 @@ struct LocationSample: Codable, Equatable, Sendable {
     var course: Double? = nil
     /// Degrees. `nil` when unknown; the simulator often reports none, so don't require it to use `course`.
     var courseAccuracy: Double? = nil
+    /// Where the reading came from (AR-3).
+    var source: LocationSource = .gps
+}
+
+enum LocationSource: String, Codable, Sendable {
+    case gps
+    /// ARKit geo-tracking, matching what the camera sees to Apple's street imagery.
+    case ar
 }
 
 extension LocationSample {
@@ -35,8 +43,8 @@ extension LocationSample {
     }
 }
 
-/// Where the top of the phone points.
-struct HeadingSample: Codable, Equatable, Sendable {
+/// Where the top of the phone points, from the compass; or, from AR, where the back camera faces.
+struct HeadingSample: Equatable, Sendable {
     /// Degrees clockwise from true north, 0..<360. `nil` when true north is unavailable.
     var trueHeading: Double?
     /// Degrees clockwise from magnetic north, 0..<360.
@@ -44,6 +52,14 @@ struct HeadingSample: Codable, Equatable, Sendable {
     /// Maximum deviation in degrees.
     var accuracy: Double
     var timestamp: Date
+    /// Where the reading came from (AR-4).
+    var source: HeadingSource = .compass
+}
+
+enum HeadingSource: String, Sendable {
+    case compass
+    /// The way the camera faces, from ARKit geo-tracking. True north only, so `magneticHeading` repeats it.
+    case ar
 }
 
 extension HeadingSample {
@@ -120,11 +136,18 @@ struct PlannedRoute: Hashable, Sendable {
 struct RouteOptions: Equatable, Sendable {
     /// Metres per second, greater than 0. Valhalla takes km/h, so its client converts.
     var walkingSpeed: Double = 1.2
+    var excludeLocations: [GeoCoordinate] = []
+    var excludePolygons: [[GeoCoordinate]] = []
+    /// Reports to route around besides those `ReportAwareRoutingService` fetches, such as one that just appeared on
+    /// the route ahead. Only that service reads them; a plain routing service ignores them.
+    var reports: [Report] = []
 }
 
 enum RoutingError: Error, Equatable, Sendable {
     case noRouteFound
     case serverUnavailable
+    /// Valhalla refused the exclusions themselves: too many points, or too long a polygon perimeter.
+    case exclusionsRejected
     /// The request could not be built or was rejected, or the response could not be decoded or failed
     /// `NavigationRoute` validation.
     case invalidResponse
@@ -165,6 +188,11 @@ extension RouteStep {
         return "stairs"
     }
 
+    /// Valhalla capitalizes the step it joins on, "Turn left. Then Turn right.", which reads oddly on screen.
+    static func withLowercaseThen(_ text: String) -> String {
+        text.replacing(/\. Then (\p{Lu})/) { ". Then " + $0.output.1.lowercased() }
+    }
+
     /// The instruction without the compass direction Valhalla starts a route with, which a blind user can't act on:
     /// "Walk north on Ferst Drive." becomes "Follow Ferst Drive.", and "Walk north for 50 meters." becomes "Follow the
     /// path for 50 meters.". Any other instruction is returned as it is.
@@ -190,6 +218,8 @@ struct NavigationRoute: Codable, Hashable, Sendable {
     let estimatedDuration: Double
     /// Metres from the start to each coordinate. Same count as `coordinates`; starts at 0.
     let cumulativeDistances: [Double]
+    /// Active reports this route passes because it couldn't avoid them. Not encoded: reports name their reporter.
+    var unavoidedReports: [Report] = []
 
     enum ValidationError: Error, Equatable, Sendable {
         case tooFewCoordinates

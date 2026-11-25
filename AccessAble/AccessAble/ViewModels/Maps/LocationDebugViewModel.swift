@@ -55,6 +55,7 @@ final class LocationDebugViewModel {
         guard let heading else { return Field(label: "Heading", value: "Unknown", spokenValue: "Unknown") }
         let degrees = Int(heading.degrees.rounded()) % 360
         let source = switch heading.source {
+        case .ar: "AR geo-tracking"
         case .walkingDirection: "walking direction"
         case .compass: "compass"
         }
@@ -73,6 +74,7 @@ final class LocationDebugViewModel {
         let time = sample.timestamp.formatted(date: .omitted, time: .standard)
         return [
             Field(label: "Time", value: time, spokenValue: time),
+            sourceField(sample.source),
             Field(label: "Coordinate", value: "\(latitude), \(longitude)",
                   spokenValue: "latitude \(latitude), longitude \(longitude)"),
             metres("Horizontal accuracy", sample.horizontalAccuracy),
@@ -127,6 +129,14 @@ final class LocationDebugViewModel {
         let now = max(newestReadingTime ?? readingTime, readingTime)
         newestReadingTime = now
         heading = headingEstimator.heading(at: now)
+    }
+
+    private static func sourceField(_ source: LocationSource) -> Field {
+        let value = switch source {
+        case .gps: "GPS"
+        case .ar: "AR geo-tracking"
+        }
+        return Field(label: "Source", value: value, spokenValue: value)
     }
 
     // "Unavailable" rather than 0 or blank, so a missing reading can't be mistaken for a real one
