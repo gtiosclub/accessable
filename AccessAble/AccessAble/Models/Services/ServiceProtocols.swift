@@ -24,18 +24,27 @@ protocol AnnouncementSink: Sendable {
 protocol AnnouncementEngineProtocol: AnnouncementSink {
     /// Events as they are actually delivered (after filtering/dedup). UI uses this for the visual banner.
     func deliveredEvents() -> AsyncStream<AnnouncementEvent>
-    /// The ids of delivered events once they have been said, or cut off, so a listener can wait for the end of
-    /// speech. An event dropped before delivery never comes.
-    func finishedEvents() -> AsyncStream<UUID>
+    /// Delivered events once they have been said, or cut off, so a listener can wait for the end of speech. An event
+    /// dropped before delivery never comes.
+    func finishedEvents() -> AsyncStream<FinishedAnnouncement>
     func repeatLast() async
     func pause() async
     func resume() async
     func updateProfile(_ profile: GuidanceProfile) async
 }
 
+/// An announcement whose speech has ended.
+struct FinishedAnnouncement: Equatable, Sendable {
+    let id: UUID
+    /// Cut off, by a more urgent announcement or a pause, rather than said to the end.
+    let wasInterrupted: Bool
+    /// Nothing else was waiting to be said.
+    let isIdle: Bool
+}
+
 extension AnnouncementEngineProtocol {
     /// Ends at once, for engines that don't speak, so a listener goes on without waiting.
-    func finishedEvents() -> AsyncStream<UUID> {
+    func finishedEvents() -> AsyncStream<FinishedAnnouncement> {
         AsyncStream { $0.finish() }
     }
 }

@@ -46,8 +46,8 @@ struct AnnouncementEngineTests {
 
         await engine.submit(event)
 
-        for await id in finished {
-            #expect(id == event.id)
+        for await end in finished {
+            #expect(end == FinishedAnnouncement(id: event.id, wasInterrupted: false, isIdle: true))
             break
         }
     }

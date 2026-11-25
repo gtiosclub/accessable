@@ -17,19 +17,29 @@ private actor RecordingAnnouncements: AnnouncementEngineProtocol {
 
 /// Records what was said, and says each event only when the test lets it finish.
 private actor HeldAnnouncements: AnnouncementEngineProtocol {
-    private nonisolated let finished = Broadcaster<UUID>()
+    private nonisolated let finished = Broadcaster<FinishedAnnouncement>()
     private var submitted: [AnnouncementEvent] = []
 
     func submit(_ event: AnnouncementEvent) async { submitted.append(event) }
     nonisolated func deliveredEvents() -> AsyncStream<AnnouncementEvent> { AsyncStream { $0.finish() } }
-    nonisolated func finishedEvents() -> AsyncStream<UUID> { finished.stream(bufferingPolicy: .unbounded) }
+    nonisolated func finishedEvents() -> AsyncStream<FinishedAnnouncement> {
+        finished.stream(bufferingPolicy: .unbounded)
+    }
     func repeatLast() async {}
     func pause() async {}
     func resume() async {}
     func updateProfile(_ profile: GuidanceProfile) async {}
 
-    func finishAll() {
-        for event in submitted { finished.send(event.id) }
+    /// Ends what was submitted; `idle` says whether anything else is still waiting to be said.
+    func finishAll(interrupted: Bool = false, idle: Bool = true) {
+        for event in submitted {
+            finished.send(FinishedAnnouncement(id: event.id, wasInterrupted: interrupted, isIdle: idle))
+        }
+    }
+
+    /// Ends something else said after them, leaving nothing waiting.
+    func finishOther() {
+        finished.send(FinishedAnnouncement(id: UUID(), wasInterrupted: false, isIdle: true))
     }
 }
 
@@ -175,7 +185,9 @@ struct TripSessionReportTests {
         reportsAvailable: Bool = true,
         clock: ManualClock = ManualClock(),
         engine: (any AnnouncementEngineProtocol)? = nil,
-        trip: FixedTrip? = nil
+        trip: FixedTrip? = nil,
+        // the simulator's dictation would ask for permission
+        mayListen: @escaping @MainActor () -> Bool = { false }
     ) async -> TripSessionViewModel {
         var services = AppServices.preview
         services.announcements = engine ?? announcements
@@ -191,8 +203,7 @@ struct TripSessionReportTests {
             services: services,
             now: { now },
             clock: clock,
-            // the simulator's dictation would ask for permission
-            mayListenForAnswers: { false }
+            mayListenForAnswers: mayListen
         )
         session.directions?.use(PlannedRoute(destination: library, route: route, requestedAt: now))
         await session.directions?.start()
@@ -715,5 +726,75 @@ struct TripSessionReportTests {
         await session.askAbout(question(askedAt: now.addingTimeInterval(-30)))
 
         #expect(trip.ended.all == ["passed": .notAsked])
+    }
+
+    /// Whether the question tried to listen, in place of the microphone.
+    @MainActor
+    private final class ListenAttempts {
+        var count = 0
+    }
+
+    /// Asks with `engine`, counting when listening would start; it isn't allowed, so dictation never starts.
+    private func askCountingListens(with engine: HeldAnnouncements, clock: ManualClock) async
+        -> (TripSessionViewModel, ListenAttempts) {
+        let attempts = ListenAttempts()
+        let session = await makeSession(walked: 10, reports: CapturingReports(), clock: clock, engine: engine,
+                                        mayListen: { attempts.count += 1; return false })
+        await session.askAbout(question())
+        return (session, attempts)
+    }
+
+    @Test
+    func listeningWaitsForTheQuestionAndAnythingQueuedBehindIt() async throws {
+        let engine = HeldAnnouncements()
+        let (session, attempts) = await askCountingListens(with: engine, clock: ManualClock())
+
+        await engine.finishAll(idle: false)
+        for _ in 0..<100 { await Task.yield() }
+        #expect(attempts.count == 0)
+
+        await engine.finishOther()
+        for _ in 0..<1000 where attempts.count == 0 { await Task.yield() }
+        #expect(attempts.count == 1)
+        #expect(session.reportQuestion != nil)
+    }
+
+    /// A warning cut the question off: listening would fight it for the audio, so there are only the buttons.
+    @Test
+    func aQuestionCutOffIsNotListenedFor() async throws {
+        let engine = HeldAnnouncements()
+        let clock = ManualClock()
+        let (session, attempts) = await askCountingListens(with: engine, clock: clock)
+
+        await engine.finishAll(interrupted: true)
+        try await runOutTheAnswerWindow(on: clock, of: session)
+
+        #expect(attempts.count == 0)
+    }
+
+    @Test
+    func aQuestionNeverSaidIsNotListenedForButStillCloses() async throws {
+        let engine = HeldAnnouncements()
+        let clock = ManualClock()
+        let (session, attempts) = await askCountingListens(with: engine, clock: clock)
+
+        try await clock.waitForSleepers(1)
+        clock.advance(by: TripSessionViewModel.questionSpeechLimit)
+        try await runOutTheAnswerWindow(on: clock, of: session)
+
+        #expect(attempts.count == 0)
+    }
+
+    @Test
+    func noDidntCatchThatOnceTheQuestionHasGone() async throws {
+        let clock = ManualClock()
+        let session = await makeSession(walked: 10, reports: CapturingReports(), clock: clock)
+        await session.askAbout(question())
+        let open = try #require(session.reportQuestion)
+        try await runOutTheAnswerWindow(on: clock, of: session)
+
+        await session.heardAnswer("What's that?", to: open)
+
+        #expect(await announcements.said == ["Is the path still blocked here?"])
     }
 }

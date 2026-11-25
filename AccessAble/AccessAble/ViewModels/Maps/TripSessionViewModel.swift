@@ -57,8 +57,8 @@ final class TripSessionViewModel {
     /// How far ahead on the route a report from Route Blocked Ahead goes: the blockage it
     /// answers is at most this far ahead.
     static let reportAheadDistance = Double(RouteBlockDetector().blockedWithin)
-    /// A report question is listened for this long once said; its buttons show from the start. One not said within
-    /// the limit, dropped or queued behind other speech, is listened for anyway.
+    /// A report question is listened for this long once said and nothing else is waiting; its buttons show from the
+    /// start. One not said within the limit, dropped or queued behind other speech, has only its buttons.
     static let answerWindow: Duration = .seconds(8)
     static let questionSpeechLimit: Duration = .seconds(15)
     /// Seconds; a question older than this is from before the screen was listening, such as an earlier trip's.
@@ -300,32 +300,46 @@ final class TripSessionViewModel {
         }
         let open = OpenReportQuestion(reportID: report.id, text: report.kind.stillThereQuestion)
         reportQuestion = open
-        let listens = mayListenForAnswers()
         let event = AnnouncementEvent(category: .system, priority: .high, text: open.text, source: .userInteraction)
         // before the submit, so its end can't be missed
         let finished = services.announcements.finishedEvents()
         questionTask = Task { [weak self, clock] in
-            await Self.waitUntilSaid(event.id, finished: finished, clock: clock)
+            let quiet = await Self.waitForQuiet(after: event.id, finished: finished, clock: clock)
             guard !Task.isCancelled else { return }
-            if listens { await self?.listenForAnswer(to: open) }
+            // the buttons still show; listening while something else is said would fight it for the audio
+            if quiet, self?.mayListenForAnswers() == true { await self?.listenForAnswer(to: open) }
             do { try await clock.sleep(for: Self.answerWindow) } catch { return }
             self?.end(open, outcome: .unanswered)
         }
         await services.announcements.submit(event)
     }
 
-    /// Returns once the question has been said, or after `questionSpeechLimit` if it was dropped or is still queued:
-    /// listening sooner would switch the audio session over and cut the question off.
-    private static func waitUntilSaid(
-        _ id: UUID, finished: AsyncStream<UUID>, clock: any Clock<Duration>
-    ) async {
-        await withTaskGroup(of: Void.self) { group in
+    /// Waits for the question to be said and nothing else to be waiting, since listening switches the audio session
+    /// over and would cut speech off. Returns whether it may listen: false when the question was cut off, as for a
+    /// warning, or when `questionSpeechLimit` passed first, with the question dropped or still waiting.
+    private static func waitForQuiet(
+        after id: UUID, finished: AsyncStream<FinishedAnnouncement>, clock: any Clock<Duration>
+    ) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
             group.addTask {
-                for await said in finished where said == id { return }
+                var said = false
+                for await end in finished {
+                    if end.id == id {
+                        guard !end.wasInterrupted else { return false }
+                        said = true
+                    }
+                    if said, end.isIdle { return true }
+                }
+                // an engine that doesn't speak
+                return true
             }
-            group.addTask { try? await clock.sleep(for: questionSpeechLimit) }
-            await group.next()
+            group.addTask {
+                try? await clock.sleep(for: questionSpeechLimit)
+                return false
+            }
+            let quiet = await group.next() ?? false
             group.cancelAll()
+            return quiet
         }
     }
 
@@ -398,8 +412,8 @@ final class TripSessionViewModel {
             return
         }
         log.notice("Heard something other than an answer to a report question")
-        guard !answeredReportIDs.contains(question.reportID),
-              missedAnswerIDs.insert(question.reportID).inserted else { return }
+        // not once the question has gone from the screen
+        guard reportQuestion == question, missedAnswerIDs.insert(question.reportID).inserted else { return }
         await say("Didn't catch that.", category: .system)
     }
 
@@ -540,6 +554,8 @@ final class TripSessionViewModel {
             dictation.stop()
             return
         }
+        // the question's late words are done with: what the user starts now is their own
+        listeningQuestion = nil
         await startListening(armingSilence: true)
     }
 
