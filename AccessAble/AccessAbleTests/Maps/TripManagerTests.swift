@@ -2029,6 +2029,32 @@ struct TripManagerReportTests {
         #expect(await spokenAboutReports(harness) == [reportReroute])
     }
 
+    /// A report too near to route around, found with one that isn't, is warned of before the reroute, and the reroute
+    /// tries to avoid it too.
+    @Test
+    func aNearReportWithAReroutedOneIsWarnedOfFirst() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let near = report("near", at: TripWalk.point(on: try cornerRoute(), along: walked20 + 15))
+        let far = report("far", at: TripWalk.point(on: try cornerRoute(), along: 60))
+        // the routing couldn't avoid the near one
+        var passingNear = try eastRoute(from: origin)
+        passingNear.unavoidedReports = [near]
+        let harness = try Harness(reroutes: [.success(passingNear)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.reports.publish([near, far])
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.options.map { Set($0.reports.map(\.id)) } == [["near", "far"]])
+        await harness.router.respond()
+
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        #expect(await spokenAboutReports(harness) == [
+            "New obstacle reported just ahead.", reportReroute,
+            "New route. A reported obstacle is on this route. \(setOff)",
+        ])
+    }
+
     /// One the route was planned around and warned of at the start isn't new.
     @Test
     func aReportTheRouteAlreadyWarnedOfDoesntReroute() async throws {

@@ -548,10 +548,16 @@ actor TripManager: TripStateProviding {
                 actedOnReportIDs.formUnion((avoidable + warned).map(\.id))
                 // said by the reroute's task before it asks, so its answer can't come first; and in flight from here,
                 // so a fix or snapshot meanwhile waits for it
-                let announcement = maneuver("New obstacle reported ahead. Finding a new route.", .high,
-                                            haptic: .attention, expiresIn: 15, key: "report-reroute-\(avoidable[0].id)")
+                var announcements = warned.first.map { near in
+                    [maneuver("New obstacle reported just ahead.", .high, haptic: .attention, expiresIn: 10,
+                              key: "report-warning-\(near.id)")]
+                } ?? []
+                announcements.append(maneuver("New obstacle reported ahead. Finding a new route.", .high,
+                                              haptic: .attention, expiresIn: 15,
+                                              key: "report-reroute-\(avoidable[0].id)"))
+                // the near ones too, so a new route that passes them warns of them
                 requestReroute(from: origin, generation: generation, requested: true, avoiding: avoidable,
-                               announcing: [announcement])
+                               alsoAvoiding: warned, announcing: announcements)
                 return
             }
         }
@@ -606,9 +612,11 @@ actor TripManager: TripStateProviding {
     /// - Parameters:
     ///   - requested: Asked for by the user or for new reports, so it lands even while still on the route.
     ///   - triggers: New reports ahead to route around. A reroute for them counts apart from the off-route ones.
+    ///   - others: Reports the route should avoid if it can, without being for them.
     ///   - announcements: Said, in order, before the request goes out.
     private func requestReroute(from origin: GeoCoordinate, generation: Int, requested: Bool = false,
-                                avoiding triggers: [Report] = [], announcing announcements: [AnnouncementEvent] = []) {
+                                avoiding triggers: [Report] = [], alsoAvoiding others: [Report] = [],
+                                announcing announcements: [AnnouncementEvent] = []) {
         guard let destination else { return }
         if triggers.isEmpty { rerouteCount += 1 } else { reportRerouteCount += 1 }
         lastRerouteRequest = now()
@@ -620,7 +628,7 @@ actor TripManager: TripStateProviding {
             let result: Result<NavigationRoute, any Error>
             do {
                 result = .success(try await routing.route(from: origin, to: destination.coordinate,
-                                                          options: RouteOptions(reports: triggers)))
+                                                          options: RouteOptions(reports: triggers + others)))
             } catch {
                 result = .failure(error)
             }
