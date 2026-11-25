@@ -293,7 +293,7 @@ struct TripSessionReportTests {
 
         #expect(await reports.submitted.isEmpty)
         #expect(await announcements.said == [
-            "What's the problem? Say report construction, blocked path, closed entrance, elevator, or other."
+            "What's the problem? Say report, then the problem: report construction, report blocked path, report closed entrance, report elevator, or report other."
         ])
         #expect(await commands.interpreted.isEmpty)
     }

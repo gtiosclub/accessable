@@ -111,6 +111,9 @@ struct TripSessionViewModelTests {
         ("i need to report the elevator", .elevatorOut),
         ("Can I report something else?", .other),
         ("REPORT   construction", .construction),
+        ("Okay, report construction", .construction),
+        ("I would like to report a blocked path", .blockedPath),
+        ("Report the elevator door is closed", .elevatorOut),
     ])
     func reportCommandsNameTheirKind(_ text: String, kind: ReportKind) {
         #expect(TripSessionViewModel.reportCommand(for: text) == .kind(kind))
