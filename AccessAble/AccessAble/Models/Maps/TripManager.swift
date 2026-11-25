@@ -81,6 +81,8 @@ actor TripManager: TripStateProviding {
     private var reportRerouteCount = 0
     /// Bumped on each subscription to reports, so a snapshot from a replaced one is dropped.
     private var reportSubscription = 0
+    /// A report reroute kept the route, or failed, while paused: said on resuming, since the route still passes it.
+    private var unavoidedReportOnResume = false
 
     // the public routing server is shared and slow to recover; this spaces requests and bounds a bad walk
     private static let rerouteInterval: TimeInterval = 30
@@ -198,6 +200,7 @@ actor TripManager: TripStateProviding {
         nearbyReports = []
         actedOnReportIDs = []
         reportRerouteCount = 0
+        unavoidedReportOnResume = false
         routes.send(route)
         publish(at: now())
         recorder?.tripStarted(at: now())
@@ -252,6 +255,10 @@ actor TripManager: TripStateProviding {
         publish(at: now())
         let guidance = resumeAnnouncement()
         await submit(confirmation("Trip resumed."))
+        if self.generation == generation, phase == .active, unavoidedReportOnResume {
+            unavoidedReportOnResume = false
+            await submit(unavoidedReportAnnouncement())
+        }
         // a reroute that landed meanwhile has its own announcement, and this one is about the old route
         guard self.generation == generation, routeVersion == version, phase == .active, let guidance else { return }
         await submit(guidance)
@@ -271,6 +278,7 @@ actor TripManager: TripStateProviding {
         destination = nil
         nearbyReports = []
         actedOnReportIDs = []
+        unavoidedReportOnResume = false
         routes.send(nil)
         states.send(TripState(phase: .planning, updatedAt: now()))
         await setTripTracking(false)
@@ -661,11 +669,14 @@ actor TripManager: TripStateProviding {
             // passing every report it was for, it is no better than the route the user is already following
             let unavoided = Set(newRoute.unavoidedReports.map(\.id))
             if !triggers.isEmpty, !needsReroute, triggers.allSatisfy({ unavoided.contains($0.id) }) {
-                guard phase == .active else { return }
-                await submit(maneuver(Self.unavoidedReportSpeech, .high, haptic: .attention, expiresIn: 10,
-                                      key: "report-unavoided"))
+                guard phase == .active else {
+                    unavoidedReportOnResume = true
+                    return
+                }
+                await submit(unavoidedReportAnnouncement())
                 return
             }
+            unavoidedReportOnResume = false
             routeVersion += 1
             hasRerouted = true
             route = newRoute
@@ -685,20 +696,32 @@ actor TripManager: TripStateProviding {
             await submit(maneuver("New route. " + Self.reportWarning(on: newRoute) + departure(on: newRoute), .high,
                                   expiresIn: 15, key: "reroute"))
         case .failure(let error):
-            guard !(error is CancellationError), phase == .active else { return }
+            guard !(error is CancellationError) else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
+            if requested, !needsReroute, !triggers.isEmpty {
+                // still on the route that passes it
+                guard phase == .active else {
+                    unavoidedReportOnResume = true
+                    return
+                }
+                await submit(unavoidedReportAnnouncement())
+                return
+            }
+            guard phase == .active else { return }
             let text = if requested, !needsReroute {
                 // still on the route, so there is nothing to walk back to
-                triggers.isEmpty ? "Couldn't get a new route. Keep following the current one."
-                    : Self.unavoidedReportSpeech
+                "Couldn't get a new route. Keep following the current one."
             } else if rerouteCount < Self.maximumReroutes {
                 "Couldn't get a new route. Walk back the way you came."
             } else {
                 "Off route. End the trip and choose your destination again."
             }
-            let key = text == Self.unavoidedReportSpeech ? "report-unavoided" : "reroute-failed"
-            await submit(maneuver(text, .high, haptic: .attention, expiresIn: 10, key: key))
+            await submit(maneuver(text, .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
         }
+    }
+
+    private func unavoidedReportAnnouncement() -> AnnouncementEvent {
+        maneuver(Self.unavoidedReportSpeech, .high, haptic: .attention, expiresIn: 10, key: "report-unavoided")
     }
 
     // MARK: Timed announcements
