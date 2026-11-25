@@ -4,6 +4,12 @@ import os
 
 private let log = Logger(subsystem: "AccessAble", category: "TripSession")
 
+/// A report question on screen, while its answer is waited for.
+struct OpenReportQuestion: Equatable, Sendable {
+    let reportID: String
+    let text: String
+}
+
 /// Owner: Maps (2.x) + Interaction (3.x). State for the redesigned trip screen.
 ///
 /// With services (the app), it walks a real trip: a Valhalla route from where the user is to
@@ -36,7 +42,8 @@ final class TripSessionViewModel {
     private(set) var isAnswering = false
     /// True while Ask AI re-checks fresh frames for something not in view yet.
     private(set) var isLookingAgain = false
-    private(set) var pendingReportConfirmation: Report?
+    /// A question about a report just walked past, open for its answer by voice or the on-screen buttons.
+    private(set) var reportQuestion: OpenReportQuestion?
     let dictation = SpeechDictation()
     /// Opens Call Help; set by the screen, which owns navigation.
     @ObservationIgnored var onCallHelp: (() -> Void)?
@@ -50,6 +57,11 @@ final class TripSessionViewModel {
     /// How far ahead on the route a report from Route Blocked Ahead goes: the blockage it
     /// answers is at most this far ahead.
     static let reportAheadDistance = Double(RouteBlockDetector().blockedWithin)
+    /// A report question is said, then listened for this long; its buttons show for both.
+    static let questionSpeechAllowance: Duration = .seconds(3)
+    static let answerWindow: Duration = .seconds(8)
+    /// Seconds; a question older than this is from before the screen was listening, such as an earlier trip's.
+    static let questionFreshness: TimeInterval = 2
 
     @ObservationIgnored private let services: AppServices?
     @ObservationIgnored private let now: () -> Date
@@ -68,7 +80,12 @@ final class TripSessionViewModel {
     /// Whether this trip can geo-track, asked once: the view model lives for one trip, so the
     /// screen coming back doesn't wait on Apple again.
     @ObservationIgnored private var canGeoTrack: Bool?
-    @ObservationIgnored private var presentedReportConfirmationIDs: Set<String> = []
+    @ObservationIgnored private let clock: any Clock<Duration>
+    @ObservationIgnored private let mayListenForAnswers: @MainActor () -> Bool
+    @ObservationIgnored private var questionTask: Task<Void, Never>?
+    /// The listening the open question started, rather than the user.
+    @ObservationIgnored private var listensForAnswer = false
+    @ObservationIgnored private var answeredReportIDs: Set<String> = []
     /// The camera picture waits for this. Its view takes its own hold on the camera, and a hold taken before the
     /// geo-tracking ask starts the session on world tracking, which a running session keeps for the whole trip.
     private(set) var isCameraReady = false
@@ -77,17 +94,24 @@ final class TripSessionViewModel {
     ///   - services: The app's services, for a real trip; nil for front end only.
     ///   - warningLifetime, infoLifetime: How long a red or blue bar stays before it fades.
     ///   - now: The time, for how old a location fix is and when a report is made.
+    ///   - clock: Times a report question's answer window.
+    ///   - mayListenForAnswers: Whether a report question may switch on the microphone: only once speech and the
+    ///     microphone are allowed, so a question never brings up a permission prompt mid-walk.
     init(
         plan: TripPlan,
         services: AppServices? = nil,
         announcements: [TripAnnouncement] = [],
         warningLifetime: Duration = .seconds(8),
         infoLifetime: Duration = .seconds(12),
-        now: @escaping () -> Date = { .now }
+        now: @escaping () -> Date = { .now },
+        clock: any Clock<Duration> = ContinuousClock(),
+        mayListenForAnswers: @escaping @MainActor () -> Bool = { SpeechDictation.isAllowed }
     ) {
         self.plan = plan
         self.services = services
         self.now = now
+        self.clock = clock
+        self.mayListenForAnswers = mayListenForAnswers
         self.directions = services.map { TripViewModel(services: $0, now: now) }
         self.warningLifetime = warningLifetime
         self.infoLifetime = infoLifetime
@@ -168,7 +192,7 @@ final class TripSessionViewModel {
             group.addTask { await self.watchForBlockedPath(services.scene) }
             group.addTask {
                 for await question in services.trip.reportQuestions() {
-                    await self.receiveReportConfirmation(question.report)
+                    await self.askAbout(question)
                 }
             }
         }
@@ -250,38 +274,99 @@ final class TripSessionViewModel {
         }
     }
 
-    private func receiveReportConfirmation(_ report: Report) async {
-        guard pendingReportConfirmation == nil,
-              !presentedReportConfirmationIDs.contains(report.id),
-              let services,
-              let user = await services.auth.currentUser(),
-              user.id != report.reporterID,
-              report.expiresAt > .now else {
-            return
-        }
+    // MARK: - Report questions
 
-        presentedReportConfirmationIDs.insert(report.id)
-        pendingReportConfirmation = report
-        await say("Is the path still blocked here?", category: .system)
+    /// Asks the question aloud and opens it: the screen shows Yes and No, and once it has been said the microphone
+    /// listens for the answer, unless speech or the microphone isn't allowed. No answer in time is no vote. Internal
+    /// so tests can ask without a trip.
+    func askAbout(_ question: ReportQuestion) async {
+        let report = question.report
+        guard let services, isReportingAvailable, reportQuestion == nil,
+              directions?.tripState.phase == .active,
+              now().timeIntervalSince(question.askedAt) <= Self.questionFreshness,
+              !answeredReportIDs.contains(report.id),
+              let user = await services.auth.currentUser(), user.id != report.reporterID,
+              // checked again after the await
+              reportQuestion == nil else { return }
+        let open = OpenReportQuestion(reportID: report.id, text: report.kind.stillThereQuestion)
+        reportQuestion = open
+        let listens = mayListenForAnswers()
+        questionTask = Task { [weak self, clock] in
+            do {
+                try await clock.sleep(for: Self.questionSpeechAllowance)
+                if listens { await self?.listenForAnswer(to: open) }
+                try await clock.sleep(for: Self.answerWindow)
+            } catch {
+                return
+            }
+            self?.close(open)
+        }
+        await say(open.text, category: .system)
     }
 
-    func confirmPendingReport(isStillPresent: Bool) async {
-        guard let report = pendingReportConfirmation, let services else { return }
+    /// Listens for the answer unless the user is already speaking. Nothing heard isn't said aloud, unlike a command.
+    private func listenForAnswer(to question: OpenReportQuestion) async {
+        guard reportQuestion == question, !dictation.isRecording else { return }
+        listensForAnswer = true
+        await startListening(armingSilence: false)
+        if !dictation.isRecording { listensForAnswer = false }
+    }
 
+    /// Ends the question, and the listening it started, when no answer came in time.
+    private func close(_ question: OpenReportQuestion) {
+        guard reportQuestion == question else { return }
+        reportQuestion = nil
+        stopListeningForAnswer()
+    }
+
+    private func stopListeningForAnswer() {
+        guard listensForAnswer else { return }
+        listensForAnswer = false
+        silenceTask?.cancel()
+        dictation.cancel()
+        heard = nil
+    }
+
+    /// Votes on the question's report, by the buttons or a spoken answer. The question is passed in rather than read
+    /// back, so the vote is for the report that was asked about even if the question closes meanwhile.
+    func answer(_ question: OpenReportQuestion, isStillPresent: Bool) async {
+        guard let services, answeredReportIDs.insert(question.reportID).inserted else { return }
+        if reportQuestion == question {
+            reportQuestion = nil
+            questionTask?.cancel()
+            questionTask = nil
+        }
+        stopListeningForAnswer()
         do {
-            try await services.reports.confirm(report.id, isStillPresent: isStillPresent)
-            pendingReportConfirmation = nil
+            let extended = try await services.reports.confirm(question.reportID, isStillPresent: isStillPresent)
             await say(
-                isStillPresent ? "Thanks. The report has been extended." : "Thanks. Your confirmation has been recorded.",
+                !isStillPresent ? "Thanks." : extended ? "Thanks, the report is extended." : "Thanks, the report is confirmed.",
                 category: .system
             )
+        } catch ReportServiceError.rateLimited {
+            await say("Wait a minute before answering again.", category: .system)
         } catch {
-            await say("I couldn't record that confirmation. Please try again later.", category: .system)
+            log.error("Report vote failed: \(String(describing: error), privacy: .public)")
+            await say("Couldn't send your answer.", category: .system)
         }
     }
 
-    func dismissPendingReportConfirmation() {
-        pendingReportConfirmation = nil
+    /// true for yes, false for no, or nil when the words aren't an answer. Speech adds punctuation, so it is ignored.
+    static func reportAnswer(for text: String) -> Bool? {
+        let words = text.lowercased()
+            .replacingOccurrences(of: "\u{2019}", with: "'")
+            .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'")).inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        if ["yes", "yeah", "yep", "still there", "still blocked", "it's still there", "it's still blocked",
+            "yes it is", "yes still blocked", "yes still there"].contains(words) {
+            return true
+        }
+        if ["no", "nope", "it's clear", "its clear", "it is clear", "clear", "gone", "it's gone", "no it's clear",
+            "no it's gone", "not anymore"].contains(words) {
+            return false
+        }
+        return nil
     }
 
     // MARK: - Commands
@@ -350,19 +435,35 @@ final class TripSessionViewModel {
             return
         }
         if dictation.isRecording {
+            // the user's own now, so it isn't cut off when the question closes
+            listensForAnswer = false
             dictation.stop()
             return
         }
+        await startListening(armingSilence: true)
+    }
+
+    /// - Parameter armingSilence: Whether listening stops after a pause from the start, or only once words come.
+    private func startListening(armingSilence: Bool) async {
         voiceTask?.cancel()
         heard = ""
         dictation.onTranscript = { [weak self] text, isFinal in self?.didHear(text, isFinal: isFinal) }
         dictation.onError = { [weak self] message in
             guard let self else { return }
             heard = nil
+            guard !listensForAnswer else {
+                listensForAnswer = false
+                log.notice("No answer heard to a report question: \(message, privacy: .public)")
+                return
+            }
             Task { await self.say(message, category: .system) }
         }
         await dictation.start()
-        if dictation.isRecording { armSilenceTimer() } else { heard = nil }
+        if !dictation.isRecording {
+            heard = nil
+        } else if armingSilence {
+            armSilenceTimer()
+        }
     }
 
     private func didHear(_ text: String, isFinal: Bool) {
@@ -373,6 +474,7 @@ final class TripSessionViewModel {
         }
         silenceTask?.cancel()
         heard = nil
+        listensForAnswer = false
         voiceTask = Task { await self.respond(to: text) }
     }
 
@@ -484,6 +586,10 @@ final class TripSessionViewModel {
     }
 
     private func stopListening() {
+        questionTask?.cancel()
+        questionTask = nil
+        reportQuestion = nil
+        listensForAnswer = false
         silenceTask?.cancel()
         voiceTask?.cancel()
         dictation.cancel()
@@ -498,18 +604,10 @@ final class TripSessionViewModel {
     func respond(to text: String) async {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let services, !text.isEmpty else { return }
-        if pendingReportConfirmation != nil {
-            let answer = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
-            if ["yes", "yeah", "yep", "still blocked", "it is"].contains(answer)
-                || answer.hasPrefix("yes ") || answer.hasPrefix("yeah ") {
-                await confirmPendingReport(isStillPresent: true)
-                return
-            }
-            if ["no", "nope", "not blocked", "it is clear", "clear"].contains(answer)
-                || answer.hasPrefix("no ") || answer.hasPrefix("nope ") {
-                await confirmPendingReport(isStillPresent: false)
-                return
-            }
+        // only while a question is open: otherwise "no" is a question for Ask AI like any other
+        if let question = reportQuestion, let isStillPresent = Self.reportAnswer(for: text) {
+            await answer(question, isStillPresent: isStillPresent)
+            return
         }
         if let report = Self.reportCommand(for: text) {
             switch report {

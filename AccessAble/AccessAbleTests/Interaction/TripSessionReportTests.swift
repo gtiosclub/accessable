@@ -14,15 +14,25 @@ private actor RecordingAnnouncements: AnnouncementEngineProtocol {
     func updateProfile(_ profile: GuidanceProfile) async {}
 }
 
-/// Keeps every report submitted; given a failure, throws it instead.
+/// Keeps every report submitted and vote sent; given a failure, throws it instead.
 private actor CapturingReports: ReportService {
     struct Offline: Error {}
+    struct Vote: Equatable {
+        let reportID: String
+        let isStillPresent: Bool
+    }
 
     let failure: (any Error)?
+    let voteFailure: (any Error)?
+    /// What a vote says it did to the expiry.
+    let extends: Bool
     private(set) var submitted: [Report] = []
+    private(set) var votes: [Vote] = []
 
-    init(failure: (any Error)? = nil) {
+    init(failure: (any Error)? = nil, voteFailure: (any Error)? = nil, extends: Bool = false) {
         self.failure = failure
+        self.voteFailure = voteFailure
+        self.extends = extends
     }
 
     func submit(_ report: Report) async throws {
@@ -31,7 +41,11 @@ private actor CapturingReports: ReportService {
     }
 
     func reports(near coordinate: GeoCoordinate, radius: Double) async throws -> [Report] { submitted }
-    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool { false }
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool {
+        votes.append(Vote(reportID: reportID, isStillPresent: isStillPresent))
+        if let voteFailure { throw voteFailure }
+        return extends
+    }
     nonisolated func reportChanges(near coordinate: GeoCoordinate, radius: Double) -> AsyncStream<[Report]> {
         AsyncStream { $0.finish() }
     }
@@ -117,7 +131,8 @@ struct TripSessionReportTests {
         walked: Double? = nil,
         reports: CapturingReports,
         signedIn: Bool = true,
-        reportsAvailable: Bool = true
+        reportsAvailable: Bool = true,
+        clock: ManualClock = ManualClock()
     ) async -> TripSessionViewModel {
         var services = AppServices.preview
         services.announcements = announcements
@@ -133,7 +148,10 @@ struct TripSessionReportTests {
         let session = TripSessionViewModel(
             plan: TripPlan(place: SampleContent.places[0], route: nil, isRecording: false),
             services: services,
-            now: { now }
+            now: { now },
+            clock: clock,
+            // the simulator's dictation would ask for permission
+            mayListenForAnswers: { false }
         )
         session.directions?.use(PlannedRoute(destination: library, route: route, requestedAt: now))
         await session.directions?.start()
@@ -334,6 +352,207 @@ struct TripSessionReportTests {
     func theReportCommandIsLeftToTheScreen() async {
         let session = await makeSession(reports: CapturingReports())
         #expect(!session.run(.reportProblem))
+        #expect(await announcements.said.isEmpty)
+    }
+
+    // MARK: Report questions
+
+    private func question(
+        _ kind: ReportKind = .blockedPath, by reporter: String = "neighbour", askedAt: Date = now
+    ) -> ReportQuestion {
+        ReportQuestion(report: Report(
+            id: "passed", kind: kind, coordinate: start, createdAt: now.addingTimeInterval(-3600),
+            expiresAt: now.addingTimeInterval(3600), reporterID: reporter
+        ), askedAt: askedAt)
+    }
+
+    /// The question's window runs out: first its speech, then the wait for an answer.
+    private func runOutTheAnswerWindow(on clock: ManualClock, of session: TripSessionViewModel) async throws {
+        try await clock.waitForSleepers(1)
+        clock.advance(by: TripSessionViewModel.questionSpeechAllowance)
+        try await clock.waitForSleepers(1)
+        clock.advance(by: TripSessionViewModel.answerWindow)
+        while session.reportQuestion != nil { await Task.yield() }
+    }
+
+    @Test(arguments: [
+        (ReportKind.blockedPath, "Is the path still blocked here?"),
+        (.construction, "Is the path still blocked here?"),
+        (.closedEntrance, "Is the entrance still closed?"),
+        (.elevatorOut, "Is the elevator still out of service?"),
+        (.other, "Is the reported problem still there?"),
+    ])
+    func aQuestionIsWordedForItsKind(_ kind: ReportKind, _ text: String) async {
+        let session = await makeSession(walked: 10, reports: CapturingReports())
+
+        await session.askAbout(question(kind))
+
+        #expect(await announcements.said == [text])
+        #expect(session.reportQuestion == OpenReportQuestion(reportID: "passed", text: text))
+        // buttons only: listening isn't allowed here
+        #expect(!session.isListening)
+    }
+
+    @Test
+    func aYesButtonVotesAndSaysTheReportIsConfirmed() async throws {
+        let reports = CapturingReports()
+        let session = await makeSession(walked: 10, reports: reports)
+        await session.askAbout(question())
+        let open = try #require(session.reportQuestion)
+
+        await session.answer(open, isStillPresent: true)
+
+        #expect(await reports.votes == [.init(reportID: "passed", isStillPresent: true)])
+        #expect(await announcements.said.last == "Thanks, the report is confirmed.")
+        #expect(session.reportQuestion == nil)
+    }
+
+    @Test
+    func aYesThatExtendsTheReportSaysSo() async throws {
+        let session = await makeSession(walked: 10, reports: CapturingReports(extends: true))
+        await session.askAbout(question())
+
+        await session.answer(try #require(session.reportQuestion), isStillPresent: true)
+
+        #expect(await announcements.said.last == "Thanks, the report is extended.")
+    }
+
+    @Test
+    func aNoButtonVotesAndSaysThanks() async throws {
+        let reports = CapturingReports()
+        let session = await makeSession(walked: 10, reports: reports)
+        await session.askAbout(question())
+
+        await session.answer(try #require(session.reportQuestion), isStillPresent: false)
+
+        #expect(await reports.votes == [.init(reportID: "passed", isStillPresent: false)])
+        #expect(await announcements.said.last == "Thanks.")
+    }
+
+    @Test
+    func answeringTwiceVotesOnce() async throws {
+        let reports = CapturingReports()
+        let session = await makeSession(walked: 10, reports: reports)
+        await session.askAbout(question())
+        let open = try #require(session.reportQuestion)
+
+        await session.answer(open, isStillPresent: true)
+        await session.answer(open, isStillPresent: false)
+
+        #expect(await reports.votes.count == 1)
+    }
+
+    /// A button pressed as the window closes still votes for the report it showed.
+    @Test
+    func aButtonPressedAsTheQuestionClosesStillVotes() async throws {
+        let reports = CapturingReports()
+        let clock = ManualClock()
+        let session = await makeSession(walked: 10, reports: reports, clock: clock)
+        await session.askAbout(question())
+        let open = try #require(session.reportQuestion)
+        try await runOutTheAnswerWindow(on: clock, of: session)
+
+        await session.answer(open, isStillPresent: true)
+
+        #expect(await reports.votes == [.init(reportID: "passed", isStillPresent: true)])
+    }
+
+    @Test(arguments: ["Yes.", "yeah", "Yep!", "Still there.", "It's still blocked"])
+    func aSpokenYesInTheWindowVotes(_ words: String) async {
+        let reports = CapturingReports()
+        let session = await makeSession(walked: 10, reports: reports)
+        await session.askAbout(question())
+
+        await session.respond(to: words)
+
+        #expect(await reports.votes == [.init(reportID: "passed", isStillPresent: true)])
+        #expect(await commands.interpreted.isEmpty)
+    }
+
+    @Test(arguments: ["No.", "nope", "It's clear.", "Gone"])
+    func aSpokenNoInTheWindowVotes(_ words: String) async {
+        let reports = CapturingReports()
+        let session = await makeSession(walked: 10, reports: reports)
+        await session.askAbout(question())
+
+        await session.respond(to: words)
+
+        #expect(await reports.votes == [.init(reportID: "passed", isStillPresent: false)])
+    }
+
+    @Test
+    func otherWordsInTheWindowAreNotAnAnswer() async {
+        let reports = CapturingReports()
+        let session = await makeSession(walked: 10, reports: reports)
+        await session.askAbout(question())
+
+        await session.respond(to: "Yes, what's that building?")
+
+        #expect(await reports.votes.isEmpty)
+        #expect(await commands.interpreted == ["Yes, what's that building?"])
+    }
+
+    @Test
+    func noAnswerIsNoVoteAndAYesAfterTheWindowIsJustSpeech() async throws {
+        let reports = CapturingReports()
+        let clock = ManualClock()
+        let session = await makeSession(walked: 10, reports: reports, clock: clock)
+        await session.askAbout(question())
+
+        try await runOutTheAnswerWindow(on: clock, of: session)
+        await session.respond(to: "Yes")
+
+        #expect(await reports.votes.isEmpty)
+        #expect(await commands.interpreted == ["Yes"])
+        // the question, then Ask AI's reply, and nothing about the report
+        #expect(await announcements.said == ["Is the path still blocked here?", "An answer."])
+    }
+
+    @Test(arguments: [
+        (ReportServiceError.rateLimited, "Wait a minute before answering again."),
+        (.unavailable, "Couldn't send your answer."),
+        (.permissionDenied, "Couldn't send your answer."),
+        (.notSignedIn, "Couldn't send your answer."),
+    ])
+    func aFailedVoteSaysWhy(_ failure: ReportServiceError, _ text: String) async throws {
+        let session = await makeSession(walked: 10, reports: CapturingReports(voteFailure: failure))
+        await session.askAbout(question())
+
+        await session.answer(try #require(session.reportQuestion), isStillPresent: true)
+
+        #expect(await announcements.said.last == text)
+    }
+
+    @Test
+    func theUsersOwnReportIsNotAskedAbout() async {
+        let session = await makeSession(walked: 10, reports: CapturingReports())
+
+        await session.askAbout(question(by: PlaceholderAuthService.sampleUser.id))
+
+        #expect(session.reportQuestion == nil)
+        #expect(await announcements.said.isEmpty)
+    }
+
+    /// One from before the screen was listening, such as the last trip's.
+    @Test
+    func anOldQuestionIsNotAsked() async {
+        let session = await makeSession(walked: 10, reports: CapturingReports())
+
+        await session.askAbout(question(askedAt: now.addingTimeInterval(-30)))
+
+        #expect(session.reportQuestion == nil)
+        #expect(await announcements.said.isEmpty)
+    }
+
+    @Test
+    func noQuestionWhileReportingIsUnavailableOrTheTripIsntUnderway() async {
+        let unavailable = await makeSession(walked: 10, reports: CapturingReports(), reportsAvailable: false)
+        await unavailable.askAbout(question())
+        let planning = await makeSession(reports: CapturingReports())
+        await planning.askAbout(question())
+
+        #expect(unavailable.reportQuestion == nil)
+        #expect(planning.reportQuestion == nil)
         #expect(await announcements.said.isEmpty)
     }
 }

@@ -55,6 +55,11 @@ struct ActiveTripView: View {
 
                 AnnouncementStack(announcements: session.announcements)
                     .padding(.horizontal, 24)
+                if let question = session.reportQuestion {
+                    reportQuestionBar(question)
+                        .padding(.horizontal, 24)
+                        .transition(.opacity)
+                }
                 if let state = voiceState {
                     voiceCaption(state)
                         .padding(.horizontal, 24)
@@ -113,6 +118,7 @@ struct ActiveTripView: View {
             session.showsMap.toggle()
         }
         .animation(.easeInOut(duration: 0.2), value: voiceState)
+        .animation(.easeInOut(duration: 0.2), value: session.reportQuestion)
         .toolbar(.hidden, for: .navigationBar)
         .task {
             session.onCallHelp = { router.push(.callHelp) }
@@ -123,28 +129,6 @@ struct ActiveTripView: View {
             // when that is on; posting it again would read it twice.
             guard let announcement, !session.isSpokenByEngine else { return }
             AccessibilityNotification.Announcement(announcement.text).post()
-        }
-        .confirmationDialog(
-            "Is the path still blocked here?",
-            isPresented: Binding(
-                get: { session.pendingReportConfirmation != nil },
-                set: { shown in
-                    if !shown { session.dismissPendingReportConfirmation() }
-                }
-            ),
-            titleVisibility: .visible
-        ) {
-            Button("Yes, it is still blocked") {
-                Task { await session.confirmPendingReport(isStillPresent: true) }
-            }
-            Button("No, the path is clear", role: .destructive) {
-                Task { await session.confirmPendingReport(isStillPresent: false) }
-            }
-            Button("Not now", role: .cancel) {
-                session.dismissPendingReportConfirmation()
-            }
-        } message: {
-            Text("Your answer helps keep route reports accurate.")
         }
         .confirmationDialog(
             "What kind of problem?",
@@ -233,6 +217,36 @@ struct ActiveTripView: View {
         .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.white.opacity(0.4)))
         // VoiceOver users hear the reply when it comes; the live words would talk over them.
         .accessibilityHidden(true)
+    }
+
+    /// Yes and No for the report question that was just said, while its answer is waited for. Not a dialog, so the
+    /// trip screen stays usable and the question goes away by itself.
+    private func reportQuestionBar(_ question: OpenReportQuestion) -> some View {
+        VStack(spacing: 10) {
+            Text(question.text)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                // said aloud already; the buttons carry it for VoiceOver
+                .accessibilityHidden(true)
+            HStack(spacing: 12) {
+                Button("Yes") { Task { await session.answer(question, isStillPresent: true) } }
+                    .buttonStyle(.pill(.primary, size: .compact))
+                    .accessibilityLabel("Yes, still there")
+                    .accessibilityHint(question.text)
+                Button("No") { Task { await session.answer(question, isStillPresent: false) } }
+                    .buttonStyle(.pill(.outline, size: .compact))
+                    .accessibilityLabel("No, it's gone")
+                    .accessibilityHint(question.text)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.white.opacity(0.4)))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(question.text)
     }
 
     /// The live camera, or the map with the real route once there is one. Leaving the camera
