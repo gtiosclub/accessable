@@ -18,23 +18,20 @@ struct ValhallaEndpoint: Sendable {
     /// Free FOSSGIS demo server: fair use only (about 1 request per second), no uptime guarantee.
     static let publicDemo = ValhallaEndpoint(baseURL: URL(string: "https://valhalla1.openstreetmap.de")!)
 
-    /// Stadia Maps' hosted Valhalla. Each route uses the team's credits; HTTP 429 means they ran out.
+    /// Stadia Maps' hosted Valhalla. Each route uses the team's credits; HTTP 429 means they ran out
+    /// or Stadia is throttling us.
     static func stadia(apiKey: String) -> ValhallaEndpoint {
         ValhallaEndpoint(
             baseURL: URL(string: "https://api.stadiamaps.com")!, routePath: "route/v1", stadiaAPIKey: apiKey
         )
     }
 
-    /// Stadia when this build has a key. Without one, Debug builds fall back to the public demo so
-    /// members without the key can still route, and Release builds stop rather than ship without it.
+    /// Stadia when this build has a key. Without one, falls back to the public demo server so a build
+    /// made without the key still launches and routes. It is read at launch, so it must never crash.
     static var live: ValhallaEndpoint {
         if let key = StadiaConfig.apiKey { return .stadia(apiKey: key) }
-        #if DEBUG
         log.fault("STADIA_API_KEY missing from Secrets.xcconfig; routing through the public demo server")
         return .publicDemo
-        #else
-        fatalError("STADIA_API_KEY missing: add it to AccessAble/Config/Secrets.xcconfig before a Release build")
-        #endif
     }
 }
 
