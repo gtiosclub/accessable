@@ -123,17 +123,14 @@ protocol TripStateProviding: Sendable {
     /// Someone else's report the user has just walked past, to ask whether it is still there; once a report a trip,
     /// and only as it happens: a new subscriber hears none from before.
     func reportQuestions() -> AsyncStream<ReportQuestion>
-    /// The screen is done with the question about `reportID`: answered, unanswered, or, when `wasAsked` is false,
-    /// not put to the user, so it may be asked again. The next question waits for this.
-    func reportQuestionEnded(_ reportID: String, wasAsked: Bool) async
+    /// The screen is done with the question about `reportID`. The next question waits for this.
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async
 }
 
 extension TripStateProviding {
     func reportQuestions() -> AsyncStream<ReportQuestion> {
         AsyncStream { $0.finish() }
     }
-
-    func reportQuestionEnded(_ reportID: String, wasAsked: Bool) async {}
 }
 
 /// The trip's Live Activity on the lock screen and in the Dynamic Island; one at a time.

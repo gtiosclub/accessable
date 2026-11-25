@@ -286,7 +286,7 @@ final class TripSessionViewModel {
         guard let services else { return }
         let report = question.report
         if answeredReportIDs.contains(report.id) {
-            await services.trip.reportQuestionEnded(report.id, wasAsked: true)
+            await services.trip.reportQuestionEnded(report.id, outcome: .unanswered)
             return
         }
         guard isReportingAvailable, reportQuestion == nil,
@@ -295,7 +295,7 @@ final class TripSessionViewModel {
               let user = await services.auth.currentUser(), user.id != report.reporterID,
               // checked again after the await
               reportQuestion == nil else {
-            await services.trip.reportQuestionEnded(report.id, wasAsked: false)
+            await services.trip.reportQuestionEnded(report.id, outcome: .notAsked)
             return
         }
         let open = OpenReportQuestion(reportID: report.id, text: report.kind.stillThereQuestion)
@@ -309,7 +309,7 @@ final class TripSessionViewModel {
             guard !Task.isCancelled else { return }
             if listens { await self?.listenForAnswer(to: open) }
             do { try await clock.sleep(for: Self.answerWindow) } catch { return }
-            self?.end(open)
+            self?.end(open, outcome: .unanswered)
         }
         await services.announcements.submit(event)
     }
@@ -337,15 +337,19 @@ final class TripSessionViewModel {
         if !dictation.isRecording { listeningQuestion = nil }
     }
 
-    /// Ends the question, answered or not, and tells the trip, which waits for this before the next.
-    private func end(_ question: OpenReportQuestion) {
+    /// Ends the question and, given an `outcome`, tells the trip, which waits for this before the next.
+    private func end(_ question: OpenReportQuestion, outcome: ReportQuestionOutcome?) {
         guard reportQuestion == question else { return }
         reportQuestion = nil
         questionTask?.cancel()
         questionTask = nil
         stopListening(for: question)
+        if let outcome { tellTrip(question, outcome) }
+    }
+
+    private func tellTrip(_ question: OpenReportQuestion, _ outcome: ReportQuestionOutcome) {
         guard let trip = services?.trip else { return }
-        Task { await trip.reportQuestionEnded(question.reportID, wasAsked: true) }
+        Task { await trip.reportQuestionEnded(question.reportID, outcome: outcome) }
     }
 
     /// Stops the listening the question started. Words already coming are let finish, so an answer begun just before
@@ -366,16 +370,20 @@ final class TripSessionViewModel {
     /// back, so the vote is for the report that was asked about even if the question closes meanwhile.
     func answer(_ question: OpenReportQuestion, isStillPresent: Bool) async {
         guard let services, answeredReportIDs.insert(question.reportID).inserted else { return }
-        end(question)
+        // the trip hears once the vote is sent or has failed, since only a sent one holds the next question back
+        end(question, outcome: nil)
         do {
             let extended = try await services.reports.confirm(question.reportID, isStillPresent: isStillPresent)
+            tellTrip(question, .voted)
             await say(
                 !isStillPresent ? "Thanks." : extended ? "Thanks, the report is extended." : "Thanks, the report is confirmed.",
                 category: .system
             )
         } catch ReportServiceError.rateLimited {
+            tellTrip(question, .unanswered)
             await say("Wait a minute before answering again.", category: .system)
         } catch {
+            tellTrip(question, .unanswered)
             log.error("Report vote failed: \(String(describing: error), privacy: .public)")
             await say("Couldn't send your answer.", category: .system)
         }
@@ -649,7 +657,7 @@ final class TripSessionViewModel {
     }
 
     private func stopListening() {
-        if let question = reportQuestion { end(question) }
+        if let question = reportQuestion { end(question, outcome: .unanswered) }
         listeningQuestion = nil
         silenceTask?.cancel()
         voiceTask?.cancel()

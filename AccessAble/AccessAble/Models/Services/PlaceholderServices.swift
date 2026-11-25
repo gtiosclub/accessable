@@ -178,6 +178,7 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 
     func currentLocationDescription() async -> String? { nil }
 }
@@ -212,6 +213,7 @@ struct PreviewTripProvider: TripStateProviding {
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 }
 
 actor PlaceholderAuthService: AuthService {

@@ -89,18 +89,25 @@ private struct SilentScene: SceneDescribing {
 
 /// One trip state and no route changes, then finishes, so `TripViewModel.start()` returns.
 private struct FixedTrip: TripStateProviding {
-    /// Each question the screen ended, and whether it was put to the user.
+    /// How the screen ended each question.
     final class EndedQuestions: Sendable {
-        private let ended = Mutex<[String: Bool]>([:])
+        private let ended = Mutex<[String: ReportQuestionOutcome]>([:])
 
-        func record(_ id: String, _ wasAsked: Bool) { ended.withLock { $0[id] = wasAsked } }
-        var all: [String: Bool] { ended.withLock { $0 } }
+        func record(_ id: String, _ outcome: ReportQuestionOutcome) { ended.withLock { $0[id] = outcome } }
+        var all: [String: ReportQuestionOutcome] { ended.withLock { $0 } }
+
+        /// Waits a bounded while for the screen's call, which comes from a task of its own.
+        func waitForAny() async {
+            for _ in 0..<1000 where all.isEmpty { await Task.yield() }
+        }
     }
 
     let state: TripState
     let ended = EndedQuestions()
 
-    func reportQuestionEnded(_ reportID: String, wasAsked: Bool) async { ended.record(reportID, wasAsked) }
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {
+        ended.record(reportID, outcome)
+    }
 
     func tripStates() -> AsyncStream<TripState> {
         AsyncStream { continuation in
@@ -656,8 +663,22 @@ struct TripSessionReportTests {
 
         await session.answer(try #require(session.reportQuestion), isStillPresent: true)
 
-        while trip.ended.all.isEmpty { await Task.yield() }
-        #expect(trip.ended.all == ["passed": true])
+        await trip.ended.waitForAny()
+        #expect(trip.ended.all == ["passed": .voted])
+    }
+
+    @Test
+    func aVoteThatCantBeSentIsNoVoteToTheTrip() async throws {
+        let trip = activeTrip(walked: 10)
+        let session = await makeSession(
+            walked: 10, reports: CapturingReports(voteFailure: ReportServiceError.unavailable), trip: trip
+        )
+        await session.askAbout(question())
+
+        await session.answer(try #require(session.reportQuestion), isStillPresent: true)
+
+        await trip.ended.waitForAny()
+        #expect(trip.ended.all == ["passed": .unanswered])
     }
 
     @Test
@@ -669,8 +690,8 @@ struct TripSessionReportTests {
 
         try await runOutTheAnswerWindow(on: clock, of: session)
 
-        while trip.ended.all.isEmpty { await Task.yield() }
-        #expect(trip.ended.all == ["passed": true])
+        await trip.ended.waitForAny()
+        #expect(trip.ended.all == ["passed": .unanswered])
     }
 
     /// One not put to the user may be asked again.
@@ -681,6 +702,6 @@ struct TripSessionReportTests {
 
         await session.askAbout(question(askedAt: now.addingTimeInterval(-30)))
 
-        #expect(trip.ended.all == ["passed": false])
+        #expect(trip.ended.all == ["passed": .notAsked])
     }
 }
