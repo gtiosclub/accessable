@@ -138,6 +138,9 @@ struct RouteOptions: Equatable, Sendable {
     var walkingSpeed: Double = 1.2
     var excludeLocations: [GeoCoordinate] = []
     var excludePolygons: [[GeoCoordinate]] = []
+    /// Reports to route around besides those `ReportAwareRoutingService` fetches, such as one that just appeared on
+    /// the route ahead. Only that service reads them; a plain routing service ignores them.
+    var reports: [Report] = []
 }
 
 enum RoutingError: Error, Equatable, Sendable {

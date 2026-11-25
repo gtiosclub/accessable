@@ -26,12 +26,17 @@ struct ReportAwareRoutingService: RoutingService {
         self.clock = clock
     }
 
-    /// Tries all the reports, then without those at either end, then none, stopping at the first route found.
+    /// Tries all the reports, then without those at either end, then none, stopping at the first route found. The
+    /// reports are those fetched and those in `options.reports`, which go through the same steps even when the fetch
+    /// fails, and aren't passed on to `base`.
     func route(
         from origin: GeoCoordinate,
         to destination: GeoCoordinate,
         options: RouteOptions
     ) async throws -> NavigationRoute {
+        var options = options
+        let given = options.reports
+        options.reports = []
         guard origin != destination else {
             return try await base.route(from: origin, to: destination, options: options)
         }
@@ -40,7 +45,11 @@ struct ReportAwareRoutingService: RoutingService {
             longitude: (origin.longitude + destination.longitude) / 2
         )
         let radius = GeoMath.distance(from: origin, to: destination) / 2 + Self.searchMargin
-        guard let nearby = try await activeReports(near: center, radius: radius), !nearby.isEmpty else {
+        // a fetched copy is the newer one
+        let fetched = try await activeReports(near: center, radius: radius) ?? []
+        let fetchedIDs = Set(fetched.map(\.id))
+        let nearby = fetched + given.filter { !fetchedIDs.contains($0.id) }
+        guard !nearby.isEmpty else {
             return try await base.route(from: origin, to: destination, options: options)
         }
 

@@ -292,6 +292,38 @@ struct ReportAwareRoutingServiceTests {
         #expect(Set(actual.unavoidedReports) == [atStart, onTheWay])
     }
 
+    /// A report the trip just found ahead is avoided even when the fetch fails, and through the same fallback.
+    @Test
+    func givenReportsAreRoutedAroundWhenTheFetchFails() async throws {
+        let given = report("given", at: corner)
+        let base = RoutingServiceFake([.failure(.noRouteFound), .success(try route(via: corner))])
+        let clock = ManualClock()
+
+        let actual = try await route(with: service(.failure(ReportServiceError.notSignedIn), base: base, clock: clock),
+                                     base: base, clock: clock, retries: 1, options: RouteOptions(reports: [given]))
+
+        #expect(await base.receivedOptions == [RouteOptions(excludeLocations: [corner]), RouteOptions()])
+        #expect(actual.unavoidedReports == [given])
+    }
+
+    @Test
+    func givenReportsJoinTheFetchedOnesOnce() async throws {
+        let onTheWay = GeoCoordinate(latitude: 33.7760, longitude: -84.3980)
+        let fetched = report("both", at: corner)
+        let given = [report("both", at: corner), report("given", at: onTheWay)]
+        let base = RoutingServiceFake([.success(try route(via: otherCorner))])
+        let clock = ManualClock()
+
+        _ = try await route(with: service(.reports([fetched]), base: base, clock: clock), base: base, clock: clock,
+                            options: RouteOptions(reports: given))
+
+        let options = await base.receivedOptions
+        #expect(options.count == 1)
+        #expect(options[0].excludeLocations.count == 2)
+        #expect(Set(options[0].excludeLocations) == [corner, onTheWay])
+        #expect(options[0].reports.isEmpty)
+    }
+
     @Test
     func waitsBetweenAttempts() async throws {
         let base = RoutingServiceFake([.failure(.noRouteFound), .success(try route(via: corner))])
