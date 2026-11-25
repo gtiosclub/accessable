@@ -2043,6 +2043,25 @@ struct TripManagerReportTests {
         #expect(abs((rerouted.distanceRemaining ?? 0) - 80) < 0.5)
     }
 
+    /// A vote that ends a report sets its expiry to now; one that comes like that isn't rerouted for, and the next
+    /// live one is rerouted for alone.
+    @Test
+    func aReportEndedByVotesIsNotRoutedAround() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        var ended = report("ended", at: harness.point(60))
+        ended.expiresAt = harness.clock.now()
+
+        await harness.reports.publish([ended])
+        let live = report("live", at: harness.point(60))
+        await harness.reports.publish([ended, live])
+
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.options == [RouteOptions(reports: [live])])
+    }
+
     @Test
     func reportsArrivingTogetherRerouteOnceAroundAll() async throws {
         // held until answered, so only the report's own line is spoken
