@@ -189,6 +189,9 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         if skipped > 0 {
             logger.error("Skipped \(skipped, privacy: .public) reports that couldn't be read")
         }
+        if snapshot.documents.count == queryLimit {
+            logger.notice("Got the query limit of \(queryLimit, privacy: .public) reports; later-expiring ones are missed")
+        }
         return reports
     }
 
