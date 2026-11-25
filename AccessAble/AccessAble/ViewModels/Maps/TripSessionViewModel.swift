@@ -59,9 +59,10 @@ final class TripSessionViewModel {
     /// How far ahead on the route a report from Route Blocked Ahead goes: the blockage it
     /// answers is at most this far ahead.
     static let reportAheadDistance = Double(RouteBlockDetector().blockedWithin)
-    /// A report question is said, then listened for this long; its buttons show for both.
-    static let questionSpeechAllowance: Duration = .seconds(3)
+    /// A report question is listened for this long once said; its buttons show from the start. One not said within
+    /// the limit, dropped or queued behind other speech, is listened for anyway.
     static let answerWindow: Duration = .seconds(8)
+    static let questionSpeechLimit: Duration = .seconds(15)
     /// Seconds; a question older than this is from before the screen was listening, such as an earlier trip's.
     static let questionFreshness: TimeInterval = 2
 
@@ -85,9 +86,11 @@ final class TripSessionViewModel {
     @ObservationIgnored private let clock: any Clock<Duration>
     @ObservationIgnored private let mayListenForAnswers: @MainActor () -> Bool
     @ObservationIgnored private var questionTask: Task<Void, Never>?
-    /// The listening the open question started, rather than the user.
-    @ObservationIgnored private var listensForAnswer = false
+    /// The question the listening is for, when the question started it rather than the user.
+    @ObservationIgnored private var listeningQuestion: OpenReportQuestion?
     @ObservationIgnored private var answeredReportIDs: Set<String> = []
+    /// Questions already told "Didn't catch that.", which is said once each.
+    @ObservationIgnored private var missedAnswerIDs: Set<String> = []
     /// The camera picture waits for this. Its view takes its own hold on the camera, and a hold taken before the
     /// geo-tracking ask starts the session on world tracking, which a running session keeps for the whole trip.
     private(set) var isCameraReady = false
@@ -306,51 +309,83 @@ final class TripSessionViewModel {
     // MARK: - Report questions
 
     /// Asks the question aloud and opens it: the screen shows Yes and No, and once it has been said the microphone
-    /// listens for the answer, unless speech or the microphone isn't allowed. No answer in time is no vote. Internal
-    /// so tests can ask without a trip.
+    /// listens for the answer, unless speech or the microphone isn't allowed. No answer in time is no vote. The trip
+    /// hears when it ends, or that it wasn't asked. Internal so tests can ask without a trip.
     func askAbout(_ question: ReportQuestion) async {
+        guard let services else { return }
         let report = question.report
-        guard let services, isReportingAvailable, reportQuestion == nil,
+        if answeredReportIDs.contains(report.id) {
+            await services.trip.reportQuestionEnded(report.id, wasAsked: true)
+            return
+        }
+        guard isReportingAvailable, reportQuestion == nil,
               directions?.tripState.phase == .active,
               now().timeIntervalSince(question.askedAt) <= Self.questionFreshness,
-              !answeredReportIDs.contains(report.id),
               let user = await services.auth.currentUser(), user.id != report.reporterID,
               // checked again after the await
-              reportQuestion == nil else { return }
+              reportQuestion == nil else {
+            await services.trip.reportQuestionEnded(report.id, wasAsked: false)
+            return
+        }
         let open = OpenReportQuestion(reportID: report.id, text: report.kind.stillThereQuestion)
         reportQuestion = open
         let listens = mayListenForAnswers()
+        let event = AnnouncementEvent(category: .system, priority: .high, text: open.text, source: .userInteraction)
+        // before the submit, so its end can't be missed
+        let finished = services.announcements.finishedEvents()
         questionTask = Task { [weak self, clock] in
-            do {
-                try await clock.sleep(for: Self.questionSpeechAllowance)
-                if listens { await self?.listenForAnswer(to: open) }
-                try await clock.sleep(for: Self.answerWindow)
-            } catch {
-                return
-            }
-            self?.close(open)
+            await Self.waitUntilSaid(event.id, finished: finished, clock: clock)
+            guard !Task.isCancelled else { return }
+            if listens { await self?.listenForAnswer(to: open) }
+            do { try await clock.sleep(for: Self.answerWindow) } catch { return }
+            self?.end(open)
         }
-        await say(open.text, category: .system)
+        await services.announcements.submit(event)
     }
 
-    /// Listens for the answer unless the user is already speaking. Nothing heard isn't said aloud, unlike a command.
+    /// Returns once the question has been said, or after `questionSpeechLimit` if it was dropped or is still queued:
+    /// listening sooner would switch the audio session over and cut the question off.
+    private static func waitUntilSaid(
+        _ id: UUID, finished: AsyncStream<UUID>, clock: any Clock<Duration>
+    ) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for await said in finished where said == id { return }
+            }
+            group.addTask { try? await clock.sleep(for: questionSpeechLimit) }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
+    /// Listens for the answer unless the user is already speaking. What it hears is only ever an answer.
     private func listenForAnswer(to question: OpenReportQuestion) async {
         guard reportQuestion == question, !dictation.isRecording else { return }
-        listensForAnswer = true
+        listeningQuestion = question
         await startListening(armingSilence: false)
-        if !dictation.isRecording { listensForAnswer = false }
+        if !dictation.isRecording { listeningQuestion = nil }
     }
 
-    /// Ends the question, and the listening it started, when no answer came in time.
-    private func close(_ question: OpenReportQuestion) {
+    /// Ends the question, answered or not, and tells the trip, which waits for this before the next.
+    private func end(_ question: OpenReportQuestion) {
         guard reportQuestion == question else { return }
         reportQuestion = nil
-        stopListeningForAnswer()
+        questionTask?.cancel()
+        questionTask = nil
+        stopListening(for: question)
+        guard let trip = services?.trip else { return }
+        Task { await trip.reportQuestionEnded(question.reportID, wasAsked: true) }
     }
 
-    private func stopListeningForAnswer() {
-        guard listensForAnswer else { return }
-        listensForAnswer = false
+    /// Stops the listening the question started. Words already coming are let finish, so an answer begun just before
+    /// the end still counts; with none, it is cancelled without a word.
+    private func stopListening(for question: OpenReportQuestion) {
+        guard listeningQuestion == question else { return }
+        if dictation.isRecording, heard?.isEmpty == false {
+            dictation.stop()
+            return
+        }
+        listeningQuestion = nil
         silenceTask?.cancel()
         dictation.cancel()
         heard = nil
@@ -360,12 +395,7 @@ final class TripSessionViewModel {
     /// back, so the vote is for the report that was asked about even if the question closes meanwhile.
     func answer(_ question: OpenReportQuestion, isStillPresent: Bool) async {
         guard let services, answeredReportIDs.insert(question.reportID).inserted else { return }
-        if reportQuestion == question {
-            reportQuestion = nil
-            questionTask?.cancel()
-            questionTask = nil
-        }
-        stopListeningForAnswer()
+        end(question)
         do {
             let extended = try await services.reports.confirm(question.reportID, isStillPresent: isStillPresent)
             await say(
@@ -380,21 +410,46 @@ final class TripSessionViewModel {
         }
     }
 
+    /// What the question's own listening heard: an answer votes, and anything else is dropped, never taken as a
+    /// command or a question, with "Didn't catch that." said once a question. Internal so tests can answer without
+    /// the microphone.
+    func heardAnswer(_ text: String, to question: OpenReportQuestion) async {
+        if let isStillPresent = Self.reportAnswer(for: text) {
+            await answer(question, isStillPresent: isStillPresent)
+            return
+        }
+        log.notice("Heard something other than an answer to a report question")
+        guard !answeredReportIDs.contains(question.reportID),
+              missedAnswerIDs.insert(question.reportID).inserted else { return }
+        await say("Didn't catch that.", category: .system)
+    }
+
     /// true for yes, false for no, or nil when the words aren't an answer. Speech adds punctuation, so it is ignored.
-    static func reportAnswer(for text: String) -> Bool? {
-        let words = text.lowercased()
+    /// - Parameter anywhere: Whether an answer may be part of a longer sentence, as it may in the question's own
+    ///   listening; otherwise only the whole of what was said counts, so a command or question isn't taken for one.
+    static func reportAnswer(for text: String, anywhere: Bool = true) -> Bool? {
+        var words = text.lowercased()
             .replacingOccurrences(of: "\u{2019}", with: "'")
             .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'")).inverted)
             .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        if ["yes", "yeah", "yep", "still there", "still blocked", "it's still there", "it's still blocked",
-            "yes it is", "yes still blocked", "yes still there"].contains(words) {
-            return true
+        guard anywhere else {
+            let said = words.joined(separator: " ")
+            if ["yes", "yeah", "yep", "yup", "still there", "still blocked", "it's still there", "it's still blocked"]
+                .contains(said) {
+                return true
+            }
+            if ["no", "nope", "nah", "clear", "it's clear", "gone", "it's gone"].contains(said) { return false }
+            return nil
         }
-        if ["no", "nope", "it's clear", "its clear", "it is clear", "clear", "gone", "it's gone", "no it's clear",
-            "no it's gone", "not anymore"].contains(words) {
-            return false
-        }
+        while let first = words.first, ["uh", "um", "er", "oh", "well"].contains(first) { words.removeFirst() }
+        guard let first = words.first else { return nil }
+        if ["yes", "yeah", "yep", "yup"].contains(first) { return true }
+        if ["no", "nope", "nah"].contains(first) { return false }
+        // padded, so each phrase matches whole words only
+        let said = " \(words.joined(separator: " ")) "
+        func says(_ phrases: String...) -> Bool { phrases.contains { said.contains(" \($0) ") } }
+        if says("still blocked", "still there", "still closed", "still out") { return true }
+        if says("gone", "clear", "open now", "fixed", "working") { return false }
         return nil
     }
 
@@ -464,8 +519,12 @@ final class TripSessionViewModel {
             return
         }
         if dictation.isRecording {
-            // the user's own now, so it isn't cut off when the question closes
-            listensForAnswer = false
+            // listening for a question's answer becomes the user's own, so what they say goes where it would
+            guard listeningQuestion == nil else {
+                listeningQuestion = nil
+                armSilenceTimer()
+                return
+            }
             dictation.stop()
             return
         }
@@ -480,8 +539,8 @@ final class TripSessionViewModel {
         dictation.onError = { [weak self] message in
             guard let self else { return }
             heard = nil
-            guard !listensForAnswer else {
-                listensForAnswer = false
+            guard listeningQuestion == nil else {
+                listeningQuestion = nil
                 log.notice("No answer heard to a report question: \(message, privacy: .public)")
                 return
             }
@@ -503,8 +562,12 @@ final class TripSessionViewModel {
         }
         silenceTask?.cancel()
         heard = nil
-        listensForAnswer = false
-        voiceTask = Task { await self.respond(to: text) }
+        if let question = listeningQuestion {
+            listeningQuestion = nil
+            voiceTask = Task { await self.heardAnswer(text, to: question) }
+        } else {
+            voiceTask = Task { await self.respond(to: text) }
+        }
     }
 
     /// A spoken "report …": the kind of problem, or a report whose kind wasn't heard.
@@ -615,10 +678,8 @@ final class TripSessionViewModel {
     }
 
     private func stopListening() {
-        questionTask?.cancel()
-        questionTask = nil
-        reportQuestion = nil
-        listensForAnswer = false
+        if let question = reportQuestion { end(question) }
+        listeningQuestion = nil
         silenceTask?.cancel()
         voiceTask?.cancel()
         dictation.cancel()
@@ -634,7 +695,7 @@ final class TripSessionViewModel {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let services, !text.isEmpty else { return }
         // only while a question is open: otherwise "no" is a question for Ask AI like any other
-        if let question = reportQuestion, let isStillPresent = Self.reportAnswer(for: text) {
+        if let question = reportQuestion, let isStillPresent = Self.reportAnswer(for: text, anywhere: false) {
             await answer(question, isStillPresent: isStillPresent)
             return
         }

@@ -24,10 +24,20 @@ protocol AnnouncementSink: Sendable {
 protocol AnnouncementEngineProtocol: AnnouncementSink {
     /// Events as they are actually delivered (after filtering/dedup). UI uses this for the visual banner.
     func deliveredEvents() -> AsyncStream<AnnouncementEvent>
+    /// The ids of delivered events once they have been said, or cut off, so a listener can wait for the end of
+    /// speech. An event dropped before delivery never comes.
+    func finishedEvents() -> AsyncStream<UUID>
     func repeatLast() async
     func pause() async
     func resume() async
     func updateProfile(_ profile: GuidanceProfile) async
+}
+
+extension AnnouncementEngineProtocol {
+    /// Ends at once, for engines that don't speak, so a listener goes on without waiting.
+    func finishedEvents() -> AsyncStream<UUID> {
+        AsyncStream { $0.finish() }
+    }
 }
 
 /// Renders a haptic from the shared vocabulary (3.2).
@@ -116,6 +126,9 @@ protocol TripStateProviding: Sendable {
     /// The active reports near the trip's route, the user's own included, to show on the map: on each report snapshot
     /// and route change, and empty from the start and end of each trip. A new subscriber hears the latest.
     func mapReports() -> AsyncStream<[Report]>
+    /// The screen is done with the question about `reportID`: answered, unanswered, or, when `wasAsked` is false,
+    /// not put to the user, so it may be asked again. The next question waits for this.
+    func reportQuestionEnded(_ reportID: String, wasAsked: Bool) async
 }
 
 extension TripStateProviding {
@@ -126,6 +139,8 @@ extension TripStateProviding {
     func mapReports() -> AsyncStream<[Report]> {
         AsyncStream { $0.finish() }
     }
+
+    func reportQuestionEnded(_ reportID: String, wasAsked: Bool) async {}
 }
 
 /// The trip's Live Activity on the lock screen and in the Dynamic Island; one at a time.

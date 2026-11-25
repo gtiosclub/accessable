@@ -90,11 +90,13 @@ actor TripManager: TripStateProviding {
     private var reportSubscription = 0
     /// A report reroute kept the route, or failed, while paused: said on resuming, since the route still passes it.
     private var unavoidedReportOnResume = false
-    /// Reports asked about this trip, or walked too far past to ask; kept across reroutes.
+    /// Reports put to the user this trip, or walked too far past to ask; kept across reroutes.
     private var promptedReportIDs: Set<String> = []
+    /// The question sent and not yet ended by the screen, and when it was sent.
+    private var openQuestion: (reportID: String, askedAt: Date)?
     /// The nearest each report not yet asked about has been to a precise fix this trip, in metres.
     private var closestApproaches: [String: Double] = [:]
-    private var lastQuestionAt: Date?
+    private var lastQuestionEndedAt: Date?
 
     // the public routing server is shared and slow to recover; this spaces requests and bounds a bad walk
     private static let rerouteInterval: TimeInterval = 30
@@ -118,8 +120,10 @@ actor TripManager: TripStateProviding {
     // this far past the report by then and it is no longer "here"
     private static let questionManeuverClearance: Double = 30
     private static let questionGiveUpDistance: Double = 60
-    // seconds between questions, longer than the answer window, so one isn't asked over another
-    private static let questionSpacing: TimeInterval = 10
+    // seconds from the end of one question to the next: the rules allow one vote a minute
+    private static let questionSpacing: TimeInterval = 60
+    // seconds; a question the screen hasn't ended by then, such as one sent with the screen closed, counts as asked
+    private static let questionReplyLimit: TimeInterval = 60
     private static let unavoidedReportSpeech =
         "Couldn't find a way around the reported obstacle. Keep following the current route carefully."
     // a new route from a rough fix would start on the wrong side of the street, and a direction from one can point
@@ -235,7 +239,8 @@ actor TripManager: TripStateProviding {
         unavoidedReportOnResume = false
         promptedReportIDs = []
         closestApproaches = [:]
-        lastQuestionAt = nil
+        openQuestion = nil
+        lastQuestionEndedAt = nil
         routes.send(route)
         publish(at: now())
         recorder?.tripStarted(at: now())
@@ -319,7 +324,8 @@ actor TripManager: TripStateProviding {
         unavoidedReportOnResume = false
         promptedReportIDs = []
         closestApproaches = [:]
-        lastQuestionAt = nil
+        openQuestion = nil
+        lastQuestionEndedAt = nil
         routes.send(nil)
         states.send(TripState(phase: .planning, updatedAt: now()))
         await setTripTracking(false)
@@ -642,9 +648,24 @@ actor TripManager: TripStateProviding {
         await submit(maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(first.id)"))
     }
 
+    /// The screen has ended the question about `reportID`. One it didn't put to the user may be asked again. Async
+    /// like the requirement, so an awaited call picks this rather than the protocol's default.
+    func reportQuestionEnded(_ reportID: String, wasAsked: Bool) async {
+        endQuestion(reportID, wasAsked: wasAsked)
+    }
+
+    private func endQuestion(_ reportID: String, wasAsked: Bool) {
+        guard openQuestion?.reportID == reportID else { return }
+        openQuestion = nil
+        guard wasAsked else { return }
+        promptedReportIDs.insert(reportID)
+        lastQuestionEndedAt = now()
+    }
+
     /// Asks about a report the user has just walked past: their nearest approach to it was within
     /// `questionPassRadius`, and they are now `questionPassMargin` further away. Only from a recent precise fix, while
-    /// following the route, and not near a turn or crossing; one question at a time, once a report a trip.
+    /// following the route, and not near a turn or crossing; one question at a time, `questionSpacing` after the
+    /// last ended, and once a report a trip.
     private func askAboutPassedReports(generation: Int) {
         guard self.generation == generation, phase == .active, !needsReroute, rerouteTask == nil,
               let route, let progress, let fix = recentPreciseFix else { return }
@@ -652,9 +673,14 @@ actor TripManager: TripStateProviding {
         let walked = route.totalDistance - progress.distanceRemaining
         let nearManeuver = progress.distanceToNextStep < Self.questionManeuverClearance
             || routeCrossings.contains { (0..<Self.questionManeuverClearance).contains($0.distanceAlongRoute - walked) }
-        let spaced = lastQuestionAt.map { time.timeIntervalSince($0) >= Self.questionSpacing } ?? true
-        var canAsk = spaced && !nearManeuver
-        for report in nearbyReports where report.expiresAt > time && !promptedReportIDs.contains(report.id) {
+        if let open = openQuestion, time.timeIntervalSince(open.askedAt) >= Self.questionReplyLimit {
+            log.notice("A report question wasn't ended by the screen; counting it as asked")
+            endQuestion(open.reportID, wasAsked: true)
+        }
+        let spaced = lastQuestionEndedAt.map { time.timeIntervalSince($0) >= Self.questionSpacing } ?? true
+        var canAsk = openQuestion == nil && spaced && !nearManeuver
+        for report in nearbyReports
+        where report.expiresAt > time && !promptedReportIDs.contains(report.id) && openQuestion?.reportID != report.id {
             let distance = report.distance(from: fix)
             let closest = min(closestApproaches[report.id] ?? .infinity, distance)
             closestApproaches[report.id] = closest
@@ -666,9 +692,7 @@ actor TripManager: TripStateProviding {
             }
             guard canAsk else { continue }
             canAsk = false
-            promptedReportIDs.insert(report.id)
-            closestApproaches[report.id] = nil
-            lastQuestionAt = time
+            openQuestion = (report.id, time)
             questions.send(ReportQuestion(report: report, askedAt: time))
         }
     }

@@ -202,8 +202,10 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
                                 forDocument: voteReference
                             )
                             transaction.updateData(change.fields, forDocument: reportReference)
+                            // names the report, as the rules require, so one stamp can't cover votes on several
                             transaction.setData(
-                                ["lastVoteAt": FieldValue.serverTimestamp()], forDocument: rateLimitReference, merge: true
+                                ["lastVoteAt": FieldValue.serverTimestamp(), "lastVoteReportId": reportID],
+                                forDocument: rateLimitReference, merge: true
                             )
                             return change.extends
                         } catch {
@@ -217,7 +219,7 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
                 }
             )
         } catch {
-            throw await voteFailure(of: error, userID: user.id)
+            throw await voteFailure(of: error, userID: user.id, isStillPresent: isStillPresent)
         }
         let votedAt = now()
         lastVote.withLock { $0[user.id] = votedAt }
@@ -227,7 +229,7 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
     /// Logs why a vote failed, then names it like `failure(of:userID:)`: a refusal inside the
     /// vote stamp's window is `.rateLimited`, and no answer in time `.unavailable`, since a
     /// transaction isn't queued.
-    private func voteFailure(of error: any Error, userID: String) async -> any Error {
+    private func voteFailure(of error: any Error, userID: String, isStillPresent: Bool) async -> any Error {
         logger.error("Report vote failed: \(error.localizedDescription, privacy: .public)")
         if let error = error as? ReportServiceError {
             return error == .queuedOffline ? ReportServiceError.unavailable : error
@@ -235,9 +237,12 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         if Self.isUnavailable(error) { return ReportServiceError.unavailable }
         guard Self.isPermissionDenied(error) else { return error }
         let stamp = await rateLimitStamp("lastVoteAt", userID: userID) ?? lastVote.withLock { $0[userID] }
-        return Self.isRateLimited(lastReportAt: stamp, now: now())
-            ? ReportServiceError.rateLimited
-            : ReportServiceError.permissionDenied
+        guard !Self.isRateLimited(lastReportAt: stamp, now: now()) else { return ReportServiceError.rateLimited }
+        if isStillPresent {
+            // the yes's expiry is from this phone's clock, refused more than the rules' tolerance off the server's
+            logger.notice("A refused yes may mean this phone's clock is off the server's")
+        }
+        return ReportServiceError.permissionDenied
     }
 
     /// Reports that haven't expired, soonest to expire first, as many as the rules allow.

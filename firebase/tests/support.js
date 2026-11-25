@@ -56,7 +56,7 @@ export async function seedVoteStamp(env, uid, ageMs) {
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     const batch = writeBatch(db);
-    batch.set(doc(db, 'rateLimits', uid), { lastVoteAt: Timestamp.fromMillis(Date.now() - ageMs) }, { merge: true });
+    batch.set(doc(db, 'rateLimits', uid), { lastVoteAt: Timestamp.fromMillis(Date.now() - ageMs), lastVoteReportId: 'earlier' }, { merge: true });
     await batch.commit();
   });
 }
@@ -69,6 +69,6 @@ export function vote(db, uid, id, isStillPresent, { report, vote = true, stamp =
   batch.update(doc(db, 'reports', id), report ?? (isStillPresent
     ? { confirmations: increment(1), negativesSinceConfirm: 0, expiresAt: Timestamp.fromMillis(Date.now() + 7 * DAY) }
     : { negativeConfirmations: increment(1), negativesSinceConfirm: increment(1) }));
-  if (stamp) batch.set(doc(db, 'rateLimits', uid), { lastVoteAt: serverTimestamp() }, { merge: true });
+  if (stamp) batch.set(doc(db, 'rateLimits', uid), { lastVoteAt: serverTimestamp(), lastVoteReportId: id }, { merge: true });
   return batch.commit();
 }

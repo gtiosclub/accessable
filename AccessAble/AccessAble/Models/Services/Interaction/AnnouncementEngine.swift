@@ -2,6 +2,7 @@ import Foundation
  
 actor AnnouncementEngine: AnnouncementEngineProtocol {
     private nonisolated let delivered = Broadcaster<AnnouncementEvent>()
+    private nonisolated let finished = Broadcaster<UUID>()
     private let speech: SpeechOutput
     private let haptics: any HapticRendering
  
@@ -30,6 +31,10 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
  
     nonisolated func deliveredEvents() -> AsyncStream<AnnouncementEvent> {
         delivered.stream(bufferingPolicy: .bufferingNewest(8))
+    }
+
+    nonisolated func finishedEvents() -> AsyncStream<UUID> {
+        finished.stream(bufferingPolicy: .bufferingNewest(8))
     }
 
     // Magic Tap  or repeat that would skip dedup and profile filter
@@ -86,6 +91,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
                 await speech.speak(event.text, rate: profile.speechRate, interrupting: event.priority == .critical)
             }
             current = nil
+            finished.send(event.id)
         }
         isDraining = false
     }
