@@ -78,12 +78,15 @@ service cloud.firestore {
       let isStillPresent = getAfter(votePath(reportId)).data.isStillPresent;
       let lifetime = reportLifetime(before.kind);
       let denials = before.get('negativesSinceConfirm', 0) + 1;
+      let stamp = getAfter(rateLimitPath()).data;
 
       return request.auth.uid != before.reporterID
         && before.expiresAt > request.time
         && !exists(votePath(reportId))
         && existsAfter(votePath(reportId))
-        && getAfter(rateLimitPath()).data.lastVoteAt == request.time
+        // the stamp names this report, so one stamp can't cover votes on many reports
+        && stamp.lastVoteAt == request.time
+        && stamp.lastVoteReportId == reportId
         && (isStillPresent
           ? after.diff(before).affectedKeys().hasOnly(['confirmations', 'negativesSinceConfirm', 'expiresAt'])
             && after.confirmations == before.confirmations + 1
@@ -208,7 +211,7 @@ service cloud.firestore {
     }
 
     match /rateLimits/{userId} {
-      // A report stamp names the report it was written with; a vote stamp is only the time.
+      // Each stamp names the report it was written with.
       function isReportStamp(keys) {
         return keys.hasOnly(['lastReportAt', 'lastReportId'])
           && request.resource.data.lastReportAt == request.time
@@ -216,11 +219,13 @@ service cloud.firestore {
       }
 
       function isVoteStamp(keys) {
-        return keys.hasOnly(['lastVoteAt']) && request.resource.data.lastVoteAt == request.time;
+        return keys.hasOnly(['lastVoteAt', 'lastVoteReportId'])
+          && request.resource.data.lastVoteAt == request.time
+          && request.resource.data.lastVoteReportId is string;
       }
 
       function hasKnownKeys() {
-        return request.resource.data.keys().hasOnly(['lastReportAt', 'lastReportId', 'lastVoteAt']);
+        return request.resource.data.keys().hasOnly(['lastReportAt', 'lastReportId', 'lastVoteAt', 'lastVoteReportId']);
       }
 
       function isSpaced(field) {
@@ -231,7 +236,7 @@ service cloud.firestore {
       allow create: if signedIn() && request.auth.uid == userId && hasKnownKeys()
         && ((request.resource.data.keys().hasAll(['lastReportAt', 'lastReportId'])
               && isReportStamp(request.resource.data.keys()))
-          || (request.resource.data.keys().hasAll(['lastVoteAt'])
+          || (request.resource.data.keys().hasAll(['lastVoteAt', 'lastVoteReportId'])
               && isVoteStamp(request.resource.data.keys())));
       allow update: if signedIn() && request.auth.uid == userId && hasKnownKeys()
         && ((isReportStamp(request.resource.data.diff(resource.data).affectedKeys())

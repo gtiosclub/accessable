@@ -202,8 +202,10 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
                                 forDocument: voteReference
                             )
                             transaction.updateData(change.fields, forDocument: reportReference)
+                            // names the report, as the rules require, so one stamp can't cover votes on several
                             transaction.setData(
-                                ["lastVoteAt": FieldValue.serverTimestamp()], forDocument: rateLimitReference, merge: true
+                                ["lastVoteAt": FieldValue.serverTimestamp(), "lastVoteReportId": reportID],
+                                forDocument: rateLimitReference, merge: true
                             )
                             return change.extends
                         } catch {

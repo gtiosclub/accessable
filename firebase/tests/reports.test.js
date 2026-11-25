@@ -222,6 +222,41 @@ test('a yes must set the expiry to one lifetime from now', async () => {
   await assertSucceeds(vote(bob(), 'bob', 'r1', true, { report: yes(Timestamp.fromMillis(Date.now() + 4 * HOUR)) }));
 });
 
+test('a yes allows for two minutes of clock difference, no more', async () => {
+  await seedReport(env, 'alice', 'r1', 2 * MINUTE, { kind: 'blockedPath', expiresAt: Timestamp.fromMillis(Date.now() + HOUR) });
+  const yes = (expiresAt) => ({ confirmations: increment(1), negativesSinceConfirm: 0, expiresAt });
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: yes(Timestamp.fromMillis(Date.now() + 4 * HOUR - 3 * MINUTE)) }));
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: yes(Timestamp.fromMillis(Date.now() + 4 * HOUR + 3 * MINUTE)) }));
+  await assertSucceeds(vote(bob(), 'bob', 'r1', true, { report: yes(Timestamp.fromMillis(Date.now() + 4 * HOUR - MINUTE)) }));
+});
+
+test('a vote whose document says no cannot count a yes', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  const db = bob();
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'reports', 'r1', 'votes', 'bob'), { isStillPresent: false, votedAt: serverTimestamp() });
+  batch.update(doc(db, 'reports', 'r1'), {
+    confirmations: increment(1), negativesSinceConfirm: 0, expiresAt: Timestamp.fromMillis(Date.now() + 7 * DAY),
+  });
+  batch.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp(), lastVoteReportId: 'r1' }, { merge: true });
+  await assertFails(batch.commit());
+});
+
+test('a stamp written without merging cannot drop the other stamp', async () => {
+  await seedReport(env, 'bob', 'mine', 20 * MINUTE);
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  const db = bob();
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'reports', 'r1', 'votes', 'bob'), { isStillPresent: true, votedAt: serverTimestamp() });
+  batch.update(doc(db, 'reports', 'r1'), {
+    confirmations: increment(1), negativesSinceConfirm: 0, expiresAt: Timestamp.fromMillis(Date.now() + 7 * DAY),
+  });
+  batch.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp(), lastVoteReportId: 'r1' });
+  await assertFails(batch.commit());
+  await seedVoteStamp(env, 'carol', 2 * MINUTE);
+  await assertFails(setDoc(doc(env.authenticatedContext('carol').firestore(), 'rateLimits', 'carol'), stampData('x')));
+});
+
 test('a yes cannot be left at a lower expiry or without a new one', async () => {
   await seedReport(env, 'alice', 'r1', 2 * MINUTE, { kind: 'blockedPath', expiresAt: Timestamp.fromMillis(Date.now() + HOUR) });
   await assertFails(vote(bob(), 'bob', 'r1', true, { report: { confirmations: increment(1), negativesSinceConfirm: 0 } }));
@@ -301,6 +336,28 @@ test('a vote needs the vote stamp, a minute after the last', async () => {
   await assertFails(vote(bob(), 'bob', 'r2', true));
 });
 
+test('one vote stamp cannot cover votes on several reports', async () => {
+  for (const id of ['r1', 'r2', 'r3']) await seedReport(env, 'alice', id, 20 * MINUTE);
+  const db = bob();
+  const batch = writeBatch(db);
+  for (const id of ['r1', 'r2', 'r3']) {
+    batch.set(doc(db, 'reports', id, 'votes', 'bob'), { isStillPresent: false, votedAt: serverTimestamp() });
+    batch.update(doc(db, 'reports', id), { negativeConfirmations: increment(1), negativesSinceConfirm: increment(1) });
+  }
+  batch.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp(), lastVoteReportId: 'r1' }, { merge: true });
+  await assertFails(batch.commit());
+});
+
+test('a vote stamp must name the report voted on', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  const db = bob();
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'reports', 'r1', 'votes', 'bob'), { isStillPresent: false, votedAt: serverTimestamp() });
+  batch.update(doc(db, 'reports', 'r1'), { negativeConfirmations: increment(1), negativesSinceConfirm: increment(1) });
+  batch.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp(), lastVoteReportId: 'r2' }, { merge: true });
+  await assertFails(batch.commit());
+});
+
 test('a vote stamp does not hold back a report, nor a report stamp a vote', async () => {
   await seedReport(env, 'alice', 'r1', 20 * MINUTE);
   await seedVoteStamp(env, 'bob', 10 * 1000);
@@ -318,7 +375,7 @@ test('a vote needs its vote document, and the vote document the matching count',
   const db = bob();
   const batch = writeBatch(db);
   batch.set(doc(db, 'reports', 'r1', 'votes', 'bob'), { isStillPresent: true, votedAt: serverTimestamp() });
-  batch.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp() }, { merge: true });
+  batch.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp(), lastVoteReportId: 'r1' }, { merge: true });
   await assertFails(batch.commit());
 });
 
@@ -330,7 +387,7 @@ test('a vote document is only for its own voter, with only the answer and time',
   forCarol.update(doc(db, 'reports', 'r1'), {
     confirmations: increment(1), negativesSinceConfirm: 0, expiresAt: Timestamp.fromMillis(Date.now() + 7 * DAY),
   });
-  forCarol.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp() }, { merge: true });
+  forCarol.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp(), lastVoteReportId: 'r1' }, { merge: true });
   await assertFails(forCarol.commit());
 
   const extra = writeBatch(db);
@@ -338,7 +395,7 @@ test('a vote document is only for its own voter, with only the answer and time',
   extra.update(doc(db, 'reports', 'r1'), {
     confirmations: increment(1), negativesSinceConfirm: 0, expiresAt: Timestamp.fromMillis(Date.now() + 7 * DAY),
   });
-  extra.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp() }, { merge: true });
+  extra.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp(), lastVoteReportId: 'r1' }, { merge: true });
   await assertFails(extra.commit());
 });
 
@@ -360,6 +417,11 @@ test('a vote cannot change the kind, place or reporter', async () => {
   await assertFails(vote(bob(), 'bob', 'r1', true, { report: { ...yes, coordinate: { latitude: 0, longitude: 0 } } }));
   await assertFails(vote(bob(), 'bob', 'r1', true, { report: { ...yes, reporterID: 'bob' } }));
   await assertFails(vote(bob(), 'bob', 'r1', true, { report: { ...yes, negativeConfirmations: 0 } }));
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: { ...yes, createdAt: Timestamp.fromMillis(Date.now() - DAY) } }));
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: { ...yes, area: area10 } }));
+  const no = { negativeConfirmations: increment(1), negativesSinceConfirm: increment(1) };
+  await assertFails(vote(bob(), 'bob', 'r1', false, { report: { ...no, kind: 'other' } }));
+  await assertFails(vote(bob(), 'bob', 'r1', false, { report: { ...no, reporterID: 'bob' } }));
 });
 
 test('a vote must change its count by exactly one', async () => {
@@ -370,6 +432,8 @@ test('a vote must change its count by exactly one', async () => {
   await assertFails(vote(bob(), 'bob', 'r1', false, { report: { negativeConfirmations: increment(2), negativesSinceConfirm: increment(1) } }));
   await assertFails(vote(bob(), 'bob', 'r1', false, { report: { negativeConfirmations: increment(1), negativesSinceConfirm: increment(2) } }));
   await assertFails(vote(bob(), 'bob', 'r1', false, { report: { negativeConfirmations: increment(1) } }));
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: { confirmations: increment(-1), negativesSinceConfirm: 0, expiresAt } }));
+  await assertFails(vote(bob(), 'bob', 'r1', false, { report: { negativeConfirmations: increment(-1), negativesSinceConfirm: increment(1) } }));
 });
 
 test("a vote is readable only by its voter, and votes can't be listed", async () => {
@@ -388,9 +452,11 @@ test('a vote cannot be changed or deleted', async () => {
 });
 
 test('a vote stamp cannot hold a phone-clock time or extra fields', async () => {
-  await assertFails(setDoc(doc(bob(), 'rateLimits', 'bob'), { lastVoteAt: Timestamp.now() }));
-  await assertFails(setDoc(doc(bob(), 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp(), email: 'bob@example.com' }));
-  await assertFails(setDoc(doc(alice(), 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp() }));
+  const stamp = { lastVoteAt: serverTimestamp(), lastVoteReportId: 'r1' };
+  await assertFails(setDoc(doc(bob(), 'rateLimits', 'bob'), { ...stamp, lastVoteAt: Timestamp.now() }));
+  await assertFails(setDoc(doc(bob(), 'rateLimits', 'bob'), { ...stamp, email: 'bob@example.com' }));
+  await assertFails(setDoc(doc(bob(), 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp() }));
+  await assertFails(setDoc(doc(alice(), 'rateLimits', 'bob'), stamp));
 });
 
 test('the reporter can delete their own report', async () => {
