@@ -47,3 +47,14 @@ export async function seedReport(env, uid, id, ageMs = 2 * 60 * 1000) {
     await batch.commit();
   });
 }
+
+// Trusted fixture prerequisites. Production clients must consent and admins issue invites.
+export async function seedCallPrerequisites(env, caller, volunteer) {
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'callConsents', caller), { version: 1, acceptedAt: Timestamp.now() });
+    batch.set(doc(db, 'volunteerInvites', volunteer), { enabled: true });
+    await batch.commit();
+  });
+}

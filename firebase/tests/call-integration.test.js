@@ -2,13 +2,14 @@ import { after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import { collection, deleteDoc, doc, getDoc, getDocs, runTransaction, serverTimestamp, setDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
-import { startEnvironment } from './support.js';
+import { startEnvironment, seedCallPrerequisites } from './support.js';
 
 const env = await startEnvironment();
 beforeEach(() => env.clearFirestore());
 after(() => env.cleanup());
 const as = uid => env.authenticatedContext(uid).firestore();
 async function seed(overrides = {}) {
+  await seedCallPrerequisites(env, 'caller', 'helper');
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore();
     await setDoc(doc(db, 'users', 'helper'), { role: 'volunteer', displayName: 'Sam', languages: ['English'], createdAt: Timestamp.now() });

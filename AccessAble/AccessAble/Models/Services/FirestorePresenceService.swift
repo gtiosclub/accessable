@@ -11,6 +11,7 @@ final class FirestorePresenceService: PresenceService {
     private nonisolated let states = Broadcaster<Bool>(replaysLatest: true)
     private let auth: any AuthService
     private let profiles: any UserProfileStore
+    private let writes = PresenceWriteQueue()
     private var isOnline = false
     private var heartbeat: Task<Void, Never>?
     private var authWatcher: Task<Void, Never>?
@@ -47,15 +48,38 @@ final class FirestorePresenceService: PresenceService {
         try await update(isOnline: isOnline)
     }
 
+    nonisolated func refreshProfile() async throws {
+        guard let user = await auth.currentUser(), let profile = try await profiles.load(userID: user.id) else {
+            throw PresenceError.noProfile
+        }
+        let ref = document(user.id)
+        let data = try await ref.getDocument(source: .server).data()
+        guard let data else { return }
+        guard data["displayName"] as? String != profile.displayName || data["languages"] as? [String] != profile.languages else { return }
+        try await ref.updateData(["displayName": profile.displayName, "languages": profile.languages,
+                                  "lastSeen": FieldValue.serverTimestamp()])
+    }
+
 
 
     private func update(isOnline newValue: Bool) async throws {
-        guard newValue != isOnline else { return }
+        try await writes.run { [self] in try await performUpdate(isOnline: newValue) }
+    }
+
+    private func performUpdate(isOnline newValue: Bool) async throws {
+        // Offline still writes when already locally off: a previous network write may have
+        // succeeded on the server even if its acknowledgement failed.
+        if newValue && isOnline { return }
         guard let user = await auth.currentUser() else { throw PresenceError.signedOut }
 
         if newValue {
             guard let profile = try await profiles.load(userID: user.id) else { throw PresenceError.noProfile }
             try await writeOnline(userID: user.id, profile: profile)
+            guard UIApplication.shared.applicationState == .active, !Task.isCancelled else {
+                try? await writeOffline(userID: user.id)
+                stopLocally()
+                return
+            }
             isOnline = true
             states.send(true)
             startHeartbeat(userID: user.id)
@@ -70,8 +94,9 @@ final class FirestorePresenceService: PresenceService {
         heartbeat = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.heartbeatInterval)
-                guard !Task.isCancelled else { return }
-                try? await self?.writeHeartbeat(userID: userID)
+                guard !Task.isCancelled, let self else { return }
+                do { try await writeHeartbeat(userID: userID) }
+                catch { stopLocally(); return }
             }
         }
     }
@@ -107,11 +132,14 @@ final class FirestorePresenceService: PresenceService {
     }
 
     private nonisolated func writeOnline(userID: String, profile: UserProfile) async throws {
+        let invite = try await Firestore.firestore().collection("volunteerInvites").document(userID).getDocument(source: .server)
+        guard profile.role == .volunteer, invite.data()?["enabled"] as? Bool == true else {
+            throw CallSafetyError.invitationRequired
+        }
         var fields: [String: Any] = [
             "displayName": profile.displayName,
             "languages": profile.languages,
             "isOnline": true,
-            "inCall": false,
             "lastSeen": FieldValue.serverTimestamp(),
         ]
         // Updating a missing document is refused by the rules as permission-denied, not notFound,

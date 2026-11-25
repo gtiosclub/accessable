@@ -34,6 +34,7 @@ struct FirestoreCallSignaling: CallSignaling {
         progress: @Sendable (CallRequestProgress) -> Void
     ) async throws -> CallTicket {
         guard let me = await auth.currentUser()?.id else { throw CallSignalingError.signedOut }
+        guard try await FirestoreCallSafety(auth: auth).hasConsent() else { throw CallSafetyError.consentRequired }
         var tried: Set<String> = [me]
         var attempts = 0
         var lastMiss: CallRequestProgress.Miss?
@@ -231,10 +232,14 @@ struct FirestoreCallSignaling: CallSignaling {
             .whereField("isOnline", isEqualTo: true)
             .limit(to: 100)
             .getDocuments(source: .server)
+        guard let me = await auth.currentUser()?.id else { throw CallSignalingError.signedOut }
+        let blocks = try await Firestore.firestore().collection("users").document(me)
+            .collection("blockedVolunteers").getDocuments(source: .server)
+        let blockedIDs = Set(blocks.documents.map(\.documentID))
         let now = Date()
         return snapshot.documents
             .compactMap { Volunteer(id: $0.documentID, firestoreData: $0.data()) }
-            .filter { !tried.contains($0.id) && $0.isFreeToRing(at: now) }
+            .filter { !tried.contains($0.id) && !blockedIDs.contains($0.id) && $0.isFreeToRing(at: now) }
             .sorted { a, b in
                 if (a.id == preferredID) != (b.id == preferredID) { return a.id == preferredID }
                 return a.lastSeen > b.lastSeen
@@ -252,6 +257,12 @@ struct FirestoreCallSignaling: CallSignaling {
         do {
             let outcome = try await db.runTransaction { transaction, errorPointer -> Any? in
                 do {
+                    // Re-read both gates in the transaction: a concurrent block or revoked
+                    // invitation must win over an earlier directory snapshot/preferred pick.
+                    let block = try transaction.getDocument(db.collection("users").document(me)
+                        .collection("blockedVolunteers").document(volunteerID))
+                    let invite = try transaction.getDocument(db.collection("volunteerInvites").document(volunteerID))
+                    guard !block.exists, invite.data()?["enabled"] as? Bool == true else { return "busy" }
                     let data = try transaction.getDocument(volunteerRef).data() ?? [:]
                     guard let volunteer = Volunteer(id: volunteerID, firestoreData: data),
                           volunteer.isFreeToRing() else { return "busy" }

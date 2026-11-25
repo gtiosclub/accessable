@@ -6,31 +6,55 @@ import SwiftUI
 struct CallFlowView: View {
     @Environment(AppViewModel.self) private var app
     @Environment(AppRouter.self) private var router
-    @AppStorage(CallConsentView.agreedKey) private var hasAgreed = false
-    /// Rung first; nil rings whoever is free.
+    @State private var hasAgreed: Bool?
+    @State private var saving = false
+    @State private var errorMessage: String?
     let volunteer: Volunteer?
 
     var body: some View {
         Group {
-            if hasAgreed {
+            if hasAgreed == true {
                 CallView(services: app.services, volunteer: volunteer) { router.pop() }
+            } else if hasAgreed == false {
+                CallConsentView(announcements: app.services.announcements, onAgree: {
+                    saving = true
+                    Task {
+                        defer { saving = false }
+                        do { try await app.services.callSafety.acceptConsent(); hasAgreed = true; errorMessage = nil }
+                        catch { errorMessage = "Couldn't save your consent. Check your connection and try again." }
+                    }
+                }, onCancel: { router.pop() })
+                .disabled(saving)
+                .overlay { if saving { ProgressView("Saving consent").padding().background(.regularMaterial) } }
             } else {
-                CallConsentView(
-                    announcements: app.services.announcements,
-                    onAgree: { hasAgreed = true },
-                    onCancel: { router.pop() }
-                )
+                VStack(spacing: 20) {
+                    if let errorMessage { Text(errorMessage) }
+                    else { ProgressView("Checking call consent") }
+                    if errorMessage != nil { Button("Retry") { Task { await loadConsent() } }.frame(minHeight: 44) }
+                    Button("Back") { router.pop() }.frame(minHeight: 44)
+                }.padding()
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if hasAgreed == false, let errorMessage { Text(errorMessage).padding().background(.black) }
+        }
+        .task { await loadConsent() }
+        .onChange(of: errorMessage) { _, text in if let text { AccessibilityNotification.Announcement(text).post() } }
         .toolbar(.hidden, for: .navigationBar)
         .navigationBarBackButtonHidden()
+    }
+
+    private func loadConsent() async {
+        errorMessage = nil
+        do { hasAgreed = try await app.services.callSafety.hasConsent() }
+        catch { errorMessage = "Couldn't check call consent. Connect to the internet and retry." }
     }
 }
 
 /// Shown before the caller's first call. It's at the start of the feature, not added at the end,
 /// so it can't be cut.
 struct CallConsentView: View {
-    /// Remembered on this phone once agreed.
+    /// Legacy key retained for compatibility; only server-recorded consent now authorizes calling.
     static let agreedKey = "calls.hasAgreedToCallConsent"
 
     let announcements: any AnnouncementEngineProtocol
@@ -48,18 +72,18 @@ struct CallConsentView: View {
                 point(
                     systemImage: "eye.fill",
                     title: "A volunteer will see your camera",
-                    detail: "Volunteers are strangers who signed up to help. During a call, they see what your back camera shows and hear you."
+                    detail: "Volunteers are club-approved helpers you may not know. During a call, they see what your back camera shows and hear you."
                 )
                 // True because LiveKit only records with its recording (egress) feature, which we never turn on.
                 point(
                     systemImage: "record.circle",
-                    title: "Calls are never recorded",
+                    title: "AccessAble does not record calls",
                     detail: "AccessAble doesn't record or save the video or audio from any call."
                 )
                 point(
                     systemImage: "phone.down.fill",
                     title: "You're in control",
-                    detail: "You can hang up at any time."
+                    detail: "You can hang up at any time. After the call, you can report a concern or block the volunteer from matching with you again."
                 )
 
                 AccessibleActionButton(title: "I understand", systemImage: "checkmark",
@@ -78,7 +102,7 @@ struct CallConsentView: View {
             guard !voiceOverEnabled else { return }
             await announcements.submit(AnnouncementEvent(
                 category: .system, priority: .high,
-                text: "Before your first call: a volunteer, who is a stranger, will see your camera and hear you. "
+                text: "Before your first call: a club-approved volunteer will see your camera and hear you. "
                     + "Calls are never recorded. You can hang up at any time. "
                     + "Choose I understand to continue, or Not now to go back.",
                 source: .userInteraction

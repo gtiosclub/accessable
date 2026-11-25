@@ -18,6 +18,8 @@ struct AppServices: Sendable {
     var commands: any CommandInterpreting
     var auth: any AuthService
     var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
+    var callSafety: any CallSafetyService = UnavailableCallSettings()
+    var volunteerSettings: any VolunteerSettingsStore = UnavailableCallSettings()
     /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
     var accountsAvailable = false
     // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
@@ -82,6 +84,8 @@ struct AppServices: Sendable {
         services.incomingCalls = unavailable
         if FirebaseApp.app() != nil {
             services.userProfiles = FirestoreUserProfileStore()
+            services.callSafety = FirestoreCallSafety(auth: services.auth)
+            services.volunteerSettings = FirestoreVolunteerSettings(auth: services.auth)
             services.volunteers = FirestoreVolunteerDirectory()
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
@@ -139,6 +143,8 @@ struct AppServices: Sendable {
             commands: FoundationModelCommandInterpreter(), auth: PlaceholderAuthService()
         )
         services.distanceSettings = DistanceSettings(units: .metres)
+        services.callSafety = PlaceholderCallSafety()
+        services.volunteerSettings = PlaceholderVolunteerSettings()
         services.userProfiles = PlaceholderUserProfileStore(profiles: [
             UserProfile(userID: PlaceholderAuthService.sampleUser.id, role: .caller,
                         displayName: "Preview caller", languages: ["English"], createdAt: .now)

@@ -4,7 +4,7 @@ import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import {
   Timestamp, doc, getDoc, runTransaction, serverTimestamp, setDoc, writeBatch,
 } from 'firebase/firestore';
-import { startEnvironment } from './support.js';
+import { startEnvironment, seedCallPrerequisites } from './support.js';
 
 // VOLUNTEER-6: matching a caller to a volunteer. Each helper below writes exactly what the
 // apps write, so these tests check the same transactions the apps run.
@@ -33,7 +33,8 @@ async function read(path, id) {
 }
 
 // An online volunteer with a fresh heartbeat who isn't ringing.
-function seedVolunteer(uid, overrides = {}) {
+async function seedVolunteer(uid, overrides = {}) {
+  await seedCallPrerequisites(env, 'fixture-caller', uid);
   return seed('volunteers', uid, {
     displayName: 'Sam', languages: ['English'], bio: '', isOnline: true, inCall: false,
     ringingCallId: null, ringingSince: null, lastSeen: Timestamp.now(), ...overrides,
@@ -61,7 +62,8 @@ function ringWrites(write, db, callerId, volunteerId, callId, ringingSince = ser
 }
 
 // The caller's app: check the volunteer is free, then ring them (a transaction).
-function ring(db, callerId, volunteerId, callId) {
+async function ring(db, callerId, volunteerId, callId) {
+  await seedCallPrerequisites(env, callerId, volunteerId);
   return runTransaction(db, async (tx) => {
     const volunteer = (await tx.get(doc(db, 'volunteers', volunteerId))).data();
     const ringing = volunteer.ringingCallId && volunteer.ringingSince.toMillis() > Date.now() - 45_000;
@@ -71,7 +73,8 @@ function ring(db, callerId, volunteerId, callId) {
 }
 
 // The same writes without the app's checks, to prove the rules alone block a bad ring.
-function ringBlindly(db, callerId, volunteerId, callId, ringingSince) {
+async function ringBlindly(db, callerId, volunteerId, callId, ringingSince) {
+  await seedCallPrerequisites(env, callerId, volunteerId);
   const batch = writeBatch(db);
   ringWrites(batch, db, callerId, volunteerId, callId, ringingSince);
   return batch.commit();

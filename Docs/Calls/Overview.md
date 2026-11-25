@@ -52,3 +52,7 @@ pause with it and resume when the call ends.
 
 1. Copy `AccessAble/Config/Secrets.example.xcconfig` to `Secrets.xcconfig` and set `LIVEKIT_URL`.
 2. Open the LiveKit Cloud and Cloudflare dashboards (shared logins/invites from the project owner).
+
+## Volunteer settings and safety
+
+See [Volunteer settings and call safety](VolunteerSettingsSafety.md) for persistent settings, invitation approval, consent, Report/Block, rules and rollout checks.
