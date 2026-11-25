@@ -239,6 +239,24 @@ struct TripSessionReportTests {
     }
 
     @Test
+    func aSignedOutServiceAsksToSignIn() async {
+        let session = await makeSession(reports: CapturingReports(failure: ReportServiceError.notSignedIn))
+
+        await session.submitReport(kind: .construction)
+
+        #expect(await announcements.said == ["Sign in to report a problem."])
+    }
+
+    @Test(arguments: [ReportServiceError.permissionDenied, .invalidReport])
+    func aRefusedReportSaysItCouldNotBeSent(_ failure: ReportServiceError) async {
+        let session = await makeSession(reports: CapturingReports(failure: failure))
+
+        await session.submitReport(kind: .construction)
+
+        #expect(await announcements.said == ["That report couldn't be sent."])
+    }
+
+    @Test
     func anOfflineReportSaysItIsSaved() async {
         let session = await makeSession(reports: CapturingReports(failure: ReportServiceError.queuedOffline))
 
@@ -247,7 +265,7 @@ struct TripSessionReportTests {
         #expect(await announcements.said == ["Saved. It will be sent when you're back online."])
     }
 
-    /// Without a real report service (REPORT-3), nothing is stored and the user is told.
+    /// While reporting isn't available, nothing is stored and the user is told.
     @Test
     func unavailableReportingStoresNothing() async {
         let reports = CapturingReports()

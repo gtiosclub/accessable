@@ -405,6 +405,11 @@ final class TripSessionViewModel {
             await say("You just sent a report. Wait a minute before sending another.", category: .system)
         } catch ReportServiceError.queuedOffline {
             await say("Saved. It will be sent when you're back online.", category: .system)
+        } catch ReportServiceError.notSignedIn {
+            await say("Sign in to report a problem.", category: .system)
+        } catch let error as ReportServiceError where error == .permissionDenied || error == .invalidReport {
+            log.error("Report refused: \(String(describing: error), privacy: .public)")
+            await say("That report couldn't be sent.", category: .system)
         } catch {
             log.error("Report submit failed: \(error.localizedDescription, privacy: .public)")
             await say(
