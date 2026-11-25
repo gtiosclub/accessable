@@ -928,6 +928,19 @@ struct TripManagerTests {
     }
 
     @Test
+    func askedForRerouteStartsFromTheLatestPreciseFixNotALateOne() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        let latest = harness.point(walked20)
+        await harness.fix(harness.point(5), timestamp: harness.clock.now().addingTimeInterval(-3))
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.requests == [latest])
+    }
+
+    @Test
     func askedForRerouteThatFailsKeepsTheCurrentRoute() async throws {
         let harness = try Harness(reroutes: [.failure(.serverUnavailable)])
         await harness.start()

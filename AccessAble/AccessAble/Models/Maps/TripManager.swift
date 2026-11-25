@@ -322,7 +322,8 @@ actor TripManager: TripStateProviding {
                 if phase == .active { pending.append((signalAnnouncement("Location signal is back.", .normal, 6), nil)) }
             }
         }
-        if sample.horizontalAccuracy <= Self.rerouteAccuracy {
+        // a late fix is no longer where they are
+        if sample.horizontalAccuracy <= Self.rerouteAccuracy, sample.timestamp >= lastPreciseFixAt ?? .distantPast {
             lastPreciseFix = sample.coordinate
             lastPreciseFixAt = sample.timestamp
         }
