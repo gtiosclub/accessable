@@ -4,6 +4,13 @@ import SwiftUI
 struct VolunteerHomeView: View {
     let settings: VolunteerSettingsViewModel
     let signOut: () async throws -> Void
+    var lastCall: CallSafetySummary? = nil
+    var callSafety: any CallSafetyService = UnavailableCallSettings()
+    var dismissLastCall: () -> Void = {}
+    var listenerError: String? = nil
+    var retryListening: () -> Void = {}
+    var callMessage: String? = nil
+    var dismissCallMessage: () -> Void = {}
     @State private var signingOut = false
     @State private var signOutError: String?
     @Environment(\.scenePhase) private var scenePhase
@@ -12,6 +19,24 @@ struct VolunteerHomeView: View {
         @Bindable var settings = settings
         NavigationStack {
             Form {
+                if let listenerError {
+                    Section("Incoming call connection") {
+                        Text(listenerError)
+                        Button("Retry incoming calls", action: retryListening).minimumTapTarget()
+                    }
+                }
+                if let callMessage {
+                    Section("Call status") {
+                        Text(callMessage)
+                        Button("Dismiss call status", action: dismissCallMessage).minimumTapTarget()
+                    }
+                }
+                if let lastCall {
+                    Section("Previous call") {
+                        CallSafetyActionsView(summary: lastCall, service: callSafety).id(lastCall.id)
+                        Button("Dismiss previous call", action: dismissLastCall).minimumTapTarget()
+                    }
+                }
                 if !settings.isLoaded {
                     Section {
                         Text("Volunteer settings need to load before going online.")
@@ -59,6 +84,7 @@ struct VolunteerHomeView: View {
                 if let signOutError { Text(signOutError) }
             }
             .navigationTitle("Volunteer settings")
+            .onChange(of: signOutError) { _, text in if let text { AccessibilityNotification.Announcement(text).post() } }
             .onChange(of: settings.message) { _, text in if let text { AccessibilityNotification.Announcement(text).post() } }
         }
     }

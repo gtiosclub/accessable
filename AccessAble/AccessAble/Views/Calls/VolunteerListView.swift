@@ -48,9 +48,13 @@ struct VolunteerListView: View {
 private struct VolunteerStatusRow: View {
     let row: VolunteerListViewModel.Row
     let onCall: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
-        HStack(spacing: 16) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 16))
+            : AnyLayout(HStackLayout(spacing: 16))
+        return layout {
             // One VoiceOver stop for who they are ("Sam, online, speaks English") and a separate
             // one for the Call button, so the button stays reachable.
             HStack(spacing: 16) {
@@ -69,7 +73,7 @@ private struct VolunteerStatusRow: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(row.accessibilityLabel)
 
-            Spacer(minLength: 0)
+            if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
 
             if row.isOnline {
                 CircleIconButton(

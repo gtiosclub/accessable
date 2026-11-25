@@ -16,6 +16,7 @@ final class CallViewModel {
     private(set) var isUsingBackCamera = true
     private(set) var isFlashlightOn = false
     private(set) var controlError: String?
+    private(set) var isUpdatingControls = false
     /// The volunteer who answered, once known. Nil while ringing, or if it isn't the one picked.
     private(set) var volunteerName: String?
     private(set) var lastCallForSafety: CallSafetySummary?
@@ -104,37 +105,55 @@ final class CallViewModel {
     }
 
     func toggleMute() async {
+        guard state == .connected, !isUpdatingControls else { return }
+        isUpdatingControls = true
+        defer { isUpdatingControls = false }
         controlError = nil
+        let generation = attemptGeneration
         do {
             try await services.videoCall.setMicrophoneMuted(!isMuted)
+            guard generation == attemptGeneration, state == .connected else { return }
             isMuted.toggle()
         } catch {
+            guard generation == attemptGeneration, state == .connected else { return }
             controlError = "Couldn't change the microphone."
         }
     }
 
     func flipCamera() async {
+        guard state == .connected, !isUpdatingControls else { return }
+        isUpdatingControls = true
+        defer { isUpdatingControls = false }
         controlError = nil
+        let generation = attemptGeneration
         do {
             try await services.videoCall.flipCamera()
+            guard generation == attemptGeneration, state == .connected else { return }
             isUsingBackCamera.toggle()
             // Only the back camera has a light, and flipping turns it off.
             if !isUsingBackCamera { isFlashlightOn = false }
         } catch {
+            guard generation == attemptGeneration, state == .connected else { return }
             controlError = "Couldn't switch cameras."
         }
     }
 
     func toggleFlashlight() async {
+        guard state == .connected, !isUpdatingControls else { return }
+        isUpdatingControls = true
+        defer { isUpdatingControls = false }
         controlError = nil
+        let generation = attemptGeneration
         guard isUsingBackCamera else {
             controlError = "The flashlight only works with the back camera."
             return
         }
         do {
             try await services.videoCall.setFlashlight(!isFlashlightOn)
+            guard generation == attemptGeneration, state == .connected else { return }
             isFlashlightOn.toggle()
         } catch {
+            guard generation == attemptGeneration, state == .connected else { return }
             controlError = "Couldn't turn the flashlight \(isFlashlightOn ? "off" : "on")."
         }
     }
@@ -182,6 +201,15 @@ final class CallViewModel {
             await services.announcements.setInCall(true)
             try Task.checkCancellation()
             try await services.videoCall.connect(with: ticket)
+            try Task.checkCancellation()
+            if services.callerSettings.preferences.flashlightOnStart {
+                do {
+                    try await services.videoCall.setFlashlight(true)
+                    try Task.checkCancellation()
+                    isFlashlightOn = true
+                } catch is CancellationError { throw CancellationError() }
+                catch { controlError = "The flashlight couldn't turn on. You can keep talking." }
+            }
             try Task.checkCancellation()
             // Subscribe only after this join, with a generation fence. An old session's
             // replayed/queued terminal state must not end a subsequent call.
@@ -264,7 +292,8 @@ final class CallViewModel {
     /// the haptic at the user's chosen strength.
     private func say(_ text: String, haptic: HapticID?) async {
         await services.announcements.submit(AnnouncementEvent(
-            category: .system, priority: .high, text: text, haptic: haptic, source: .userInteraction
+            category: .system, priority: .high, text: text, haptic: haptic, source: .userInteraction,
+            isCallAnnouncement: true
         ))
     }
 

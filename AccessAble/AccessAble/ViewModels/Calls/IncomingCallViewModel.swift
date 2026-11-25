@@ -11,6 +11,7 @@ final class IncomingCallViewModel {
     private(set) var message: String?
     private(set) var listenerError: String?
     private(set) var isMuted = false
+    private(set) var isUpdatingControls = false
     private(set) var listenerAttempt = 0
     private(set) var lastCallForSafety: CallSafetySummary?
 
@@ -213,9 +214,18 @@ final class IncomingCallViewModel {
     }
 
     func toggleMute() async {
-        guard phase == .connected else { return }
-        do { try await video.setMicrophoneMuted(!isMuted); isMuted.toggle() }
-        catch { report("Couldn't change the microphone.") }
+        guard phase == .connected, !isUpdatingControls else { return }
+        isUpdatingControls = true
+        defer { isUpdatingControls = false }
+        let generation = actionGeneration
+        do {
+            try await video.setMicrophoneMuted(!isMuted)
+            guard generation == actionGeneration, phase == .connected else { return }
+            isMuted.toggle()
+        } catch {
+            guard generation == actionGeneration, phase == .connected else { return }
+            report("Couldn't change the microphone.")
+        }
     }
 
     /// Root volunteer host disappeared (for example sign-out), not just a navigation push.

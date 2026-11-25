@@ -103,9 +103,9 @@ struct CallConsentView: View {
             await announcements.submit(AnnouncementEvent(
                 category: .system, priority: .high,
                 text: "Before your first call: a club-approved volunteer will see your camera and hear you. "
-                    + "Calls are never recorded. You can hang up at any time. "
+                    + "AccessAble does not record calls. You can hang up at any time and report or block afterward. "
                     + "Choose I understand to continue, or Not now to go back.",
-                source: .userInteraction
+                source: .userInteraction, isCallAnnouncement: true
             ))
         }
     }

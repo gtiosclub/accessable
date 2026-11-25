@@ -5,6 +5,7 @@ struct IncomingVolunteerCallView: View {
     let model: IncomingCallViewModel
     let video: any VideoCallSession
     @AccessibilityFocusState private var acceptFocused: Bool
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
     var body: some View {
         ScrollView {
@@ -31,11 +32,13 @@ struct IncomingVolunteerCallView: View {
                                     .accessibilityLabel("Live video from the caller's camera")
                             } else { Text("Waiting for caller video") }
                         }
-                        AccessibleActionButton(title: model.isMuted ? "Unmute" : "Mute",
+                        AccessibleActionButton(title: model.isMuted ? "Unmute microphone" : "Mute microphone",
                                                systemImage: model.isMuted ? "mic.slash.fill" : "mic.fill",
                                                hint: "Changes your microphone") {
                             Task { await model.toggleMute() }
                         }
+                        .accessibilityValue(model.isMuted ? "Muted" : "On")
+                        .disabled(model.isUpdatingControls)
                     } else { ProgressView().accessibilityLabel(title) }
                     if let message = model.message { Text(message) }
                     AccessibleActionButton(title: "End call", systemImage: "phone.down.fill",
@@ -50,6 +53,16 @@ struct IncomingVolunteerCallView: View {
         .accessibilityAddTraits(.isModal)
         .accessibilityAction(.escape) {
             if model.phase == .ringing { model.decline() } else { model.endCall() }
+        }
+        .onChange(of: model.phase) { _, phase in
+            if voiceOverEnabled, phase == .accepting || phase == .connecting {
+                AccessibilityNotification.Announcement(title).post()
+            }
+        }
+        .onChange(of: model.isMuted) { _, muted in
+            if voiceOverEnabled, model.phase == .connected {
+                AccessibilityNotification.Announcement(muted ? "Microphone muted" : "Microphone on").post()
+            }
         }
         .task(id: model.call?.id) {
             acceptFocused = true

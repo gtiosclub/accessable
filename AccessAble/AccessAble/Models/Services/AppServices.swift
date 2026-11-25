@@ -20,6 +20,7 @@ struct AppServices: Sendable {
     var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
     var callSafety: any CallSafetyService = UnavailableCallSettings()
     var volunteerSettings: any VolunteerSettingsStore = UnavailableCallSettings()
+    var callerSettings = CallerSettings()
     /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
     var accountsAvailable = false
     // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
@@ -47,7 +48,8 @@ struct AppServices: Sendable {
     static func live(performance: PerformanceModeMonitor) -> AppServices {
         // One renderer, so the engine's haptics and anyone else's replace each other rather than overlap.
         let haptics = CoreHapticsRenderer()
-        let announcements = AnnouncementEngine(speech: SpeechOutput(), haptics: haptics)
+        let callerSettings = CallerSettings()
+        let announcements = AnnouncementEngine(speech: SpeechOutput(), haptics: haptics, callSettings: callerSettings)
         let askAISettings = AskAISettings()
         let alertSettings = AlertSettings()
         let distanceSettings = DistanceSettings()
@@ -73,6 +75,7 @@ struct AppServices: Sendable {
             locationContext: LocationDescriber(location: location, distances: distanceSettings),
             commands: FoundationModelCommandInterpreter(),
             auth: FirebaseApp.app() != nil ? FirebaseAuthService() : PlaceholderAuthService(signedIn: false),
+            callerSettings: callerSettings,
             askAISettings: askAISettings,
             alertSettings: alertSettings,
             distanceSettings: distanceSettings

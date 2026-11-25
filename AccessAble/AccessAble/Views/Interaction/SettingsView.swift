@@ -28,6 +28,25 @@ struct SettingsView: View {
                 }
                 .padding(.leading, 8)
 
+                SettingsCard("Volunteer calls") {
+                    SettingsToggleRow("Flashlight on start", isOn: $viewModel.callerPreferences.flashlightOnStart)
+                        .accessibilityHint("Turns on the back camera light when a call connects, if this phone supports it")
+                    SettingsToggleRow("Critical obstacle alerts during calls", isOn: $viewModel.callerPreferences.criticalObstacleAlerts)
+                        .accessibilityHint("Allows critical obstacle announcements received during a call")
+                    SettingsRow {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Call announcement volume").foregroundStyle(.white).accessibilityHidden(true)
+                            Slider(value: $viewModel.callerPreferences.announcementVolume, in: 0...1, step: 0.1) {
+                                Text("Call announcement volume")
+                            }
+                            .accessibilityValue("\(Int((viewModel.callerPreferences.announcementVolume * 100).rounded())) percent")
+                            .accessibilityHint("Adjusts AccessAble's spoken call prompts, not the volunteer or VoiceOver")
+                        }
+                    }
+                    Text("VoiceOver and the volunteer use system volume. Camera-based obstacle detection pauses while LiveKit owns the camera; this setting does not restart it.")
+                        .font(.footnote).foregroundStyle(.white).padding(.vertical, 12)
+                }
+
                 SettingsSectionTitle("Navigation Info Output")
                 SettingsCard("Auto Repeat Announcements") {
                     ForEach(AutoRepeat.allCases, id: \.self) { option in
