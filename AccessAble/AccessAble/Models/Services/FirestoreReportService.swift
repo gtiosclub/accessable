@@ -83,7 +83,18 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         ], forDocument: rateLimitReference, merge: true)
 
         do {
-            try await Self.commit(within: Self.commitTimeout, clock: clock) { batch.commit(completion: $0) }
+            try await Self.commit(
+                within: Self.commitTimeout,
+                clock: clock,
+                onLateOutcome: { error in
+                    if let error {
+                        logger.error("Queued report \(report.id, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                    } else {
+                        logger.notice("Queued report \(report.id, privacy: .public) reached the server")
+                    }
+                },
+                { batch.commit(completion: $0) }
+            )
         } catch ReportServiceError.queuedOffline {
             logger.notice("Report \(report.id, privacy: .public) is queued until the server answers")
             let queuedAt = now()
@@ -244,11 +255,13 @@ extension FirestoreReportService {
     }
 
     /// Starts a commit and waits for it, at most `timeout`. A commit can't be cancelled, so the
-    /// wait ends at whichever comes first, and the other is ignored: the commit's result, or
-    /// `.queuedOffline` once the timeout passes.
+    /// wait ends at whichever comes first: the commit's result, or `.queuedOffline` once the
+    /// timeout passes. A result that comes after the timeout goes to `onLateOutcome`, since the
+    /// server can still refuse a queued write.
     static func commit(
         within timeout: Duration,
         clock: any Clock<Duration>,
+        onLateOutcome: @escaping @Sendable ((any Error)?) -> Void,
         _ start: (_ completion: @escaping @Sendable ((any Error)?) -> Void) -> Void
     ) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
@@ -259,7 +272,9 @@ extension FirestoreReportService {
                 outcome.finish(.failure(ReportServiceError.queuedOffline))
             })
             start { error in
-                outcome.finish(error.map { .failure($0) } ?? .success(()))
+                if !outcome.finish(error.map { .failure($0) } ?? .success(())) {
+                    onLateOutcome(error)
+                }
             }
         }
     }
@@ -384,7 +399,9 @@ private final class FirstOutcome: Sendable {
         if finished { timer.cancel() }
     }
 
-    func finish(_ outcome: Result<Void, any Error>) {
+    /// Returns whether this outcome came first.
+    @discardableResult
+    func finish(_ outcome: Result<Void, any Error>) -> Bool {
         let pending = state.withLock { state -> (CheckedContinuation<Void, any Error>, Task<Void, Never>?)? in
             guard let continuation = state.continuation else { return nil }
             defer {
@@ -393,8 +410,9 @@ private final class FirstOutcome: Sendable {
             }
             return (continuation, state.timer)
         }
-        guard let (continuation, timer) = pending else { return }
+        guard let (continuation, timer) = pending else { return false }
         timer?.cancel()
         continuation.resume(with: outcome)
+        return true
     }
 }

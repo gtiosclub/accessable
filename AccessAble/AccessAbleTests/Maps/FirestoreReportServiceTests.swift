@@ -80,11 +80,24 @@ private final class HeldCommit: Sendable {
 
     init() {
         (holds, held) = AsyncStream.makeStream()
+        (lateOutcomes, lateOutcome) = AsyncStream.makeStream()
     }
 
     func hold(_ completion: @escaping @Sendable ((any Error)?) -> Void) {
         self.completion.withLock { $0 = completion }
         held.yield()
+    }
+
+    /// What arrived after the timeout, in order: nil for a success.
+    let lateOutcomes: AsyncStream<(any Error)?>
+    private let lateOutcome: AsyncStream<(any Error)?>.Continuation
+
+    func late(_ error: (any Error)?) {
+        lateOutcome.yield(error)
+    }
+
+    func finishLateOutcomes() {
+        lateOutcome.finish()
     }
 
     /// Returns once the commit has started.
@@ -353,31 +366,35 @@ struct FirestoreReportServiceTests {
 
     @Test(.timeLimit(.minutes(1)))
     func aCommitThatAnswersReturns() async throws {
-        try await FirestoreReportService.commit(within: .seconds(10), clock: ManualClock()) { $0(nil) }
+        try await FirestoreReportService.commit(within: .seconds(10), clock: ManualClock(), onLateOutcome: { _ in }) { $0(nil) }
     }
 
     @Test(.timeLimit(.minutes(1)))
     func aCommitThatFailsThrowsItsError() async {
         await #expect(throws: Boom()) {
-            try await FirestoreReportService.commit(within: .seconds(10), clock: ManualClock()) { $0(Boom()) }
+            try await FirestoreReportService.commit(within: .seconds(10), clock: ManualClock(), onLateOutcome: { _ in }) { $0(Boom()) }
         }
     }
 
-    /// The server's answer after the timeout is ignored, not a second resume.
+    /// The server's answer after the timeout goes to `onLateOutcome`, not a second resume.
     @Test(.timeLimit(.minutes(1)))
     func aCommitWithoutAnAnswerIsQueuedAfterTheTimeout() async throws {
         let clock = ManualClock()
         let held = HeldCommit()
         let commit = Task {
-            try await FirestoreReportService.commit(within: .seconds(10), clock: clock) { held.hold($0) }
+            try await FirestoreReportService.commit(within: .seconds(10), clock: clock, onLateOutcome: held.late) { held.hold($0) }
         }
         try await clock.waitForSleepers(1)
 
         clock.advance(by: .seconds(10))
 
         await #expect(throws: ReportServiceError.queuedOffline) { try await commit.value }
-        held.complete(nil)
         held.complete(Boom())
+        held.complete(nil)
+
+        var late = held.lateOutcomes.makeAsyncIterator()
+        #expect(try #require(await late.next()) is Boom)
+        #expect(try #require(await late.next()) == nil)
     }
 
     /// Once the server answers, the timeout is cancelled and can't resume again.
@@ -386,7 +403,7 @@ struct FirestoreReportServiceTests {
         let clock = ManualClock()
         let held = HeldCommit()
         let commit = Task {
-            try await FirestoreReportService.commit(within: .seconds(10), clock: clock) { held.hold($0) }
+            try await FirestoreReportService.commit(within: .seconds(10), clock: clock, onLateOutcome: held.late) { held.hold($0) }
         }
         try await clock.waitForSleepers(1)
         await held.waitForCommit()
@@ -395,5 +412,9 @@ struct FirestoreReportServiceTests {
 
         try await commit.value
         clock.advance(by: .seconds(10))
+        held.finishLateOutcomes()
+
+        var late = held.lateOutcomes.makeAsyncIterator()
+        #expect(await late.next() == nil)
     }
 }
