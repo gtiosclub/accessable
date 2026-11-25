@@ -98,6 +98,7 @@ actor TripManager: TripStateProviding {
     private static let reportRetryDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(60)]
     // metres beyond the route's reach that reports are listened for
     private static let reportSearchMargin: Double = 250
+    private static let nearReportSpeech = "New obstacle reported just ahead."
     private static let unavoidedReportSpeech =
         "Couldn't find a way around the reported obstacle. Keep following the current route carefully."
     // a new route from a rough fix would start on the wrong side of the street, and a direction from one can point
@@ -556,6 +557,7 @@ actor TripManager: TripStateProviding {
                 avoidable.append(report)
             }
         }
+        let hasNear = !warned.isEmpty
         if !avoidable.isEmpty, rerouteTask == nil {
             if reportRerouteCount >= Self.maximumReportReroutes {
                 warned += avoidable
@@ -564,7 +566,7 @@ actor TripManager: TripStateProviding {
                 // said by the reroute's task before it asks, so its answer can't come first; and in flight from here,
                 // so a fix or snapshot meanwhile waits for it
                 var announcements = warned.first.map { near in
-                    [maneuver("New obstacle reported just ahead.", .high, haptic: .attention, expiresIn: 10,
+                    [maneuver(Self.nearReportSpeech, .high, haptic: .attention, expiresIn: 10,
                               key: "report-warning-\(near.id)")]
                 } ?? []
                 announcements.append(maneuver("New obstacle reported ahead. Finding a new route.", .high,
@@ -578,8 +580,8 @@ actor TripManager: TripStateProviding {
         }
         guard let first = warned.first else { return }
         actedOnReportIDs.formUnion(warned.map(\.id))
-        await submit(maneuver("New obstacle reported ahead.", .high, haptic: .attention, expiresIn: 10,
-                              key: "report-warning-\(first.id)"))
+        await submit(maneuver(hasNear ? Self.nearReportSpeech : "New obstacle reported ahead.", .high,
+                              haptic: .attention, expiresIn: 10, key: "report-warning-\(first.id)"))
     }
 
     // MARK: Rerouting

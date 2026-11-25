@@ -1985,6 +1985,7 @@ struct TripManagerRecordingTests {
 
 private let reportReroute = "New obstacle reported ahead. Finding a new route."
 private let reportWarning = "New obstacle reported ahead."
+private let nearReportWarning = "New obstacle reported just ahead."
 private let reportUnavoided =
     "Couldn't find a way around the reported obstacle. Keep following the current route carefully."
 
@@ -2065,7 +2066,7 @@ struct TripManagerReportTests {
 
         await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
         #expect(await spokenAboutReports(harness) == [
-            "New obstacle reported just ahead.", reportReroute,
+            nearReportWarning, reportReroute,
             "New route. A reported obstacle is on this route. \(setOff)",
         ])
     }
@@ -2152,7 +2153,7 @@ struct TripManagerReportTests {
         await harness.reports.publish(near)
 
         #expect(await harness.router.requests.isEmpty)
-        #expect(await spokenAboutReports(harness) == [reportWarning])
+        #expect(await spokenAboutReports(harness) == [nearReportWarning])
     }
 
     @Test
