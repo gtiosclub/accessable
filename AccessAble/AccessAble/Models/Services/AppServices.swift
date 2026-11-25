@@ -25,7 +25,8 @@ struct AppServices: Sendable {
     var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
     /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
     var accountsAvailable = false
-    // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
+    /// True once a real report service is wired (REPORT-3); until then the trip screen offers no reporting.
+    var reportsAvailable = false
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
     // TODO(MATCH-x): replace these four placeholders with the real call services.
     var volunteers: any VolunteerDirectory = PlaceholderVolunteerDirectory()
@@ -84,20 +85,28 @@ struct AppServices: Sendable {
             distanceSettings: distanceSettings
         )
         services.geoTracking = geoTracking
+        if let analyzer = scene as? ARSceneAnalyzer {
+            let perception = analyzer.perception
+            services.landmarks = CameraLandmarkProvider(
+                scene: analyzer,
+                setReadsText: { perception.setReadsLandmarkText($0) },
+                // Find and Read speak the signs SignInterpreter knows, so Maps doesn't name them again
+                isAnnouncedByCamera: { perception.mode.announcesSigns && SignInterpreter.interpret($0) != nil }
+            )
+        }
         if FirebaseApp.app() != nil {
             services.reports = FirestoreReportService(auth: services.auth)
+            services.reportsAvailable = true
+            services.routing = ReportAwareRoutingService(base: services.routing, reports: services.reports)
             services.userProfiles = FirestoreUserProfileStore()
-        services.routing = ReportAwareRoutingService(
-            base: services.routing,
-            reports: services.reports
-        )
             services.volunteers = FirestoreVolunteerDirectory()
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
         }
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
-            reports: services.reports,
+            reports: services.reportsAvailable ? services.reports : nil,
+            currentUserID: { [auth = services.auth] in await auth.currentUser()?.id },
             landmarks: services.landmarks,
             setTripTracking: { await gps.setTripTracking($0) },
             distances: distanceSettings,
@@ -156,6 +165,9 @@ struct AppServices: Sendable {
         ])
         services.volunteers = PlaceholderVolunteerDirectory()
         services.presence = PlaceholderPresenceService()
+        // Reports stay in memory, so previews and tests can report a problem.
+        services.reports = PlaceholderReportService()
+        services.reportsAvailable = true
         return services
     }
 }

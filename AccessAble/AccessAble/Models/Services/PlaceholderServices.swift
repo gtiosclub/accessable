@@ -339,7 +339,7 @@ actor PlaceholderUserProfileStore: UserProfileStore {
     }
 }
 
-/// In-memory reports for previews and tests; replaced by Firestore when Firebase is configured.
+/// The in-memory stand-in for reports, used in previews and tests.
 actor PlaceholderReportService: ReportService {
     private var storedReports: [Report] = []
     private nonisolated let changes = Broadcaster<[Report]>(replaysLatest: true)
@@ -358,11 +358,7 @@ actor PlaceholderReportService: ReportService {
         near coordinate: GeoCoordinate,
         radius: Double
     ) async throws -> [Report] {
-        storedReports.filter {
-            $0.expiresAt > .now
-                && !$0.isRemoved
-                && GeoMath.distance(from: coordinate, to: $0.coordinate) <= radius
-        }
+        storedReports.filter { $0.expiresAt > .now && !$0.isRemoved && $0.isNear(coordinate, within: radius) }
     }
 
     nonisolated func reportChanges(
@@ -375,12 +371,7 @@ actor PlaceholderReportService: ReportService {
             let task = Task {
                 for await reports in source {
                     continuation.yield(reports.filter {
-                        $0.expiresAt > .now
-                            && !$0.isRemoved
-                            && GeoMath.distance(
-                                from: coordinate,
-                                to: $0.coordinate
-                            ) <= radius
+                        $0.expiresAt > .now && !$0.isRemoved && $0.isNear(coordinate, within: radius)
                     })
                 }
                 continuation.finish()
@@ -389,11 +380,7 @@ actor PlaceholderReportService: ReportService {
         }
     }
 
-    func confirm(
-        _ reportID: String,
-        isStillPresent: Bool,
-        userID: String
-    ) async throws {
+    func confirm(_ reportID: String, isStillPresent: Bool, userID: String) async throws {
         guard let index = storedReports.firstIndex(where: { $0.id == reportID }),
               storedReports[index].reporterID != userID,
               storedReports[index].expiresAt > .now,
@@ -403,16 +390,12 @@ actor PlaceholderReportService: ReportService {
         }
 
         storedReports[index].confirmationResponses[userID] = isStillPresent
-
         if isStillPresent {
             storedReports[index].confirmations += 1
-            storedReports[index].expiresAt = .now.addingTimeInterval(
-                storedReports[index].kind.lifetime
-            )
+            storedReports[index].expiresAt = .now.addingTimeInterval(storedReports[index].kind.lifetime)
         } else {
             storedReports[index].negativeConfirmations += 1
-            storedReports[index].isRemoved =
-                storedReports[index].negativeConfirmations >= 2
+            storedReports[index].isRemoved = storedReports[index].negativeConfirmations >= 2
         }
         changes.send(storedReports)
     }

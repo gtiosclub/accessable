@@ -43,6 +43,9 @@ struct TripRecorderTests {
             ))
             recorder.record(announcement: "You're off the route. Finding a new route.", at: start)
             recorder.record(announcement: "Say \"stop\", then wait", at: start)
+            recorder.record(sighting: LandmarkObservation(kind: .signText, text: "JOHN LEWIS STUDENT CENTER", key: "sign",
+                                                          confidence: 0.876),
+                            progress: 98.26, at: start)
             recorder.tripEnded()
             #expect(!recorder.isRecording)
 
@@ -55,6 +58,7 @@ struct TripRecorderTests {
                     + "49.4,-21.0,1,1,\"offRoute prepare(2,40.0)\",",
                 "announcement,2023-11-14T22:13:20.000Z,,,,,,,,,,,,,,,,You're off the route. Finding a new route.",
                 "announcement,2023-11-14T22:13:20.000Z,,,,,,,,,,,,,,,,\"Say \"\"stop\"\", then wait\"",
+                "sighting,2023-11-14T22:13:20.000Z,,,,,,,,,,,98.3,,,,signText 0.88,JOHN LEWIS STUDENT CENTER",
             ])
         }
     }

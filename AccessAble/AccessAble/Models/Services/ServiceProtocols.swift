@@ -110,17 +110,11 @@ protocol TripStateProviding: Sendable {
     func endTrip() async
     /// A new route from where the user is now, for a running trip, when they ask for one.
     func reroute() async
-    /// Active reports received during the current trip.
-    func tripReports() -> AsyncStream<[Report]>
     /// Reports passed nearby that need a one-time confirmation prompt.
     func reportConfirmationRequests() -> AsyncStream<Report>
 }
 
 extension TripStateProviding {
-    func tripReports() -> AsyncStream<[Report]> {
-        AsyncStream { $0.finish() }
-    }
-
     func reportConfirmationRequests() -> AsyncStream<Report> {
         AsyncStream { $0.finish() }
     }

@@ -255,6 +255,8 @@ struct ValhallaRoutingServiceTests {
         (400, valhallaError(171), .noRouteFound),
         (400, valhallaError(172), .noRouteFound),
         (400, valhallaError(442), .noRouteFound),
+        (400, valhallaError(157), .exclusionsRejected),
+        (400, valhallaError(167), .exclusionsRejected),
         (400, valhallaError(100), .invalidResponse),
         (400, "Bad Request", .invalidResponse),
         (404, "", .invalidResponse),

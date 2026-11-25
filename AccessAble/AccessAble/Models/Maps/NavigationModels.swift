@@ -138,11 +138,16 @@ struct RouteOptions: Equatable, Sendable {
     var walkingSpeed: Double = 1.2
     var excludeLocations: [GeoCoordinate] = []
     var excludePolygons: [[GeoCoordinate]] = []
+    /// Reports to route around besides those `ReportAwareRoutingService` fetches, such as one that just appeared on
+    /// the route ahead. Only that service reads them; a plain routing service ignores them.
+    var reports: [Report] = []
 }
 
 enum RoutingError: Error, Equatable, Sendable {
     case noRouteFound
     case serverUnavailable
+    /// Valhalla refused the exclusions themselves: too many points, or too long a polygon perimeter.
+    case exclusionsRejected
     /// The request could not be built or was rejected, or the response could not be decoded or failed
     /// `NavigationRoute` validation.
     case invalidResponse
@@ -183,6 +188,11 @@ extension RouteStep {
         return "stairs"
     }
 
+    /// Valhalla capitalizes the step it joins on, "Turn left. Then Turn right.", which reads oddly on screen.
+    static func withLowercaseThen(_ text: String) -> String {
+        text.replacing(/\. Then (\p{Lu})/) { ". Then " + $0.output.1.lowercased() }
+    }
+
     /// The instruction without the compass direction Valhalla starts a route with, which a blind user can't act on:
     /// "Walk north on Ferst Drive." becomes "Follow Ferst Drive.", and "Walk north for 50 meters." becomes "Follow the
     /// path for 50 meters.". Any other instruction is returned as it is.
@@ -208,10 +218,8 @@ struct NavigationRoute: Codable, Hashable, Sendable {
     let estimatedDuration: Double
     /// Metres from the start to each coordinate. Same count as `coordinates`; starts at 0.
     let cumulativeDistances: [Double]
-    /// Community reports excluded successfully when Valhalla calculated this route.
-    let avoidedReports: [Report]
-    /// Community reports that could not be excluded when Valhalla needed a fallback route.
-    let unavoidedReports: [Report]
+    /// Active reports this route passes because it couldn't avoid them. Not encoded: reports name their reporter.
+    var unavoidedReports: [Report] = []
 
     enum ValidationError: Error, Equatable, Sendable {
         case tooFewCoordinates
@@ -222,13 +230,7 @@ struct NavigationRoute: Codable, Hashable, Sendable {
         case invalidDuration
     }
 
-    init(
-        coordinates: [GeoCoordinate],
-        steps: [RouteStep],
-        estimatedDuration: Double,
-        avoidedReports: [Report] = [],
-        unavoidedReports: [Report] = []
-    ) throws(ValidationError) {
+    init(coordinates: [GeoCoordinate], steps: [RouteStep], estimatedDuration: Double) throws(ValidationError) {
         guard coordinates.count >= 2 else { throw .tooFewCoordinates }
         // Range checks also reject NaN and infinity.
         if let index = coordinates.firstIndex(where: {
@@ -251,20 +253,16 @@ struct NavigationRoute: Codable, Hashable, Sendable {
         self.steps = steps
         self.estimatedDuration = estimatedDuration
         self.cumulativeDistances = GeoMath.cumulativeDistances(along: coordinates)
-        self.avoidedReports = avoidedReports
-        self.unavoidedReports = unavoidedReports
     }
 
     /// Metres.
     var totalDistance: Double { cumulativeDistances[cumulativeDistances.count - 1] }
 
-    // Derived distances are not encoded; decoding re-runs validation and restores report metadata when present.
+    // Only the inputs are encoded; decoding re-runs validation and re-derives the distances.
     private enum CodingKeys: String, CodingKey {
         case coordinates
         case steps
         case estimatedDuration
-        case avoidedReports
-        case unavoidedReports
     }
 
     init(from decoder: any Decoder) throws {
@@ -272,16 +270,8 @@ struct NavigationRoute: Codable, Hashable, Sendable {
         let coordinates = try container.decode([GeoCoordinate].self, forKey: .coordinates)
         let steps = try container.decode([RouteStep].self, forKey: .steps)
         let estimatedDuration = try container.decode(Double.self, forKey: .estimatedDuration)
-        let avoidedReports = try container.decodeIfPresent([Report].self, forKey: .avoidedReports) ?? []
-        let unavoidedReports = try container.decodeIfPresent([Report].self, forKey: .unavoidedReports) ?? []
         do {
-            try self.init(
-                coordinates: coordinates,
-                steps: steps,
-                estimatedDuration: estimatedDuration,
-                avoidedReports: avoidedReports,
-                unavoidedReports: unavoidedReports
-            )
+            try self.init(coordinates: coordinates, steps: steps, estimatedDuration: estimatedDuration)
         } catch {
             throw DecodingError.dataCorrupted(DecodingError.Context(
                 codingPath: decoder.codingPath,
