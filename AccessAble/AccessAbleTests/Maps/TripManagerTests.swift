@@ -880,6 +880,47 @@ struct TripManagerTests {
     }
 
     @Test
+    func startingOnABackupRouteSaysItMayIncludeStairs() async throws {
+        var route = try cornerRoute()
+        route.source = .appleMaps
+        let harness = try Harness(route: route)
+        await harness.start()
+
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 160 metres. \(RouteSource.backupNotice) " + setOff)
+    }
+
+    /// Said only when the new route comes from a different service than the one being followed.
+    @Test(arguments: [
+        (RouteSource.valhalla, RouteSource.appleMaps, "New route. \(RouteSource.backupNotice) \(setOff)"),
+        (.appleMaps, .appleMaps, "New route. \(setOff)"),
+        (.appleMaps, .valhalla, "New route. Back to accessible directions. \(setOff)"),
+        (.valhalla, .valhalla, "New route. \(setOff)"),
+    ])
+    func aRerouteSaysWhenTheDirectionsChangeService(_ from: RouteSource, _ to: RouteSource, _ expected: String)
+        async throws {
+        let walked = TripWalk.distances(from: 0, to: 20).last ?? 0
+        var route = try cornerRoute()
+        route.source = from
+        let origin = TripWalk.point(on: route, along: walked)
+        var newRoute = try eastRoute(from: origin)
+        newRoute.source = to
+        let harness = try Harness(route: route, reroutes: [.success(newRoute)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        #expect(await harness.engine.texts.filter { $0.hasPrefix("New route.") } == [expected])
+    }
+
+    @Test
     func askedForRerouteWithoutAPreciseFixSaysSoAndAsksNothing() async throws {
         let harness = try Harness()
         await harness.start()
