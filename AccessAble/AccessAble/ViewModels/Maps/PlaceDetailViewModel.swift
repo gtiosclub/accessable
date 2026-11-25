@@ -26,7 +26,8 @@ final class PlaceDetailViewModel {
         campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all }
     ) {
         self.destination = destination
-        planner = TripViewModel(services: services)
+        // the summary says which reports the route passes, so the planner doesn't warn of them as well
+        planner = TripViewModel(services: services, warnsOfPassedReports: false)
         distanceSettings = services.distanceSettings
         self.campusCrossings = campusCrossings
         if let planned { planner.use(planned) }
