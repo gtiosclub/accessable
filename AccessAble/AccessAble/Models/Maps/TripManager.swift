@@ -546,10 +546,12 @@ actor TripManager: TripStateProviding {
                 warned += avoidable
             } else if !isSignalWeak, let origin = lastPreciseFix, rerouteSpacingElapsed {
                 actedOnReportIDs.formUnion((avoidable + warned).map(\.id))
-                // before the await, so a fix or snapshot meanwhile sees it in flight
-                requestReroute(from: origin, generation: generation, requested: true, avoiding: avoidable)
-                await submit(maneuver("New obstacle reported ahead. Finding a new route.", .high, haptic: .attention,
-                                      expiresIn: 15, key: "report-reroute-\(reportRerouteCount)"))
+                // said by the reroute's task before it asks, so its answer can't come first; and in flight from here,
+                // so a fix or snapshot meanwhile waits for it
+                let announcement = maneuver("New obstacle reported ahead. Finding a new route.", .high,
+                                            haptic: .attention, expiresIn: 15, key: "report-reroute-\(avoidable[0].id)")
+                requestReroute(from: origin, generation: generation, requested: true, avoiding: avoidable,
+                               announcing: [announcement])
                 return
             }
         }
@@ -604,13 +606,17 @@ actor TripManager: TripStateProviding {
     /// - Parameters:
     ///   - requested: Asked for by the user or for new reports, so it lands even while still on the route.
     ///   - triggers: New reports ahead to route around. A reroute for them counts apart from the off-route ones.
+    ///   - announcements: Said, in order, before the request goes out.
     private func requestReroute(from origin: GeoCoordinate, generation: Int, requested: Bool = false,
-                                avoiding triggers: [Report] = []) {
+                                avoiding triggers: [Report] = [], announcing announcements: [AnnouncementEvent] = []) {
         guard let destination else { return }
         if triggers.isEmpty { rerouteCount += 1 } else { reportRerouteCount += 1 }
         lastRerouteRequest = now()
         let version = routeVersion
         rerouteTask = Task { [routing] in
+            for announcement in announcements where !Task.isCancelled {
+                await self.submit(announcement)
+            }
             let result: Result<NavigationRoute, any Error>
             do {
                 result = .success(try await routing.route(from: origin, to: destination.coordinate,
@@ -636,7 +642,7 @@ actor TripManager: TripStateProviding {
             if !triggers.isEmpty, !needsReroute, triggers.allSatisfy({ unavoided.contains($0.id) }) {
                 guard phase == .active else { return }
                 await submit(maneuver(Self.unavoidedReportSpeech, .high, haptic: .attention, expiresIn: 10,
-                                      key: "reroute-failed"))
+                                      key: "report-unavoided"))
                 return
             }
             routeVersion += 1
@@ -669,7 +675,8 @@ actor TripManager: TripStateProviding {
             } else {
                 "Off route. End the trip and choose your destination again."
             }
-            await submit(maneuver(text, .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
+            let key = text == Self.unavoidedReportSpeech ? "report-unavoided" : "reroute-failed"
+            await submit(maneuver(text, .high, haptic: .attention, expiresIn: 10, key: key))
         }
     }
 

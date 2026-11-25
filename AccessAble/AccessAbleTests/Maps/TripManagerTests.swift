@@ -2091,8 +2091,12 @@ struct TripManagerReportTests {
         await harness.fix(harness.point(walked20))
 
         #expect(await harness.router.requests.count == 1)
+        // in that order however fast the answer comes
         #expect(await spokenAboutReports(harness) == [reportReroute, reportUnavoided])
         #expect(!(await harness.engine.texts.contains("Couldn't get a new route. Keep following the current one.")))
+        // apart from the other reroute messages, so the engine's dedup can't take it for one of them
+        let unavoided = await harness.engine.submitted.first { $0.text == reportUnavoided }
+        #expect(unavoided?.dedupKey?.hasSuffix("-report-unavoided") == true)
     }
 
     /// The routing can't avoid a report this near the user, so a reroute would only pass it again.
