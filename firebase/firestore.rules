@@ -185,14 +185,8 @@ service cloud.firestore {
         && getAfter(rateLimitPath()).data.lastReportId == reportId;
 
 
-      allow update: if signedIn()
-        && (
-          (resource.data.reporterID == request.auth.uid
-            && isValidReport(request.resource.data)
-            && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['kind', 'coordinate', 'area', 'expiresAt']))
-          || isValidVote(reportId)
-        );
+      // Votes are the only edits: the reporter could otherwise extend, move or revive a report others voted on.
+      allow update: if signedIn() && isValidVote(reportId);
 
       allow delete: if signedIn() && resource.data.reporterID == request.auth.uid;
 

@@ -119,29 +119,28 @@ test('signed-in users can read reports with a limit of at most 200', async () =>
   await assertFails(getDocs(collection(db, 'reports')));
 });
 
-test('the reporter can change kind, coordinate, area and expiry', async () => {
-  await seedReport(env, 'alice', 'r1');
-  await assertSucceeds(updateDoc(doc(alice(), 'reports', 'r1'), {
-    kind: 'blockedPath',
-    coordinate: { latitude: 33.78, longitude: -84.4 },
-    expiresAt: Timestamp.now(),
-  }));
-});
-
-test('the reporter cannot change id, reporter, creation time or confirmations', async () => {
-  await seedReport(env, 'alice', 'r1');
+// Votes are the only edits, so a reporter can't undo what they decide.
+test('the reporter cannot edit their report', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE, { kind: 'blockedPath', expiresAt: Timestamp.fromMillis(Date.now() + HOUR) });
   const report = doc(alice(), 'reports', 'r1');
+  await assertFails(updateDoc(report, { kind: 'construction' }));
+  await assertFails(updateDoc(report, { coordinate: { latitude: 33.78, longitude: -84.4 } }));
+  await assertFails(updateDoc(report, { expiresAt: Timestamp.fromMillis(Date.now() + 29 * DAY) }));
+  await assertFails(updateDoc(report, { expiresAt: Timestamp.now() }));
   await assertFails(updateDoc(report, { id: 'r2' }));
   await assertFails(updateDoc(report, { reporterID: 'bob' }));
-  await assertFails(updateDoc(report, { createdAt: serverTimestamp() }));
   await assertFails(updateDoc(report, { confirmations: 1 }));
 });
 
-test('an update must still be a valid report', async () => {
-  await seedReport(env, 'alice', 'r1');
-  const report = doc(alice(), 'reports', 'r1');
-  await assertFails(updateDoc(report, { kind: 'pothole' }));
-  await assertFails(updateDoc(report, { expiresAt: Timestamp.fromMillis(Date.now() + 31 * DAY) }));
+test('the reporter cannot revive a report voted gone, or move a confirmed one', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await assertSucceeds(vote(bob(), 'bob', 'r1', true));
+  await assertFails(updateDoc(doc(alice(), 'reports', 'r1'), { coordinate: { latitude: 10, longitude: 10 } }));
+  await assertSucceeds(vote(env.authenticatedContext('carol').firestore(), 'carol', 'r1', false));
+  await assertSucceeds(vote(env.authenticatedContext('dave').firestore(), 'dave', 'r1', false, { report: {
+    negativeConfirmations: increment(1), negativesSinceConfirm: increment(1), expiresAt: serverTimestamp(),
+  } }));
+  await assertFails(updateDoc(doc(alice(), 'reports', 'r1'), { expiresAt: Timestamp.fromMillis(Date.now() + 29 * DAY) }));
 });
 
 test("a user cannot edit or delete someone else's report", async () => {
