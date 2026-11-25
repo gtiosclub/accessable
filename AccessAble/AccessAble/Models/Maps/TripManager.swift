@@ -257,7 +257,8 @@ actor TripManager: TripStateProviding {
         await submit(confirmation("Trip resumed."))
         if self.generation == generation, phase == .active, unavoidedReportOnResume {
             unavoidedReportOnResume = false
-            await submit(unavoidedReportAnnouncement())
+            // off the route since, so it no longer passes the report
+            if !needsReroute { await submit(unavoidedReportAnnouncement()) }
         }
         // a reroute that landed meanwhile has its own announcement, and this one is about the old route
         guard self.generation == generation, routeVersion == version, phase == .active, let guidance else { return }

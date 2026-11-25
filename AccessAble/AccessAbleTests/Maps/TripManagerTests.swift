@@ -2303,6 +2303,28 @@ struct TripManagerReportTests {
             == ["Trip resumed.", reportUnavoided])
     }
 
+    @Test
+    func aRerouteThatCantAvoidTheReportWhilePausedIsntSaidOffTheRoute() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let blocked = report("ahead", at: TripWalk.point(on: try cornerRoute(), along: 60))
+        var passing = try eastRoute(from: origin)
+        passing.unavoidedReports = [blocked]
+        let harness = try Harness(reroutes: [.success(passing)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        await harness.reports.publish([blocked])
+        await harness.router.waitForRequests(1)
+        await harness.manager.pauseTrip()
+        await harness.answerReroute()
+
+        await harness.goOffRoute(at: walked20)
+        #expect(await harness.states.current?.isOffRoute == true)
+        await harness.manager.resumeTrip()
+
+        await waitUntil { await harness.engine.texts.contains("You're off the route. Finding a new route.") }
+        #expect(!(await harness.engine.texts.contains(reportUnavoided)))
+    }
+
     /// The first fix after resuming both says the turn and reroutes for the report that came while paused.
     @Test
     func aReportWhilePausedReroutesOnTheFirstFixAfterResumingWithItsTurnCue() async throws {
