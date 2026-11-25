@@ -9,6 +9,10 @@ private actor FakeRouting: RoutingService {
         case returns(NavigationRoute)
         case fails(any Error)
         case hangs
+        /// Answers once `clock` moves on a second.
+        case returnsLater(NavigationRoute, ManualClock)
+        /// Answers as `service` does, so a test can wait for requests to it.
+        case forwards(any RoutingService)
     }
 
     private let behaviour: @Sendable (Int) -> Behaviour
@@ -37,6 +41,11 @@ private actor FakeRouting: RoutingService {
             return route
         case .fails(let error):
             throw error
+        case .returnsLater(let route, let clock):
+            try await clock.sleep(for: .seconds(1))
+            return route
+        case .forwards(let service):
+            return try await service.route(from: origin, to: destination, options: options)
         case .hangs:
             do {
                 // a clock no one advances, so only cancellation ends the wait
@@ -225,7 +234,7 @@ struct FallbackRoutingServiceTests {
     }
 
     @Test
-    func aTimeoutWithExclusionsRejectsThemAndIsNotRemembered() async throws {
+    func aTimeoutWithExclusionsRejectsThemAndIsRemembered() async throws {
         let primary = FakeRouting(byCall: { $0 == 0 ? .hangs : .returns(Self.valhallaRoute) })
         let fallback = FakeRouting(.returns(Self.backupRoute))
         let clock = ManualClock()
@@ -237,8 +246,12 @@ struct FallbackRoutingServiceTests {
         await #expect(throws: RoutingError.exclusionsRejected) { try await routing.value }
         await primary.waitForCancellations(1)
         #expect(await fallback.calls == 0)
-        // a slow request with exclusions says nothing of Valhalla without them
-        #expect(try await request(service).value == Self.valhallaRoute)
+        // report-aware routing's next tries don't wait on Valhalla again
+        await #expect(throws: RoutingError.exclusionsRejected) {
+            try await request(service, options: Self.exclusions).value
+        }
+        #expect(try await request(service).value == Self.backupRoute)
+        #expect(await primary.calls == 1)
     }
 
     @Test
@@ -297,14 +310,47 @@ struct FallbackRoutingServiceTests {
         clock.advance(by: FallbackRoutingService.timeoutMemory - .seconds(1))
         #expect(try await request(service).value == Self.backupRoute)
         #expect(await primary.calls == 1)
-        // asked to avoid places, Valhalla is still the only one that can
-        #expect(try await request(service, options: Self.exclusions).value == Self.valhallaRoute)
-        #expect(await primary.calls == 2)
+        await #expect(throws: RoutingError.exclusionsRejected) {
+            try await request(service, options: Self.exclusions).value
+        }
+        #expect(await primary.calls == 1)
 
         clock.advance(by: .seconds(1))
         #expect(try await request(service).value == Self.valhallaRoute)
-        #expect(await primary.calls == 3)
+        #expect(await primary.calls == 2)
         #expect(await fallback.calls == 2)
+    }
+
+    /// A request that went out before the timeout and then answers shows Valhalla is back.
+    @Test
+    func anAnswerFromValhallaClearsTheTimeout() async throws {
+        let gate = ManualClock()
+        let primary = FakeRouting(byCall: { call in
+            switch call {
+            case 0: .hangs
+            case 1: .returnsLater(Self.valhallaRoute, gate)
+            default: .returns(Self.valhallaRoute)
+            }
+        })
+        let fallback = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+        let service = FallbackRoutingService(primary: primary, fallback: fallback, clock: clock)
+        let slow = request(service)
+        await primary.waitForRequests(1)
+        try await clock.waitForSleepers(1)
+        clock.advance(by: FallbackRoutingService.defaultTimeout - .seconds(1))
+        let late = request(service)
+        await primary.waitForRequests(2)
+        try await clock.waitForSleepers(2)
+
+        clock.advance(by: .seconds(1))
+        #expect(try await slow.value == Self.backupRoute)
+        try await gate.waitForSleepers(1)
+        gate.advance(by: .seconds(1))
+        #expect(try await late.value == Self.valhallaRoute)
+
+        #expect(try await request(service).value == Self.valhallaRoute)
+        #expect(await primary.calls == 3)
     }
 
     @Test
@@ -345,12 +391,42 @@ struct FallbackRoutingServiceTests {
         await valhalla.waitForRequests(1)
         try await spacingClock.waitForSleepers(1)
         spacingClock.advance(by: ReportAwareRoutingService.retrySpacing)
-        if hangs { try await timeOut(valhalla, requests: 2, on: timeoutClock) }
         let route = try await routing.value
 
         #expect(route.source == .appleMaps)
         #expect(route.unavoidedReports.map(\.id) == [Self.report.id])
-        #expect(await valhalla.receivedOptions.map(\.excludeLocations) == [[Self.corner], []])
+        // after a timeout the try without exclusions goes straight to Apple Maps
+        #expect(await valhalla.receivedOptions.map(\.excludeLocations) == (hangs ? [[Self.corner]] : [[Self.corner], []]))
         #expect(await apple.receivedOptions == [RouteOptions()])
+    }
+
+    /// One timeout costs the wait once: the next reroute only waits out the spacing between tries.
+    @Test
+    func aDeadValhallaIsWaitedOnOnceAcrossReroutes() async throws {
+        let valhalla = FakeRouting(.hangs)
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let timeoutClock = ManualClock()
+        let spacingClock = ManualClock()
+        let fallback = FakeRouting(.forwards(
+            FallbackRoutingService(primary: valhalla, fallback: apple, clock: timeoutClock)
+        ))
+        let service = ReportAwareRoutingService(base: fallback, reports: FakeReports([Self.report]),
+                                                clock: spacingClock)
+        let first = request(service)
+        try await timeOut(valhalla, on: timeoutClock)
+        try await spacingClock.waitForSleepers(1)
+        spacingClock.advance(by: ReportAwareRoutingService.retrySpacing)
+        _ = try await first.value
+
+        let second = request(service)
+        // the try with exclusions, rejected at once
+        await fallback.waitForRequests(3)
+        try await spacingClock.waitForSleepers(1)
+        spacingClock.advance(by: ReportAwareRoutingService.retrySpacing)
+        let route = try await second.value
+
+        #expect(route.unavoidedReports.map(\.id) == [Self.report.id])
+        #expect(await valhalla.calls == 1)
+        #expect(await apple.calls == 2)
     }
 }
