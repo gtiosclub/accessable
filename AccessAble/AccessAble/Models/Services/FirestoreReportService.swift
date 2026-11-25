@@ -32,8 +32,9 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
     private let database: Firestore
     private let clock: any Clock<Duration>
     private let now: @Sendable () -> Date
-    /// When this phone last sent or queued a report, so the next one inside the window fails fast.
-    private let lastSubmit = Mutex<Date?>(nil)
+    /// When this phone last sent or queued a report for each user, so the next one inside the
+    /// window fails fast.
+    private let lastSubmit = Mutex<[String: Date]>([:])
 
     init(
         auth: any AuthService,
@@ -54,7 +55,7 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         guard Self.isValid(report, reporterID: user.id) else {
             throw ReportServiceError.invalidReport
         }
-        guard !Self.isRateLimited(lastReportAt: lastSubmit.withLock { $0 }, now: now()) else {
+        guard !Self.isRateLimited(lastReportAt: lastSubmit.withLock { $0[user.id] }, now: now()) else {
             throw ReportServiceError.rateLimited
         }
 
@@ -98,13 +99,13 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         } catch ReportServiceError.queuedOffline {
             logger.notice("Report \(report.id, privacy: .public) is queued until the server answers")
             let queuedAt = now()
-            lastSubmit.withLock { $0 = queuedAt }
+            lastSubmit.withLock { $0[user.id] = queuedAt }
             throw ReportServiceError.queuedOffline
         } catch {
             throw await failure(of: error, userID: user.id)
         }
         let sentAt = now()
-        lastSubmit.withLock { $0 = sentAt }
+        lastSubmit.withLock { $0[user.id] = sentAt }
     }
 
     func reports(
@@ -162,7 +163,7 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
     private func failure(of error: any Error, userID: String) async -> any Error {
         logger.error("Report submit failed: \(error.localizedDescription, privacy: .public)")
         guard Self.isPermissionDenied(error) else { return error }
-        let stamp = await lastReportStamp(userID: userID) ?? lastSubmit.withLock { $0 }
+        let stamp = await lastReportStamp(userID: userID) ?? lastSubmit.withLock { $0[userID] }
         return Self.isRateLimited(lastReportAt: stamp, now: now())
             ? ReportServiceError.rateLimited
             : ReportServiceError.permissionDenied
@@ -286,6 +287,7 @@ extension FirestoreReportService {
     /// Whether the rules would still refuse a report, `rateLimitWindow` after the last one.
     static func isRateLimited(lastReportAt: Date?, now: Date) -> Bool {
         guard let lastReportAt else { return false }
+        // The phone's clock against the server's stamp: a skewed clock can misjudge the window.
         return now.timeIntervalSince(lastReportAt) < rateLimitWindow
     }
 
