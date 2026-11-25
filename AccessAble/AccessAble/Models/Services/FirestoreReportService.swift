@@ -235,8 +235,9 @@ extension FirestoreReportService {
                     switch result {
                     case .success(let reports):
                         let time = now()
-                        if let changed = feed.withLock({ $0.receive(reports, now: time) }) {
-                            continuation.yield(changed)
+                        // Yield under the lock, so the listener and the recheck can't send out of order.
+                        feed.withLock { feed in
+                            if let changed = feed.receive(reports, now: time) { continuation.yield(changed) }
                         }
                     case .failure(let error):
                         logger.error("Report listener failed: \(error.localizedDescription, privacy: .public)")
@@ -248,8 +249,8 @@ extension FirestoreReportService {
                 while true {
                     do { try await clock.sleep(for: recheckInterval) } catch { return }
                     let time = now()
-                    if let changed = feed.withLock({ $0.refresh(now: time) }) {
-                        continuation.yield(changed)
+                    feed.withLock { feed in
+                        if let changed = feed.refresh(now: time) { continuation.yield(changed) }
                     }
                 }
             }
