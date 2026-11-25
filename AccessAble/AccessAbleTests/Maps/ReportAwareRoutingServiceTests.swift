@@ -342,6 +342,67 @@ struct ReportAwareRoutingServiceTests {
         #expect(options[0].reports.isEmpty)
     }
 
+    /// About 40 m east of the west side of the block, halfway up it: near the route via `otherCorner`, not on it.
+    private let besideTheWestSide = GeoCoordinate(latitude: 33.7760, longitude: -84.39957)
+
+    @Test
+    func aReportBesideTheRouteItWentAroundIsAvoided() async throws {
+        let beside = report("beside", at: besideTheWestSide)
+        let base = RoutingServiceFake([.success(try route(via: otherCorner))])
+        let clock = ManualClock()
+
+        let actual = try await route(with: service(.reports([beside]), base: base, clock: clock), base: base,
+                                     clock: clock)
+
+        #expect(actual.avoidedReports == [beside])
+        #expect(actual.unavoidedReports.isEmpty)
+    }
+
+    /// The report at `corner` is about 185 m from the route via `otherCorner`: excluded, but nowhere near the walk.
+    @Test
+    func aReportFarFromTheRouteIsntCountedAsAvoided() async throws {
+        let base = RoutingServiceFake([.success(try route(via: otherCorner))])
+        let clock = ManualClock()
+
+        let actual = try await route(with: service(.reports([report(at: corner)]), base: base, clock: clock),
+                                     base: base, clock: clock)
+
+        #expect(await base.receivedOptions.map(\.excludeLocations) == [[corner]])
+        #expect(actual.avoidedReports.isEmpty)
+    }
+
+    @Test
+    func aRouteWithoutExclusionsAvoidsNone() async throws {
+        let base = RoutingServiceFake([.failure(.noRouteFound), .success(try route(via: otherCorner))])
+        let clock = ManualClock()
+
+        let actual = try await route(
+            with: service(.reports([report("beside", at: besideTheWestSide)]), base: base, clock: clock),
+            base: base, clock: clock, retries: 1
+        )
+
+        #expect(await base.receivedOptions.map(\.excludeLocations) == [[besideTheWestSide], []])
+        #expect(actual.avoidedReports.isEmpty)
+    }
+
+    /// The second attempt leaves out the report near the start, so only the one it still excludes is avoided.
+    @Test
+    func aRouteWithoutTheEndReportsAvoidsOnlyWhatItExcluded() async throws {
+        // about 20 m east of the start: beside the route, not on it, and within the endpoint clearance
+        let nearStart = report("start", at: GeoCoordinate(latitude: 33.7750, longitude: -84.39978))
+        let beside = report("beside", at: besideTheWestSide)
+        let base = RoutingServiceFake([.failure(.noRouteFound), .success(try route(via: otherCorner))])
+        let clock = ManualClock()
+
+        let actual = try await route(with: service(.reports([nearStart, beside]), base: base, clock: clock),
+                                     base: base, clock: clock, retries: 1)
+
+        #expect(await base.receivedOptions.map { Set($0.excludeLocations) } == [
+            [nearStart.coordinate, beside.coordinate], [beside.coordinate]
+        ])
+        #expect(actual.avoidedReports == [beside])
+    }
+
     @Test
     func waitsBetweenAttempts() async throws {
         let base = RoutingServiceFake([.failure(.noRouteFound), .success(try route(via: corner))])

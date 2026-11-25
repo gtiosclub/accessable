@@ -220,6 +220,8 @@ struct NavigationRoute: Codable, Hashable, Sendable {
     let cumulativeDistances: [Double]
     /// Active reports this route passes because it couldn't avoid them. Not encoded: reports name their reporter.
     var unavoidedReports: [Report] = []
+    /// Active reports near this route that it goes around. Not encoded: reports name their reporter.
+    var avoidedReports: [Report] = []
 
     enum ValidationError: Error, Equatable, Sendable {
         case tooFewCoordinates
