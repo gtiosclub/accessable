@@ -135,6 +135,24 @@ final class TripSessionViewModel {
 
     var hasArrived: Bool { directions?.tripState.phase == .arrived }
 
+    /// VoiceOver reads the map as this one element, the reports on it included.
+    var mapAccessibilityLabel: String {
+        let map = directions?.mapAccessibilityLabel ?? "Map showing walking directions to \(destinationName)."
+        let route = directions?.route
+        let fix = directions?.currentFix
+        guard let reports = MapReportsDescription.text(
+            mapReports,
+            route: route,
+            walked: route.flatMap { route in
+                directions?.tripState.distanceRemaining.map { route.totalDistance - $0 }
+            },
+            location: fix?.coordinate,
+            heading: fix?.course,
+            distances: services?.distanceSettings.formatter ?? .metric
+        ) else { return map }
+        return "\(map) \(reports)"
+    }
+
     /// One line on where directions stand, or nil while walking normally.
     var directionsStatus: String? {
         guard let directions else { return nil }

@@ -261,8 +261,7 @@ struct ActiveTripView: View {
                     name: session.plan.place.name,
                     coordinate: GeoCoordinate(latitude: session.plan.place.latitude, longitude: session.plan.place.longitude)
                 ),
-                accessibilityLabel: session.directions?.mapAccessibilityLabel
-                    ?? "Map showing walking directions to \(session.destinationName).",
+                accessibilityLabel: session.mapAccessibilityLabel,
                 reports: session.mapReports
             )
         } else if let services, session.isCameraReady {

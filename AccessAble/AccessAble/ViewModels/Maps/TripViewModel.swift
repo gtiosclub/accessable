@@ -69,10 +69,13 @@ final class TripViewModel {
     }
 
     /// Where a report goes: the latest precise fix, while it is recent enough to be where the user is.
-    var reportableLocation: GeoCoordinate? {
+    var reportableLocation: GeoCoordinate? { currentFix?.coordinate }
+
+    /// The latest precise fix, while it is recent enough to be where the user is.
+    var currentFix: LocationSample? {
         guard let latestPreciseFix,
               now().timeIntervalSince(latestPreciseFix.timestamp) <= Self.maximumReportFixAge else { return nil }
-        return latestPreciseFix.coordinate
+        return latestPreciseFix
     }
 
     /// The route found so far, to hand on to the next screen.
