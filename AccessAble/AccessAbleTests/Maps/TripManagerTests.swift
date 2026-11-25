@@ -912,6 +912,21 @@ struct TripManagerTests {
         ))
     }
 
+    /// Fixes good enough to guide by but too rough to start a route from leave the last precise one behind.
+    @Test
+    func askedForRerouteFromAnOldPreciseFixSaysSoAndAsksNothing() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.fix(harness.point(0))
+        for along in TripWalk.distances(from: 1.4, to: 16) { await harness.fix(harness.point(along), accuracy: 25) }
+
+        await harness.manager.reroute()
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await harness.engine.texts.contains(
+            "Couldn't find where you are precisely enough for a new route. Try again in a moment."
+        ))
+    }
+
     @Test
     func askedForRerouteThatFailsKeepsTheCurrentRoute() async throws {
         let harness = try Harness(reroutes: [.failure(.serverUnavailable)])
@@ -2267,6 +2282,21 @@ struct TripManagerReportTests {
         await harness.router.waitForRequests(1)
         await waitUntil { await harness.engine.texts.contains(reportReroute) }
         #expect(Array(await harness.engine.texts.suffix(2)) == ["Location signal is back.", reportReroute])
+    }
+
+    @Test
+    func aReportWithOnlyAnOldPreciseFixReroutesFromTheNextPreciseOne() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.fix(harness.point(0))
+        for along in TripWalk.distances(from: 1.4, to: 16) { await harness.fix(harness.point(along), accuracy: 25) }
+
+        await harness.reports.publish([report("ahead", at: harness.point(60))])
+        #expect(await harness.router.requests.isEmpty)
+
+        await harness.fix(harness.point(16.8))
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.requests == [harness.point(16.8)])
     }
 
     /// Regression: a report that came while a reroute was in flight was taken as already there on the new route.

@@ -65,8 +65,9 @@ actor TripManager: TripStateProviding {
     private var rerouteCount = 0
     private var lastRerouteRequest: Date?
     private var hasRerouted = false
-    /// Where an asked-for reroute starts: the latest fix precise enough to start a route from.
+    /// Where an asked-for reroute starts: the latest fix precise enough to start a route from, and when it was.
     private var lastPreciseFix: GeoCoordinate?
+    private var lastPreciseFixAt: Date?
     /// The latest fix, however rough, for saying which way the path or the destination lies only when it is precise.
     private var lastFix: LocationSample?
     private var headingEstimator = HeadingEstimator()
@@ -86,6 +87,8 @@ actor TripManager: TripStateProviding {
     // a reroute that came back shows the server is answering, and a user still lost shouldn't wait as long again
     private static let reroutedInterval: TimeInterval = 15
     private static let maximumReroutes = 5
+    // seconds; a reroute from an older precise fix would start where the user was, not where they are
+    private static let rerouteFixAge: TimeInterval = 10
     // reroutes for new reports ahead, apart from the off-route ones, so reports can't use up a lost user's
     private static let maximumReportReroutes = 2
     // waits before listening again after the report stream ends, on an error or signed out: longer each time in a
@@ -186,6 +189,7 @@ actor TripManager: TripStateProviding {
         lastRerouteRequest = nil
         hasRerouted = false
         lastPreciseFix = nil
+        lastPreciseFixAt = nil
         lastFix = nil
         headingEstimator = HeadingEstimator()
         tripStartedAt = now()
@@ -309,7 +313,10 @@ actor TripManager: TripStateProviding {
                 if phase == .active { pending.append((signalAnnouncement("Location signal is back.", .normal, 6), nil)) }
             }
         }
-        if sample.horizontalAccuracy <= Self.rerouteAccuracy { lastPreciseFix = sample.coordinate }
+        if sample.horizontalAccuracy <= Self.rerouteAccuracy {
+            lastPreciseFix = sample.coordinate
+            lastPreciseFixAt = sample.timestamp
+        }
         // a bearing from a NaN fix would trap when turned into a direction, and a late fix is no longer where they are
         if sample.coordinate.latitude.isFinite, sample.coordinate.longitude.isFinite,
            sample.horizontalAccuracy.isFinite, sample.timestamp >= lastFix?.timestamp ?? .distantPast {
@@ -544,7 +551,7 @@ actor TripManager: TripStateProviding {
         if !avoidable.isEmpty, rerouteTask == nil {
             if reportRerouteCount >= Self.maximumReportReroutes {
                 warned += avoidable
-            } else if !isSignalWeak, let origin = lastPreciseFix, rerouteSpacingElapsed {
+            } else if !isSignalWeak, let origin = recentPreciseFix, rerouteSpacingElapsed {
                 actedOnReportIDs.formUnion((avoidable + warned).map(\.id))
                 // said by the reroute's task before it asks, so its answer can't come first; and in flight from here,
                 // so a fix or snapshot meanwhile waits for it
@@ -583,6 +590,12 @@ actor TripManager: TripStateProviding {
         return rerouteSpacingElapsed
     }
 
+    /// `lastPreciseFix` while it is recent enough to start a reroute from.
+    private var recentPreciseFix: GeoCoordinate? {
+        guard let lastPreciseFixAt, now().timeIntervalSince(lastPreciseFixAt) <= Self.rerouteFixAge else { return nil }
+        return lastPreciseFix
+    }
+
     /// Long enough since the last request, whatever it was for, for the public routing server.
     private var rerouteSpacingElapsed: Bool {
         let interval = hasRerouted ? Self.reroutedInterval : Self.rerouteInterval
@@ -595,7 +608,7 @@ actor TripManager: TripStateProviding {
     func reroute() async {
         guard phase == .active || phase == .paused else { return }
         // with a weak signal the last precise fix is old, and the user has walked on from it
-        guard let origin = lastPreciseFix, !isSignalWeak else {
+        guard let origin = recentPreciseFix, !isSignalWeak else {
             await submit(maneuver("Couldn't find where you are precisely enough for a new route. Try again in a moment.",
                                   .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
             return
