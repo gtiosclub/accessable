@@ -123,6 +123,8 @@ final class ScenePerception: Sendable {
     private let walkingSpeed: Float = 0.3
     /// What the Live screen is doing; decides which stages run and what is spoken.
     private let liveMode = Mutex(LiveMode.walk)
+    /// Trips read signs in Walk too, so Maps can match building names to the route (LAND-5).
+    private let readsLandmarkText = Mutex(false)
 
     init(
         peopleDetector: PeopleDetector = PeopleDetector(),
@@ -178,6 +180,12 @@ final class ScenePerception: Sendable {
         liveMode.withLock { $0 = mode }
     }
 
+    /// Reads text whatever the mode, from the next analyzed frame; reading only puts it on the observation, and
+    /// Walk still doesn't speak signs.
+    func setReadsLandmarkText(_ reads: Bool) {
+        readsLandmarkText.withLock { $0 = reads }
+    }
+
     /// Starts steering the user towards `query` ("the chair", "exit"), replacing any
     /// current request; nil cancels. Takes effect on the next analyzed frame.
     func navigate(to query: String?) {
@@ -223,8 +231,8 @@ final class ScenePerception: Sendable {
             }
         }
         let mode = liveMode.withLock { $0 }
-        // OCR only where text is wanted: Find and Read, or any "take me to…" (room numbers).
-        if mode.readsText || navigation.withLock({ $0 != nil }) {
+        // OCR only where text is wanted: Find and Read, any "take me to…" (room numbers), or a trip's landmarks.
+        if mode.readsText || navigation.withLock({ $0 != nil }) || readsLandmarkText.withLock({ $0 }) {
             textReader.readIfDue(frame.capturedImage, orientation: imageOrientation, at: frame.timestamp, locate: textLocator)
         }
         let wasReadingText = textReader.isReading

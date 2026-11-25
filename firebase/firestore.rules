@@ -38,51 +38,55 @@ service cloud.firestore {
       return data.keys().hasAll(['id', 'kind', 'coordinate', 'createdAt', 'expiresAt', 'confirmations', 'reporterID'])
         && data.keys().hasOnly([
           'id', 'kind', 'coordinate', 'area', 'createdAt', 'expiresAt', 'confirmations', 'reporterID',
-          'negativeConfirmations', 'isRemoved', 'confirmationResponses', 'lastConfirmedAt'
+          'negativeConfirmations', 'negativesSinceConfirm'
         ])
         && data.kind in ['construction', 'blockedPath', 'closedEntrance', 'elevatorOut', 'other']
         && isValidCoordinate(data.coordinate)
         && (!('area' in data) || data.area == null || isValidArea(data.area))
         && data.expiresAt is timestamp
-        && data.expiresAt <= data.createdAt + duration.value(30, 'd')
-        && (!('negativeConfirmations' in data)
-            || (data.negativeConfirmations is int && data.negativeConfirmations >= 0))
-        && (!('isRemoved' in data) || data.isRemoved is bool)
-        && (!('confirmationResponses' in data)
-            || (data.confirmationResponses is map && data.confirmationResponses.size() <= 1000))
-        && (!('lastConfirmedAt' in data) || data.lastConfirmedAt is timestamp);
+        && data.expiresAt <= data.createdAt + duration.value(30, 'd');
     }
 
-    function isValidConfirmationUpdate() {
-      let previousResponses = resource.data.get('confirmationResponses', {});
-      let nextResponses = request.resource.data.get('confirmationResponses', {});
-      let response = nextResponses[request.auth.uid];
-      let nextNegativeCount = resource.data.get('negativeConfirmations', 0)
-        + (response ? 0 : 1);
+    // REPORT-6: a phone's clock may be this far off the server's when it sets an expiry.
+    function clockTolerance() {
+      return duration.value(2, 'm');
+    }
 
-      return signedIn()
-        && resource.data.get('isRemoved', false) == false
-        && request.auth.uid != resource.data.reporterID
-        && resource.data.expiresAt > request.time
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'confirmationResponses', 'confirmations', 'negativeConfirmations',
-          'isRemoved', 'expiresAt', 'lastConfirmedAt'
-        ])
-        && nextResponses is map
-        && !(request.auth.uid in previousResponses)
-        && nextResponses.diff(previousResponses).affectedKeys().hasOnly([request.auth.uid])
-        && nextResponses.diff(previousResponses).affectedKeys().hasAll([request.auth.uid])
-        && response is bool
-        && request.resource.data.confirmations
-          == resource.data.confirmations + (response ? 1 : 0)
-        && request.resource.data.negativeConfirmations == nextNegativeCount
-        && request.resource.data.isRemoved == (nextNegativeCount >= 2)
-        && request.resource.data.lastConfirmedAt == request.time
-        && (response
-          ? (request.resource.data.expiresAt > request.time
-              && request.resource.data.expiresAt
-                <= request.time + reportLifetime(resource.data.kind) + duration.value(2, 'm'))
-          : request.resource.data.expiresAt == resource.data.expiresAt);
+    function votePath(reportId) {
+      return /databases/$(database)/documents/reports/$(reportId)/votes/$(request.auth.uid);
+    }
+
+    // A vote on someone else's live report, written in one batch with the voter's private vote
+    // document and their vote stamp. "Yes" counts a confirmation and moves the expiry to one
+    // lifetime from now, never earlier; "no" counts a denial and, the second one since the last
+    // "yes", ends the report now, so every expiry filter drops it.
+    function isValidVote(reportId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let isStillPresent = getAfter(votePath(reportId)).data.isStillPresent;
+      let lifetime = reportLifetime(before.kind);
+      let denials = before.get('negativesSinceConfirm', 0) + 1;
+
+      return request.auth.uid != before.reporterID
+        && before.expiresAt > request.time
+        && !exists(votePath(reportId))
+        && existsAfter(votePath(reportId))
+        && getAfter(rateLimitPath()).data.lastVoteAt == request.time
+        && (isStillPresent
+          ? after.diff(before).affectedKeys().hasOnly(['confirmations', 'negativesSinceConfirm', 'expiresAt'])
+            && after.confirmations == before.confirmations + 1
+            && after.get('negativesSinceConfirm', 0) == 0
+            && after.expiresAt >= before.expiresAt
+            && after.expiresAt >= request.time + lifetime - clockTolerance()
+            // one already further out than a lifetime from now stays as it is
+            && (after.expiresAt == before.expiresAt
+              || after.expiresAt <= request.time + lifetime + clockTolerance())
+          : after.diff(before).affectedKeys().hasOnly(['negativeConfirmations', 'negativesSinceConfirm', 'expiresAt'])
+            // a report this new hasn't been walked past yet
+            && request.time >= before.createdAt + duration.value(10, 'm')
+            && after.negativeConfirmations == before.get('negativeConfirmations', 0) + 1
+            && after.negativesSinceConfirm == denials
+            && (denials >= 2 ? after.expiresAt == request.time : after.expiresAt == before.expiresAt));
     }
 
     function rateLimitPath() {
@@ -170,10 +174,12 @@ service cloud.firestore {
         && request.resource.data.reporterID == request.auth.uid
         && request.resource.data.createdAt == request.time
         && request.resource.data.expiresAt > request.time
+        && request.resource.data.expiresAt
+          <= request.time + reportLifetime(request.resource.data.kind) + clockTolerance()
         && request.resource.data.confirmations == 0
-        && request.resource.data.negativeConfirmations == 0
-        && request.resource.data.isRemoved == false
-        && request.resource.data.confirmationResponses.size() == 0
+        // optional, so an app from before REPORT-6 can still report
+        && request.resource.data.get('negativeConfirmations', 0) == 0
+        && request.resource.data.get('negativesSinceConfirm', 0) == 0
         // The stamp names this report, so one stamp can't cover a batch of many reports.
         && getAfter(rateLimitPath()).data.lastReportAt == request.time
         && getAfter(rateLimitPath()).data.lastReportId == reportId;
@@ -185,25 +191,63 @@ service cloud.firestore {
             && isValidReport(request.resource.data)
             && request.resource.data.diff(resource.data).affectedKeys()
                  .hasOnly(['kind', 'coordinate', 'area', 'expiresAt']))
-          || isValidConfirmationUpdate()
+          || isValidVote(reportId)
         );
 
       allow delete: if signedIn() && resource.data.reporterID == request.auth.uid;
+
+      // One vote per user per report, readable only by its voter. Written only with the report's
+      // matching count, which the report's update rule checks the other way round.
+      match /votes/{voterId} {
+        function reportPath() {
+          return /databases/$(database)/documents/reports/$(reportId);
+        }
+
+        allow get: if signedIn() && request.auth.uid == voterId;
+        allow create: if signedIn() && request.auth.uid == voterId
+          && request.resource.data.keys().hasAll(['isStillPresent', 'votedAt'])
+          && request.resource.data.keys().hasOnly(['isStillPresent', 'votedAt'])
+          && request.resource.data.isStillPresent is bool
+          && request.resource.data.votedAt == request.time
+          && (request.resource.data.isStillPresent
+            ? getAfter(reportPath()).data.confirmations == get(reportPath()).data.confirmations + 1
+            : getAfter(reportPath()).data.get('negativeConfirmations', 0)
+              == get(reportPath()).data.get('negativeConfirmations', 0) + 1);
+      }
     }
 
     match /rateLimits/{userId} {
-      function isOwnStamp() {
-        return request.auth.uid == userId
-          && request.resource.data.keys().hasAll(['lastReportAt', 'lastReportId'])
-          && request.resource.data.keys().hasOnly(['lastReportAt', 'lastReportId'])
+      // A report stamp names the report it was written with; a vote stamp is only the time.
+      function isReportStamp(keys) {
+        return keys.hasOnly(['lastReportAt', 'lastReportId'])
           && request.resource.data.lastReportAt == request.time
           && request.resource.data.lastReportId is string;
       }
 
+      function isVoteStamp(keys) {
+        return keys.hasOnly(['lastVoteAt']) && request.resource.data.lastVoteAt == request.time;
+      }
+
+      function hasKnownKeys() {
+        return request.resource.data.keys().hasOnly(['lastReportAt', 'lastReportId', 'lastVoteAt']);
+      }
+
+      function isSpaced(field) {
+        return !(field in resource.data) || request.time >= resource.data[field] + duration.value(60, 's');
+      }
+
       allow read: if signedIn() && request.auth.uid == userId;
-      allow create: if signedIn() && isOwnStamp();
-      allow update: if signedIn() && isOwnStamp()
-        && request.time >= resource.data.lastReportAt + duration.value(60, 's');
+      allow create: if signedIn() && request.auth.uid == userId && hasKnownKeys()
+        && ((request.resource.data.keys().hasAll(['lastReportAt', 'lastReportId'])
+              && isReportStamp(request.resource.data.keys()))
+          || (request.resource.data.keys().hasAll(['lastVoteAt'])
+              && isVoteStamp(request.resource.data.keys())));
+      allow update: if signedIn() && request.auth.uid == userId && hasKnownKeys()
+        && ((isReportStamp(request.resource.data.diff(resource.data).affectedKeys())
+              && request.resource.data.keys().hasAll(['lastReportAt', 'lastReportId'])
+              && isSpaced('lastReportAt'))
+          || (isVoteStamp(request.resource.data.diff(resource.data).affectedKeys())
+              && isSpaced('lastVoteAt')));
     }
   }
 }

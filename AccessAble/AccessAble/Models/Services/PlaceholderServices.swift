@@ -339,12 +339,19 @@ actor PlaceholderUserProfileStore: UserProfileStore {
     }
 }
 
-/// In-memory reports for previews and tests; replaced by Firestore when Firebase is configured.
+/// The in-memory stand-in for reports, used in previews and tests. It refuses the votes the rules refuse, so they
+/// behave as they would with Firestore.
 actor PlaceholderReportService: ReportService {
     private var storedReports: [Report] = []
     private nonisolated let changes = Broadcaster<[Report]>(replaysLatest: true)
+    private let auth: any AuthService
+    private let now: @Sendable () -> Date
+    private var votes: [String: Set<String>] = [:]
+    private var lastVote: [String: Date] = [:]
 
-    init() {
+    init(auth: any AuthService = PlaceholderAuthService(), now: @escaping @Sendable () -> Date = { .now }) {
+        self.auth = auth
+        self.now = now
         changes.send([])
     }
 
@@ -358,11 +365,8 @@ actor PlaceholderReportService: ReportService {
         near coordinate: GeoCoordinate,
         radius: Double
     ) async throws -> [Report] {
-        storedReports.filter {
-            $0.expiresAt > .now
-                && !$0.isRemoved
-                && GeoMath.distance(from: coordinate, to: $0.coordinate) <= radius
-        }
+        let time = now()
+        return storedReports.filter { $0.expiresAt > time && $0.isNear(coordinate, within: radius) }
     }
 
     nonisolated func reportChanges(
@@ -374,13 +378,9 @@ actor PlaceholderReportService: ReportService {
         return AsyncStream { continuation in
             let task = Task {
                 for await reports in source {
+                    let time = self.now()
                     continuation.yield(reports.filter {
-                        $0.expiresAt > .now
-                            && !$0.isRemoved
-                            && GeoMath.distance(
-                                from: coordinate,
-                                to: $0.coordinate
-                            ) <= radius
+                        $0.expiresAt > time && $0.isNear(coordinate, within: radius)
                     })
                 }
                 continuation.finish()
@@ -389,31 +389,38 @@ actor PlaceholderReportService: ReportService {
         }
     }
 
-    func confirm(
-        _ reportID: String,
-        isStillPresent: Bool,
-        userID: String
-    ) async throws {
-        guard let index = storedReports.firstIndex(where: { $0.id == reportID }),
-              storedReports[index].reporterID != userID,
-              storedReports[index].expiresAt > .now,
-              !storedReports[index].isRemoved,
-              storedReports[index].confirmationResponses[userID] == nil else {
-            return
+    @discardableResult
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool {
+        guard let user = await auth.currentUser() else { throw ReportServiceError.notSignedIn }
+        let time = now()
+        guard !FirestoreReportService.isRateLimited(lastReportAt: lastVote[user.id], now: time) else {
+            throw ReportServiceError.rateLimited
         }
+        guard let index = storedReports.firstIndex(where: { $0.id == reportID }) else {
+            throw ReportServiceError.invalidReport
+        }
+        let report = storedReports[index]
+        guard FirestoreReportService.canVote(on: report, as: user.id, isStillPresent: isStillPresent, now: time),
+              votes[reportID, default: []].insert(user.id).inserted else {
+            throw ReportServiceError.permissionDenied
+        }
+        lastVote[user.id] = time
 
-        storedReports[index].confirmationResponses[userID] = isStillPresent
-
+        var voted = report
+        var extends = false
         if isStillPresent {
-            storedReports[index].confirmations += 1
-            storedReports[index].expiresAt = .now.addingTimeInterval(
-                storedReports[index].kind.lifetime
-            )
+            voted.confirmations += 1
+            voted.negativesSinceConfirm = 0
+            let renewed = time.addingTimeInterval(report.kind.lifetime)
+            extends = renewed > report.expiresAt
+            if extends { voted.expiresAt = renewed }
         } else {
-            storedReports[index].negativeConfirmations += 1
-            storedReports[index].isRemoved =
-                storedReports[index].negativeConfirmations >= 2
+            voted.negativeConfirmations += 1
+            voted.negativesSinceConfirm += 1
+            if voted.negativesSinceConfirm >= FirestoreReportService.removalDenials { voted.expiresAt = time }
         }
+        storedReports[index] = voted
         changes.send(storedReports)
+        return extends
     }
 }

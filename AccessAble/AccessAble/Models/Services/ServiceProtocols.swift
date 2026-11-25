@@ -110,18 +110,13 @@ protocol TripStateProviding: Sendable {
     func endTrip() async
     /// A new route from where the user is now, for a running trip, when they ask for one.
     func reroute() async
-    /// Active reports received during the current trip.
-    func tripReports() -> AsyncStream<[Report]>
-    /// Reports passed nearby that need a one-time confirmation prompt.
-    func reportConfirmationRequests() -> AsyncStream<Report>
+    /// Someone else's report the user has just walked past, to ask whether it is still there; once a report a trip,
+    /// and only as it happens: a new subscriber hears none from before.
+    func reportQuestions() -> AsyncStream<ReportQuestion>
 }
 
 extension TripStateProviding {
-    func tripReports() -> AsyncStream<[Report]> {
-        AsyncStream { $0.finish() }
-    }
-
-    func reportConfirmationRequests() -> AsyncStream<Report> {
+    func reportQuestions() -> AsyncStream<ReportQuestion> {
         AsyncStream { $0.finish() }
     }
 }
@@ -159,7 +154,13 @@ protocol LocationContextProviding: Sendable {
 protocol ReportService: Sendable {
     func submit(_ report: Report) async throws
     func reports(near coordinate: GeoCoordinate, radius: Double) async throws -> [Report]
-    func confirm(_ reportID: String, isStillPresent: Bool, userID: String) async throws
+    /// The signed-in user's one vote on someone else's report: a "yes" moves its expiry to one lifetime from now,
+    /// never earlier, and the second "no" since the last "yes" ends it now. Returns whether the expiry moved later.
+    /// - Throws: `ReportServiceError`: `.notSignedIn`; `.rateLimited` within a minute of their last vote;
+    ///   `.permissionDenied` for their own report, a second vote, an expired report, or a "no" on a report under
+    ///   ten minutes old; `.unavailable` when the server can't be reached in time.
+    @discardableResult
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool
     func reportChanges(near coordinate: GeoCoordinate, radius: Double) -> AsyncStream<[Report]>
 }
 

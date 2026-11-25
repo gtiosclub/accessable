@@ -87,6 +87,12 @@ struct ValhallaRoutingService: RoutingService {
         442, // no path could be found for input
     ]
 
+    /// Valhalla error codes meaning it refused the request's exclusions.
+    private static let exclusionErrorCodes: Set<Int> = [
+        157, // exceeded max avoid locations
+        167, // exceeded max perimeter of exclude_polygons
+    ]
+
     /// Any other rejection means our request was wrong, which is a bug rather than a missing route.
     private func requestError(_ data: Data) -> RoutingError {
         let body: ErrorResponse
@@ -98,7 +104,9 @@ struct ValhallaRoutingService: RoutingService {
         }
         // Valhalla's message can echo request details, so only the code is logged.
         log.error("Valhalla rejected the request: error_code \(body.errorCode, privacy: .public)")
-        return Self.noRouteErrorCodes.contains(body.errorCode) ? .noRouteFound : .invalidResponse
+        if Self.noRouteErrorCodes.contains(body.errorCode) { return .noRouteFound }
+        if Self.exclusionErrorCodes.contains(body.errorCode) { return .exclusionsRejected }
+        return .invalidResponse
     }
 
     private func makeRequest(
