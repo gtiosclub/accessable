@@ -13,6 +13,9 @@ actor TripManager: TripStateProviding {
     private nonisolated let routes = Broadcaster<NavigationRoute?>(replaysLatest: true)
     // not replayed: a question is for the trip it was asked on
     private nonisolated let questions = Broadcaster<ReportQuestion>()
+    // replayed, so a map that opens mid-trip shows them; emptied when a trip starts or ends, so it never shows the
+    // last trip's
+    private nonisolated let shownReports = Broadcaster<[Report]>(replaysLatest: true)
 
     private let location: any LocationProvider
     private let routing: any RoutingService
@@ -78,6 +81,8 @@ actor TripManager: TripStateProviding {
     private var isSignalWeak = false
     /// The latest active reports near the route, without the user's own.
     private var nearbyReports: [Report] = []
+    /// The latest snapshot as it came, the user's own reports included, for the map.
+    private var latestReports: [Report] = []
     /// Reports rerouted around or warned of this trip; kept across reroutes and new subscriptions.
     private var actedOnReportIDs: Set<String> = []
     private var reportRerouteCount = 0
@@ -186,6 +191,10 @@ actor TripManager: TripStateProviding {
         questions.stream()
     }
 
+    nonisolated func mapReports() -> AsyncStream<[Report]> {
+        shownReports.stream()
+    }
+
     func startTrip(route: NavigationRoute, destination: Destination) async {
         generation += 1
         let generation = generation
@@ -219,6 +228,8 @@ actor TripManager: TripStateProviding {
         lastGoodFixAt = nil
         isSignalWeak = false
         nearbyReports = []
+        latestReports = []
+        shownReports.send([])
         actedOnReportIDs = []
         reportRerouteCount = 0
         unavoidedReportOnResume = false
@@ -302,6 +313,8 @@ actor TripManager: TripStateProviding {
         route = nil
         destination = nil
         nearbyReports = []
+        latestReports = []
+        shownReports.send([])
         actedOnReportIDs = []
         unavoidedReportOnResume = false
         promptedReportIDs = []
@@ -561,8 +574,21 @@ actor TripManager: TripStateProviding {
 
     private func receive(_ snapshot: [Report], userID: String?, subscription: Int, generation: Int) async {
         guard self.generation == generation, subscription == reportSubscription else { return }
+        latestReports = snapshot
         nearbyReports = snapshot.filter { $0.reporterID != userID }
+        publishMapReports()
         await considerReports(generation: generation)
+    }
+
+    /// The active reports near the route for the map, the user's own included: they want to see what they reported.
+    /// Near is within the corridor the route summary counts avoided reports in, so the map shows those it mentions.
+    private func publishMapReports() {
+        guard let route else { return }
+        let time = now()
+        shownReports.send(ReportExclusions.reports(
+            latestReports.filter { $0.expiresAt > time },
+            within: ReportAwareRoutingService.avoidanceCorridor, of: route
+        ))
     }
 
     /// Reroutes around reports the route ahead passes but wasn't planned around, or warns of them where a reroute
@@ -757,6 +783,7 @@ actor TripManager: TripStateProviding {
             )
             routes.send(newRoute)
             publish(at: now())
+            publishMapReports()
             subscribeToReports(along: newRoute, generation: generation)
             guard phase == .active else { return }
             await submit(maneuver("New route. " + Self.reportWarning(on: newRoute) + departure(on: newRoute), .high,

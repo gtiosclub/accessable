@@ -113,10 +113,17 @@ protocol TripStateProviding: Sendable {
     /// Someone else's report the user has just walked past, to ask whether it is still there; once a report a trip,
     /// and only as it happens: a new subscriber hears none from before.
     func reportQuestions() -> AsyncStream<ReportQuestion>
+    /// The active reports near the trip's route, the user's own included, to show on the map: on each report snapshot
+    /// and route change, and empty from the start and end of each trip. A new subscriber hears the latest.
+    func mapReports() -> AsyncStream<[Report]>
 }
 
 extension TripStateProviding {
     func reportQuestions() -> AsyncStream<ReportQuestion> {
+        AsyncStream { $0.finish() }
+    }
+
+    func mapReports() -> AsyncStream<[Report]> {
         AsyncStream { $0.finish() }
     }
 }

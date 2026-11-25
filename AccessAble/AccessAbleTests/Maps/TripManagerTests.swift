@@ -2496,6 +2496,41 @@ struct TripManagerReportTests {
         await waitUntil { !harness.reports.isListening }
         #expect(harness.reports.subscriptionCount == 1)
     }
+
+    /// What a map opening now would show first: the IDs of the reports it is sent.
+    private func shownOnTheMap(_ harness: Harness) async -> [String]? {
+        var shown = harness.manager.mapReports().makeAsyncIterator()
+        return await shown.next()?.map(\.id)
+    }
+
+    @Test
+    func theMapShowsLiveReportsNearTheRouteTheUsersOwnIncluded() async throws {
+        let harness = try Harness()
+        await harness.start()
+        let own = report("own", at: harness.point(30), by: reporterSelf)
+        let beside = report("beside", at: harness.point(50, lateral: -40))
+        let far = report("far", at: harness.point(50, lateral: -200))
+        var ended = report("ended", at: harness.point(60))
+        ended.expiresAt = harness.clock.now()
+
+        await harness.reports.publish([own, beside, far, ended])
+
+        #expect(await shownOnTheMap(harness) == ["own", "beside"])
+    }
+
+    @Test
+    func theMapStartsEachTripWithoutTheLastTripsReports() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.reports.publish([report("own", at: harness.point(30), by: reporterSelf)])
+        #expect(await shownOnTheMap(harness) == ["own"])
+
+        await harness.manager.endTrip()
+        #expect(await shownOnTheMap(harness) == [])
+
+        await harness.start()
+        #expect(await shownOnTheMap(harness) == [])
+    }
 }
 
 /// The questions a trip asks, in order.

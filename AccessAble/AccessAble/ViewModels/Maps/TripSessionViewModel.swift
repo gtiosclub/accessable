@@ -44,6 +44,8 @@ final class TripSessionViewModel {
     private(set) var isLookingAgain = false
     /// A question about a report just walked past, open for its answer by voice or the on-screen buttons.
     private(set) var reportQuestion: OpenReportQuestion?
+    /// Active reports near the route, for the map; none without a real trip or where reporting isn't available.
+    private(set) var mapReports: [Report] = []
     let dictation = SpeechDictation()
     /// Opens Call Help; set by the screen, which owns navigation.
     @ObservationIgnored var onCallHelp: (() -> Void)?
@@ -195,9 +197,18 @@ final class TripSessionViewModel {
                     await self.askAbout(question)
                 }
             }
+            group.addTask {
+                for await reports in services.trip.mapReports() {
+                    await self.show(reports)
+                }
+            }
         }
         stopListening()
         await closeCamera(camera)
+    }
+
+    private func show(_ reports: [Report]) {
+        mapReports = reports
     }
 
     /// Opens the camera beside the route request rather than before it, since asking Apple about

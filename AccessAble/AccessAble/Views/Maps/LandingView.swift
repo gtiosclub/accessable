@@ -148,7 +148,7 @@ struct CampusMap: View {
     }
 
     private var visibleReports: [Report] {
-        reports.filter { !$0.isRemoved && $0.expiresAt > .now }
+        reports.filter { $0.expiresAt > .now }
     }
 
     /// An arrow the way the user faces, turned back by however far the map is turned, or a dot while the compass

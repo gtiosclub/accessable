@@ -27,7 +27,7 @@ struct RouteSummary: Equatable, Sendable {
         elevators = kinds.count { $0 == .elevator }
         escalators = kinds.count { $0 == .escalator }
         crosswalks = crossings.count
-        avoidedReports = route.avoidedReports.filter { !$0.isRemoved && $0.expiresAt > .now }
+        avoidedReports = route.avoidedReports.filter { $0.expiresAt > .now }
     }
 
     /// The summary in the user's units, for speech and the screen alike.
