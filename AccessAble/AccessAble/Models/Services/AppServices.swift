@@ -105,7 +105,8 @@ struct AppServices: Sendable {
         }
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
-            reports: services.reports,
+            reports: services.reportsAvailable ? services.reports : nil,
+            currentUserID: { [auth = services.auth] in await auth.currentUser()?.id },
             landmarks: services.landmarks,
             setTripTracking: { await gps.setTripTracking($0) },
             distances: distanceSettings,
