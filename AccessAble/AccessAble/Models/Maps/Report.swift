@@ -18,6 +18,16 @@ enum ReportKind: String, Codable, CaseIterable, Sendable, Identifiable {
         }
     }
 
+    /// Asked once the user has walked past a report of this kind; a yes confirms it, a no counts against it.
+    var stillThereQuestion: String {
+        switch self {
+        case .blockedPath, .construction: "Is the path still blocked here?"
+        case .closedEntrance: "Is the entrance still closed?"
+        case .elevatorOut: "Is the elevator still out of service?"
+        case .other: "Is the reported problem still there?"
+        }
+    }
+
     var lifetime: TimeInterval {
         switch self {
         case .construction: 7 * 24 * 60 * 60
@@ -41,12 +51,23 @@ struct Report: Codable, Hashable, Identifiable, Sendable {
     var negativeConfirmations: Int = 0
     var negativesSinceConfirm: Int = 0
 
+    /// Metres to the report's point or the nearest corner of its area.
+    func distance(from coordinate: GeoCoordinate) -> Double {
+        ([self.coordinate] + (area ?? [])).map { GeoMath.distance(from: coordinate, to: $0) }.min() ?? .infinity
+    }
+
     /// Whether the report's point, or any corner of its area, is within `radius` metres.
     func isNear(_ coordinate: GeoCoordinate, within radius: Double) -> Bool {
         ([self.coordinate] + (area ?? [])).contains {
             GeoMath.distance(from: coordinate, to: $0) <= radius
         }
     }
+}
+
+/// A question about a report the user just walked past, asked once a trip.
+struct ReportQuestion: Equatable, Sendable {
+    let report: Report
+    let askedAt: Date
 }
 
 extension Report {

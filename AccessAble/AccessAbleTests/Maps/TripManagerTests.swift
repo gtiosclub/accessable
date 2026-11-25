@@ -2478,3 +2478,119 @@ struct TripManagerReportTests {
         #expect(harness.reports.subscriptionCount == 1)
     }
 }
+
+/// The questions a trip asks, in order.
+private actor QuestionRecorder {
+    private(set) var asked: [ReportQuestion] = []
+
+    nonisolated func listen(to manager: TripManager) {
+        let stream = manager.reportQuestions()
+        Task { for await question in stream { await self.record(question) } }
+    }
+
+    private func record(_ question: ReportQuestion) { asked.append(question) }
+
+    func waitForCount(_ count: Int) async -> [ReportQuestion] {
+        await waitUntil { asked.count >= count }
+        return asked
+    }
+}
+
+/// A question is checked after the one that should come first, so a question asked too early would show up ahead
+/// of it.
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerReportQuestionTests {
+    /// `route`, planned around `reports` it couldn't avoid, so they are warned of at the start and not rerouted for.
+    private func harness(passing reports: [Report], route: NavigationRoute? = nil) async throws
+        -> (Harness, QuestionRecorder) {
+        var planned = try route ?? cornerRoute()
+        planned.unavoidedReports = reports
+        let harness = try Harness(route: planned)
+        let questions = QuestionRecorder()
+        questions.listen(to: harness.manager)
+        await harness.start()
+        await harness.reports.publish(reports)
+        return (harness, questions)
+    }
+
+    @Test
+    func asksOnceAboutEachReportAfterPassingIt() async throws {
+        let route = try cornerRoute()
+        let first = report("first", at: TripWalk.point(on: route, along: 30))
+        let second = report("second", at: TripWalk.point(on: route, along: 55))
+        let (harness, questions) = try await harness(passing: [first, second])
+
+        // up to the first and a step beyond: passed, but not yet by more than GPS jitter
+        await harness.walk(from: 0, to: 32)
+        let atFirst = harness.clock.now()
+        await harness.walk(from: 32, to: 69)
+
+        let asked = await questions.waitForCount(2)
+        #expect(asked.map(\.report.id) == ["first", "second"])
+        #expect(asked[0].askedAt > atFirst)
+    }
+
+    @Test
+    func waitsUntilClearOfATurn() async throws {
+        let route = try longCornerRoute()
+        let byTheTurn = report("by the turn", at: TripWalk.point(on: route, along: 80))
+        let (harness, questions) = try await harness(passing: [byTheTurn], route: route)
+
+        await harness.walk(from: 0, to: 99)
+        let atTurn = harness.clock.now()
+        await harness.walk(from: 99, to: 115)
+
+        let asked = await questions.waitForCount(1)
+        #expect(asked.map(\.report.id) == ["by the turn"])
+        #expect(asked[0].askedAt > atTurn)
+    }
+
+    @Test
+    func neverAsksAboutTheUsersOwnReport() async throws {
+        let route = try cornerRoute()
+        let own = report("own", at: TripWalk.point(on: route, along: 30), by: reporterSelf)
+        let theirs = report("theirs", at: TripWalk.point(on: route, along: 55))
+        let (harness, questions) = try await harness(passing: [own, theirs])
+
+        await harness.walk(from: 0, to: 69)
+
+        #expect(await questions.waitForCount(1).map(\.report.id) == ["theirs"])
+    }
+
+    @Test
+    func passingOnRoughFixesIsNotAsked() async throws {
+        let route = try cornerRoute()
+        let roughly = report("roughly", at: TripWalk.point(on: route, along: 30))
+        let precisely = report("precisely", at: TripWalk.point(on: route, along: 55))
+        let (harness, questions) = try await harness(passing: [roughly, precisely])
+
+        for along in TripWalk.distances(from: 0, to: 42) {
+            await harness.fix(harness.point(along), accuracy: 25)
+        }
+        await harness.walk(from: 42, to: 69)
+
+        #expect(await questions.waitForCount(1).map(\.report.id) == ["precisely"])
+    }
+
+    @Test
+    func aQuestionIsNotHeardAgainOnTheNextTrip() async throws {
+        let route = try cornerRoute()
+        let passed = report("passed", at: TripWalk.point(on: route, along: 30))
+        let (harness, firstTrip) = try await harness(passing: [passed])
+        await harness.walk(from: 0, to: 45)
+        _ = await firstTrip.waitForCount(1)
+        await harness.manager.endTrip()
+
+        let nextTrip = QuestionRecorder()
+        nextTrip.listen(to: harness.manager)
+        let restartedAt = harness.clock.now()
+        await harness.start()
+        await harness.reports.publish([passed])
+        await harness.walk(from: 0, to: 45)
+
+        let asked = await nextTrip.waitForCount(1)
+        // asked again, since it is a new trip, but not the first trip's question replayed
+        #expect(asked.map(\.report.id) == ["passed"])
+        #expect(asked[0].askedAt > restartedAt)
+    }
+}

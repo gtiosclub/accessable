@@ -167,8 +167,8 @@ final class TripSessionViewModel {
             group.addTask { await self.showAnnouncements(from: services.announcements) }
             group.addTask { await self.watchForBlockedPath(services.scene) }
             group.addTask {
-                for await report in services.trip.reportConfirmationRequests() {
-                    await self.receiveReportConfirmation(report)
+                for await question in services.trip.reportQuestions() {
+                    await self.receiveReportConfirmation(question.report)
                 }
             }
         }
