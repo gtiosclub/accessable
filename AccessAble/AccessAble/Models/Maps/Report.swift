@@ -36,5 +36,11 @@ struct Report: Codable, Hashable, Identifiable, Sendable {
     var expiresAt: Date
     var confirmations: Int = 0
     var reporterID: String
-    
+
+    /// Whether the report's point, or any corner of its area, is within `radius` metres.
+    func isNear(_ coordinate: GeoCoordinate, within radius: Double) -> Bool {
+        ([self.coordinate] + (area ?? [])).contains {
+            GeoMath.distance(from: coordinate, to: $0) <= radius
+        }
+    }
 }

@@ -14,19 +14,19 @@ private actor RecordingAnnouncements: AnnouncementEngineProtocol {
     func updateProfile(_ profile: GuidanceProfile) async {}
 }
 
-/// Keeps every report submitted; a failing one throws instead.
+/// Keeps every report submitted; given a failure, throws it instead.
 private actor CapturingReports: ReportService {
     struct Offline: Error {}
 
-    let fails: Bool
+    let failure: (any Error)?
     private(set) var submitted: [Report] = []
 
-    init(fails: Bool = false) {
-        self.fails = fails
+    init(failure: (any Error)? = nil) {
+        self.failure = failure
     }
 
     func submit(_ report: Report) async throws {
-        if fails { throw Offline() }
+        if let failure { throw failure }
         submitted.append(report)
     }
 
@@ -222,14 +222,50 @@ struct TripSessionReportTests {
 
     @Test
     func aFailedSendSaysSo() async {
-        let session = await makeSession(reports: CapturingReports(fails: true))
+        let session = await makeSession(reports: CapturingReports(failure: CapturingReports.Offline()))
 
         await session.submitReport(kind: .construction)
 
         #expect(await announcements.said == ["I couldn't send that report. Check your connection and try again."])
     }
 
-    /// Without a real report service (REPORT-3), nothing is stored and the user is told.
+    @Test
+    func aSecondReportInsideAMinuteSaysToWait() async {
+        let session = await makeSession(reports: CapturingReports(failure: ReportServiceError.rateLimited))
+
+        await session.submitReport(kind: .construction)
+
+        #expect(await announcements.said == ["You just sent a report. Wait a minute before sending another."])
+    }
+
+    @Test
+    func aSignedOutServiceAsksToSignIn() async {
+        let session = await makeSession(reports: CapturingReports(failure: ReportServiceError.notSignedIn))
+
+        await session.submitReport(kind: .construction)
+
+        #expect(await announcements.said == ["Sign in to report a problem."])
+    }
+
+    @Test(arguments: [ReportServiceError.permissionDenied, .invalidReport])
+    func aRefusedReportSaysItCouldNotBeSent(_ failure: ReportServiceError) async {
+        let session = await makeSession(reports: CapturingReports(failure: failure))
+
+        await session.submitReport(kind: .construction)
+
+        #expect(await announcements.said == ["That report couldn't be sent."])
+    }
+
+    @Test
+    func anOfflineReportSaysItIsSaved() async {
+        let session = await makeSession(reports: CapturingReports(failure: ReportServiceError.queuedOffline))
+
+        await session.submitReport(kind: .construction)
+
+        #expect(await announcements.said == ["Saved. It will be sent when you're back online."])
+    }
+
+    /// While reporting isn't available, nothing is stored and the user is told.
     @Test
     func unavailableReportingStoresNothing() async {
         let reports = CapturingReports()
