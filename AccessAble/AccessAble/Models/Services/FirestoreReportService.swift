@@ -270,9 +270,10 @@ extension FirestoreReportService {
         _ start: (_ completion: @escaping @Sendable ((any Error)?) -> Void) -> Void
     ) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            let outcome = FirstOutcome(continuation)
+            let outcome = FirstOutcome<Void>()
+            outcome.wait(continuation)
             // Not structured: nothing should wait on the commit once the timeout passes.
-            outcome.setTimer(Task {
+            outcome.cancelsOnFinish(Task {
                 do { try await clock.sleep(for: timeout) } catch { return }
                 outcome.finish(.failure(ReportServiceError.queuedOffline))
             })
@@ -380,45 +381,5 @@ struct ReportFeed: Sendable {
         guard nearby != lastSent else { return nil }
         lastSent = nearby
         return nearby
-    }
-}
-
-/// Resumes one continuation with whichever outcome arrives first: the commit's or the
-/// timeout's. Later outcomes are dropped, so the continuation is never resumed twice.
-private final class FirstOutcome: Sendable {
-    private struct State {
-        var continuation: CheckedContinuation<Void, any Error>?
-        var timer: Task<Void, Never>?
-    }
-
-    private let state: Mutex<State>
-
-    init(_ continuation: CheckedContinuation<Void, any Error>) {
-        state = Mutex(State(continuation: continuation))
-    }
-
-    func setTimer(_ timer: Task<Void, Never>) {
-        let finished = state.withLock { state in
-            if state.continuation != nil { state.timer = timer }
-            return state.continuation == nil
-        }
-        if finished { timer.cancel() }
-    }
-
-    /// Returns whether this outcome came first.
-    @discardableResult
-    func finish(_ outcome: Result<Void, any Error>) -> Bool {
-        let pending = state.withLock { state -> (CheckedContinuation<Void, any Error>, Task<Void, Never>?)? in
-            guard let continuation = state.continuation else { return nil }
-            defer {
-                state.continuation = nil
-                state.timer = nil
-            }
-            return (continuation, state.timer)
-        }
-        guard let (continuation, timer) = pending else { return false }
-        timer?.cancel()
-        continuation.resume(with: outcome)
-        return true
     }
 }

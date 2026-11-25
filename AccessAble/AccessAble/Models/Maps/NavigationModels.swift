@@ -136,11 +136,15 @@ struct PlannedRoute: Hashable, Sendable {
 struct RouteOptions: Equatable, Sendable {
     /// Metres per second, greater than 0. Valhalla takes km/h, so its client converts.
     var walkingSpeed: Double = 1.2
+    var excludeLocations: [GeoCoordinate] = []
+    var excludePolygons: [[GeoCoordinate]] = []
 }
 
 enum RoutingError: Error, Equatable, Sendable {
     case noRouteFound
     case serverUnavailable
+    /// Valhalla refused the exclusions themselves: too many points, or too long a polygon perimeter.
+    case exclusionsRejected
     /// The request could not be built or was rejected, or the response could not be decoded or failed
     /// `NavigationRoute` validation.
     case invalidResponse
@@ -211,6 +215,8 @@ struct NavigationRoute: Codable, Hashable, Sendable {
     let estimatedDuration: Double
     /// Metres from the start to each coordinate. Same count as `coordinates`; starts at 0.
     let cumulativeDistances: [Double]
+    /// Active reports this route passes because it couldn't avoid them. Not encoded: reports name their reporter.
+    var unavoidedReports: [Report] = []
 
     enum ValidationError: Error, Equatable, Sendable {
         case tooFewCoordinates

@@ -464,8 +464,8 @@ actor TripManager: TripStateProviding {
     }
 
     /// A new route from where the user is now, asked for by the user (Route Blocked Ahead's
-    /// "find another way") rather than because they left the route. The routing service doesn't
-    /// know about the obstacle, so the new route is the best one from here, not one around it.
+    /// "find another way") rather than because they left the route. The new route avoids the obstacle only once it
+    /// has been reported, and says so when it can't.
     func reroute() async {
         guard phase == .active || phase == .paused else { return }
         // with a weak signal the last precise fix is old, and the user has walked on from it
@@ -524,7 +524,8 @@ actor TripManager: TripStateProviding {
             routes.send(newRoute)
             publish(at: now())
             guard phase == .active else { return }
-            await submit(maneuver("New route. " + departure(on: newRoute), .high, expiresIn: 15, key: "reroute"))
+            await submit(maneuver("New route. " + Self.reportWarning(on: newRoute) + departure(on: newRoute), .high,
+                                  expiresIn: 15, key: "reroute"))
         case .failure(let error):
             guard !(error is CancellationError), phase == .active else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
@@ -546,7 +547,7 @@ actor TripManager: TripStateProviding {
         do { try await sleep(Self.startDelay) } catch { return }
         guard self.generation == generation, phase == .active, let route, let destination else { return }
         let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
-            + departure(on: route)
+            + Self.reportWarning(on: route) + departure(on: route)
         await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
     }
 
@@ -695,6 +696,11 @@ actor TripManager: TripStateProviding {
                                         cumulativeDistances: route.cumulativeDistances)
         guard let direction = direction(to: target) else { return nil }
         return direction == .behind ? "Turn around, the path is behind you." : "The path is \(direction.phrase)."
+    }
+
+    /// Said before setting off on a route that passes reports it couldn't avoid.
+    private static func reportWarning(on route: NavigationRoute) -> String {
+        route.unavoidedReports.isEmpty ? "" : ReportExclusions.warning + " "
     }
 
     /// How to set off, at the start and on a new route: which way the path is, then the first turn when it is near.

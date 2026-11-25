@@ -89,6 +89,7 @@ final class TripViewModel {
         case .noRouteFound: return "No walking route to \(destination.name) was found."
         case .serverUnavailable: return "Couldn't reach the routing service. Check your connection and try again."
         case .invalidResponse: return "The routing service sent a route AccessAble couldn't read. Try again."
+        case .exclusionsRejected: return "The routing service couldn't take that many reported obstacles."
         }
     }
 
@@ -283,6 +284,16 @@ final class TripViewModel {
                 guard !Task.isCancelled else { return }
                 self.route = route
                 routeRequestedAt = requestedAt
+                // a refresh for Start leaves the warning to the trip's start announcement
+                if !route.unavoidedReports.isEmpty, !isStartingTrip {
+                    await services.announcements.submit(AnnouncementEvent(
+                        category: .hazard,
+                        priority: .high,
+                        text: ReportExclusions.warning,
+                        source: .navigation,
+                        dedupKey: "route-report-fallback"
+                    ))
+                }
             } catch {
                 guard !Task.isCancelled else { return }
                 log.error("Routing failed: \(error.localizedDescription, privacy: .public)")

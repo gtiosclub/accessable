@@ -97,6 +97,7 @@ struct AppServices: Sendable {
         if FirebaseApp.app() != nil {
             services.reports = FirestoreReportService(auth: services.auth)
             services.reportsAvailable = true
+            services.routing = ReportAwareRoutingService(base: services.routing, reports: services.reports)
             services.userProfiles = FirestoreUserProfileStore()
             services.volunteers = FirestoreVolunteerDirectory()
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
