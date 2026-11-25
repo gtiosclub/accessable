@@ -166,6 +166,16 @@ test('a report can expire up to its kind lifetime', async () => {
   }));
 });
 
+// The largest area the rules allow, so its checks stay within the rules' expression budget.
+const area10 = Array.from({ length: 10 }, (_, i) => ({ latitude: 33.775 + i * 0.0001, longitude: -84.396 - (i % 2) * 0.0001 }));
+
+test('a report with a 10-point area can be created and voted on', async () => {
+  await assertSucceeds(createReport(alice(), 'alice', 'r1', { area: area10 }));
+  await seedReport(env, 'alice', 'r2', 20 * MINUTE, { area: area10 });
+  await assertSucceeds(vote(bob(), 'bob', 'r2', true));
+  await assertSucceeds(vote(env.authenticatedContext('carol').firestore(), 'carol', 'r2', false));
+});
+
 test('a report from an app without the vote counts is still accepted', async () => {
   await assertSucceeds(createReport(alice(), 'alice', 'r1'));
 });
