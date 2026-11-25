@@ -24,10 +24,20 @@ protocol AnnouncementSink: Sendable {
 protocol AnnouncementEngineProtocol: AnnouncementSink {
     /// Events as they are actually delivered (after filtering/dedup). UI uses this for the visual banner.
     func deliveredEvents() -> AsyncStream<AnnouncementEvent>
+    /// The ids of delivered events once they have been said, or cut off, so a listener can wait for the end of
+    /// speech. An event dropped before delivery never comes.
+    func finishedEvents() -> AsyncStream<UUID>
     func repeatLast() async
     func pause() async
     func resume() async
     func updateProfile(_ profile: GuidanceProfile) async
+}
+
+extension AnnouncementEngineProtocol {
+    /// Ends at once, for engines that don't speak, so a listener goes on without waiting.
+    func finishedEvents() -> AsyncStream<UUID> {
+        AsyncStream { $0.finish() }
+    }
 }
 
 /// Renders a haptic from the shared vocabulary (3.2).
