@@ -24,15 +24,16 @@ extension NavigationRoute {
 
 /// One step of an Apple Maps route, reduced to what the conversion needs, so it can be tested without an `MKRoute`.
 struct AppleMapsStep: Equatable, Sendable {
-    /// `MKRoute.Step.instructions`; Apple leaves it empty for the first step of most walking routes.
+    /// `MKRoute.Step.instructions`, in the device's language; Apple leaves it empty for the first step of most
+    /// walking routes.
     var instructions: String
     /// First coordinate of the step's polyline; nil when the polyline is empty.
     var start: GeoCoordinate?
 }
 
 extension NavigationRoute {
-    /// Converts Apple's walking route. Apple doesn't know about stairs, kerbs or step-free paths, so whoever uses this
-    /// must tell the user (see `FallbackRoutingService`).
+    /// Converts Apple's walking route, with `source` `.appleMaps`. Apple doesn't know about stairs, kerbs or step-free
+    /// paths, so whoever shows the route must tell the user (see `RouteSource.backupNotice`).
     /// - Parameter duration: Seconds; nil keeps Apple's `expectedTravelTime`.
     init(appleMapsRoute route: MKRoute, duration: Double? = nil) throws(ValidationError) {
         try self.init(
@@ -46,7 +47,8 @@ extension NavigationRoute {
 
     /// The conversion itself. Steps are placed at the route coordinate nearest their start, never before the previous
     /// step. The first step always departs and the route always ends with an arrival at its last coordinate, which
-    /// Apple's own last step ("Arrive at the destination") becomes when it says so.
+    /// Apple's own last step becomes when it says so or starts there. A step whose text names no maneuver this knows,
+    /// such as one in another language, takes its turn from the route's shape.
     init(appleMapsCoordinates rawCoordinates: [GeoCoordinate], steps appleSteps: [AppleMapsStep],
          estimatedDuration: Double) throws(ValidationError) {
         // Apple's polylines repeat the point where two steps meet
@@ -61,25 +63,26 @@ extension NavigationRoute {
         var previousIndex = 0
         for (position, appleStep) in appleSteps.enumerated() {
             let text = appleStep.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
-            let isLast = position == appleSteps.count - 1
             if position == 0 {
-                let instruction = text.isEmpty ? "Follow the path" : text
+                // the trip speaks the first step's display text, so it is spelled out like the spoken text
+                let instruction = text.isEmpty ? "Follow the path" : Self.appleMapsExpandedText(instruction: text)
                 steps.append(RouteStep(kind: .depart, coordinateIndex: 0, instruction: instruction,
                                        spokenInstruction: Self.appleMapsSpokenText(instruction)))
                 continue
             }
             // an empty middle step has nothing to say
             guard !text.isEmpty else { continue }
-            if isLast, Self.appleMapsTextIsArrival(text) {
-                steps.append(RouteStep(kind: .arrive, coordinateIndex: lastIndex, instruction: text,
-                                       spokenInstruction: Self.appleMapsSpokenText(text)))
-                continue
-            }
             let index = appleStep.start.map { Self.nearestIndex(to: $0, in: coordinates, from: previousIndex) }
                 ?? previousIndex
+            if position == appleSteps.count - 1, index == lastIndex || Self.appleMapsTextIsArrival(text) {
+                steps.append(RouteStep(kind: .arrive, coordinateIndex: lastIndex, instruction: text,
+                                       spokenInstruction: Self.appleMapsArrivalSpeech(text)))
+                continue
+            }
             previousIndex = index
-            steps.append(RouteStep(kind: Self.appleMapsManeuverKind(for: text), coordinateIndex: index,
-                                   instruction: text, spokenInstruction: Self.appleMapsSpokenText(text)))
+            let kind = Self.appleMapsManeuverKind(for: text) ?? Self.turnKind(at: index, in: coordinates)
+            steps.append(RouteStep(kind: kind, coordinateIndex: index, instruction: text,
+                                   spokenInstruction: Self.appleMapsSpokenText(text)))
         }
         if steps.isEmpty {
             steps.append(RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Follow the path",
@@ -90,6 +93,7 @@ extension NavigationRoute {
                                    spokenInstruction: "You have arrived."))
         }
         try self.init(coordinates: coordinates, steps: steps, estimatedDuration: estimatedDuration)
+        source = .appleMaps
     }
 
     /// The first coordinate within a metre of `point` at or after `start`, otherwise the nearest one, so a route
@@ -108,6 +112,31 @@ extension NavigationRoute {
         return best
     }
 
+    /// Metres before and after a step's start that `turnKind` measures the way in and out over, so a kink in the
+    /// polyline right at the corner doesn't decide the turn.
+    private static let turnMeasureDistance: Double = 10
+
+    /// The turn the route makes at `index`, from the change of bearing there: under 20° straight, under 45° slight,
+    /// under 150° a turn, sharp ones included, and beyond that a U-turn.
+    static func turnKind(at index: Int, in coordinates: [GeoCoordinate]) -> ManeuverKind {
+        guard index > 0, index < coordinates.count - 1 else { return .straight }
+        let corner = coordinates[index]
+        let before = coordinates[..<index].last { GeoMath.distance(from: $0, to: corner) >= turnMeasureDistance }
+            ?? coordinates[0]
+        let after = coordinates[(index + 1)...].first {
+            GeoMath.distance(from: corner, to: $0) >= turnMeasureDistance
+        } ?? coordinates[coordinates.count - 1]
+        let change = GeoMath.normalizedBearing(
+            GeoMath.bearing(from: corner, to: after) - GeoMath.bearing(from: before, to: corner) + 180
+        ) - 180
+        switch abs(change) {
+        case ..<20: return .straight
+        case ..<45: return change < 0 ? .slightLeft : .slightRight
+        case ..<150: return change < 0 ? .turnLeft : .turnRight
+        default: return .uTurn
+        }
+    }
+
     /// Apple's instruction text, lowercased, with punctuation turned into spaces and padded, so phrases match whole
     /// words: "U-turn" reads " u turn ".
     private static func padded(_ text: String) -> String {
@@ -119,14 +148,22 @@ extension NavigationRoute {
         return [" arrive ", " arrived ", " destination "].contains { words.contains($0) }
     }
 
-    /// The maneuver Apple's instruction text describes. Apple gives no maneuver type, only the text. Stairs come first:
-    /// they are what a user of this app most needs warning about, even when the same step also turns.
-    static func appleMapsManeuverKind(for text: String) -> ManeuverKind {
+    /// Apple's arrival, "Arrive at the destination", said as Valhalla's are: "You have arrived.", or which side the
+    /// destination is on when Apple says.
+    static func appleMapsArrivalSpeech(_ text: String) -> String {
         let words = padded(text)
         func says(_ phrases: [String]) -> Bool { phrases.contains { words.contains(" \($0) ") } }
-        if says(["stairs", "stair", "staircase", "stairway", "steps"]) { return .stairs }
-        if says(["elevator", "lift"]) { return .elevator }
-        if says(["escalator"]) { return .escalator }
+        if says(["on the left", "on your left"]) { return "Your destination is on the left." }
+        if says(["on the right", "on your right"]) { return "Your destination is on the right." }
+        return "You have arrived."
+    }
+
+    /// The maneuver Apple's English instruction text describes, or nil when it names none, as in another language.
+    /// Apple gives no maneuver type, only the text. A turn comes before stairs, elevators and escalators in the same
+    /// step, which the spoken text still names: "Turn left and take the steps down" must still be a left turn.
+    static func appleMapsManeuverKind(for text: String) -> ManeuverKind? {
+        let words = padded(text)
+        func says(_ phrases: [String]) -> Bool { phrases.contains { words.contains(" \($0) ") } }
         if says(["u turn", "uturn", "turn around"]) { return .uTurn }
         if says(["slight left", "slightly left", "bear left", "keep left", "stay left"]) { return .slightLeft }
         if says(["slight right", "slightly right", "bear right", "keep right", "stay right"]) { return .slightRight }
@@ -136,8 +173,12 @@ extension NavigationRoute {
                  "right at", "right to", "right toward", "right towards"]) || words.hasPrefix(" right ") {
             return .turnRight
         }
+        if says(["stairs", "stair", "staircase", "stairway", "steps"]) { return .stairs }
+        if says(["elevator", "lift"]) { return .elevator }
+        if says(["escalator"]) { return .escalator }
         if says(["cross", "crosswalk", "crossing"]) { return .cross }
-        return .straight
+        if says(["continue", "proceed", "head", "walk", "go straight", "straight", "follow"]) { return .straight }
+        return nil
     }
 
     private static let streetSuffixes = [
@@ -147,30 +188,39 @@ extension NavigationRoute {
     ]
     private static let directionSuffixes = [
         "NW": "Northwest", "NE": "Northeast", "SW": "Southwest", "SE": "Southeast",
+        "N": "North", "S": "South", "E": "East", "W": "West",
     ]
 
-    /// Text for speech from Apple's display text: no compass start ("Head north on X" becomes "Follow X"), street
-    /// abbreviations spelled out so "Ferst Dr NW" isn't read as "Ferst Doctor N W", and a full stop at the end. An
-    /// abbreviation is only expanded where it ends a street name, so "Dr Martin Luther King Jr Dr" keeps its first "Dr".
-    static func appleMapsSpokenText(_ text: String) -> String {
-        let source = RouteStep.withoutCompassDirection(text.trimmingCharacters(in: .whitespacesAndNewlines))
-        var words = source.split(separator: " ").map(String.init)
+    /// Apple's display text with street abbreviations spelled out, so "Ferst Dr NW" isn't read as "Ferst Doctor N W".
+    /// A street abbreviation is only expanded where it ends a street name, so "Dr Martin Luther King Jr Dr" keeps its
+    /// first "Dr"; a direction only after a street abbreviation, or for "NW" and the like at the end of a phrase, so
+    /// "Turn left onto E St" keeps its "E".
+    static func appleMapsExpandedText(instruction text: String) -> String {
+        let original = text.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ").map(String.init)
         func split(_ word: String) -> (core: String, trailing: String) {
             let core = word.reversed().drop(while: { ".,;:!?".contains($0) }).reversed()
             return (String(core), String(word.dropFirst(core.count)))
         }
-        for index in words.indices {
-            let (core, trailing) = split(words[index])
-            let isLastWord = index == words.count - 1
-            let nextCore = isLastWord ? nil : split(words[index + 1]).core
-            let endsName = isLastWord || !trailing.isEmpty || nextCore.map { directionSuffixes[$0] != nil } == true
-            if index > 0, endsName, let expanded = streetSuffixes[core] {
+        var words = original
+        for index in original.indices where index > 0 {
+            let (core, trailing) = split(original[index])
+            let endsPhrase = index == original.count - 1 || !trailing.isEmpty
+            let nextIsDirection = endsPhrase ? false : directionSuffixes[split(original[index + 1]).core] != nil
+            let previous = split(original[index - 1])
+            let followsStreet = previous.trailing.isEmpty && streetSuffixes[previous.core] != nil
+            if let expanded = streetSuffixes[core], endsPhrase || nextIsDirection {
                 words[index] = expanded + trailing
-            } else if index > 0, isLastWord || !trailing.isEmpty, let expanded = directionSuffixes[core] {
+            } else if let expanded = directionSuffixes[core], followsStreet || (core.count == 2 && endsPhrase) {
                 words[index] = expanded + trailing
             }
         }
-        let spoken = words.joined(separator: " ")
+        return words.joined(separator: " ")
+    }
+
+    /// Text for speech from Apple's display text: spelled out as `appleMapsExpandedText(instruction:)`, with no
+    /// compass start ("Head north on X" becomes "Follow X"), and a full stop at the end.
+    static func appleMapsSpokenText(_ text: String) -> String {
+        let spoken = RouteStep.withoutCompassDirection(appleMapsExpandedText(instruction: text))
         guard let last = spoken.last else { return spoken }
         return ".!?".contains(last) ? spoken : spoken + "."
     }
