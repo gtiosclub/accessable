@@ -1,108 +1,140 @@
 import Foundation
 import os
+import Synchronization
 
 private let log = Logger(subsystem: "AccessAble", category: "Routing")
 
-/// Asks `primary` (Valhalla) first and, when it fails or takes longer than `timeout`, `fallback` (Apple Maps), telling
-/// the user that the backup route may include stairs. Cancellation is passed on, never treated as a failure.
+/// Asks `primary` (Valhalla) first and, when it fails or takes longer than `timeout`, `fallback` (Apple Maps), whose
+/// routes come back with `source` `.appleMaps` for the caller to tell the user. Cancellation is passed on, never
+/// treated as a failure.
+///
+/// Apple Maps can't avoid places, so a request that excludes some never falls back: a failure or timeout throws
+/// `.exclusionsRejected` instead, for `ReportAwareRoutingService` to try again with fewer exclusions. Its last try has
+/// none, so a route it gets from Apple Maps still lists the reports it passes.
 struct FallbackRoutingService: RoutingService {
-    static let backupNotice = "Using backup directions. They may include stairs."
     static let defaultTimeout: Duration = .seconds(6)
+    /// After a timeout, how long requests without exclusions skip Valhalla, so each reroute doesn't wait it out again.
+    static let timeoutMemory: Duration = .seconds(120)
 
     private let primary: any RoutingService
     private let fallback: any RoutingService
-    private let announcements: any AnnouncementSink
     private let timeout: Duration
-    private let sleep: @Sendable (Duration) async throws -> Void
+    private let clock: any Clock<Duration>
+    /// The primary's last timeout on a request without exclusions. Shared by copies.
+    private let lastTimeout = TimeoutMemory()
 
-    /// `sleep` waits out the timeout; tests replace it so they don't wait in real time.
     init(
         primary: any RoutingService,
         fallback: any RoutingService,
-        announcements: any AnnouncementSink,
         timeout: Duration = FallbackRoutingService.defaultTimeout,
-        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+        clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.primary = primary
         self.fallback = fallback
-        self.announcements = announcements
         self.timeout = timeout
-        self.sleep = sleep
+        self.clock = clock
     }
 
     func route(
         from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
     ) async throws -> NavigationRoute {
-        let primaryError: RoutingError?
-        switch await primaryOutcome(from: origin, to: destination, options: options) {
-        case .route(let route):
-            return route
-        case .failed(let error):
-            if Task.isCancelled || error is CancellationError { throw CancellationError() }
-            log.error("Valhalla failed, trying Apple Maps: \(String(describing: error), privacy: .public)")
-            primaryError = error as? RoutingError ?? .invalidResponse
-        case .timedOut:
-            log.error("Valhalla took longer than \(String(describing: timeout), privacy: .public), trying Apple Maps")
-            primaryError = nil
+        let excludes = !options.excludeLocations.isEmpty || !options.excludePolygons.isEmpty
+        if !excludes, let elapsed = lastTimeout.elapsed, elapsed < Self.timeoutMemory {
+            log.notice("Valhalla timed out \(String(describing: elapsed), privacy: .public) ago, asking Apple Maps")
+            return try await fallbackRoute(from: origin, to: destination, options: options, after: nil)
         }
-        try Task.checkCancellation()
 
-        let route: NavigationRoute
+        let primaryError: RoutingError?
         do {
-            route = try await fallback.route(from: origin, to: destination, options: options)
+            return try await primaryRoute(from: origin, to: destination, options: options)
+        } catch is CancellationError where Task.isCancelled {
+            throw CancellationError()
+        } catch is PrimaryTimedOut {
+            log.error("Valhalla took longer than \(String(describing: timeout), privacy: .public)")
+            guard !excludes else { throw RoutingError.exclusionsRejected }
+            lastTimeout.record(clock.stopwatch())
+            primaryError = nil
+        } catch {
+            log.error("Valhalla failed: \(String(describing: error), privacy: .public)")
+            let routingError = error as? RoutingError ?? .invalidResponse
+            if excludes {
+                // no route at all is the answer; anything else may be the exclusions' fault, so fewer can be tried
+                throw routingError == .noRouteFound ? routingError : RoutingError.exclusionsRejected
+            }
+            primaryError = routingError
+        }
+        return try await fallbackRoute(from: origin, to: destination, options: options, after: primaryError)
+    }
+
+    private func fallbackRoute(
+        from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions,
+        after primaryError: RoutingError?
+    ) async throws -> NavigationRoute {
+        try Task.checkCancellation()
+        do {
+            return try await fallback.route(from: origin, to: destination, options: options)
         } catch {
             if Task.isCancelled || error is CancellationError { throw CancellationError() }
-            log.error("Apple Maps failed too: \(String(describing: error), privacy: .public)")
+            log.error("Apple Maps failed: \(String(describing: error), privacy: .public)")
             throw Self.combined(primaryError, error as? RoutingError ?? .invalidResponse)
         }
-        try Task.checkCancellation()
-
-        let time = Date.now
-        await announcements.submit(AnnouncementEvent(
-            category: .system, priority: .high, text: Self.backupNotice, haptic: .attention, source: .navigation,
-            createdAt: time, expiresAt: time.addingTimeInterval(30)
-        ))
-        return route
     }
 
-    private enum PrimaryOutcome: Sendable {
-        case route(NavigationRoute)
-        case failed(any Error)
-        case timedOut
-    }
-
-    /// The primary's answer or the timeout, whichever comes first; the other is cancelled.
-    private func primaryOutcome(
+    /// The primary's route or error, or `PrimaryTimedOut` after `timeout`, whichever comes first; the other is
+    /// cancelled, as is the primary when the caller is.
+    private func primaryRoute(
         from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
-    ) async -> PrimaryOutcome {
-        await withTaskGroup(of: PrimaryOutcome.self) { group in
-            group.addTask { [primary] in
-                do {
-                    return .route(try await primary.route(from: origin, to: destination, options: options))
-                } catch {
-                    return .failed(error)
-                }
+    ) async throws -> NavigationRoute {
+        let outcome = FirstOutcome<NavigationRoute>()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                outcome.wait(continuation)
+                // Not structured, so a request that ignores cancellation can't hold up the fallback.
+                outcome.cancelsOnFinish(Task { [primary] in
+                    do {
+                        outcome.finish(.success(try await primary.route(from: origin, to: destination,
+                                                                        options: options)))
+                    } catch {
+                        outcome.finish(.failure(error))
+                    }
+                })
+                outcome.cancelsOnFinish(Task { [clock, timeout] in
+                    do { try await clock.sleep(for: timeout) } catch { return }
+                    outcome.finish(.failure(PrimaryTimedOut()))
+                })
             }
-            group.addTask { [sleep, timeout] in
-                do {
-                    try await sleep(timeout)
-                    return .timedOut
-                } catch {
-                    // only cancelled: by the caller, or because the primary answered first
-                    return .failed(CancellationError())
-                }
-            }
-            let first = await group.next() ?? .failed(CancellationError())
-            group.cancelAll()
-            return first
+        } onCancel: {
+            outcome.finish(.failure(CancellationError()))
         }
     }
 
-    /// One error for both failures: no route from either beats "unavailable", which beats a bad response.
+    /// One error for both failures: no route from either beats rejected exclusions, which beat "unavailable", which
+    /// beats a bad response.
     private static func combined(_ primary: RoutingError?, _ fallback: RoutingError) -> RoutingError {
         let errors = [primary, fallback].compactMap { $0 }
         if errors.contains(.noRouteFound) { return .noRouteFound }
+        if errors.contains(.exclusionsRejected) { return .exclusionsRejected }
         if errors.contains(.serverUnavailable) { return .serverUnavailable }
         return .invalidResponse
+    }
+}
+
+private struct PrimaryTimedOut: Error {}
+
+/// When the primary last timed out, as time elapsed since.
+private final class TimeoutMemory: Sendable {
+    private let since = Mutex<(@Sendable () -> Duration)?>(nil)
+
+    /// Nil until the first timeout.
+    var elapsed: Duration? { since.withLock { $0?() } }
+
+    func record(_ elapsed: @escaping @Sendable () -> Duration) { since.withLock { $0 = elapsed } }
+}
+
+private extension Clock where Duration == Swift.Duration {
+    /// Time elapsed on this clock since now, whatever its instant type.
+    func stopwatch() -> @Sendable () -> Swift.Duration {
+        let start = now
+        return { start.duration(to: now) }
     }
 }

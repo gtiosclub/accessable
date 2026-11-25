@@ -3,12 +3,18 @@ import os
 
 private let log = Logger(subsystem: "AccessAble", category: "Routing")
 
-/// Asks Apple Maps for a walking route. Apple's routes know nothing about stairs, kerbs or step-free paths, so this
-/// is only a backup for when Valhalla can't answer; see `FallbackRoutingService`.
+/// Asks Apple Maps for a walking route, the backup `FallbackRoutingService` uses when Valhalla can't answer. Apple's
+/// routes know nothing about stairs, kerbs or step-free paths, and come back with `source` `.appleMaps` so the user
+/// can be told. MapKit can't avoid places, so a request with `excludeLocations` or `excludePolygons` is refused with
+/// `.exclusionsRejected` rather than answered with a route through them.
 struct AppleMapsRoutingService: RoutingService {
     func route(
         from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
     ) async throws -> NavigationRoute {
+        guard options.excludeLocations.isEmpty, options.excludePolygons.isEmpty else {
+            log.error("Apple Maps can't avoid places")
+            throw RoutingError.exclusionsRejected
+        }
         guard options.walkingSpeed.isFinite, options.walkingSpeed > 0 else {
             log.error("Invalid walking speed: \(options.walkingSpeed, privacy: .public) m/s")
             throw RoutingError.invalidResponse
@@ -24,7 +30,13 @@ struct AppleMapsRoutingService: RoutingService {
 
         let response: MKDirections.Response
         do {
-            response = try await MKDirections(request: request).calculate()
+            // not Sendable, but only `cancel()` crosses over, which MapKit allows from any thread while it calculates
+            nonisolated(unsafe) let directions = MKDirections(request: request)
+            response = try await withTaskCancellationHandler {
+                try await directions.calculate()
+            } onCancel: {
+                directions.cancel()
+            }
         } catch {
             if Task.isCancelled || error is CancellationError { throw CancellationError() }
             log.error("Apple Maps directions failed: \(error.localizedDescription, privacy: .public)")

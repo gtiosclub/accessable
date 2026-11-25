@@ -9,9 +9,16 @@ struct AppServicesTests {
         #expect(AppServices.preview.routing is PlaceholderRoutingService)
     }
 
+    /// With Firebase configured, report-aware routing wraps the fallback, so its last try can reach Apple Maps.
     @Test
     func liveFallsBackToAppleMapsWhenValhallaFails() {
-        #expect(AppServices.live(performance: PerformanceModeMonitor()).routing is FallbackRoutingService)
+        let configured = Bundle.main.url(forResource: "GoogleService-Info", withExtension: "plist") != nil
+        let routing = AppServices.live(performance: PerformanceModeMonitor()).routing
+        if configured {
+            #expect((routing as? ReportAwareRoutingService)?.base is FallbackRoutingService)
+        } else {
+            #expect(routing is FallbackRoutingService)
+        }
     }
 
     @Test
