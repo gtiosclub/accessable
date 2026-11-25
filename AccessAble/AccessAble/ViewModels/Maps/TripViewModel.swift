@@ -288,7 +288,7 @@ final class TripViewModel {
                     await services.announcements.submit(AnnouncementEvent(
                         category: .hazard,
                         priority: .high,
-                        text: "A reported obstacle is on this route.",
+                        text: ReportExclusions.warning,
                         source: .navigation,
                         dedupKey: "route-report-fallback"
                     ))

@@ -166,6 +166,24 @@ private actor CountingRouting: RoutingService {
     }
 }
 
+/// Keeps what is submitted.
+private actor SubmittedAnnouncements: AnnouncementEngineProtocol {
+    private(set) var texts: [String] = []
+
+    func submit(_ event: AnnouncementEvent) async {
+        texts.append(event.text)
+    }
+
+    nonisolated func deliveredEvents() -> AsyncStream<AnnouncementEvent> {
+        AsyncStream { continuation in continuation.finish() }
+    }
+
+    func repeatLast() async {}
+    func pause() async {}
+    func resume() async {}
+    func updateProfile(_ profile: GuidanceProfile) async {}
+}
+
 private let origin = GeoCoordinate(latitude: 33.775, longitude: -84.399)
 private let library = Destination(name: "Library", coordinate: GeoCoordinate(latitude: 33.776, longitude: -84.399))
 
@@ -194,6 +212,7 @@ private final class ManualDate: Sendable {
 private final class TripScreen {
     let trip: ControlledTripProvider
     let routing: CountingRouting
+    let announcements = SubmittedAnnouncements()
     let viewModel: TripViewModel
     private let clock = ManualDate()
     private var running: Task<Void, Never>?
@@ -201,12 +220,13 @@ private final class TripScreen {
     /// - Parameter trip: Pass another screen's to open this one on a trip already running.
     init(fixes: [GeoCoordinate] = [origin], accuracy: Double = 5,
          authorization: LocationAuthorization = .authorized(preciseAccuracy: true),
-         trip: ControlledTripProvider = ControlledTripProvider()) {
+         trip: ControlledTripProvider = ControlledTripProvider(), route: NavigationRoute = plannedRoute) {
         self.trip = trip
-        routing = CountingRouting(route: plannedRoute)
+        routing = CountingRouting(route: route)
         var services = AppServices.preview
         services.trip = trip
         services.routing = routing
+        services.announcements = announcements
         let time = clock.now
         services.location = ScriptedLocationProvider(
             samples: fixes.map { LocationSample(coordinate: $0, horizontalAccuracy: accuracy, timestamp: time) },
@@ -442,6 +462,21 @@ struct TripStartTests {
         await screen.plan()
         await screen.show(state(phase))
         #expect(screen.viewModel.mapAccessibilityLabel == expected)
+        screen.stop()
+    }
+
+    @Test
+    func aRouteThatPassesAReportWarnsOfIt() async {
+        var route = plannedRoute
+        route.unavoidedReports = [Report(id: "blocked-1", kind: .blockedPath, coordinate: library.coordinate,
+                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600),
+                                         reporterID: "user-1")]
+        let screen = TripScreen(route: route)
+        await screen.plan()
+
+        // submitted just after the route lands
+        while await screen.announcements.texts.isEmpty { await Task.yield() }
+        #expect(await screen.announcements.texts == ["A reported obstacle is on this route."])
         screen.stop()
     }
 

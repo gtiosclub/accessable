@@ -381,6 +381,11 @@ private func eastRoute(from origin: GeoCoordinate) throws -> NavigationRoute {
     ], estimatedDuration: 60)
 }
 
+private func blockedPath(at coordinate: GeoCoordinate) -> Report {
+    Report(id: "blocked-1", kind: .blockedPath, coordinate: coordinate, createdAt: TripWalk.start,
+           expiresAt: TripWalk.start.addingTimeInterval(3600), reporterID: "user-1")
+}
+
 private final class BackgroundRecorder: Sendable {
     private let calls = Mutex<[Bool]>([])
 
@@ -768,6 +773,41 @@ struct TripManagerTests {
         let texts = await harness.engine.texts
         #expect(texts.contains("Finding a new route from here."))
         #expect(!texts.contains("Trip ended."))
+    }
+
+    /// A route that couldn't avoid a reported obstacle says so before setting off.
+    @Test
+    func aRerouteThatPassesAReportWarnsOfIt() async throws {
+        let walked = TripWalk.distances(from: 0, to: 20).last ?? 0
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked)
+        var fallback = try eastRoute(from: origin)
+        fallback.unavoidedReports = [blockedPath(at: TripWalk.destination(from: origin, bearing: 90, distance: 40))]
+        let harness = try Harness(reroutes: [.success(fallback)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        #expect(await harness.engine.texts.filter { $0.hasPrefix("New route.") }
+            == ["New route. A reported obstacle is on this route. \(setOff)"])
+    }
+
+    @Test
+    func startingOnARouteThatPassesAReportWarnsOfIt() async throws {
+        var route = try cornerRoute()
+        route.unavoidedReports = [blockedPath(at: route.coordinates[1])]
+        let harness = try Harness(route: route)
+        await harness.start()
+
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 160 metres. A reported obstacle is on this route. "
+            + setOff)
     }
 
     @Test
