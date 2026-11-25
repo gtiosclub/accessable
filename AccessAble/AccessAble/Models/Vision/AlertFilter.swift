@@ -20,9 +20,9 @@ enum DangerLevel: Int, Codable, CaseIterable, Comparable, Sendable {
     var displayName: String {
         switch self {
         case .low: "Everything"
-        case .medium: "Medium and above"
-        case .high: "High and above"
-        case .critical: "Critical only"
+        case .medium: "Medium and up"
+        case .high: "High and up"
+        case .critical: "Only critical"
         }
     }
 
@@ -85,6 +85,14 @@ struct AlertFilter: Codable, Hashable, Sendable {
     static let distanceChoices: [Float] = [1.5, 2.5, 4]
 
     static let `default` = AlertFilter()
+
+    /// Presentation only: filter distances always remain in metres.
+    static func distanceLabel(_ metres: Float, usesMetricUnits: Bool, spoken: Bool = false) -> String {
+        if usesMetricUnits {
+            return String(format: "%g", metres) + (spoken ? " metres" : " m")
+        }
+        return String(format: "%.1f", metres * 3.28084) + (spoken ? " feet" : " ft")
+    }
 
     func allows(_ level: DangerLevel) -> Bool { level >= minimumDanger }
 }
