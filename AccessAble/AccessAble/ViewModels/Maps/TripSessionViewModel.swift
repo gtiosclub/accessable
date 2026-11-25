@@ -400,6 +400,10 @@ final class TripSessionViewModel {
         do {
             try await services.reports.submit(report)
             await say("Reported \(kind.title.lowercased()). Thank you.", category: .system)
+        } catch ReportServiceError.rateLimited {
+            await say("You just sent a report. Wait a minute before sending another.", category: .system)
+        } catch ReportServiceError.queuedOffline {
+            await say("Saved. It will be sent when you're back online.", category: .system)
         } catch {
             log.error("Report submit failed: \(error.localizedDescription, privacy: .public)")
             await say(
