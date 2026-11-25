@@ -24,7 +24,7 @@ struct ValhallaRoutingServiceTests {
     }
 
     private static func httpResponse(_ status: Int) -> HTTPURLResponse {
-        HTTPURLResponse(url: endpoint.baseURL.appending(path: "route"), statusCode: status,
+        HTTPURLResponse(url: endpoint.routeURL, statusCode: status,
                         httpVersion: nil, headerFields: nil)!
     }
 
@@ -121,6 +121,30 @@ struct ValhallaRoutingServiceTests {
         let endpoint = ValhallaEndpoint(baseURL: try #require(URL(string: baseURL)))
         let request = try await sentRequest(endpoint: endpoint)
         #expect(request.url?.absoluteString == "https://h/valhalla/route")
+    }
+
+    @Test
+    func noAuthorizationWithoutStadiaKey() async throws {
+        let request = try await sentRequest()
+        #expect(request.value(forHTTPHeaderField: "Authorization") == nil)
+    }
+
+    @Test
+    func stadiaPostsToRouteV1WithKeyInHeader() async throws {
+        let request = try await sentRequest(endpoint: .stadia(apiKey: "test-key"))
+        #expect(request.url == URL(string: "https://api.stadiamaps.com/route/v1"))
+        #expect(request.value(forHTTPHeaderField: "Authorization") == "Stadia-Auth test-key")
+        #expect(request.url?.query == nil)
+    }
+
+    @Test(arguments: [nil, "", "  ", "$(STADIA_API_KEY)"] as [String?])
+    func missingStadiaKeyIsNil(_ value: String?) {
+        #expect(StadiaConfig.apiKey(from: value) == nil)
+    }
+
+    @Test
+    func stadiaKeyIsTrimmed() {
+        #expect(StadiaConfig.apiKey(from: " abc ") == "abc")
     }
 
     @Test(arguments: [(0.01, 0.5), (100.0, 25.0)])
@@ -221,7 +245,8 @@ struct ValhallaRoutingServiceTests {
 
     @Test(arguments: [
         (403, "", RoutingError.serverUnavailable),
-        (429, "", .serverUnavailable),
+        (401, "", .serverUnavailable),
+        (429, "", .usageLimitReached),
         (500, "", .serverUnavailable),
         (503, "", .serverUnavailable),
         (400, valhallaError(154), .noRouteFound),

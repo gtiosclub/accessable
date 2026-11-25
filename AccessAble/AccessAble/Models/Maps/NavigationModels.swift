@@ -141,6 +141,8 @@ struct RouteOptions: Equatable, Sendable {
 enum RoutingError: Error, Equatable, Sendable {
     case noRouteFound
     case serverUnavailable
+    /// HTTP 429: the routing service is out of credits or throttling us.
+    case usageLimitReached
     /// The request could not be built or was rejected, or the response could not be decoded or failed
     /// `NavigationRoute` validation.
     case invalidResponse

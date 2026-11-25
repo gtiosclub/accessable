@@ -72,7 +72,7 @@ struct AppServices: Sendable {
             scene: scene,
             sceneDescriber: scene,
             location: location,
-            routing: ValhallaRoutingService(),
+            routing: ValhallaRoutingService(endpoint: .live),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
             tripActivity: ActivityKitTripActivityClient(),
