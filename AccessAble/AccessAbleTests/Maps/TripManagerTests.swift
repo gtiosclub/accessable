@@ -146,6 +146,7 @@ private final class ManualFeed<Element: Sendable>: Sendable {
         var waiter: CheckedContinuation<Element?, Never>?
         var requests = 0
         var sent = 0
+        var isFinished = false
     }
 
     private enum Next { case value(Element), end, wait }
@@ -158,6 +159,15 @@ private final class ManualFeed<Element: Sendable>: Sendable {
             return feeds.count - 1
         }
         return AsyncStream(unfolding: { [self] in await next(on: index) })
+    }
+
+    var streamCount: Int {
+        feeds.withLock { $0.count }
+    }
+
+    /// Whether the latest subscriber is waiting for its next value, so it is still listening.
+    var isListening: Bool {
+        feeds.withLock { $0.last?.waiter != nil }
     }
 
     func yield(_ element: Element) {
@@ -174,6 +184,17 @@ private final class ManualFeed<Element: Sendable>: Sendable {
         waiter?.resume(returning: element)
     }
 
+    /// Ends the latest subscriber's stream once it has had everything sent before.
+    func finish() {
+        let waiter = feeds.withLock { feeds -> CheckedContinuation<Element?, Never>? in
+            guard let last = feeds.indices.last else { return nil }
+            feeds[last].isFinished = true
+            defer { feeds[last].waiter = nil }
+            return feeds[last].waiter
+        }
+        waiter?.resume(returning: nil)
+    }
+
     /// Waits until the latest subscriber has handled everything sent to it.
     func waitUntilHandled() async {
         await waitUntil {
@@ -188,6 +209,7 @@ private final class ManualFeed<Element: Sendable>: Sendable {
                     feeds[index].requests += 1
                     if Task.isCancelled { return .end }
                     if !feeds[index].buffer.isEmpty { return .value(feeds[index].buffer.removeFirst()) }
+                    if feeds[index].isFinished { return .end }
                     feeds[index].waiter = continuation
                     return .wait
                 }
@@ -210,6 +232,41 @@ private final class ManualFeed<Element: Sendable>: Sendable {
 extension ManualFeed: LandmarkObserving where Element == LandmarkObservation {
     func landmarkObservations() -> AsyncStream<LandmarkObservation> {
         stream()
+    }
+}
+
+/// Report snapshots the test sends on the latest subscription, which it can end.
+private final class ManualReportService: ReportService, Sendable {
+    private let changes = ManualFeed<[Report]>()
+
+    func submit(_ report: Report) async throws {}
+
+    func reports(near coordinate: GeoCoordinate, radius: Double) async throws -> [Report] {
+        []
+    }
+
+    func reportChanges(near coordinate: GeoCoordinate, radius: Double) -> AsyncStream<[Report]> {
+        changes.stream()
+    }
+
+    var subscriptionCount: Int { changes.streamCount }
+    var isListening: Bool { changes.isListening }
+
+    func waitForSubscriptions(_ count: Int) async {
+        await waitUntil { changes.streamCount >= count }
+    }
+
+    /// Sends `reports` once the latest subscription is listening, and waits until it has handled them.
+    func publish(_ reports: [Report]) async {
+        await waitUntil { changes.isListening }
+        changes.yield(reports)
+        await changes.waitUntilHandled()
+    }
+
+    /// Ends the latest subscription, as a listener error or signing out does.
+    func finish() async {
+        await waitUntil { changes.isListening }
+        changes.finish()
     }
 }
 
@@ -284,6 +341,7 @@ private actor RecordingEngine: AnnouncementEngineProtocol {
 private actor ScriptedRouter: RoutingService {
     private var results: [Result<NavigationRoute, RoutingError>]
     private(set) var requests: [GeoCoordinate] = []
+    private(set) var options: [RouteOptions] = []
     private var pending: [CheckedContinuation<Void, Never>] = []
     private var requestWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
     private(set) var answered = 0
@@ -296,6 +354,7 @@ private actor ScriptedRouter: RoutingService {
         from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
     ) async throws -> NavigationRoute {
         requests.append(origin)
+        self.options.append(options)
         let ready = requestWaiters.filter { $0.count <= requests.count }
         requestWaiters.removeAll { $0.count <= requests.count }
         ready.forEach { $0.continuation.resume() }
@@ -386,6 +445,14 @@ private func blockedPath(at coordinate: GeoCoordinate) -> Report {
            expiresAt: TripWalk.start.addingTimeInterval(3600), reporterID: "user-1")
 }
 
+/// The signed-in user, as the harness's trip sees them.
+private let reporterSelf = "me"
+
+private func report(_ id: String, at coordinate: GeoCoordinate, by reporter: String = "neighbour") -> Report {
+    Report(id: id, kind: .blockedPath, coordinate: coordinate, createdAt: TripWalk.start,
+           expiresAt: TripWalk.start.addingTimeInterval(3600), reporterID: reporter)
+}
+
 private final class BackgroundRecorder: Sendable {
     private let calls = Mutex<[Bool]>([])
 
@@ -401,6 +468,7 @@ private struct Harness {
     let location = ManualLocationProvider()
     let engine = RecordingEngine()
     let router: ScriptedRouter
+    let reports = ManualReportService()
     let background = BackgroundRecorder()
     let landmarks = ManualFeed<LandmarkObservation>()
     let states = StateRecorder()
@@ -421,6 +489,7 @@ private struct Harness {
         router = ScriptedRouter(reroutes)
         manager = TripManager(
             location: location, routing: router, announcements: engine,
+            reports: reports, currentUserID: { reporterSelf },
             landmarks: landmarks, campusBuildings: { buildings }, campusCrossings: { crossings },
             setTripTracking: { [background] in background.record($0) },
             distances: distances,
@@ -841,6 +910,34 @@ struct TripManagerTests {
         #expect(await harness.engine.texts.contains(
             "Couldn't find where you are precisely enough for a new route. Try again in a moment."
         ))
+    }
+
+    /// Fixes good enough to guide by but too rough to start a route from leave the last precise one behind.
+    @Test
+    func askedForRerouteFromAnOldPreciseFixSaysSoAndAsksNothing() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.fix(harness.point(0))
+        for along in TripWalk.distances(from: 1.4, to: 16) { await harness.fix(harness.point(along), accuracy: 25) }
+
+        await harness.manager.reroute()
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await harness.engine.texts.contains(
+            "Couldn't find where you are precisely enough for a new route. Try again in a moment."
+        ))
+    }
+
+    @Test
+    func askedForRerouteStartsFromTheLatestPreciseFixNotALateOne() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        let latest = harness.point(walked20)
+        await harness.fix(harness.point(5), timestamp: harness.clock.now().addingTimeInterval(-3))
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.requests == [latest])
     }
 
     @Test
@@ -1894,5 +1991,488 @@ struct TripManagerRecordingTests {
 
         let recordings = try recorder.recordings()
         #expect(recordings.isEmpty)
+    }
+}
+
+// MARK: Reports during a trip
+
+private let reportReroute = "New obstacle reported ahead. Finding a new route."
+private let reportWarning = "New obstacle reported ahead."
+private let nearReportWarning = "New obstacle reported just ahead."
+private let reportUnavoided =
+    "Couldn't find a way around the reported obstacle. Keep following the current route carefully."
+
+/// `cornerRoute` with 100 m east after the corner, so a report past the turn is far enough from the end to reroute
+/// around.
+private func longCornerRoute() throws -> NavigationRoute {
+    let corner = try cornerRoute()
+    let end = TripWalk.destination(from: corner.coordinates[1], bearing: 90, distance: 100)
+    return try NavigationRoute(coordinates: [corner.coordinates[0], corner.coordinates[1], end], steps: corner.steps,
+                               estimatedDuration: 160)
+}
+
+/// Where `walk(from: 0, to: 20)` leaves the user on `cornerRoute`.
+private let walked20 = TripWalk.distances(from: 0, to: 20).last ?? 0
+
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerReportTests {
+    private func spokenAboutReports(_ harness: Harness) async -> [String] {
+        await harness.engine.texts.filter { $0.contains("reported obstacle") || $0.hasPrefix("New ") }
+    }
+
+    @Test
+    func aReportAheadReroutesAroundItOnce() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        let blocked = report("ahead", at: harness.point(60))
+
+        await harness.reports.publish([blocked])
+
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.requests == [origin])
+        #expect(await harness.router.options == [RouteOptions(reports: [blocked])])
+        await harness.router.respond()
+        await waitUntil { await harness.engine.texts.contains(newRouteSpeech) }
+        #expect(await harness.engine.texts.filter { !$0.hasPrefix("Starting directions") }
+            == [reportReroute, newRouteSpeech])
+        let rerouted = try #require(await harness.states.current)
+        #expect(abs((rerouted.distanceRemaining ?? 0) - 80) < 0.5)
+    }
+
+    @Test
+    func reportsArrivingTogetherRerouteOnceAroundAll() async throws {
+        // held until answered, so only the report's own line is spoken
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        let first = report("first", at: harness.point(50))
+        let second = report("second", at: harness.point(60, lateral: 10))
+
+        await harness.reports.publish([first, second])
+
+        await harness.router.waitForRequests(1)
+        await waitUntil { await harness.engine.texts.contains(reportReroute) }
+        #expect(await harness.router.options.map { Set($0.reports.map(\.id)) } == [["first", "second"]])
+        #expect(await spokenAboutReports(harness) == [reportReroute])
+    }
+
+    /// A report too near to route around, found with one that isn't, is warned of before the reroute, and the reroute
+    /// tries to avoid it too.
+    @Test
+    func aNearReportWithAReroutedOneIsWarnedOfFirst() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let near = report("near", at: TripWalk.point(on: try cornerRoute(), along: walked20 + 15))
+        let far = report("far", at: TripWalk.point(on: try cornerRoute(), along: 60))
+        // the routing couldn't avoid the near one
+        var passingNear = try eastRoute(from: origin)
+        passingNear.unavoidedReports = [near]
+        let harness = try Harness(reroutes: [.success(passingNear)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.reports.publish([near, far])
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.options.map { Set($0.reports.map(\.id)) } == [["near", "far"]])
+        await harness.router.respond()
+
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        #expect(await spokenAboutReports(harness) == [
+            nearReportWarning, reportReroute,
+            "New route. A reported obstacle is on this route. \(setOff)",
+        ])
+    }
+
+    /// One the route was planned around and warned of at the start isn't new.
+    @Test
+    func aReportTheRouteAlreadyWarnedOfDoesntReroute() async throws {
+        var route = try cornerRoute()
+        let planned = report("planned", at: TripWalk.point(on: route, along: 60))
+        route.unavoidedReports = [planned]
+        let harness = try Harness(route: route)
+        await harness.start()
+        await harness.walk(from: 0, to: 10)
+
+        await harness.reports.publish([planned])
+        await harness.walk(from: 11.2, to: 20)
+
+        #expect(await harness.router.requests.isEmpty)
+        #expect(!(await harness.engine.texts.contains { $0.hasPrefix("New obstacle") }))
+    }
+
+    @Test
+    func reportsBehindOrAwayFromTheRouteAreIgnored() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 30)
+
+        await harness.reports.publish([
+            report("behind", at: harness.point(10)), report("aside", at: harness.point(60, lateral: 20)),
+        ])
+        await harness.walk(from: 30.8, to: 40)
+
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await spokenAboutReports(harness).isEmpty)
+    }
+
+    /// Route Blocked Ahead's Re-Route is the way round the user's own report.
+    @Test
+    func theUsersOwnReportIsIgnored() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.reports.publish([report("mine", at: harness.point(60), by: reporterSelf)])
+        await harness.walk(from: 21, to: 30)
+
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await spokenAboutReports(harness).isEmpty)
+    }
+
+    /// The stream sends the same reports again as they expire; and a reroute for one that fails isn't tried again.
+    @Test
+    func aReportIsActedOnOnceAndAFailedRerouteSaysSo() async throws {
+        let harness = try Harness(reroutes: [.failure(.serverUnavailable)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        let blocked = [report("ahead", at: harness.point(60))]
+
+        await harness.reports.publish(blocked)
+        await harness.router.waitForRequests(1)
+        await waitUntil { await harness.engine.texts.contains(reportUnavoided) }
+        await harness.fix(harness.point(walked20), then: 30)
+        await harness.reports.publish(blocked)
+        await harness.fix(harness.point(walked20))
+
+        #expect(await harness.router.requests.count == 1)
+        // in that order however fast the answer comes
+        #expect(await spokenAboutReports(harness) == [reportReroute, reportUnavoided])
+        #expect(!(await harness.engine.texts.contains("Couldn't get a new route. Keep following the current one.")))
+        // apart from the other reroute messages, so the engine's dedup can't take it for one of them
+        let unavoided = await harness.engine.submitted.first { $0.text == reportUnavoided }
+        #expect(unavoided?.dedupKey?.hasSuffix("-report-unavoided") == true)
+    }
+
+    /// The routing can't avoid a report this near the user, so a reroute would only pass it again.
+    @Test
+    func aReportJustAheadIsOnlyWarnedOf() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        let near = [report("near", at: harness.point(walked20 + 20))]
+
+        await harness.reports.publish(near)
+        await harness.reports.publish(near)
+
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await spokenAboutReports(harness) == [nearReportWarning])
+    }
+
+    @Test
+    func aPauseBeforeTheRerouteLineIsSaidDropsIt() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        await harness.engine.hold(text: nearReportWarning)
+
+        await harness.reports.publish([report("near", at: harness.point(walked20 + 15)),
+                                       report("on the way", at: harness.point(60))])
+        await harness.engine.waitUntilHeld()
+        await harness.manager.pauseTrip()
+        await harness.engine.release()
+
+        await harness.router.waitForRequests(1)
+        #expect(Array(await harness.engine.texts.suffix(2)) == [nearReportWarning, "Trip paused."])
+    }
+
+    /// Too near the destination to route around, but not near the user.
+    @Test
+    func aReportByTheDestinationIsWarnedOfAsAhead() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.reports.publish([report("by the door", at: harness.point(150))])
+
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await spokenAboutReports(harness) == [reportWarning])
+    }
+
+    @Test
+    func aReportByTheDestinationWithARerouteIsCoveredByTheRerouteLine() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.reports.publish([report("by the door", at: harness.point(150)),
+                                       report("on the way", at: harness.point(60))])
+        await harness.router.waitForRequests(1)
+
+        await waitUntil { await harness.engine.texts.contains(reportReroute) }
+        #expect(await harness.router.options.map { Set($0.reports.map(\.id)) } == [["by the door", "on the way"]])
+        #expect(await spokenAboutReports(harness) == [reportReroute])
+    }
+
+    @Test
+    func aReportAfterTheLastReportRerouteIsOnlyWarnedOf() async throws {
+        let harness = try Harness(reroutes: [.failure(.serverUnavailable), .failure(.serverUnavailable)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        let first = report("first", at: harness.point(50))
+        let second = report("second", at: harness.point(60))
+        let third = report("third", at: harness.point(70))
+
+        await harness.reports.publish([first])
+        await harness.router.waitForRequests(1)
+        await waitUntil { await harness.engine.texts.contains(reportUnavoided) }
+        // standing for the 30 s between requests, with fixes so the signal isn't weak
+        for _ in 0..<30 { await harness.fix(harness.point(walked20)) }
+        await harness.reports.publish([first, second])
+        await harness.router.waitForRequests(2)
+        await waitUntil { await harness.engine.texts.filter { $0 == reportUnavoided }.count == 2 }
+        // standing for the 30 s between requests, with fixes so the signal isn't weak
+        for _ in 0..<30 { await harness.fix(harness.point(walked20)) }
+        await harness.reports.publish([first, second, third])
+        await harness.fix(harness.point(walked20))
+
+        #expect(await harness.router.requests.count == 2)
+        #expect(await spokenAboutReports(harness).filter { $0 != reportUnavoided }
+            == [reportReroute, reportReroute, reportWarning])
+    }
+
+    /// Reports can't use up the reroutes a user who leaves the route needs.
+    @Test
+    func aReportRerouteDoesntCountAgainstOffRouteReroutes() async throws {
+        let harness = try Harness(reroutes: Array(repeating: .failure(.serverUnavailable), count: 7))
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        await harness.reports.publish([report("ahead", at: harness.point(60))])
+        await harness.router.waitForRequests(1)
+        await waitUntil { await harness.engine.texts.contains(reportUnavoided) }
+
+        await harness.walk(from: 21, to: 50)
+        let along = TripWalk.distances(from: 21, to: 50).last ?? 0
+        for index in 1...40 {
+            await harness.fix(harness.point(along, lateral: -min(1.4 * Double(index), 40)))
+        }
+        await harness.router.waitForRequests(2)
+        let away = harness.point(along, lateral: -40)
+        for attempt in 3...6 {
+            await harness.fix(away, then: 30)
+            await harness.fix(away)
+            await harness.router.waitForRequests(attempt)
+        }
+        await waitUntil {
+            let texts = await harness.engine.texts
+            return texts.filter { $0 == "Couldn't get a new route. Walk back the way you came." }.count == 4
+                && texts.contains("Off route. End the trip and choose your destination again.")
+        }
+        for _ in 0..<3 { await harness.fix(away, then: 30) }
+        await harness.fix(away)
+        #expect(await harness.router.requests.count == 6)
+    }
+
+    /// A route that passes the report anyway is no better than the one the user is following.
+    @Test
+    func aRerouteThatCantAvoidTheReportKeepsTheRoute() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let blocked = report("ahead", at: TripWalk.point(on: try cornerRoute(), along: 60))
+        var passing = try eastRoute(from: origin)
+        passing.unavoidedReports = [blocked]
+        let harness = try Harness(reroutes: [.success(passing)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.reports.publish([blocked])
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+
+        await waitUntil { await harness.engine.texts.contains(reportUnavoided) }
+        #expect(await spokenAboutReports(harness) == [reportReroute, reportUnavoided])
+        let state = await harness.fix(harness.point(walked20 + 1.4))
+        #expect(abs((state.distanceRemaining ?? 0) - (160 - walked20 - 1.4)) < 0.5)
+        #expect(harness.reports.subscriptionCount == 1)
+    }
+
+    /// Paused while the reroute was asked for, the user hears that it couldn't avoid the report once they resume.
+    @Test
+    func aRerouteThatCantAvoidTheReportWhilePausedSaysSoOnResuming() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let blocked = report("ahead", at: TripWalk.point(on: try cornerRoute(), along: 60))
+        var passing = try eastRoute(from: origin)
+        passing.unavoidedReports = [blocked]
+        let harness = try Harness(reroutes: [.success(passing)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        await harness.reports.publish([blocked])
+        await harness.router.waitForRequests(1)
+
+        await harness.manager.pauseTrip()
+        await harness.answerReroute()
+        #expect(!(await harness.engine.texts.contains(reportUnavoided)))
+
+        await harness.manager.resumeTrip()
+        #expect(Array(await harness.engine.texts.drop { $0 != "Trip resumed." }.prefix(2))
+            == ["Trip resumed.", reportUnavoided])
+    }
+
+    @Test
+    func aRerouteThatCantAvoidTheReportWhilePausedIsntSaidOffTheRoute() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let blocked = report("ahead", at: TripWalk.point(on: try cornerRoute(), along: 60))
+        var passing = try eastRoute(from: origin)
+        passing.unavoidedReports = [blocked]
+        let harness = try Harness(reroutes: [.success(passing)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        await harness.reports.publish([blocked])
+        await harness.router.waitForRequests(1)
+        await harness.manager.pauseTrip()
+        await harness.answerReroute()
+
+        await harness.goOffRoute(at: walked20)
+        #expect(await harness.states.current?.isOffRoute == true)
+        await harness.manager.resumeTrip()
+
+        await waitUntil { await harness.engine.texts.contains("You're off the route. Finding a new route.") }
+        #expect(!(await harness.engine.texts.contains(reportUnavoided)))
+    }
+
+    /// The first fix after resuming both says the turn and reroutes for the report that came while paused.
+    @Test
+    func aReportWhilePausedReroutesOnTheFirstFixAfterResumingWithItsTurnCue() async throws {
+        // held until answered, so nothing follows the report's line
+        let harness = try Harness(route: try longCornerRoute(),
+                                  reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 50)
+        await harness.manager.pauseTrip()
+        await harness.walk(from: 51.8, to: 95.3)
+
+        await harness.reports.publish([report("past the turn", at: harness.point(150))])
+        #expect(await harness.router.requests.isEmpty)
+
+        await harness.manager.resumeTrip()
+        await harness.fix(harness.point(96.6))
+        await harness.router.waitForRequests(1)
+        await waitUntil { await harness.engine.texts.contains(reportReroute) }
+        let texts = await harness.engine.texts
+        #expect(Array(texts.drop { $0 != "Trip resumed." }) == [
+            "Trip resumed.", "Turn right onto Ferst Drive.", reportReroute,
+        ])
+    }
+
+    /// With a weak signal the last precise fix is old, so the reroute waits for the signal to come back.
+    @Test
+    func aReportDuringAWeakSignalReroutesOnceItIsBack() async throws {
+        // held until answered, so nothing follows the report's line
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.fix(harness.point(0), then: 0)
+        // as in watchdogWarnsOfWeakSignalAndItsReturn: 10 s without a good fix is weak
+        harness.clock.advance(by: 5)
+        await harness.waitForSleepers(1)
+        await harness.fix(harness.point(1.4), accuracy: 40, then: 5)
+        await harness.waitForSleepers(1)
+        harness.clock.advance(by: 5)
+        await waitUntil { await harness.engine.texts.contains("Location signal is weak. Directions may be delayed.") }
+
+        await harness.reports.publish([report("ahead", at: harness.point(60))])
+        #expect(await harness.router.requests.isEmpty)
+
+        await harness.fix(harness.point(2.8))
+        await harness.router.waitForRequests(1)
+        await waitUntil { await harness.engine.texts.contains(reportReroute) }
+        #expect(Array(await harness.engine.texts.suffix(2)) == ["Location signal is back.", reportReroute])
+    }
+
+    @Test
+    func aReportWithOnlyAnOldPreciseFixReroutesFromTheNextPreciseOne() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.fix(harness.point(0))
+        for along in TripWalk.distances(from: 1.4, to: 16) { await harness.fix(harness.point(along), accuracy: 25) }
+
+        await harness.reports.publish([report("ahead", at: harness.point(60))])
+        #expect(await harness.router.requests.isEmpty)
+
+        await harness.fix(harness.point(16.8))
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.requests == [harness.point(16.8)])
+    }
+
+    /// Regression: a report that came while a reroute was in flight was taken as already there on the new route.
+    @Test
+    func aReportDuringARerouteIsActedOnAfterItLands() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let newRoute = try eastRoute(from: origin)
+        let harness = try Harness(reroutes: [.success(newRoute)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+
+        let blocked = [report("on the new route", at: TripWalk.point(on: newRoute, along: 52))]
+        await harness.reports.publish(blocked)
+        await harness.answerReroute()
+        await harness.manager.resumeTrip()
+        // the new route's subscription starts with the reports there now
+        await harness.reports.waitForSubscriptions(2)
+        await harness.reports.publish(blocked)
+        // 15 s after the last request, like any reroute after one that came back
+        await harness.fix(origin, then: 15)
+        #expect(await harness.router.requests.count == 1)
+        await harness.fix(origin)
+
+        await harness.router.waitForRequests(2)
+        #expect(await harness.router.options.last?.reports == blocked)
+    }
+
+    @Test
+    func anEndedReportStreamIsListenedToAgainAfterAGrowingWait() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 3)
+        await harness.reports.waitForSubscriptions(1)
+
+        await harness.reports.finish()
+        // the watchdog and the wait
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 4.9)
+        #expect(harness.reports.subscriptionCount == 1)
+        harness.clock.advance(by: 0.1)
+        await harness.reports.waitForSubscriptions(2)
+
+        // ended again with nothing sent: longer
+        await harness.reports.finish()
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 14.9)
+        await harness.waitForSleepers(2)
+        #expect(harness.reports.subscriptionCount == 2)
+        harness.clock.advance(by: 0.1)
+        await harness.reports.waitForSubscriptions(3)
+        #expect(harness.clock.hasWoken(after: 15))
+
+        // a snapshot shows the stream works, so the wait starts short again
+        await harness.reports.publish([])
+        await harness.reports.finish()
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 5)
+        await harness.reports.waitForSubscriptions(4)
+    }
+
+    @Test
+    func arrivingStopsListeningForReports() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.reports.waitForSubscriptions(1)
+        await waitUntil { harness.reports.isListening }
+
+        await harness.walk(from: 0, to: 160)
+        #expect(await harness.states.waitFor { $0.phase == .arrived }.phase == .arrived)
+
+        await waitUntil { !harness.reports.isListening }
+        #expect(harness.reports.subscriptionCount == 1)
     }
 }

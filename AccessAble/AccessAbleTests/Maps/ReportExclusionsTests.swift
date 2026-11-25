@@ -93,21 +93,59 @@ struct ReportExclusionsTests {
         #expect(exclusions.excluded.isEmpty)
     }
 
-    @Test
-    func findsTheReportsARoutePasses() throws {
-        let corner = GeoCoordinate(latitude: 33.7750, longitude: -84.3980)
-        let route = try NavigationRoute(
-            coordinates: [origin, corner, destination],
+    /// East about 185 m to a corner, then north about 222 m to `destination`.
+    private func lRoute() throws -> NavigationRoute {
+        try NavigationRoute(
+            coordinates: [origin, GeoCoordinate(latitude: 33.7750, longitude: -84.3980), destination],
             steps: [
                 RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Start", spokenInstruction: "Start"),
                 RouteStep(kind: .arrive, coordinateIndex: 2, instruction: "Arrive", spokenInstruction: "Arrive"),
             ],
             estimatedDuration: 300
         )
-        // About 10 m and 30 m north of the route's first leg.
-        let near = report("near", at: GeoCoordinate(latitude: 33.77509, longitude: -84.3990))
-        let far = report("far", at: GeoCoordinate(latitude: 33.77527, longitude: -84.3990))
+    }
 
-        #expect(ReportExclusions.reports([near, far], passedBy: route) == [near])
+    // About 10 m and 30 m north of the first leg, halfway along it.
+    private var near: Report { report("near", at: GeoCoordinate(latitude: 33.77509, longitude: -84.3990)) }
+    private var far: Report { report("far", at: GeoCoordinate(latitude: 33.77527, longitude: -84.3990)) }
+
+    @Test
+    func findsTheReportsARoutePasses() throws {
+        // each read of `near` is a new report, created at a new time
+        let near = near
+        #expect(ReportExclusions.reports([near, far], passedBy: try lRoute()) == [near])
+    }
+
+    @Test
+    func findsHowFarAlongARoutePassesAReport() throws {
+        let route = try lRoute()
+        let along = try #require(ReportExclusions.distanceAlong(route, passing: near, from: 0))
+        #expect(abs(along - 92.5) < 1)
+        #expect(ReportExclusions.distanceAlong(route, passing: far, from: 0) == nil)
+    }
+
+    @Test
+    func aReportAlreadyPassedIsNotAhead() throws {
+        let route = try lRoute()
+        #expect(ReportExclusions.distanceAlong(route, passing: near, from: 100) == nil)
+        // on the second leg, so the first isn't searched at all
+        #expect(ReportExclusions.distanceAlong(route, passing: near, from: 200) == nil)
+    }
+
+    @Test
+    func findsAReportAheadOnALaterLeg() throws {
+        let route = try lRoute()
+        // About 9 m east of the second leg, halfway along it.
+        let beside = report("beside", at: GeoCoordinate(latitude: 33.7760, longitude: -84.39790))
+        let along = try #require(ReportExclusions.distanceAlong(route, passing: beside, from: 50))
+        #expect(abs(along - (route.cumulativeDistances[1] + 111.2)) < 1)
+    }
+
+    @Test
+    func anAreaCornerNearTheRouteCounts() throws {
+        let area = report("area", at: far.coordinate, area: [far.coordinate, near.coordinate,
+                                                             GeoCoordinate(latitude: 33.77527, longitude: -84.3989)])
+        let along = try #require(ReportExclusions.distanceAlong(try lRoute(), passing: area, from: 0))
+        #expect(abs(along - 92.5) < 1)
     }
 }

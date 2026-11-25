@@ -15,6 +15,11 @@ actor TripManager: TripStateProviding {
     private let location: any LocationProvider
     private let routing: any RoutingService
     private let announcements: any AnnouncementEngineProtocol
+    /// Nil where reports aren't available, so a trip doesn't listen for them.
+    private let reports: (any ReportService)?
+    /// The signed-in user, whose own reports don't reroute their trip: Route Blocked Ahead's Re-Route is their way
+    /// round.
+    private let currentUserID: @Sendable () async -> String?
     private let landmarks: any LandmarkObserving
     /// Read when a trip starts, not at launch: loading them parses a large bundled file.
     private let campusBuildings: @Sendable () -> [CampusBuilding]
@@ -50,6 +55,7 @@ actor TripManager: TripStateProviding {
     private var rerouteTask: Task<Void, Never>?
     private var landmarkTask: Task<Void, Never>?
     private var headingTask: Task<Void, Never>?
+    private var reportTask: Task<Void, Never>?
     private var cueChecks: [Task<Void, Never>] = []
 
     /// Turn cues submitted and waiting for their delivery check, and those of them the engine has delivered.
@@ -59,20 +65,41 @@ actor TripManager: TripStateProviding {
     private var rerouteCount = 0
     private var lastRerouteRequest: Date?
     private var hasRerouted = false
-    /// Where an asked-for reroute starts: the latest fix precise enough to start a route from.
+    /// Where an asked-for reroute starts: the latest fix precise enough to start a route from, and when it was.
     private var lastPreciseFix: GeoCoordinate?
+    private var lastPreciseFixAt: Date?
     /// The latest fix, however rough, for saying which way the path or the destination lies only when it is precise.
     private var lastFix: LocationSample?
     private var headingEstimator = HeadingEstimator()
     private var tripStartedAt = Date.distantPast
     private var lastGoodFixAt: Date?
     private var isSignalWeak = false
+    /// The latest active reports near the route, without the user's own.
+    private var nearbyReports: [Report] = []
+    /// Reports rerouted around or warned of this trip; kept across reroutes and new subscriptions.
+    private var actedOnReportIDs: Set<String> = []
+    private var reportRerouteCount = 0
+    /// Bumped on each subscription to reports, so a snapshot from a replaced one is dropped.
+    private var reportSubscription = 0
+    /// A report reroute kept the route, or failed, while paused: said on resuming, since the route still passes it.
+    private var unavoidedReportOnResume = false
 
     // the public routing server is shared and slow to recover; this spaces requests and bounds a bad walk
     private static let rerouteInterval: TimeInterval = 30
     // a reroute that came back shows the server is answering, and a user still lost shouldn't wait as long again
     private static let reroutedInterval: TimeInterval = 15
     private static let maximumReroutes = 5
+    // seconds; a reroute from an older precise fix would start where the user was, not where they are
+    private static let rerouteFixAge: TimeInterval = 10
+    // reroutes for new reports ahead, apart from the off-route ones, so reports can't use up a lost user's
+    private static let maximumReportReroutes = 2
+    // waits before listening again after the report stream ends, on an error or signed out: longer each time in a
+    // row, so a stream that keeps ending doesn't spin
+    private static let reportRetryDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(60)]
+    // metres beyond the route's reach that reports are listened for
+    private static let reportSearchMargin: Double = 250
+    private static let unavoidedReportSpeech =
+        "Couldn't find a way around the reported obstacle. Keep following the current route carefully."
     // a new route from a rough fix would start on the wrong side of the street, and a direction from one can point
     // the wrong way
     private static let rerouteAccuracy: Double = 20
@@ -103,6 +130,8 @@ actor TripManager: TripStateProviding {
         location: any LocationProvider,
         routing: any RoutingService,
         announcements: any AnnouncementEngineProtocol,
+        reports: (any ReportService)? = nil,
+        currentUserID: @escaping @Sendable () async -> String? = { nil },
         landmarks: any LandmarkObserving = PlaceholderLandmarkProvider(),
         campusBuildings: @escaping @Sendable () -> [CampusBuilding] = { CampusLandmarks.buildings },
         campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all },
@@ -115,6 +144,8 @@ actor TripManager: TripStateProviding {
         self.location = location
         self.routing = routing
         self.announcements = announcements
+        self.reports = reports
+        self.currentUserID = currentUserID
         self.landmarks = landmarks
         self.campusBuildings = campusBuildings
         self.campusCrossings = campusCrossings
@@ -160,11 +191,16 @@ actor TripManager: TripStateProviding {
         lastRerouteRequest = nil
         hasRerouted = false
         lastPreciseFix = nil
+        lastPreciseFixAt = nil
         lastFix = nil
         headingEstimator = HeadingEstimator()
         tripStartedAt = now()
         lastGoodFixAt = nil
         isSignalWeak = false
+        nearbyReports = []
+        actedOnReportIDs = []
+        reportRerouteCount = 0
+        unavoidedReportOnResume = false
         routes.send(route)
         publish(at: now())
         recorder?.tripStarted(at: now())
@@ -174,6 +210,7 @@ actor TripManager: TripStateProviding {
         let headings = location.headingSamples()
         let delivered = announcements.deliveredEvents()
         let sightings = landmarks.landmarkObservations()
+        subscribeToReports(along: route, generation: generation)
         headingTask = Task {
             for await sample in headings { self.handle(sample, generation: generation) }
         }
@@ -218,6 +255,11 @@ actor TripManager: TripStateProviding {
         publish(at: now())
         let guidance = resumeAnnouncement()
         await submit(confirmation("Trip resumed."))
+        if self.generation == generation, phase == .active, unavoidedReportOnResume {
+            unavoidedReportOnResume = false
+            // off the route since, so it no longer passes the report
+            if !needsReroute { await submit(unavoidedReportAnnouncement()) }
+        }
         // a reroute that landed meanwhile has its own announcement, and this one is about the old route
         guard self.generation == generation, routeVersion == version, phase == .active, let guidance else { return }
         await submit(guidance)
@@ -235,6 +277,9 @@ actor TripManager: TripStateProviding {
         routeCrossings = []
         route = nil
         destination = nil
+        nearbyReports = []
+        actedOnReportIDs = []
+        unavoidedReportOnResume = false
         routes.send(nil)
         states.send(TripState(phase: .planning, updatedAt: now()))
         await setTripTracking(false)
@@ -245,7 +290,8 @@ actor TripManager: TripStateProviding {
     }
 
     private func cancelTasks() {
-        for task in [trackingTask, deliveryTask, startTask, watchdogTask, rerouteTask, landmarkTask, headingTask] {
+        for task in [trackingTask, deliveryTask, startTask, watchdogTask, rerouteTask, landmarkTask, headingTask,
+                     reportTask] {
             task?.cancel()
         }
         for task in cueChecks {
@@ -253,6 +299,7 @@ actor TripManager: TripStateProviding {
         }
         landmarkTask = nil
         headingTask = nil
+        reportTask = nil
         trackingTask = nil
         deliveryTask = nil
         startTask = nil
@@ -275,7 +322,11 @@ actor TripManager: TripStateProviding {
                 if phase == .active { pending.append((signalAnnouncement("Location signal is back.", .normal, 6), nil)) }
             }
         }
-        if sample.horizontalAccuracy <= Self.rerouteAccuracy { lastPreciseFix = sample.coordinate }
+        // a late fix is no longer where they are
+        if sample.horizontalAccuracy <= Self.rerouteAccuracy, sample.timestamp >= lastPreciseFixAt ?? .distantPast {
+            lastPreciseFix = sample.coordinate
+            lastPreciseFixAt = sample.timestamp
+        }
         // a bearing from a NaN fix would trap when turned into a direction, and a late fix is no longer where they are
         if sample.coordinate.latitude.isFinite, sample.coordinate.longitude.isFinite,
            sample.horizontalAccuracy.isFinite, sample.timestamp >= lastFix?.timestamp ?? .distantPast {
@@ -321,6 +372,7 @@ actor TripManager: TripStateProviding {
                                  generation: generation)
             }
         }
+        await considerReports(generation: generation)
     }
 
     private func handle(_ sample: HeadingSample, generation: Int) {
@@ -334,7 +386,7 @@ actor TripManager: TripStateProviding {
 
     private func arrive(at time: Date, generation: Int) async {
         // the heading only words guidance, and the compass runs while it is subscribed
-        for task in [watchdogTask, rerouteTask, deliveryTask, headingTask] {
+        for task in [watchdogTask, rerouteTask, deliveryTask, headingTask, reportTask] {
             task?.cancel()
         }
         for task in cueChecks {
@@ -446,6 +498,95 @@ actor TripManager: TripStateProviding {
         }
     }
 
+    // MARK: Community reports
+
+    /// Listens for reports near `route` until the trip ends or the route changes, and again after a wait whenever the
+    /// stream ends.
+    private func subscribeToReports(along route: NavigationRoute, generation: Int) {
+        reportTask?.cancel()
+        reportTask = nil
+        guard let reports else { return }
+        reportSubscription += 1
+        let subscription = reportSubscription
+        // every point of the route is within half its length, along it, of its middle
+        let center = GeoMath.coordinate(atDistance: route.totalDistance / 2, along: route.coordinates,
+                                        cumulativeDistances: route.cumulativeDistances)
+        let radius = route.totalDistance / 2 + Self.reportSearchMargin
+        reportTask = Task { [currentUserID] in
+            var retries = 0
+            // an injected sleep may return rather than throw once cancelled
+            while !Task.isCancelled {
+                for await snapshot in reports.reportChanges(near: center, radius: radius) {
+                    retries = 0
+                    let userID = await currentUserID()
+                    await self.receive(snapshot, userID: userID, subscription: subscription, generation: generation)
+                }
+                guard !Task.isCancelled else { return }
+                let delay = Self.reportRetryDelays[min(retries, Self.reportRetryDelays.count - 1)]
+                retries += 1
+                log.notice("Report stream ended; listening again in \(String(describing: delay), privacy: .public)")
+                do { try await self.sleep(delay) } catch { return }
+            }
+        }
+    }
+
+    private func receive(_ snapshot: [Report], userID: String?, subscription: Int, generation: Int) async {
+        guard self.generation == generation, subscription == reportSubscription else { return }
+        nearbyReports = snapshot.filter { $0.reporterID != userID }
+        await considerReports(generation: generation)
+    }
+
+    /// Reroutes around reports the route ahead passes but wasn't planned around, or warns of them where a reroute
+    /// can't help. A report not acted on stays a candidate, so one put off (paused, off route, a weak signal, a reroute
+    /// in flight or too soon after the last) is weighed again on the next fix or snapshot.
+    private func considerReports(generation: Int) async {
+        guard self.generation == generation, phase == .active, !needsReroute, let route, let progress else { return }
+        let walked = route.totalDistance - progress.distanceRemaining
+        let time = now()
+        // warned of when the route was planned
+        let planned = Set(route.unavoidedReports.map(\.id))
+        var nearUser: [Report] = []
+        var nearEnd: [Report] = []
+        var avoidable: [Report] = []
+        for report in nearbyReports
+        where report.expiresAt > time && !actedOnReportIDs.contains(report.id) && !planned.contains(report.id) {
+            guard let along = ReportExclusions.distanceAlong(route, passing: report, from: walked) else { continue }
+            // the routing drops a report this near either end first, so a new route would pass it anyway
+            if along - walked < ReportAwareRoutingService.endpointClearance {
+                nearUser.append(report)
+            } else if route.totalDistance - along < ReportAwareRoutingService.endpointClearance {
+                nearEnd.append(report)
+            } else {
+                avoidable.append(report)
+            }
+        }
+        var warned = nearUser + nearEnd
+        let warning = nearUser.isEmpty ? "New obstacle reported ahead." : "New obstacle reported just ahead."
+        if !avoidable.isEmpty, rerouteTask == nil {
+            if reportRerouteCount >= Self.maximumReportReroutes {
+                warned += avoidable
+            } else if !isSignalWeak, let origin = recentPreciseFix, rerouteSpacingElapsed {
+                actedOnReportIDs.formUnion((avoidable + warned).map(\.id))
+                // said by the reroute's task before it asks, so its answer can't come first; and in flight from here,
+                // so a fix or snapshot meanwhile waits for it
+                // the reroute's own line covers those near the end
+                var announcements = nearUser.first.map { near in
+                    [maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(near.id)")]
+                } ?? []
+                announcements.append(maneuver("New obstacle reported ahead. Finding a new route.", .high,
+                                              haptic: .attention, expiresIn: 15,
+                                              key: "report-reroute-\(avoidable[0].id)"))
+                // the near ones too, so a new route that passes them warns of them
+                requestReroute(from: origin, generation: generation, requested: true, avoiding: avoidable,
+                               alsoAvoiding: warned, announcing: announcements)
+                return
+            }
+        }
+        guard let first = warned.first else { return }
+        actedOnReportIDs.formUnion(warned.map(\.id))
+        await submit(maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(first.id)"))
+    }
+
     // MARK: Rerouting
 
     private var needsReroute: Bool {
@@ -459,6 +600,17 @@ actor TripManager: TripStateProviding {
 
     private var canRequestReroute: Bool {
         guard rerouteTask == nil, rerouteCount < Self.maximumReroutes else { return false }
+        return rerouteSpacingElapsed
+    }
+
+    /// `lastPreciseFix` while it is recent enough to start a reroute from.
+    private var recentPreciseFix: GeoCoordinate? {
+        guard let lastPreciseFixAt, now().timeIntervalSince(lastPreciseFixAt) <= Self.rerouteFixAge else { return nil }
+        return lastPreciseFix
+    }
+
+    /// Long enough since the last request, whatever it was for, for the public routing server.
+    private var rerouteSpacingElapsed: Bool {
         let interval = hasRerouted ? Self.reroutedInterval : Self.rerouteInterval
         return lastRerouteRequest.map { now().timeIntervalSince($0) >= interval } ?? true
     }
@@ -469,7 +621,7 @@ actor TripManager: TripStateProviding {
     func reroute() async {
         guard phase == .active || phase == .paused else { return }
         // with a weak signal the last precise fix is old, and the user has walked on from it
-        guard let origin = lastPreciseFix, !isSignalWeak else {
+        guard let origin = recentPreciseFix, !isSignalWeak else {
             await submit(maneuver("Couldn't find where you are precisely enough for a new route. Try again in a moment.",
                                   .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
             return
@@ -483,32 +635,54 @@ actor TripManager: TripStateProviding {
         requestReroute(from: origin, generation: generation, requested: true)
     }
 
-    /// - Parameter requested: Asked for by the user, so it lands even while still on the route.
-    private func requestReroute(from origin: GeoCoordinate, generation: Int, requested: Bool = false) {
+    /// - Parameters:
+    ///   - requested: Asked for by the user or for new reports, so it lands even while still on the route.
+    ///   - triggers: New reports ahead to route around. A reroute for them counts apart from the off-route ones.
+    ///   - others: Reports the route should avoid if it can, without being for them.
+    ///   - announcements: Said, in order, before the request goes out.
+    private func requestReroute(from origin: GeoCoordinate, generation: Int, requested: Bool = false,
+                                avoiding triggers: [Report] = [], alsoAvoiding others: [Report] = [],
+                                announcing announcements: [AnnouncementEvent] = []) {
         guard let destination else { return }
-        rerouteCount += 1
+        if triggers.isEmpty { rerouteCount += 1 } else { reportRerouteCount += 1 }
         lastRerouteRequest = now()
         let version = routeVersion
         rerouteTask = Task { [routing] in
+            // not after a pause that came first
+            for announcement in announcements where !Task.isCancelled && self.phase == .active {
+                await self.submit(announcement)
+            }
             let result: Result<NavigationRoute, any Error>
             do {
                 result = .success(try await routing.route(from: origin, to: destination.coordinate,
-                                                          options: RouteOptions()))
+                                                          options: RouteOptions(reports: triggers + others)))
             } catch {
                 result = .failure(error)
             }
-            await self.finishReroute(result, generation: generation, version: version, requested: requested)
+            await self.finishReroute(result, generation: generation, version: version, requested: requested,
+                                     triggers: triggers)
         }
     }
 
     private func finishReroute(_ result: Result<NavigationRoute, any Error>, generation: Int, version: Int,
-                               requested: Bool) async {
+                               requested: Bool, triggers: [Report]) async {
         guard self.generation == generation, routeVersion == version else { return }
         rerouteTask = nil
         // back on the route, or arrived, since the request went out
         guard phase == .active || phase == .paused, !arrivedWhilePaused, needsReroute || requested else { return }
         switch result {
         case .success(let newRoute):
+            // passing every report it was for, it is no better than the route the user is already following
+            let unavoided = Set(newRoute.unavoidedReports.map(\.id))
+            if !triggers.isEmpty, !needsReroute, triggers.allSatisfy({ unavoided.contains($0.id) }) {
+                guard phase == .active else {
+                    unavoidedReportOnResume = true
+                    return
+                }
+                await submit(unavoidedReportAnnouncement())
+                return
+            }
+            unavoidedReportOnResume = false
             routeVersion += 1
             hasRerouted = true
             route = newRoute
@@ -523,12 +697,23 @@ actor TripManager: TripStateProviding {
             )
             routes.send(newRoute)
             publish(at: now())
+            subscribeToReports(along: newRoute, generation: generation)
             guard phase == .active else { return }
             await submit(maneuver("New route. " + Self.reportWarning(on: newRoute) + departure(on: newRoute), .high,
                                   expiresIn: 15, key: "reroute"))
         case .failure(let error):
-            guard !(error is CancellationError), phase == .active else { return }
+            guard !(error is CancellationError) else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
+            if requested, !needsReroute, !triggers.isEmpty {
+                // still on the route that passes it
+                guard phase == .active else {
+                    unavoidedReportOnResume = true
+                    return
+                }
+                await submit(unavoidedReportAnnouncement())
+                return
+            }
+            guard phase == .active else { return }
             let text = if requested, !needsReroute {
                 // still on the route, so there is nothing to walk back to
                 "Couldn't get a new route. Keep following the current one."
@@ -539,6 +724,10 @@ actor TripManager: TripStateProviding {
             }
             await submit(maneuver(text, .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
         }
+    }
+
+    private func unavoidedReportAnnouncement() -> AnnouncementEvent {
+        maneuver(Self.unavoidedReportSpeech, .high, haptic: .attention, expiresIn: 10, key: "report-unavoided")
     }
 
     // MARK: Timed announcements
