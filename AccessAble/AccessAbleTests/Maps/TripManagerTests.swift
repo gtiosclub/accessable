@@ -405,7 +405,7 @@ private let newRouteSpeech = "New route. \(setOff)"
 private let library = Destination(name: "Library", coordinate: GeoCoordinate(latitude: 33.7759, longitude: -84.3984))
 
 /// North 100 m, right onto Ferst Drive, then 60 m east to the destination.
-private func cornerRoute() throws -> NavigationRoute {
+private func cornerRoute(arrival: String = "Your destination is on the left.") throws -> NavigationRoute {
     let start = GeoCoordinate(latitude: 33.775, longitude: -84.399)
     let corner = TripWalk.destination(from: start, bearing: 0, distance: 100)
     let end = TripWalk.destination(from: corner, bearing: 90, distance: 60)
@@ -415,7 +415,7 @@ private func cornerRoute() throws -> NavigationRoute {
     return try NavigationRoute(coordinates: [start, corner, end], steps: [
         step(.depart, 0, "Walk north."),
         step(.turnRight, 1, "Turn right onto Ferst Drive."),
-        step(.arrive, 2, "Your destination is on the left."),
+        step(.arrive, 2, arrival),
     ], estimatedDuration: 130)
 }
 
@@ -428,6 +428,11 @@ private func eastRoute(from origin: GeoCoordinate) throws -> NavigationRoute {
         RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Head east.", spokenInstruction: "Head east."),
         RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
     ], estimatedDuration: 60)
+}
+
+private func blockedPath(at coordinate: GeoCoordinate) -> Report {
+    Report(id: "blocked-1", kind: .blockedPath, coordinate: coordinate, createdAt: TripWalk.start,
+           expiresAt: TripWalk.start.addingTimeInterval(3600), reporterID: "user-1")
 }
 
 private final class BackgroundRecorder: Sendable {
@@ -625,6 +630,18 @@ struct TripManagerTests {
         let texts = await harness.engine.waitForCount(5).map(\.text)
         #expect(texts[1] == "In about 125 feet, turn right onto Ferst Drive.")
         #expect(texts[3] == "In about 125 feet, your destination is on the left.")
+    }
+
+    // Valhalla's generic arrival is past tense: read out early it says arrived 40 m away, and on arrival it doubles up
+    @Test
+    func aGenericArrivalIsNotSaidBeforeArriving() async throws {
+        let harness = try Harness(route: try cornerRoute(arrival: "You have arrived at your destination."))
+        await harness.start()
+        await harness.walk(from: 0, to: 160)
+
+        let texts = await harness.engine.waitForCount(5).map(\.text)
+        #expect(texts[3] == "In about 40 metres, you'll reach Library.")
+        #expect(texts[4] == "You have arrived at Library.")
     }
 
     @Test
@@ -854,6 +871,41 @@ struct TripManagerTests {
         let texts = await harness.engine.texts
         #expect(texts.contains("Finding a new route from here."))
         #expect(!texts.contains("Trip ended."))
+    }
+
+    /// A route that couldn't avoid a reported obstacle says so before setting off.
+    @Test
+    func aRerouteThatPassesAReportWarnsOfIt() async throws {
+        let walked = TripWalk.distances(from: 0, to: 20).last ?? 0
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked)
+        var fallback = try eastRoute(from: origin)
+        fallback.unavoidedReports = [blockedPath(at: TripWalk.destination(from: origin, bearing: 90, distance: 40))]
+        let harness = try Harness(reroutes: [.success(fallback)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        #expect(await harness.engine.texts.filter { $0.hasPrefix("New route.") }
+            == ["New route. A reported obstacle is on this route. \(setOff)"])
+    }
+
+    @Test
+    func startingOnARouteThatPassesAReportWarnsOfIt() async throws {
+        var route = try cornerRoute()
+        route.unavoidedReports = [blockedPath(at: route.coordinates[1])]
+        let harness = try Harness(route: route)
+        await harness.start()
+
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 160 metres. A reported obstacle is on this route. "
+            + setOff)
     }
 
     @Test
@@ -1877,6 +1929,30 @@ struct TripManagerDepartureTests {
 
 @Suite(.timeLimit(.minutes(1)))
 struct TripManagerRecordingTests {
+    // a walk's misreads and missed buildings only show if signs that matched nothing are kept too
+    @Test
+    func recordsEverySignTheCameraReads() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let recorder = TripRecorder(directory: directory)
+        recorder.setEnabled(true)
+        let skiles = try building("Skiles", along: 50, lateral: 15)
+        let harness = try Harness(buildings: [skiles], recorder: recorder)
+        await harness.start()
+        await harness.walk(from: 0, to: 30)
+        harness.landmarks.yield(sign("NO PARKING"))
+        harness.landmarks.yield(sign("SKILES"))
+        await harness.landmarks.waitUntilHandled()
+        await harness.manager.endTrip()
+
+        let url = try #require(try recorder.recordings().first)
+        let rows = try String(contentsOf: url, encoding: .utf8).split(separator: "\n").map(String.init)
+        let sightings = rows.filter { $0.hasPrefix("sighting,") }
+        #expect(sightings.count == 2)
+        #expect(sightings.first?.hasSuffix(",signText 0.90,NO PARKING") == true)
+        #expect(rows.contains { $0.hasPrefix("announcement,") && $0.hasSuffix(",Passing Skiles on your right.") })
+    }
+
     @Test
     func recordsEachFixAndAnnouncementWhileOn() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")

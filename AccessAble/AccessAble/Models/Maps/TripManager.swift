@@ -420,8 +420,9 @@ actor TripManager: TripStateProviding {
         guard self.generation == generation, phase == .active || phase == .arrived,
               let route, let progress, var matcher = landmarkMatcher
         else { return }
-        let event = matcher.match(sighting, progress: route.totalDistance - progress.distanceRemaining,
-                                  remaining: progress.distanceRemaining)
+        let along = route.totalDistance - progress.distanceRemaining
+        recorder?.record(sighting: sighting, progress: along, at: now())
+        let event = matcher.match(sighting, progress: along, remaining: progress.distanceRemaining)
         landmarkMatcher = matcher
         let time = now()
         let text: String
@@ -582,8 +583,8 @@ actor TripManager: TripStateProviding {
     }
 
     /// A new route from where the user is now, asked for by the user (Route Blocked Ahead's
-    /// "find another way") rather than because they left the route. The routing service doesn't
-    /// know about the obstacle, so the new route is the best one from here, not one around it.
+    /// "find another way") rather than because they left the route. The new route avoids the obstacle only once it
+    /// has been reported, and says so when it can't.
     func reroute() async {
         guard phase == .active || phase == .paused else { return }
         // with a weak signal the last precise fix is old, and the user has walked on from it
@@ -643,7 +644,8 @@ actor TripManager: TripStateProviding {
             publish(at: now())
             await observeReports(along: newRoute, generation: generation)
             guard phase == .active else { return }
-            await submit(maneuver("New route. " + departure(on: newRoute), .high, expiresIn: 15, key: "reroute"))
+            await submit(maneuver("New route. " + Self.reportWarning(on: newRoute) + departure(on: newRoute), .high,
+                                  expiresIn: 15, key: "reroute"))
         case .failure(let error):
             guard !(error is CancellationError), phase == .active else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
@@ -665,7 +667,7 @@ actor TripManager: TripStateProviding {
         do { try await sleep(Self.startDelay) } catch { return }
         guard self.generation == generation, phase == .active, let route, let destination else { return }
         let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
-            + departure(on: route)
+            + Self.reportWarning(on: route) + departure(on: route)
         await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
     }
 
@@ -776,6 +778,9 @@ actor TripManager: TripStateProviding {
                           >= Self.arrivalDirectionMinimum,
                       let direction = direction(to: destination.coordinate) {
             "Arriving at \(name). \(name) is \(direction.phrase)."
+        } else if arrival.spokenInstruction.hasPrefix("You have arrived") {
+            // Valhalla's generic arrival, which would say arriving twice
+            "You have arrived at \(name)."
         } else {
             "Arriving at \(name). \(arrival.spokenInstruction)"
         }
@@ -811,6 +816,11 @@ actor TripManager: TripStateProviding {
                                         cumulativeDistances: route.cumulativeDistances)
         guard let direction = direction(to: target) else { return nil }
         return direction == .behind ? "Turn around, the path is behind you." : "The path is \(direction.phrase)."
+    }
+
+    /// Said before setting off on a route that passes reports it couldn't avoid.
+    private static func reportWarning(on route: NavigationRoute) -> String {
+        route.unavoidedReports.isEmpty ? "" : ReportExclusions.warning + " "
     }
 
     /// How to set off, at the start and on a new route: which way the path is, then the first turn when it is near.
@@ -861,7 +871,12 @@ actor TripManager: TripStateProviding {
     /// "In about 30 feet, turn left onto Ferst Drive." Stairs say which way they go instead of Valhalla's "Take the
     /// stairs", so the warning names the change of level.
     private func prepareText(_ step: RouteStep, in distance: Double) -> String {
-        let action = step.kind == .stairs ? step.stairsPhrase + "." : Self.midSentence(step.spokenInstruction)
+        let action = switch step.kind {
+        case .stairs: step.stairsPhrase + "."
+        // Valhalla's generic arrival is past tense; its "on the left" kind is kept, since it says where to look
+        case .arrive where step.spokenInstruction.hasPrefix("You have arrived"): "you'll reach \(destination?.name ?? "your destination")."
+        default: Self.midSentence(step.spokenInstruction)
+        }
         return "In \(spoken(distance)), \(action)"
     }
 

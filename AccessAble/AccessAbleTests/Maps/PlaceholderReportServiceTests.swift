@@ -8,13 +8,17 @@ struct PlaceholderReportServiceTests {
         longitude: -84.3963
     )
 
-    private var sample: Report {
-        Report(
+    /// One stored report from one captured date, so every read of it is equal.
+    private let sample: Report
+
+    init() {
+        let createdAt = Date.now
+        sample = Report(
             id: "r1",
             kind: .construction,
             coordinate: coordinate,
-            createdAt: .now,
-            expiresAt: .now.addingTimeInterval(3600),
+            createdAt: createdAt,
+            expiresAt: createdAt.addingTimeInterval(3600),
             reporterID: "test-user"
         )
     }

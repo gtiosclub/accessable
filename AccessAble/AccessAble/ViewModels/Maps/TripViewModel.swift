@@ -38,6 +38,8 @@ final class TripViewModel {
     private static let maximumRouteAge: TimeInterval = 120
     private static let maximumStartFixAccuracy: Double = 20
     private static let maximumStartOffset: Double = 20
+    // older than this, the user has likely walked on from where the fix puts them
+    private static let maximumReportFixAge: TimeInterval = 10
 
     init(services: AppServices, now: @escaping () -> Date = { .now }) {
         self.services = services
@@ -62,6 +64,13 @@ final class TripViewModel {
         routeError = nil
     }
 
+    /// Where a report goes: the latest precise fix, while it is recent enough to be where the user is.
+    var reportableLocation: GeoCoordinate? {
+        guard let latestPreciseFix,
+              now().timeIntervalSince(latestPreciseFix.timestamp) <= Self.maximumReportFixAge else { return nil }
+        return latestPreciseFix.coordinate
+    }
+
     /// The route found so far, to hand on to the next screen.
     var plannedRoute: PlannedRoute? {
         guard let destination, let route, let routeRequestedAt else { return nil }
@@ -80,6 +89,7 @@ final class TripViewModel {
         case .noRouteFound: return "No walking route to \(destination.name) was found."
         case .serverUnavailable: return "Couldn't reach the routing service. Check your connection and try again."
         case .invalidResponse: return "The routing service sent a route AccessAble couldn't read. Try again."
+        case .exclusionsRejected: return "The routing service couldn't take that many reported obstacles."
         }
     }
 
@@ -274,11 +284,12 @@ final class TripViewModel {
                 guard !Task.isCancelled else { return }
                 self.route = route
                 routeRequestedAt = requestedAt
-                if !route.unavoidedReports.isEmpty {
+                // a refresh for Start leaves the warning to the trip's start announcement
+                if !route.unavoidedReports.isEmpty, !isStartingTrip {
                     await services.announcements.submit(AnnouncementEvent(
                         category: .hazard,
                         priority: .high,
-                        text: "A reported obstacle is on this route.",
+                        text: ReportExclusions.warning,
                         source: .navigation,
                         dedupKey: "route-report-fallback"
                     ))

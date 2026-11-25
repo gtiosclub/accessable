@@ -339,7 +339,7 @@ actor PlaceholderUserProfileStore: UserProfileStore {
     }
 }
 
-/// In-memory reports for previews and tests; replaced by Firestore when Firebase is configured.
+/// The in-memory stand-in for reports, used in previews and tests.
 actor PlaceholderReportService: ReportService {
     private var storedReports: [Report] = []
     private nonisolated let changes = Broadcaster<[Report]>(replaysLatest: true)
@@ -358,10 +358,7 @@ actor PlaceholderReportService: ReportService {
         near coordinate: GeoCoordinate,
         radius: Double
     ) async throws -> [Report] {
-        storedReports.filter {
-            $0.expiresAt > .now
-                && GeoMath.distance(from: coordinate, to: $0.coordinate) <= radius
-        }
+        storedReports.filter { $0.expiresAt > .now && $0.isNear(coordinate, within: radius) }
     }
 
     nonisolated func reportChanges(
@@ -374,11 +371,7 @@ actor PlaceholderReportService: ReportService {
             let task = Task {
                 for await reports in source {
                     continuation.yield(reports.filter {
-                        $0.expiresAt > .now
-                            && GeoMath.distance(
-                                from: coordinate,
-                                to: $0.coordinate
-                            ) <= radius
+                        $0.expiresAt > .now && $0.isNear(coordinate, within: radius)
                     })
                 }
                 continuation.finish()
