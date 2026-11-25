@@ -20,9 +20,9 @@ enum DangerLevel: Int, Codable, CaseIterable, Comparable, Sendable {
     var displayName: String {
         switch self {
         case .low: "Everything"
-        case .medium: "Medium and up"
-        case .high: "High and up"
-        case .critical: "Only critical"
+        case .medium: "Medium and above"
+        case .high: "High and above"
+        case .critical: "Critical only"
         }
     }
 
