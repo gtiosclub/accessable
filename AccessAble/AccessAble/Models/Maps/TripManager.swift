@@ -645,7 +645,8 @@ actor TripManager: TripStateProviding {
         lastRerouteRequest = now()
         let version = routeVersion
         rerouteTask = Task { [routing] in
-            for announcement in announcements where !Task.isCancelled {
+            // not after a pause that came first
+            for announcement in announcements where !Task.isCancelled && self.phase == .active {
                 await self.submit(announcement)
             }
             let result: Result<NavigationRoute, any Error>

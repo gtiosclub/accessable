@@ -2156,6 +2156,23 @@ struct TripManagerReportTests {
         #expect(await spokenAboutReports(harness) == [nearReportWarning])
     }
 
+    @Test
+    func aPauseBeforeTheRerouteLineIsSaidDropsIt() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        await harness.engine.hold(text: nearReportWarning)
+
+        await harness.reports.publish([report("near", at: harness.point(walked20 + 15)),
+                                       report("on the way", at: harness.point(60))])
+        await harness.engine.waitUntilHeld()
+        await harness.manager.pauseTrip()
+        await harness.engine.release()
+
+        await harness.router.waitForRequests(1)
+        #expect(Array(await harness.engine.texts.suffix(2)) == [nearReportWarning, "Trip paused."])
+    }
+
     /// Too near the destination to route around, but not near the user.
     @Test
     func aReportByTheDestinationIsWarnedOfAsAhead() async throws {
