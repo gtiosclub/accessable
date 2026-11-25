@@ -245,7 +245,7 @@ private final class ManualReportService: ReportService, Sendable {
         []
     }
 
-    func confirm(_ reportID: String, isStillPresent: Bool, userID: String) async throws {}
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool { false }
 
     func reportChanges(near coordinate: GeoCoordinate, radius: Double) -> AsyncStream<[Report]> {
         changes.stream()

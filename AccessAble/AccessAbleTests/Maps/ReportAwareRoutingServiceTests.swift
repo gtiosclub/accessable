@@ -41,11 +41,7 @@ private actor ReportRoutingServiceFake: ReportService {
         AsyncStream { $0.finish() }
     }
 
-    func confirm(
-        _ reportID: String,
-        isStillPresent: Bool,
-        userID: String
-    ) async throws {}
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool { false }
 }
 
 private actor RoutingServiceFake: RoutingService {

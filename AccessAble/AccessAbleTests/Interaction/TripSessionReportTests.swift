@@ -31,7 +31,7 @@ private actor CapturingReports: ReportService {
     }
 
     func reports(near coordinate: GeoCoordinate, radius: Double) async throws -> [Report] { submitted }
-    func confirm(_ reportID: String, isStillPresent: Bool, userID: String) async throws {}
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool { false }
     nonisolated func reportChanges(near coordinate: GeoCoordinate, radius: Double) -> AsyncStream<[Report]> {
         AsyncStream { $0.finish() }
     }

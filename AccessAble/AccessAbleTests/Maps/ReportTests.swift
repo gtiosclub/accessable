@@ -18,13 +18,12 @@ struct ReportTests {
 
         #expect(Set(fields.keys) == [
             "id", "kind", "coordinate", "createdAt", "expiresAt", "confirmations", "reporterID",
-            "negativeConfirmations", "isRemoved", "confirmationResponses"
+            "negativeConfirmations", "negativesSinceConfirm"
         ])
         #expect(fields["kind"] as? String == "blockedPath")
         #expect(fields["confirmations"] as? Int == 0)
         #expect(fields["negativeConfirmations"] as? Int == 0)
-        #expect(fields["isRemoved"] as? Bool == false)
-        #expect((fields["confirmationResponses"] as? [String: Bool])?.isEmpty == true)
+        #expect(fields["negativesSinceConfirm"] as? Int == 0)
     }
 
     /// The stored values can't be renamed without migrating existing reports.
@@ -38,54 +37,8 @@ struct ReportTests {
         #expect(ReportKind.construction.lifetime == 7 * 24 * 60 * 60)
         #expect(ReportKind.blockedPath.lifetime == 4 * 60 * 60)
         #expect(ReportKind.elevatorOut.lifetime == 24 * 60 * 60)
-    }
-
-    @Test
-    func yesConfirmationExtendsTheReportOnlyOnce() async throws {
-        let service = PlaceholderReportService()
-        let activeReport = Report(
-            id: "active-yes",
-            kind: .blockedPath,
-            coordinate: report.coordinate,
-            createdAt: .now,
-            expiresAt: .now.addingTimeInterval(60 * 60),
-            reporterID: "report-owner"
-        )
-        let originalExpiry = activeReport.expiresAt
-        try await service.submit(activeReport)
-
-        try await service.confirm(activeReport.id, isStillPresent: true, userID: "reader-1")
-        try await service.confirm(activeReport.id, isStillPresent: true, userID: "reader-1")
-
-        let updated = try await service.reports(near: activeReport.coordinate, radius: 100)
-        #expect(updated.count == 1)
-        #expect(updated[0].confirmations == 1)
-        #expect(updated[0].expiresAt > originalExpiry)
-    }
-
-    @Test
-    func twoDifferentNoAnswersRemoveTheReport() async throws {
-        let service = PlaceholderReportService()
-        let activeReport = Report(
-            id: "active-no",
-            kind: .blockedPath,
-            coordinate: report.coordinate,
-            createdAt: .now,
-            expiresAt: .now.addingTimeInterval(60 * 60),
-            reporterID: "report-owner"
-        )
-        try await service.submit(activeReport)
-
-        try await service.confirm(activeReport.id, isStillPresent: false, userID: "reader-1")
-        try await service.confirm(activeReport.id, isStillPresent: false, userID: "reader-1")
-        let afterOnePerson = try await service.reports(near: activeReport.coordinate, radius: 100)
-        #expect(afterOnePerson.count == 1)
-        #expect(afterOnePerson[0].negativeConfirmations == 1)
-        #expect(!afterOnePerson[0].isRemoved)
-
-        try await service.confirm(activeReport.id, isStillPresent: false, userID: "reader-2")
-        let afterTwoPeople = try await service.reports(near: activeReport.coordinate, radius: 100)
-        #expect(afterTwoPeople.isEmpty)
+        #expect(ReportKind.closedEntrance.lifetime == 4 * 60 * 60)
+        #expect(ReportKind.other.lifetime == 4 * 60 * 60)
     }
 
     @Test
@@ -98,5 +51,14 @@ struct ReportTests {
         ]
         let decoded = try JSONDecoder().decode(Report.self, from: JSONEncoder().encode(outlined))
         #expect(decoded == outlined)
+    }
+
+    /// Reports from before REPORT-6 have no vote counts.
+    @Test
+    func decodesWithoutTheVoteCounts() throws {
+        var fields = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
+        for key in ["confirmations", "negativeConfirmations", "negativesSinceConfirm"] { fields[key] = nil }
+        let decoded = try JSONDecoder().decode(Report.self, from: JSONSerialization.data(withJSONObject: fields))
+        #expect(decoded == report)
     }
 }

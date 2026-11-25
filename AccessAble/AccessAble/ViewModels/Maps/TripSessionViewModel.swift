@@ -256,9 +256,7 @@ final class TripSessionViewModel {
               let services,
               let user = await services.auth.currentUser(),
               user.id != report.reporterID,
-              report.confirmationResponses[user.id] == nil,
-              report.expiresAt > .now,
-              !report.isRemoved else {
+              report.expiresAt > .now else {
             return
         }
 
@@ -270,13 +268,8 @@ final class TripSessionViewModel {
     func confirmPendingReport(isStillPresent: Bool) async {
         guard let report = pendingReportConfirmation, let services else { return }
 
-        guard let user = await services.auth.currentUser() else {
-            await say("Sign in to confirm this report.", category: .system)
-            return
-        }
-
         do {
-            try await services.reports.confirm(report.id, isStillPresent: isStillPresent, userID: user.id)
+            try await services.reports.confirm(report.id, isStillPresent: isStillPresent)
             pendingReportConfirmation = nil
             await say(
                 isStillPresent ? "Thanks. The report has been extended." : "Thanks. Your confirmation has been recorded.",

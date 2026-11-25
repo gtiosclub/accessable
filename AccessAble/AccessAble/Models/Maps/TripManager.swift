@@ -559,7 +559,7 @@ actor TripManager: TripStateProviding {
         var nearEnd: [Report] = []
         var avoidable: [Report] = []
         for report in nearbyReports
-        where report.expiresAt > time && !report.isRemoved && !actedOnReportIDs.contains(report.id) && !planned.contains(report.id) {
+        where report.expiresAt > time && !actedOnReportIDs.contains(report.id) && !planned.contains(report.id) {
             guard let along = ReportExclusions.distanceAlong(route, passing: report, from: walked) else { continue }
             // the routing drops a report this near either end first, so a new route would pass it anyway
             if along - walked < ReportAwareRoutingService.endpointClearance {
@@ -599,7 +599,7 @@ actor TripManager: TripStateProviding {
 
     private func checkNearbyReports(at coordinate: GeoCoordinate) {
         for report in nearbyReports
-        where !promptedReportIDs.contains(report.id) && report.expiresAt > now() && !report.isRemoved {
+        where !promptedReportIDs.contains(report.id) && report.expiresAt > now() {
             guard GeoMath.distance(from: coordinate, to: report.coordinate) <= 10 else { continue }
             promptedReportIDs.insert(report.id)
             confirmationRequests.send(report)
