@@ -144,6 +144,16 @@ struct NavigationRouteTests {
         #expect(RouteStep.withoutCompassDirection(text) == expected)
     }
 
+    @Test(arguments: [
+        ("Turn left. Then Turn left.", "Turn left. Then turn left."),
+        ("Keep right to take the walkway. Then Keep left to take the walkway.",
+         "Keep right to take the walkway. Then keep left to take the walkway."),
+        ("Turn right onto Ferst Drive.", "Turn right onto Ferst Drive."),
+    ])
+    func theJoinedStepStartsLowercase(_ text: String, _ expected: String) {
+        #expect(RouteStep.withLowercaseThen(text) == expected)
+    }
+
     @Test
     func buildsTheSampleRoute() {
         let route = MapsSamples.route

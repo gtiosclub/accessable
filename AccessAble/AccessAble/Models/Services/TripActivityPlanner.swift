@@ -127,7 +127,9 @@ struct TripActivityPlanner {
         let distance = status == .active ? state.distanceToNextManeuver : nil
         return Content(
             status: status,
-            instruction: maneuver.instruction,
+            // Valhalla's generic arrival is past tense, which reads as arrived while still walking
+            instruction: maneuver.kind == .arrive && maneuver.instruction.hasPrefix("You have arrived")
+                ? "Arrive at \(state.destinationName ?? "your destination")" : maneuver.instruction,
             distance: distance.map(formatter.written),
             spokenDistance: distance.map(formatter.words),
             symbolName: maneuver.kind.symbolName,
