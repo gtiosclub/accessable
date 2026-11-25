@@ -497,7 +497,8 @@ actor TripManager: TripStateProviding {
         let radius = route.totalDistance / 2 + Self.reportSearchMargin
         reportTask = Task { [currentUserID] in
             var retries = 0
-            while true {
+            // an injected sleep may return rather than throw once cancelled
+            while !Task.isCancelled {
                 for await snapshot in reports.reportChanges(near: center, radius: radius) {
                     retries = 0
                     let userID = await currentUserID()
