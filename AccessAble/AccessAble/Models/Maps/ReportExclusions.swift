@@ -62,6 +62,18 @@ struct ReportExclusions: Equatable, Sendable {
         }
     }
 
+    /// Metres along `route` where it passes `report`, by the same points as `reports(_:passedBy:)`, searching only
+    /// from `distance` along it on: nil if it passes the report only before then, or not at all.
+    static func distanceAlong(_ route: NavigationRoute, passing report: Report, from distance: Double) -> Double? {
+        let lastSegment = route.coordinates.count - 2
+        let first = min(route.cumulativeDistances.lastIndex { $0 <= distance } ?? 0, lastSegment)
+        return points(of: report)
+            .map { route.projection(of: $0, segments: first..<lastSegment + 1) }
+            .filter { abs($0.sideOffset) <= passingDistance && $0.distanceAlongRoute >= distance }
+            .map(\.distanceAlongRoute)
+            .min()
+    }
+
     private static func points(of report: Report) -> [GeoCoordinate] {
         [report.coordinate] + (report.area ?? [])
     }
