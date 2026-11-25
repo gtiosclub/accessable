@@ -481,6 +481,24 @@ struct TripStartTests {
     }
 
     @Test
+    func aRefreshForStartLeavesTheWarningToTheTrip() async {
+        var route = plannedRoute
+        route.unavoidedReports = [Report(id: "blocked-1", kind: .blockedPath, coordinate: library.coordinate,
+                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600),
+                                         reporterID: "user-1")]
+        let screen = TripScreen(route: route)
+        await screen.plan()
+        while await screen.announcements.texts.isEmpty { await Task.yield() }
+        screen.advance(by: 121)
+
+        await screen.viewModel.startTrip()
+
+        #expect(await screen.routing.requestCount == 2)
+        #expect(await screen.announcements.texts == ["A reported obstacle is on this route."])
+        screen.stop()
+    }
+
+    @Test
     func routeReadyAnnouncementRoundsTheDistance() async {
         let screen = TripScreen()
         await screen.plan()

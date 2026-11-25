@@ -284,7 +284,8 @@ final class TripViewModel {
                 guard !Task.isCancelled else { return }
                 self.route = route
                 routeRequestedAt = requestedAt
-                if !route.unavoidedReports.isEmpty {
+                // a refresh for Start leaves the warning to the trip's start announcement
+                if !route.unavoidedReports.isEmpty, !isStartingTrip {
                     await services.announcements.submit(AnnouncementEvent(
                         category: .hazard,
                         priority: .high,
