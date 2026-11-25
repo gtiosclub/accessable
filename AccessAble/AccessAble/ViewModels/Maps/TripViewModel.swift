@@ -89,6 +89,7 @@ final class TripViewModel {
         case .noRouteFound: return "No walking route to \(destination.name) was found."
         case .serverUnavailable: return "Couldn't reach the routing service. Check your connection and try again."
         case .invalidResponse: return "The routing service sent a route AccessAble couldn't read. Try again."
+        case .exclusionsRejected: return "The routing service couldn't take that many reported obstacles. Try again."
         }
     }
 

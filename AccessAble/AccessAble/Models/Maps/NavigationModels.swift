@@ -143,6 +143,8 @@ struct RouteOptions: Equatable, Sendable {
 enum RoutingError: Error, Equatable, Sendable {
     case noRouteFound
     case serverUnavailable
+    /// Valhalla refused the exclusions themselves: too many points, or too long a polygon perimeter.
+    case exclusionsRejected
     /// The request could not be built or was rejected, or the response could not be decoded or failed
     /// `NavigationRoute` validation.
     case invalidResponse
