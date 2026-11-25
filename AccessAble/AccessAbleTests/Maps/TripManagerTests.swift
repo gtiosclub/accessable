@@ -2014,7 +2014,8 @@ struct TripManagerReportTests {
 
     @Test
     func reportsArrivingTogetherRerouteOnceAroundAll() async throws {
-        let harness = try Harness()
+        // held until answered, so only the report's own line is spoken
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
         await harness.start()
         await harness.walk(from: 0, to: 20)
         let first = report("first", at: harness.point(50))
@@ -2023,6 +2024,7 @@ struct TripManagerReportTests {
         await harness.reports.publish([first, second])
 
         await harness.router.waitForRequests(1)
+        await waitUntil { await harness.engine.texts.contains(reportReroute) }
         #expect(await harness.router.options.map { Set($0.reports.map(\.id)) } == [["first", "second"]])
         #expect(await spokenAboutReports(harness) == [reportReroute])
     }
@@ -2192,7 +2194,9 @@ struct TripManagerReportTests {
     /// The first fix after resuming both says the turn and reroutes for the report that came while paused.
     @Test
     func aReportWhilePausedReroutesOnTheFirstFixAfterResumingWithItsTurnCue() async throws {
-        let harness = try Harness(route: try longCornerRoute())
+        // held until answered, so nothing follows the report's line
+        let harness = try Harness(route: try longCornerRoute(),
+                                  reroutes: [.success(try eastRoute(from: harness0Origin))])
         await harness.start()
         await harness.walk(from: 0, to: 50)
         await harness.manager.pauseTrip()
@@ -2204,6 +2208,7 @@ struct TripManagerReportTests {
         await harness.manager.resumeTrip()
         await harness.fix(harness.point(96.6))
         await harness.router.waitForRequests(1)
+        await waitUntil { await harness.engine.texts.contains(reportReroute) }
         let texts = await harness.engine.texts
         #expect(Array(texts.drop { $0 != "Trip resumed." }) == [
             "Trip resumed.", "Turn right onto Ferst Drive.", reportReroute,
@@ -2213,7 +2218,8 @@ struct TripManagerReportTests {
     /// With a weak signal the last precise fix is old, so the reroute waits for the signal to come back.
     @Test
     func aReportDuringAWeakSignalReroutesOnceItIsBack() async throws {
-        let harness = try Harness()
+        // held until answered, so nothing follows the report's line
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
         await harness.start()
         await harness.fix(harness.point(0), then: 0)
         // as in watchdogWarnsOfWeakSignalAndItsReturn: 10 s without a good fix is weak
@@ -2229,6 +2235,7 @@ struct TripManagerReportTests {
 
         await harness.fix(harness.point(2.8))
         await harness.router.waitForRequests(1)
+        await waitUntil { await harness.engine.texts.contains(reportReroute) }
         #expect(Array(await harness.engine.texts.suffix(2)) == ["Location signal is back.", reportReroute])
     }
 
