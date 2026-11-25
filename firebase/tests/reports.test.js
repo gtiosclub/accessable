@@ -1,10 +1,13 @@
+import assert from 'node:assert/strict';
 import { after, beforeEach, test } from 'node:test';
 import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import {
-  collection, deleteDoc, doc, getDoc, getDocs, limit, query, serverTimestamp, setDoc, Timestamp, updateDoc,
-  writeBatch,
+  collection, deleteDoc, doc, getDoc, getDocs, increment, limit, query, serverTimestamp, setDoc, Timestamp,
+  updateDoc, writeBatch,
 } from 'firebase/firestore';
-import { createReport, DAY, reportData, seedReport, stampData, startEnvironment } from './support.js';
+import {
+  createReport, DAY, HOUR, MINUTE, reportData, seedReport, seedVoteStamp, stampData, startEnvironment, vote,
+} from './support.js';
 
 const env = await startEnvironment();
 beforeEach(() => env.clearFirestore());
@@ -148,76 +151,237 @@ test("a user cannot edit or delete someone else's report", async () => {
   await assertFails(deleteDoc(report));
 });
 
-test('a signed-in user can confirm another user report once', async () => {
-  await seedReport(env, 'alice', 'r1');
-
-  await assertSucceeds(updateDoc(doc(bob(), 'reports', 'r1'), {
-    confirmationResponses: { bob: true },
-    confirmations: 1,
-    negativeConfirmations: 0,
-    isRemoved: false,
-    expiresAt: Timestamp.fromMillis(Date.now() + 6 * DAY),
-    lastConfirmedAt: serverTimestamp()
+test('a report cannot expire later than its kind lasts', async () => {
+  await assertFails(createReport(alice(), 'alice', 'r1', { expiresAt: Timestamp.fromMillis(Date.now() + 8 * DAY) }));
+  await assertFails(createReport(alice(), 'alice', 'r2', {
+    kind: 'blockedPath', expiresAt: Timestamp.fromMillis(Date.now() + 5 * HOUR),
   }));
-
-  await assertFails(updateDoc(doc(bob(), 'reports', 'r1'), {
-    confirmationResponses: { bob: true },
-    confirmations: 2,
-    negativeConfirmations: 0,
-    isRemoved: false,
-    expiresAt: Timestamp.fromMillis(Date.now() + 6 * DAY),
-    lastConfirmedAt: serverTimestamp()
+  await assertFails(createReport(alice(), 'alice', 'r3', {
+    kind: 'elevatorOut', expiresAt: Timestamp.fromMillis(Date.now() + 25 * HOUR),
   }));
 });
 
-test('two different negative confirmations remove a report', async () => {
-  await seedReport(env, 'alice', 'r1');
-  const report = doc(bob(), 'reports', 'r1');
-
-  await assertSucceeds(updateDoc(report, {
-    confirmationResponses: { bob: false },
-    confirmations: 0,
-    negativeConfirmations: 1,
-    isRemoved: false,
-    expiresAt: (await getDoc(report)).data().expiresAt,
-    lastConfirmedAt: serverTimestamp()
+test('a report can expire up to its kind lifetime', async () => {
+  await assertSucceeds(createReport(alice(), 'alice', 'r1', {
+    kind: 'elevatorOut', expiresAt: Timestamp.fromMillis(Date.now() + 24 * HOUR),
   }));
+});
 
+test('a report from an app without the vote counts is still accepted', async () => {
+  await assertSucceeds(createReport(alice(), 'alice', 'r1'));
+});
+
+test('a report cannot start with denials or a confirmation time', async () => {
+  await assertFails(createReport(alice(), 'alice', 'r1', { negativeConfirmations: 1 }));
+  await assertFails(createReport(alice(), 'alice', 'r1', { negativesSinceConfirm: 1 }));
+  await assertFails(createReport(alice(), 'alice', 'r1', { lastConfirmedAt: serverTimestamp() }));
+});
+
+test('a report can start with zero denials', async () => {
+  await assertSucceeds(createReport(alice(), 'alice', 'r1', { negativeConfirmations: 0, negativesSinceConfirm: 0 }));
+});
+
+test("a yes on someone else's report counts and extends it", async () => {
+  await seedReport(env, 'alice', 'r1');
+  await assertSucceeds(vote(bob(), 'bob', 'r1', true));
+  const data = (await getDoc(doc(bob(), 'reports', 'r1'))).data();
+  assert.equal(data.confirmations, 1);
+  assert.equal(data.negativesSinceConfirm, 0);
+});
+
+test('a yes cannot shorten a report', async () => {
+  await seedReport(env, 'alice', 'r1', 2 * MINUTE, { kind: 'blockedPath', expiresAt: Timestamp.fromMillis(Date.now() + 3 * DAY) });
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: {
+    confirmations: increment(1), negativesSinceConfirm: 0, expiresAt: Timestamp.fromMillis(Date.now() + 4 * HOUR),
+  } }));
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: {
+    confirmations: increment(1), negativesSinceConfirm: 0, expiresAt: Timestamp.fromMillis(Date.now() + MINUTE),
+  } }));
+});
+
+test('a yes keeps a report that already lasts longer than a lifetime', async () => {
+  await seedReport(env, 'alice', 'r1', 2 * MINUTE, { kind: 'blockedPath', expiresAt: Timestamp.fromMillis(Date.now() + 3 * DAY) });
+  await assertSucceeds(vote(bob(), 'bob', 'r1', true, { report: { confirmations: increment(1), negativesSinceConfirm: 0 } }));
+});
+
+test('a yes must set the expiry to one lifetime from now', async () => {
+  await seedReport(env, 'alice', 'r1', 2 * MINUTE, { kind: 'blockedPath', expiresAt: Timestamp.fromMillis(Date.now() + HOUR) });
+  const yes = (expiresAt) => ({ confirmations: increment(1), negativesSinceConfirm: 0, expiresAt });
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: yes(Timestamp.fromMillis(Date.now() + 5 * HOUR)) }));
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: yes(Timestamp.fromMillis(Date.now() + 2 * HOUR)) }));
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: yes(Timestamp.fromMillis(Date.now() + 30 * DAY)) }));
+  await assertSucceeds(vote(bob(), 'bob', 'r1', true, { report: yes(Timestamp.fromMillis(Date.now() + 4 * HOUR)) }));
+});
+
+test('a yes cannot be left at a lower expiry or without a new one', async () => {
+  await seedReport(env, 'alice', 'r1', 2 * MINUTE, { kind: 'blockedPath', expiresAt: Timestamp.fromMillis(Date.now() + HOUR) });
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: { confirmations: increment(1), negativesSinceConfirm: 0 } }));
+});
+
+test('a no counts a denial and leaves the expiry', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  const before = (await getDoc(doc(bob(), 'reports', 'r1'))).data();
+  await assertSucceeds(vote(bob(), 'bob', 'r1', false));
+  const after = (await getDoc(doc(bob(), 'reports', 'r1'))).data();
+  assert.equal(after.negativeConfirmations, 1);
+  assert.equal(after.negativesSinceConfirm, 1);
+  assert.deepEqual(after.expiresAt, before.expiresAt);
+});
+
+test('a no cannot change the expiry before it is the second', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await assertFails(vote(bob(), 'bob', 'r1', false, { report: {
+    negativeConfirmations: increment(1), negativesSinceConfirm: increment(1), expiresAt: serverTimestamp(),
+  } }));
+});
+
+test('the second no since the last yes ends the report now', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await assertSucceeds(vote(bob(), 'bob', 'r1', false));
   const carol = env.authenticatedContext('carol').firestore();
-  await assertSucceeds(updateDoc(doc(carol, 'reports', 'r1'), {
-    confirmationResponses: { bob: false, carol: false },
-    confirmations: 0,
-    negativeConfirmations: 2,
-    isRemoved: true,
-    expiresAt: (await getDoc(report)).data().expiresAt,
-    lastConfirmedAt: serverTimestamp()
-  }));
+  await assertFails(vote(carol, 'carol', 'r1', false));
+  await assertFails(vote(carol, 'carol', 'r1', false, { report: {
+    negativeConfirmations: increment(1), negativesSinceConfirm: increment(1),
+    expiresAt: Timestamp.fromMillis(Date.now() + HOUR),
+  } }));
+  await assertSucceeds(vote(carol, 'carol', 'r1', false, { report: {
+    negativeConfirmations: increment(1), negativesSinceConfirm: increment(1), expiresAt: serverTimestamp(),
+  } }));
+  const data = (await getDoc(doc(bob(), 'reports', 'r1'))).data();
+  assert.ok(data.expiresAt.toMillis() <= Date.now() + MINUTE);
 });
 
-test('confirmation counts and responses cannot be forged', async () => {
-  await seedReport(env, 'alice', 'r1');
-
-  await assertFails(updateDoc(doc(bob(), 'reports', 'r1'), {
-    confirmationResponses: { bob: true },
-    confirmations: 99,
-    negativeConfirmations: 0,
-    isRemoved: false,
-    expiresAt: Timestamp.fromMillis(Date.now() + 6 * DAY),
-    lastConfirmedAt: serverTimestamp()
-  }));
+test('a yes resets the denials, so the next no does not end the report', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await assertSucceeds(vote(bob(), 'bob', 'r1', false));
+  const carol = env.authenticatedContext('carol').firestore();
+  await assertFails(vote(carol, 'carol', 'r1', true, { report: {
+    confirmations: increment(1), expiresAt: Timestamp.fromMillis(Date.now() + 7 * DAY),
+  } }));
+  await assertSucceeds(vote(carol, 'carol', 'r1', true));
+  const dave = env.authenticatedContext('dave').firestore();
+  await assertSucceeds(vote(dave, 'dave', 'r1', false));
+  const data = (await getDoc(doc(bob(), 'reports', 'r1'))).data();
+  assert.equal(data.negativeConfirmations, 2);
+  assert.equal(data.negativesSinceConfirm, 1);
+  assert.ok(data.expiresAt.toMillis() > Date.now() + DAY);
 });
 
-test('a report owner cannot confirm their own report', async () => {
-  await seedReport(env, 'alice', 'r1');
+test('a no is refused for the first 10 minutes of a report', async () => {
+  await seedReport(env, 'alice', 'r1', 5 * MINUTE);
+  await assertFails(vote(bob(), 'bob', 'r1', false));
+  await assertSucceeds(vote(bob(), 'bob', 'r1', true));
+});
 
-  await assertFails(updateDoc(doc(alice(), 'reports', 'r1'), {
-    confirmationResponses: { alice: true },
-    confirmations: 1,
-    negativeConfirmations: 0,
-    isRemoved: false,
-    expiresAt: Timestamp.fromMillis(Date.now() + 6 * DAY),
-    lastConfirmedAt: serverTimestamp()
-  }));
+test('a user can vote only once on a report', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await assertSucceeds(vote(bob(), 'bob', 'r1', true));
+  await seedVoteStamp(env, 'bob', 2 * MINUTE);
+  await assertFails(vote(bob(), 'bob', 'r1', true));
+  await assertFails(vote(bob(), 'bob', 'r1', false));
+});
+
+test('a vote needs the vote stamp, a minute after the last', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await seedReport(env, 'carol', 'r2', 20 * MINUTE);
+  await assertFails(vote(bob(), 'bob', 'r1', true, { stamp: false }));
+  await seedVoteStamp(env, 'bob', 30 * 1000);
+  await assertFails(vote(bob(), 'bob', 'r1', true));
+  await seedVoteStamp(env, 'bob', 2 * MINUTE);
+  await assertSucceeds(vote(bob(), 'bob', 'r1', true));
+  await assertFails(vote(bob(), 'bob', 'r2', true));
+});
+
+test('a vote stamp does not hold back a report, nor a report stamp a vote', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await seedVoteStamp(env, 'bob', 10 * 1000);
+  await assertSucceeds(createReport(bob(), 'bob', 'r2'));
+  await seedReport(env, 'carol', 'r3', 10 * 1000);
+  await assertSucceeds(vote(env.authenticatedContext('carol').firestore(), 'carol', 'r1', true));
+});
+
+test('a vote needs its vote document, and the vote document the matching count', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await assertFails(vote(bob(), 'bob', 'r1', true, { vote: false }));
+  await assertFails(vote(bob(), 'bob', 'r1', false, { report: {
+    confirmations: increment(1), negativesSinceConfirm: 0, expiresAt: Timestamp.fromMillis(Date.now() + 7 * DAY),
+  } }));
+  const db = bob();
+  const batch = writeBatch(db);
+  batch.set(doc(db, 'reports', 'r1', 'votes', 'bob'), { isStillPresent: true, votedAt: serverTimestamp() });
+  batch.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp() }, { merge: true });
+  await assertFails(batch.commit());
+});
+
+test('a vote document is only for its own voter, with only the answer and time', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  const db = bob();
+  const forCarol = writeBatch(db);
+  forCarol.set(doc(db, 'reports', 'r1', 'votes', 'carol'), { isStillPresent: true, votedAt: serverTimestamp() });
+  forCarol.update(doc(db, 'reports', 'r1'), {
+    confirmations: increment(1), negativesSinceConfirm: 0, expiresAt: Timestamp.fromMillis(Date.now() + 7 * DAY),
+  });
+  forCarol.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp() }, { merge: true });
+  await assertFails(forCarol.commit());
+
+  const extra = writeBatch(db);
+  extra.set(doc(db, 'reports', 'r1', 'votes', 'bob'), { isStillPresent: true, votedAt: serverTimestamp(), name: 'Bob' });
+  extra.update(doc(db, 'reports', 'r1'), {
+    confirmations: increment(1), negativesSinceConfirm: 0, expiresAt: Timestamp.fromMillis(Date.now() + 7 * DAY),
+  });
+  extra.set(doc(db, 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp() }, { merge: true });
+  await assertFails(extra.commit());
+});
+
+test('the reporter cannot vote on their own report', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await assertFails(vote(alice(), 'alice', 'r1', true));
+  await assertFails(vote(alice(), 'alice', 'r1', false));
+});
+
+test('an expired report cannot be voted on', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE, { expiresAt: Timestamp.fromMillis(Date.now() - MINUTE) });
+  await assertFails(vote(bob(), 'bob', 'r1', true));
+});
+
+test('a vote cannot change the kind, place or reporter', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  const yes = { confirmations: increment(1), negativesSinceConfirm: 0, expiresAt: Timestamp.fromMillis(Date.now() + 7 * DAY) };
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: { ...yes, kind: 'other' } }));
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: { ...yes, coordinate: { latitude: 0, longitude: 0 } } }));
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: { ...yes, reporterID: 'bob' } }));
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: { ...yes, negativeConfirmations: 0 } }));
+});
+
+test('a vote must change its count by exactly one', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  const expiresAt = Timestamp.fromMillis(Date.now() + 7 * DAY);
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: { confirmations: increment(2), negativesSinceConfirm: 0, expiresAt } }));
+  await assertFails(vote(bob(), 'bob', 'r1', true, { report: { confirmations: 0, negativesSinceConfirm: 0, expiresAt } }));
+  await assertFails(vote(bob(), 'bob', 'r1', false, { report: { negativeConfirmations: increment(2), negativesSinceConfirm: increment(1) } }));
+  await assertFails(vote(bob(), 'bob', 'r1', false, { report: { negativeConfirmations: increment(1), negativesSinceConfirm: increment(2) } }));
+  await assertFails(vote(bob(), 'bob', 'r1', false, { report: { negativeConfirmations: increment(1) } }));
+});
+
+test("a vote is readable only by its voter, and votes can't be listed", async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await assertSucceeds(vote(bob(), 'bob', 'r1', true));
+  await assertSucceeds(getDoc(doc(bob(), 'reports', 'r1', 'votes', 'bob')));
+  await assertFails(getDoc(doc(alice(), 'reports', 'r1', 'votes', 'bob')));
+  await assertFails(getDocs(collection(bob(), 'reports', 'r1', 'votes')));
+});
+
+test('a vote cannot be changed or deleted', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await assertSucceeds(vote(bob(), 'bob', 'r1', true));
+  await assertFails(updateDoc(doc(bob(), 'reports', 'r1', 'votes', 'bob'), { isStillPresent: false }));
+  await assertFails(deleteDoc(doc(bob(), 'reports', 'r1', 'votes', 'bob')));
+});
+
+test('a vote stamp cannot hold a phone-clock time or extra fields', async () => {
+  await assertFails(setDoc(doc(bob(), 'rateLimits', 'bob'), { lastVoteAt: Timestamp.now() }));
+  await assertFails(setDoc(doc(bob(), 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp(), email: 'bob@example.com' }));
+  await assertFails(setDoc(doc(alice(), 'rateLimits', 'bob'), { lastVoteAt: serverTimestamp() }));
 });
 
 test('the reporter can delete their own report', async () => {
