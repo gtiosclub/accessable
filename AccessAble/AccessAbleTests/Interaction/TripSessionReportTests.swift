@@ -621,6 +621,11 @@ struct TripSessionReportTests {
         ("Uh, yes.", true), ("Yup", true), ("The elevator is still out.", true),
         ("No, it's not.", false), ("No it's clear now.", false), ("Nope, it's gone.", false),
         ("It's gone now.", false), ("No, the path is clear.", false), ("Nah.", false), ("It's fixed.", false),
+        // a "not" or "-n't" turns the words round
+        ("It's still not working", true), ("The elevator still isn't working", true), ("Not working", true),
+        ("It's not gone", true), ("It's not clear", true), ("It doesn't work.", true), ("It isn't open.", true),
+        ("Not anymore.", false), ("No longer.", false), ("It's no longer blocked.", false),
+        ("It isn't there anymore.", false), ("The entrance is open now.", false),
     ])
     func theQuestionsListeningTakesAnswersInWholeSentences(_ words: String, _ isStillPresent: Bool) async throws {
         let reports = CapturingReports()
@@ -630,6 +635,13 @@ struct TripSessionReportTests {
         await session.heardAnswer(words, to: try #require(session.reportQuestion))
 
         #expect(await reports.votes == [.init(reportID: "passed", isStillPresent: isStillPresent)])
+    }
+
+    /// Doubt, or words that say both, are no vote.
+    @Test(arguments: ["No idea", "No clue.", "Not sure", "I don't know", "Maybe", "No it's still there",
+                      "No wait, yes", "Yes, it's gone", "Hmm", ""])
+    func doubtOrAContradictionIsNoAnswer(_ words: String) {
+        #expect(TripSessionViewModel.reportAnswer(for: words) == nil)
     }
 
     /// The question's own listening only ever answers it: nothing heard there pauses, calls help, reports or asks.

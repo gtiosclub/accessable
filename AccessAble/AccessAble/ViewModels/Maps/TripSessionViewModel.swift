@@ -407,29 +407,62 @@ final class TripSessionViewModel {
     /// - Parameter anywhere: Whether an answer may be part of a longer sentence, as it may in the question's own
     ///   listening; otherwise only the whole of what was said counts, so a command or question isn't taken for one.
     static func reportAnswer(for text: String, anywhere: Bool = true) -> Bool? {
-        var words = text.lowercased()
+        let said = " " + text.lowercased()
             .replacingOccurrences(of: "\u{2019}", with: "'")
             .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'")).inverted)
             .filter { !$0.isEmpty }
+            .joined(separator: " ") + " "
         guard anywhere else {
-            let said = words.joined(separator: " ")
+            let whole = said.trimmingCharacters(in: .whitespaces)
             if ["yes", "yeah", "yep", "yup", "still there", "still blocked", "it's still there", "it's still blocked"]
-                .contains(said) {
+                .contains(whole) {
                 return true
             }
-            if ["no", "nope", "nah", "clear", "it's clear", "gone", "it's gone"].contains(said) { return false }
+            if ["no", "nope", "nah", "clear", "it's clear", "gone", "it's gone"].contains(whole) { return false }
             return nil
         }
+        return answerInSentence(said)
+    }
+
+    private static let yesWords: Set = ["yes", "yeah", "yep", "yup"]
+    private static let noWords: Set = ["no", "nope", "nah"]
+    /// Words saying the problem is there, and that it has gone; either, negated, says the other.
+    private static let presentWords: Set = ["blocked", "there", "closed", "out", "broken"]
+    private static let goneWords: Set = ["gone", "clear", "cleared", "open", "fixed", "working", "works", "work"]
+
+    /// Every cue in the sentence must agree: a leading yes or no, a later yes, and each word that says the problem is
+    /// there or gone, turned round by a "not" or "-n't" up to three words before it. Doubt or a contradiction is no
+    /// answer, since a wrong vote is worse than none.
+    private static func answerInSentence(_ said: String) -> Bool? {
+        let doubts = [" no idea ", " no clue ", " not sure ", " don't know ", " dont know ", " do not know ", " maybe "]
+        guard !doubts.contains(where: said.contains) else { return nil }
+        var words = said.replacingOccurrences(of: " no longer ", with: " not anymore ")
+            .split(separator: " ").map(String.init)
         while let first = words.first, ["uh", "um", "er", "oh", "well"].contains(first) { words.removeFirst() }
-        guard let first = words.first else { return nil }
-        if ["yes", "yeah", "yep", "yup"].contains(first) { return true }
-        if ["no", "nope", "nah"].contains(first) { return false }
-        // padded, so each phrase matches whole words only
-        let said = " \(words.joined(separator: " ")) "
-        func says(_ phrases: String...) -> Bool { phrases.contains { said.contains(" \($0) ") } }
-        if says("still blocked", "still there", "still closed", "still out") { return true }
-        if says("gone", "clear", "open now", "fixed", "working") { return false }
-        return nil
+        var answers: [Bool] = []
+        var start = 0
+        if let first = words.first, yesWords.contains(first) || noWords.contains(first) {
+            answers.append(yesWords.contains(first))
+            start = 1
+        }
+        func isNegator(_ word: String) -> Bool {
+            ["not", "never", "no", "cannot"].contains(word) || word.hasSuffix("n't")
+        }
+        for index in words.indices.dropFirst(start) {
+            let word = words[index]
+            let negated = words[max(start, index - 3)..<index].contains(where: isNegator)
+            if yesWords.contains(word) {
+                answers.append(true)
+            } else if word == "anymore", negated {
+                answers.append(false)
+            } else if presentWords.contains(word) {
+                answers.append(!negated)
+            } else if goneWords.contains(word) {
+                answers.append(negated)
+            }
+        }
+        guard let answer = answers.first, answers.allSatisfy({ $0 == answer }) else { return nil }
+        return answer
     }
 
     // MARK: - Commands
