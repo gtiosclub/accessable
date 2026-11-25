@@ -24,7 +24,9 @@ struct AppleMapsRouteConversionTests {
         ("Bear right", .slightRight),
         ("Make a U-turn", .uTurn),
         ("Take the stairs", .stairs),
-        ("Turn left and take the steps down", .turnLeft),
+        ("Turn left and take the steps down", .stairs),
+        ("Turn left and take the stairs down", .stairs),
+        ("Turn left and take the elevator", .turnLeft),
         ("Take the steps down", .stairs),
         ("Take the elevator", .elevator),
         ("Take the escalator to level 2", .escalator),
@@ -91,6 +93,27 @@ struct AppleMapsRouteConversionTests {
         let kink = TripWalk.destination(from: corner, bearing: change + 60, distance: 2)
         let end = TripWalk.destination(from: corner, bearing: change, distance: 30)
         #expect(NavigationRoute.turnKind(at: 1, in: [start, corner, kink, end]) == expected)
+    }
+
+    /// Half a metre of wobble either side every 2 m, along a walk north then east, doesn't read as turns where there
+    /// are 10 m to measure over on both sides; only the corner turns.
+    @Test
+    func aJitteryPolylineTurnsOnlyAtItsCorner() {
+        func leg(from start: GeoCoordinate, bearing: Double) -> [GeoCoordinate] {
+            (1...15).map { index in
+                let along = TripWalk.destination(from: start, bearing: bearing, distance: Double(index) * 2)
+                return TripWalk.destination(from: along, bearing: bearing + (index.isMultiple(of: 2) ? 90 : -90),
+                                            distance: 0.5)
+            }
+        }
+        let start = Self.points[0]
+        let corner = TripWalk.destination(from: start, bearing: 0, distance: 32)
+        let line = [start] + leg(from: start, bearing: 0) + [corner] + leg(from: corner, bearing: 90)
+        let cornerIndex = 16
+        for index in [5, 6, 7, 8, 9, 10, 22, 23, 24, 25, 26] {
+            #expect(NavigationRoute.turnKind(at: index, in: line) == .straight, "at \(index)")
+        }
+        #expect(NavigationRoute.turnKind(at: cornerIndex, in: line) == .turnRight)
     }
 
     // MARK: - Route

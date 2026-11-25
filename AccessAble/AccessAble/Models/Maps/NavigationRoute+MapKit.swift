@@ -159,11 +159,13 @@ extension NavigationRoute {
     }
 
     /// The maneuver Apple's English instruction text describes, or nil when it names none, as in another language.
-    /// Apple gives no maneuver type, only the text. A turn comes before stairs, elevators and escalators in the same
-    /// step, which the spoken text still names: "Turn left and take the steps down" must still be a left turn.
+    /// Apple gives no maneuver type, only the text. Stairs come first: they are what a user of this app most needs
+    /// warning about, and only stairs get the trip's stairs warnings. The spoken text still names a turn in the same
+    /// step, "Turn left and take the steps down". A turn comes before an elevator or escalator.
     static func appleMapsManeuverKind(for text: String) -> ManeuverKind? {
         let words = padded(text)
         func says(_ phrases: [String]) -> Bool { phrases.contains { words.contains(" \($0) ") } }
+        if says(["stairs", "stair", "staircase", "stairway", "steps"]) { return .stairs }
         if says(["u turn", "uturn", "turn around"]) { return .uTurn }
         if says(["slight left", "slightly left", "bear left", "keep left", "stay left"]) { return .slightLeft }
         if says(["slight right", "slightly right", "bear right", "keep right", "stay right"]) { return .slightRight }
@@ -173,7 +175,6 @@ extension NavigationRoute {
                  "right at", "right to", "right toward", "right towards"]) || words.hasPrefix(" right ") {
             return .turnRight
         }
-        if says(["stairs", "stair", "staircase", "stairway", "steps"]) { return .stairs }
         if says(["elevator", "lift"]) { return .elevator }
         if says(["escalator"]) { return .escalator }
         if says(["cross", "crosswalk", "crossing"]) { return .cross }

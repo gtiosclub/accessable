@@ -667,6 +667,30 @@ struct TripManagerTests {
         #expect(events[2].haptic == .attention)
     }
 
+    /// Apple's turn onto stairs is still warned of as stairs, and its cue keeps the turn.
+    @Test
+    func appleStairsWithATurnAreWarnedOfWhichWay() async throws {
+        let corner = try cornerRoute()
+        let route = try NavigationRoute(
+            appleMapsCoordinates: corner.coordinates,
+            steps: [
+                AppleMapsStep(instructions: "", start: corner.coordinates[0]),
+                AppleMapsStep(instructions: "Turn left and take the stairs down", start: corner.coordinates[1]),
+                AppleMapsStep(instructions: "Arrive at the destination", start: corner.coordinates.last),
+            ],
+            estimatedDuration: corner.estimatedDuration
+        )
+        let harness = try Harness(route: route)
+        await harness.start()
+        await harness.walk(from: 0, to: 160)
+
+        let events = await harness.engine.waitForCount(5)
+        #expect(events[1].text == "In about 40 metres, stairs going down.")
+        #expect(events[1].priority == .high)
+        #expect(events[2].text == "Turn left and take the stairs down.")
+        #expect(events[2].haptic == .attention)
+    }
+
     @Test
     func pausedTripKeepsTrackingAndSpeaksTheMissedCueOnResume() async throws {
         let harness = try Harness()
