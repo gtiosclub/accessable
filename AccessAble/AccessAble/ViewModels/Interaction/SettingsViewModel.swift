@@ -44,6 +44,16 @@ final class SettingsViewModel {
 
     var currentPerformanceMode: PerformanceMode { app.performance.mode }
 
+    var minimumDanger: DangerLevel {
+        get { profile.alertFilter.minimumDanger }
+        set { profile.alertFilter.minimumDanger = newValue }
+    }
+
+    var warningDistance: Float {
+        get { profile.alertFilter.maximumDistance }
+        set { profile.alertFilter.maximumDistance = newValue }
+    }
+
     func isEnabled(_ channel: GuidanceChannels) -> Bool {
         profile.channels.contains(channel)
     }

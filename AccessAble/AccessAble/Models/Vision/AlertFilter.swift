@@ -86,6 +86,14 @@ struct AlertFilter: Codable, Hashable, Sendable {
 
     static let `default` = AlertFilter()
 
+    /// Presentation only: filter distances always remain in metres.
+    static func distanceLabel(_ metres: Float, usesMetricUnits: Bool, spoken: Bool = false) -> String {
+        if usesMetricUnits {
+            return String(format: "%g", metres) + (spoken ? " metres" : " m")
+        }
+        return String(format: "%.1f", metres * 3.28084) + (spoken ? " feet" : " ft")
+    }
+
     func allows(_ level: DangerLevel) -> Bool { level >= minimumDanger }
 }
 

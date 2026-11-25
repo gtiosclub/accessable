@@ -26,6 +26,9 @@ struct SettingsView: View {
                 }
                 .padding(.leading, 8)
 
+                SettingsSectionTitle("Obstacle Warnings")
+                obstacleWarningControls
+
                 SettingsSectionTitle("Navigation Info Output")
                 SettingsCard("Auto Repeat Announcements") {
                     ForEach(AutoRepeat.allCases, id: \.self) { option in
@@ -156,6 +159,40 @@ struct SettingsView: View {
             Text("Best quality").tag(PerformanceModeSetting.normal)
             Text("Save battery").tag(PerformanceModeSetting.battery)
         }
+    }
+
+    private var obstacleWarningControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SettingsSteppedSliderRow(
+                "Warn me about",
+                selection: Binding(
+                    get: { DangerLevel.allCases.firstIndex(of: viewModel.minimumDanger) ?? 1 },
+                    set: { viewModel.minimumDanger = DangerLevel.allCases[$0] }
+                ),
+                values: DangerLevel.allCases.map(\.displayName),
+                explanation: "Choose the minimum danger level for obstacle warnings.",
+                hapticsEnabled: viewModel.isEnabled(.haptics)
+            )
+            SettingsSteppedSliderRow(
+                "Warning distance",
+                selection: Binding(
+                    get: { AlertFilter.distanceChoices.firstIndex(of: viewModel.warningDistance) ?? 1 },
+                    set: { viewModel.warningDistance = AlertFilter.distanceChoices[$0] }
+                ),
+                values: AlertFilter.distanceChoices.map {
+                    AlertFilter.distanceLabel($0, usesMetricUnits: viewModel.preferences.usesMetricUnits)
+                },
+                spokenValues: AlertFilter.distanceChoices.map {
+                    AlertFilter.distanceLabel($0, usesMetricUnits: viewModel.preferences.usesMetricUnits, spoken: true)
+                },
+                explanation: "Choose how far away obstacle warnings begin. Longer distances give earlier warnings.",
+                hapticsEnabled: viewModel.isEnabled(.haptics)
+            )
+            Text("Drop-offs always trigger warnings from at least \(AlertFilter.distanceLabel(2.5, usesMetricUnits: viewModel.preferences.usesMetricUnits, spoken: true)) away, regardless of these settings.")
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.75))
+        }
+        .padding(.horizontal, 8)
     }
 
     private var resetCard: some View {
@@ -376,6 +413,65 @@ private struct SettingsPickerRow<Value: Hashable, Options: View>: View {
                         .foregroundStyle(.white.opacity(0.75))
                 }
             }
+        }
+    }
+}
+
+private struct SettingsSteppedSliderRow: View {
+    let title: String
+    @Binding var selection: Int
+    let values: [String]
+    var spokenValues: [String]?
+    let explanation: String
+    let hapticsEnabled: Bool
+
+    init(
+        _ title: String,
+        selection: Binding<Int>,
+        values: [String],
+        spokenValues: [String]? = nil,
+        explanation: String,
+        hapticsEnabled: Bool
+    ) {
+        self.title = title
+        _selection = selection
+        self.values = values
+        self.spokenValues = spokenValues
+        self.explanation = explanation
+        self.hapticsEnabled = hapticsEnabled
+    }
+
+    var body: some View {
+        SettingsRow {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).font(.body)
+                Text(values[selection]).font(.subheadline.bold())
+                Slider(
+                    value: Binding(
+                        get: { Double(selection) },
+                        set: { selection = min(values.count - 1, max(0, Int($0.rounded()))) }
+                    ),
+                    in: 0...Double(values.count - 1),
+                    step: 1
+                ) { Text(title) }
+                .tint(SettingsPalette.accent)
+                Text(explanation)
+                    .font(.footnote)
+                    .foregroundStyle(.white.opacity(0.75))
+            }
+            .foregroundStyle(.white)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
+            .accessibilityValue((spokenValues ?? values)[selection])
+            .accessibilityHint(explanation)
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: selection = min(selection + 1, values.count - 1)
+                case .decrement: selection = max(selection - 1, 0)
+                @unknown default: break
+                }
+            }
+            .sensoryFeedback(.selection, trigger: selection) { _, _ in hapticsEnabled }
         }
     }
 }
