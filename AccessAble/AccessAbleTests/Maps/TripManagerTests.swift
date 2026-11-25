@@ -930,6 +930,19 @@ struct TripManagerTests {
     }
 
     @Test
+    func askedForRerouteStartsFromTheLatestPreciseFixNotALateOne() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        let latest = harness.point(walked20)
+        await harness.fix(harness.point(5), timestamp: harness.clock.now().addingTimeInterval(-3))
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.requests == [latest])
+    }
+
+    @Test
     func askedForRerouteThatFailsKeepsTheCurrentRoute() async throws {
         let harness = try Harness(reroutes: [.failure(.serverUnavailable)])
         await harness.start()
@@ -2159,6 +2172,51 @@ struct TripManagerReportTests {
     }
 
     @Test
+    func aPauseBeforeTheRerouteLineIsSaidDropsIt() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        await harness.engine.hold(text: nearReportWarning)
+
+        await harness.reports.publish([report("near", at: harness.point(walked20 + 15)),
+                                       report("on the way", at: harness.point(60))])
+        await harness.engine.waitUntilHeld()
+        await harness.manager.pauseTrip()
+        await harness.engine.release()
+
+        await harness.router.waitForRequests(1)
+        #expect(Array(await harness.engine.texts.suffix(2)) == [nearReportWarning, "Trip paused."])
+    }
+
+    /// Too near the destination to route around, but not near the user.
+    @Test
+    func aReportByTheDestinationIsWarnedOfAsAhead() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.reports.publish([report("by the door", at: harness.point(150))])
+
+        #expect(await harness.router.requests.isEmpty)
+        #expect(await spokenAboutReports(harness) == [reportWarning])
+    }
+
+    @Test
+    func aReportByTheDestinationWithARerouteIsCoveredByTheRerouteLine() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.reports.publish([report("by the door", at: harness.point(150)),
+                                       report("on the way", at: harness.point(60))])
+        await harness.router.waitForRequests(1)
+
+        await waitUntil { await harness.engine.texts.contains(reportReroute) }
+        #expect(await harness.router.options.map { Set($0.reports.map(\.id)) } == [["by the door", "on the way"]])
+        #expect(await spokenAboutReports(harness) == [reportReroute])
+    }
+
+    @Test
     func aReportAfterTheLastReportRerouteIsOnlyWarnedOf() async throws {
         let harness = try Harness(reroutes: [.failure(.serverUnavailable), .failure(.serverUnavailable)])
         await harness.start()
@@ -2259,6 +2317,28 @@ struct TripManagerReportTests {
         await harness.manager.resumeTrip()
         #expect(Array(await harness.engine.texts.drop { $0 != "Trip resumed." }.prefix(2))
             == ["Trip resumed.", reportUnavoided])
+    }
+
+    @Test
+    func aRerouteThatCantAvoidTheReportWhilePausedIsntSaidOffTheRoute() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let blocked = report("ahead", at: TripWalk.point(on: try cornerRoute(), along: 60))
+        var passing = try eastRoute(from: origin)
+        passing.unavoidedReports = [blocked]
+        let harness = try Harness(reroutes: [.success(passing)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        await harness.reports.publish([blocked])
+        await harness.router.waitForRequests(1)
+        await harness.manager.pauseTrip()
+        await harness.answerReroute()
+
+        await harness.goOffRoute(at: walked20)
+        #expect(await harness.states.current?.isOffRoute == true)
+        await harness.manager.resumeTrip()
+
+        await waitUntil { await harness.engine.texts.contains("You're off the route. Finding a new route.") }
+        #expect(!(await harness.engine.texts.contains(reportUnavoided)))
     }
 
     /// The first fix after resuming both says the turn and reroutes for the report that came while paused.

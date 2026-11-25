@@ -100,7 +100,6 @@ actor TripManager: TripStateProviding {
     private static let reportRetryDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(60)]
     // metres beyond the route's reach that reports are listened for
     private static let reportSearchMargin: Double = 250
-    private static let nearReportSpeech = "New obstacle reported just ahead."
     private static let unavoidedReportSpeech =
         "Couldn't find a way around the reported obstacle. Keep following the current route carefully."
     // a new route from a rough fix would start on the wrong side of the street, and a direction from one can point
@@ -265,7 +264,8 @@ actor TripManager: TripStateProviding {
         await submit(confirmation("Trip resumed."))
         if self.generation == generation, phase == .active, unavoidedReportOnResume {
             unavoidedReportOnResume = false
-            await submit(unavoidedReportAnnouncement())
+            // off the route since, so it no longer passes the report
+            if !needsReroute { await submit(unavoidedReportAnnouncement()) }
         }
         // a reroute that landed meanwhile has its own announcement, and this one is about the old route
         guard self.generation == generation, routeVersion == version, phase == .active, let guidance else { return }
@@ -329,7 +329,8 @@ actor TripManager: TripStateProviding {
                 if phase == .active { pending.append((signalAnnouncement("Location signal is back.", .normal, 6), nil)) }
             }
         }
-        if sample.horizontalAccuracy <= Self.rerouteAccuracy {
+        // a late fix is no longer where they are
+        if sample.horizontalAccuracy <= Self.rerouteAccuracy, sample.timestamp >= lastPreciseFixAt ?? .distantPast {
             lastPreciseFix = sample.coordinate
             lastPreciseFixAt = sample.timestamp
         }
@@ -554,20 +555,23 @@ actor TripManager: TripStateProviding {
         let time = now()
         // warned of when the route was planned
         let planned = Set(route.unavoidedReports.map(\.id))
-        var warned: [Report] = []
+        var nearUser: [Report] = []
+        var nearEnd: [Report] = []
         var avoidable: [Report] = []
         for report in nearbyReports
         where report.expiresAt > time && !report.isRemoved && !actedOnReportIDs.contains(report.id) && !planned.contains(report.id) {
             guard let along = ReportExclusions.distanceAlong(route, passing: report, from: walked) else { continue }
             // the routing drops a report this near either end first, so a new route would pass it anyway
-            if along - walked < ReportAwareRoutingService.endpointClearance
-                || route.totalDistance - along < ReportAwareRoutingService.endpointClearance {
-                warned.append(report)
+            if along - walked < ReportAwareRoutingService.endpointClearance {
+                nearUser.append(report)
+            } else if route.totalDistance - along < ReportAwareRoutingService.endpointClearance {
+                nearEnd.append(report)
             } else {
                 avoidable.append(report)
             }
         }
-        let hasNear = !warned.isEmpty
+        var warned = nearUser + nearEnd
+        let warning = nearUser.isEmpty ? "New obstacle reported ahead." : "New obstacle reported just ahead."
         if !avoidable.isEmpty, rerouteTask == nil {
             if reportRerouteCount >= Self.maximumReportReroutes {
                 warned += avoidable
@@ -575,9 +579,9 @@ actor TripManager: TripStateProviding {
                 actedOnReportIDs.formUnion((avoidable + warned).map(\.id))
                 // said by the reroute's task before it asks, so its answer can't come first; and in flight from here,
                 // so a fix or snapshot meanwhile waits for it
-                var announcements = warned.first.map { near in
-                    [maneuver(Self.nearReportSpeech, .high, haptic: .attention, expiresIn: 10,
-                              key: "report-warning-\(near.id)")]
+                // the reroute's own line covers those near the end
+                var announcements = nearUser.first.map { near in
+                    [maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(near.id)")]
                 } ?? []
                 announcements.append(maneuver("New obstacle reported ahead. Finding a new route.", .high,
                                               haptic: .attention, expiresIn: 15,
@@ -590,8 +594,7 @@ actor TripManager: TripStateProviding {
         }
         guard let first = warned.first else { return }
         actedOnReportIDs.formUnion(warned.map(\.id))
-        await submit(maneuver(hasNear ? Self.nearReportSpeech : "New obstacle reported ahead.", .high,
-                              haptic: .attention, expiresIn: 10, key: "report-warning-\(first.id)"))
+        await submit(maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(first.id)"))
     }
 
     private func checkNearbyReports(at coordinate: GeoCoordinate) {
@@ -665,7 +668,8 @@ actor TripManager: TripStateProviding {
         lastRerouteRequest = now()
         let version = routeVersion
         rerouteTask = Task { [routing] in
-            for announcement in announcements where !Task.isCancelled {
+            // not after a pause that came first
+            for announcement in announcements where !Task.isCancelled && self.phase == .active {
                 await self.submit(announcement)
             }
             let result: Result<NavigationRoute, any Error>
