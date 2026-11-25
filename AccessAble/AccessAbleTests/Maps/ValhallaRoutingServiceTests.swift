@@ -163,14 +163,47 @@ struct ValhallaRoutingServiceTests {
         #expect(request.url?.query == nil)
     }
 
-    @Test(arguments: [nil, "", "  ", "$(STADIA_API_KEY)"] as [String?])
-    func missingStadiaKeyIsNil(_ value: String?) {
+    @Test(arguments: [
+        nil, "", "  ", "\n", "$(STADIA_API_KEY)", "paste-your-key-here", "PASTE-YOUR-KEY-HERE", "YOUR_KEY", "<key>",
+        "\"paste-your-key-here\"", "\"\"", "''", 42,
+    ] as [(any Sendable)?])
+    func missingStadiaKeyIsNil(_ value: (any Sendable)?) {
         #expect(StadiaConfig.apiKey(from: value) == nil)
     }
 
     @Test
     func stadiaKeyIsTrimmed() {
         #expect(StadiaConfig.apiKey(from: " abc ") == "abc")
+        #expect(StadiaConfig.apiKey(from: "\nabc\n") == "abc")
+    }
+
+    @Test(arguments: ["\"abc\"", "'abc'", " \"abc\" "])
+    func stadiaKeyQuotesAreStripped(_ value: String) {
+        #expect(StadiaConfig.apiKey(from: value) == "abc")
+    }
+
+    @Test(arguments: [nil, "", "  ", "paste-your-key-here", "$(STADIA_API_KEY)"] as [String?])
+    func liveFallsBackToDemoServerWithoutRealKey(_ value: String?) {
+        let endpoint = ValhallaEndpoint.live(apiKey: StadiaConfig.apiKey(from: value))
+        #expect(endpoint.baseURL == ValhallaEndpoint.publicDemo.baseURL)
+        #expect(endpoint.stadiaAPIKey == nil)
+    }
+
+    @Test
+    func liveUsesStadiaWithRealKey() {
+        let endpoint = ValhallaEndpoint.live(apiKey: StadiaConfig.apiKey(from: " \"abc\" "))
+        #expect(endpoint.baseURL == ValhallaEndpoint.stadia(apiKey: "abc").baseURL)
+        #expect(endpoint.stadiaAPIKey == "abc")
+    }
+
+    @Test(arguments: [401, 403])
+    func rejectedStadiaKeyIsNotAuthorized(_ status: Int) async {
+        let service = ValhallaRoutingService(endpoint: .stadia(apiKey: "k")) { request in
+            (Data(), HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        }
+        await #expect(throws: RoutingError.notAuthorized) {
+            try await route(with: service)
+        }
     }
 
     @Test(arguments: [(0.01, 0.5), (100.0, 25.0)])
@@ -272,6 +305,8 @@ struct ValhallaRoutingServiceTests {
     @Test(arguments: [
         (403, "", RoutingError.serverUnavailable),
         (401, "", .serverUnavailable),
+        (402, "", .usageLimitReached),
+        (408, "", .serverUnavailable),
         (429, "", .usageLimitReached),
         (500, "", .serverUnavailable),
         (503, "", .serverUnavailable),

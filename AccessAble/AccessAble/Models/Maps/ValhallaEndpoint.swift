@@ -18,8 +18,12 @@ struct ValhallaEndpoint: Sendable {
     /// Free FOSSGIS demo server: fair use only (about 1 request per second), no uptime guarantee.
     static let publicDemo = ValhallaEndpoint(baseURL: URL(string: "https://valhalla1.openstreetmap.de")!)
 
-    /// Stadia Maps' hosted Valhalla. Each route uses the team's credits; HTTP 429 means they ran out
-    /// or Stadia is throttling us.
+    /// Stadia Maps' hosted Valhalla. Every route request spends the team's credits; check Stadia's
+    /// pricing page for the cost (#317 assumed 20 credits per route). With REPORT-4's staged fallback one
+    /// route request can send up to 3 requests, and rerouting is capped at 5 per trip, so a trip can cost
+    /// about 18 requests. Overage is off, so running out of credits returns HTTP 429.
+    /// The key ships inside the app binary: if it leaks, rotate it in the Stadia dashboard. Never add
+    /// Secrets.xcconfig to GitHub, including through the web upload.
     static func stadia(apiKey: String) -> ValhallaEndpoint {
         ValhallaEndpoint(
             baseURL: URL(string: "https://api.stadiamaps.com")!, routePath: "route/v1", stadiaAPIKey: apiKey
@@ -28,8 +32,10 @@ struct ValhallaEndpoint: Sendable {
 
     /// Stadia when this build has a key. Without one, falls back to the public demo server so a build
     /// made without the key still launches and routes. It is read at launch, so it must never crash.
-    static var live: ValhallaEndpoint {
-        if let key = StadiaConfig.apiKey { return .stadia(apiKey: key) }
+    static var live: ValhallaEndpoint { live(apiKey: StadiaConfig.apiKey) }
+
+    static func live(apiKey: String?) -> ValhallaEndpoint {
+        if let apiKey { return .stadia(apiKey: apiKey) }
         log.fault("STADIA_API_KEY missing from Secrets.xcconfig; routing through the public demo server")
         return .publicDemo
     }
@@ -40,10 +46,18 @@ enum StadiaConfig {
     /// Nil until the member has added STADIA_API_KEY to their AccessAble/Config/Secrets.xcconfig.
     static var apiKey: String? { apiKey(from: Bundle.main.object(forInfoDictionaryKey: "StadiaAPIKey")) }
 
+    /// Text copied from Secrets.example.xcconfig that was never replaced with a real key.
+    private static let placeholders: Set<String> = ["paste-your-key-here", "your_key", "your-key", "your_api_key"]
+
     /// An unset build setting reaches Info.plist as "" or, if unexpanded, as "$(STADIA_API_KEY)".
+    /// xcconfig keeps quotes around a value, so they are stripped. Placeholders count as no key.
     static func apiKey(from value: Any?) -> String? {
-        guard let raw = (value as? String)?.trimmingCharacters(in: .whitespaces),
-              !raw.isEmpty, !raw.contains("$(") else { return nil }
+        guard var raw = (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) else { return nil }
+        if raw.count >= 2, let first = raw.first, first == raw.last, first == "\"" || first == "'" {
+            raw = String(raw.dropFirst().dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard !raw.isEmpty, !raw.contains("$("), !(raw.hasPrefix("<") && raw.hasSuffix(">")),
+              !placeholders.contains(raw.lowercased()) else { return nil }
         return raw
     }
 }
