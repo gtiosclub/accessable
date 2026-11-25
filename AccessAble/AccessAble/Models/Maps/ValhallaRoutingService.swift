@@ -56,13 +56,20 @@ struct ValhallaRoutingService: RoutingService {
             return try decodeRoute(data)
         case 400:
             throw requestError(data)
-        // 429 is Stadia out of credits or a server throttling us.
-        case 429:
-            log.error("Valhalla usage limit reached: HTTP 429")
+        // 429 is Stadia out of credits or a server throttling us; 402 is Stadia asking for payment.
+        case 402, 429:
+            log.error("Valhalla usage limit reached: HTTP \(http.statusCode, privacy: .public)")
             throw RoutingError.usageLimitReached
         // 401/403 from Stadia means a missing or rejected key; from the demo server, blocking us.
         case 401, 403:
-            log.error("Valhalla refused us: HTTP \(http.statusCode, privacy: .public). Check STADIA_API_KEY.")
+            if endpoint.stadiaAPIKey != nil {
+                log.fault("Stadia rejected the API key: HTTP \(http.statusCode, privacy: .public). Check STADIA_API_KEY.")
+                throw RoutingError.notAuthorized
+            }
+            log.error("Valhalla refused us: HTTP \(http.statusCode, privacy: .public)")
+            throw RoutingError.serverUnavailable
+        case 408:
+            log.error("Valhalla request timed out: HTTP 408")
             throw RoutingError.serverUnavailable
         case 500...599:
             log.error("Valhalla unavailable: HTTP \(http.statusCode, privacy: .public)")
