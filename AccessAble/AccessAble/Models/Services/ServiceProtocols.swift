@@ -110,14 +110,6 @@ protocol TripStateProviding: Sendable {
     func endTrip() async
     /// A new route from where the user is now, for a running trip, when they ask for one.
     func reroute() async
-    /// Active reports received during the current trip.
-    func tripReports() -> AsyncStream<[Report]>
-}
-
-extension TripStateProviding {
-    func tripReports() -> AsyncStream<[Report]> {
-        AsyncStream { $0.finish() }
-    }
 }
 
 /// The trip's Live Activity on the lock screen and in the Dynamic Island; one at a time.

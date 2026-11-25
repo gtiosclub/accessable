@@ -11,7 +11,6 @@ private let log = Logger(subsystem: "AccessAble", category: "TripManager")
 actor TripManager: TripStateProviding {
     private nonisolated let states = Broadcaster<TripState>(replaysLatest: true)
     private nonisolated let routes = Broadcaster<NavigationRoute?>(replaysLatest: true)
-    private nonisolated let reportLists = Broadcaster<[Report]>(replaysLatest: true)
 
     private let location: any LocationProvider
     private let routing: any RoutingService
@@ -142,10 +141,6 @@ actor TripManager: TripStateProviding {
         routes.stream()
     }
 
-    nonisolated func tripReports() -> AsyncStream<[Report]> {
-        reportLists.stream()
-    }
-
     func startTrip(route: NavigationRoute, destination: Destination) async {
         generation += 1
         let generation = generation
@@ -180,7 +175,6 @@ actor TripManager: TripStateProviding {
         currentReports = []
         hasInitialReportSnapshot = false
         seenReportIDs = []
-        reportLists.send([])
         routes.send(route)
         publish(at: now())
         recorder?.tripStarted(at: now())
@@ -499,7 +493,6 @@ actor TripManager: TripStateProviding {
 
         let active = reports.filter { $0.expiresAt > now() }
         currentReports = active
-        reportLists.send(active)
 
         // Reports present when the trip starts are not newly reported obstacles.
         if !hasInitialReportSnapshot {

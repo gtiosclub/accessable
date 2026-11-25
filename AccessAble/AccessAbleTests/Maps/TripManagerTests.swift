@@ -253,13 +253,6 @@ private actor ManualReportService: ReportService {
     func waitUntilHandled() async {
         await changes.waitUntilHandled()
     }
-
-    // REPORT-6 uses this to record one response from each nearby user.
-    func confirm(
-        _ reportID: String,
-        isStillPresent: Bool,
-        userID: String
-    ) async throws {}
 }
 
 /// Records submissions in order. Delivers each one at once unless `autoDelivers` is off, and can hold one
