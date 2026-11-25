@@ -2200,7 +2200,7 @@ struct TripManagerReportTests {
     }
 
     @Test
-    func aReportByTheDestinationWithARerouteIsWarnedOfAsAhead() async throws {
+    func aReportByTheDestinationWithARerouteIsCoveredByTheRerouteLine() async throws {
         let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
         await harness.start()
         await harness.walk(from: 0, to: 20)
@@ -2210,7 +2210,8 @@ struct TripManagerReportTests {
         await harness.router.waitForRequests(1)
 
         await waitUntil { await harness.engine.texts.contains(reportReroute) }
-        #expect(await spokenAboutReports(harness) == [reportWarning, reportReroute])
+        #expect(await harness.router.options.map { Set($0.reports.map(\.id)) } == [["by the door", "on the way"]])
+        #expect(await spokenAboutReports(harness) == [reportReroute])
     }
 
     @Test

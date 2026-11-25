@@ -569,7 +569,8 @@ actor TripManager: TripStateProviding {
                 actedOnReportIDs.formUnion((avoidable + warned).map(\.id))
                 // said by the reroute's task before it asks, so its answer can't come first; and in flight from here,
                 // so a fix or snapshot meanwhile waits for it
-                var announcements = warned.first.map { near in
+                // the reroute's own line covers those near the end
+                var announcements = nearUser.first.map { near in
                     [maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(near.id)")]
                 } ?? []
                 announcements.append(maneuver("New obstacle reported ahead. Finding a new route.", .high,
