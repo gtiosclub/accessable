@@ -9,10 +9,23 @@ final class Broadcaster<Element: Sendable>: Sendable {
     private let continuations = Mutex<[UUID: AsyncStream<Element>.Continuation]>([:])
     private let latestValue = Mutex<Element?>(nil)
     private let replaysLatest: Bool
+    private let replayWindow: (maxAge: TimeInterval, now: @Sendable () -> Date)?
+    private let latestSent = Mutex<(value: Element, at: Date)?>(nil)
 
     /// - Parameter replaysLatest: When true, new subscribers immediately receive the most recent value.
     init(replaysLatest: Bool = false) {
         self.replaysLatest = replaysLatest
+        replayWindow = nil
+    }
+
+    /// New subscribers immediately receive the most recent value only while it is fresh; after that they wait
+    /// for the next one, as without replay.
+    /// - Parameters:
+    ///   - maxAge: Seconds after it was sent that a value is still replayed.
+    ///   - now: The current time, to age the latest value.
+    init(replaysWithin maxAge: TimeInterval, now: @escaping @Sendable () -> Date = { .now }) {
+        replaysLatest = false
+        replayWindow = (maxAge, now)
     }
 
     func stream(bufferingPolicy: AsyncStream<Element>.Continuation.BufferingPolicy = .bufferingNewest(1)) -> AsyncStream<Element> {
@@ -20,6 +33,10 @@ final class Broadcaster<Element: Sendable>: Sendable {
         let id = UUID()
         continuation.onTermination = { [weak self] _ in
             self?.continuations.withLock { _ = $0.removeValue(forKey: id) }
+        }
+        // yielded before subscribing, so a value sent meanwhile lands after it rather than being replaced by it
+        if let fresh = freshLatest() {
+            continuation.yield(fresh)
         }
         continuations.withLock { $0[id] = continuation }
         if replaysLatest, let value = latest {
@@ -33,6 +50,10 @@ final class Broadcaster<Element: Sendable>: Sendable {
 
     func send(_ value: Element) {
         if replaysLatest { latestValue.withLock { $0 = value } }
+        if let replayWindow {
+            let now = replayWindow.now()
+            latestSent.withLock { $0 = (value, now) }
+        }
         let targets = continuations.withLock { Array($0.values) }
         for continuation in targets { continuation.yield(value) }
     }
@@ -43,5 +64,10 @@ final class Broadcaster<Element: Sendable>: Sendable {
             return Array(dict.values)
         }
         for continuation in targets { continuation.finish() }
+    }
+
+    private func freshLatest() -> Element? {
+        guard let replayWindow, let sent = latestSent.withLock({ $0 }) else { return nil }
+        return replayWindow.now().timeIntervalSince(sent.at) <= replayWindow.maxAge ? sent.value : nil
     }
 }
