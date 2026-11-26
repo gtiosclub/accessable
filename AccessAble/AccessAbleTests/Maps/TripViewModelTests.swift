@@ -200,16 +200,6 @@ private let pickedRoute = try! NavigationRoute(coordinates: [origin, library.coo
     RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
 ], estimatedDuration: 95)
 
-private final class ManualDate: Sendable {
-    private let date = Mutex(Date(timeIntervalSince1970: 1_700_000_000))
-
-    var now: Date { date.withLock { $0 } }
-
-    func advance(by seconds: TimeInterval) {
-        date.withLock { $0 = $0.addingTimeInterval(seconds) }
-    }
-}
-
 @MainActor
 private final class TripScreen {
     let trip: ControlledTripProvider

@@ -44,6 +44,8 @@ struct AppServices: Sendable {
     var distanceSettings = DistanceSettings()
     /// Field-test recording of trips, off until turned on in Developer Tools.
     var tripRecorder = TripRecorder()
+    /// The trip in progress, kept for resuming after the app closes; nil where trips aren't kept.
+    var savedTrips: SavedTripStore?
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
@@ -107,6 +109,7 @@ struct AppServices: Sendable {
                 services.callSignaling = FirestoreCallSignaling(auth: services.auth, tokenURL: tokenURL)
             }
         }
+        services.savedTrips = SavedTripStore()
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
             reports: services.reportsAvailable ? services.reports : nil,
@@ -114,7 +117,8 @@ struct AppServices: Sendable {
             landmarks: services.landmarks,
             setTripTracking: { await gps.setTripTracking($0) },
             distances: distanceSettings,
-            recorder: services.tripRecorder
+            recorder: services.tripRecorder,
+            savedTrips: services.savedTrips
         )
 
         // Real calls need both halves: the placeholder's fake token would make LiveKit refuse
@@ -167,6 +171,8 @@ struct AppServices: Sendable {
         services.routing = PlaceholderRoutingService()
         // A real trip would start GPS tracking and background location from a preview or test.
         services.trip = PlaceholderTripProvider()
+        // Nor offer to resume a trip the app saved.
+        services.savedTrips = nil
         // Nor put a trip on the simulator's lock screen.
         services.tripActivity = PlaceholderTripActivityClient()
         // Nor wait on GPS and Apple Maps for "where am I".

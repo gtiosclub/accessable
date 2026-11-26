@@ -477,19 +477,23 @@ private struct Harness {
     let states = StateRecorder()
     let manager: TripManager
     let route: NavigationRoute
+    let savedTrips: SavedTripStore?
 
     /// No campus buildings or crossings by default, so only the landmark and crossing tests have any.
+    /// - Parameter savedTripsDirectory: Where the trip is saved for resuming, on the harness's clock; nil saves none.
     init(
         route: NavigationRoute? = nil,
         reroutes: [Result<NavigationRoute, RoutingError>] = [],
         buildings: [CampusBuilding] = [],
         crossings: [CampusCrossing] = [],
         distances: DistanceSettings = DistanceSettings(units: .metres),
-        recorder: TripRecorder? = nil
+        recorder: TripRecorder? = nil,
+        savedTripsDirectory: URL? = nil
     ) throws {
         let route = try route ?? cornerRoute()
         self.route = route
         router = ScriptedRouter(reroutes)
+        savedTrips = savedTripsDirectory.map { [clock] in SavedTripStore(directory: $0, now: { clock.now() }) }
         manager = TripManager(
             location: location, routing: router, announcements: engine,
             reports: reports, currentUserID: { reporterSelf },
@@ -497,6 +501,7 @@ private struct Harness {
             setTripTracking: { [background] in background.record($0) },
             distances: distances,
             recorder: recorder,
+            savedTrips: savedTrips,
             now: { [clock] in clock.now() },
             sleep: { [clock] in try await clock.sleep($0) }
         )
@@ -2059,6 +2064,87 @@ struct TripManagerRecordingTests {
 
         let recordings = try recorder.recordings()
         #expect(recordings.isEmpty)
+    }
+}
+
+// MARK: Saving the trip for resuming
+
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerSavedTripTests {
+    private static func directory() -> URL {
+        FileManager.default.temporaryDirectory.appending(path: "TripManagerSavedTripTests-\(UUID())")
+    }
+
+    @Test
+    func savesAtTheStartAndEachTimeAStepIsPassed() async throws {
+        let directory = Self.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = try Harness(savedTripsDirectory: directory)
+        let store = try #require(harness.savedTrips)
+        await harness.start()
+
+        let started = try #require(store.load())
+        #expect(started.route == harness.route)
+        #expect(started.destination == library)
+        #expect(started.passedStepCount == 1)
+        #expect(started.startedAt == TripWalk.start)
+        #expect(started.savedAt == TripWalk.start)
+
+        // past the corner at 100 m
+        await harness.walk(from: 0, to: 110)
+        let passed = try #require(store.load())
+        #expect(passed.tripID == started.tripID)
+        #expect(passed.passedStepCount == 2)
+        #expect(passed.startedAt == TripWalk.start)
+        #expect(passed.savedAt > started.savedAt)
+    }
+
+    @Test
+    func savesTheNewRouteAfterAReroute() async throws {
+        let directory = Self.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let newRoute = try eastRoute(from: harness0Origin)
+        let harness = try Harness(reroutes: [.success(newRoute)], savedTripsDirectory: directory)
+        let store = try #require(harness.savedTrips)
+        await harness.start()
+        await harness.walk(from: 0, to: 50)
+        await harness.goOffRoute(at: 49)
+        await harness.router.waitForRequests(1)
+        #expect(store.load()?.route == harness.route)
+
+        await harness.router.respond()
+        await harness.states.waitFor { $0.nextManeuver?.instruction == "Arrive" }
+        let saved = try #require(store.load())
+        #expect(saved.route == newRoute)
+        #expect(saved.passedStepCount == 1)
+    }
+
+    @Test
+    func endingTheTripDeletesIt() async throws {
+        let directory = Self.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = try Harness(savedTripsDirectory: directory)
+        let store = try #require(harness.savedTrips)
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        await harness.manager.endTrip()
+
+        #expect(store.load() == nil)
+        #expect(!FileManager.default.fileExists(atPath: store.url.path()))
+    }
+
+    @Test
+    func arrivingDeletesIt() async throws {
+        let directory = Self.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = try Harness(savedTripsDirectory: directory)
+        let store = try #require(harness.savedTrips)
+        await harness.start()
+        await harness.walk(from: 0, to: 160)
+        await harness.states.waitFor { $0.phase == .arrived }
+
+        #expect(store.load() == nil)
+        #expect(!FileManager.default.fileExists(atPath: store.url.path()))
     }
 }
 
