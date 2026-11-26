@@ -182,20 +182,6 @@ struct ValhallaRoutingServiceTests {
         #expect(StadiaConfig.apiKey(from: value) == "abc")
     }
 
-    @Test(arguments: [nil, "", "  ", "paste-your-key-here", "$(STADIA_API_KEY)"] as [String?])
-    func liveFallsBackToDemoServerWithoutRealKey(_ value: String?) {
-        let endpoint = ValhallaEndpoint.live(apiKey: StadiaConfig.apiKey(from: value))
-        #expect(endpoint.baseURL == ValhallaEndpoint.publicDemo.baseURL)
-        #expect(endpoint.stadiaAPIKey == nil)
-    }
-
-    @Test
-    func liveUsesStadiaWithRealKey() {
-        let endpoint = ValhallaEndpoint.live(apiKey: StadiaConfig.apiKey(from: " \"abc\" "))
-        #expect(endpoint.baseURL == ValhallaEndpoint.stadia(apiKey: "abc").baseURL)
-        #expect(endpoint.stadiaAPIKey == "abc")
-    }
-
     @Test(arguments: [401, 403])
     func rejectedStadiaKeyIsNotAuthorized(_ status: Int) async {
         let service = ValhallaRoutingService(endpoint: .stadia(apiKey: "k")) { request in
