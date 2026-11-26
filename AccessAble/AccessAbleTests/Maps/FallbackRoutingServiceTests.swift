@@ -562,7 +562,13 @@ struct FallbackRoutingServiceTests {
     }
 
     @Test
-    func eachServerGetsItsOwnTimeoutBeforeApple() async throws {
+    func chainBudgetIsEightSeconds() {
+        #expect(FallbackRoutingService.chainBudget == .seconds(8))
+    }
+
+    /// Two hanging servers cost the chain's budget before Apple Maps, not a full timeout each.
+    @Test
+    func twoHangingServersReachAppleAfterTheChainBudget() async throws {
         let stadia = FakeRouting(.hangs)
         let fossgis = FakeRouting(.hangs)
         let apple = FakeRouting(.returns(Self.backupRoute))
@@ -570,13 +576,95 @@ struct FallbackRoutingServiceTests {
 
         let routing = request(chain(stadia, fossgis, apple, clock: clock))
         try await timeOut(stadia, on: clock)
-        try await timeOut(fossgis, on: clock)
+        await fossgis.waitForRequests(1)
+        try await clock.waitForSleepers(1)
+        clock.advance(by: FallbackRoutingService.chainBudget - FallbackRoutingService.defaultTimeout - .seconds(1))
+        #expect(await apple.calls == 0)
+        clock.advance(by: .seconds(1))
         let route = try await routing.value
 
         #expect(route.source == .appleMaps)
         await stadia.waitForCancellations(1)
         await fossgis.waitForCancellations(1)
         #expect(await apple.calls == 1)
+    }
+
+    @Test
+    func aServerFailingFastLeavesTheNextItsFullTimeout() async throws {
+        let gate = ManualClock()
+        let stadia = FakeRouting(.fails(RoutingError.serverUnavailable))
+        let fossgis = FakeRouting(.returnsLater(Self.valhallaRoute, gate))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+
+        let routing = request(chain(stadia, fossgis, apple, clock: clock))
+        await fossgis.waitForRequests(1)
+        try await clock.waitForSleepers(1)
+        clock.advance(by: FallbackRoutingService.defaultTimeout - .seconds(1))
+        try await gate.waitForSleepers(1)
+        gate.advance(by: .seconds(1))
+
+        #expect(try await routing.value == Self.valhallaRoute)
+        #expect(await apple.calls == 0)
+    }
+
+    @Test
+    func twoHangingServersWithExclusionsRejectThemAfterTheChainBudget() async throws {
+        let stadia = FakeRouting(.hangs)
+        let fossgis = FakeRouting(.hangs)
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+
+        let routing = request(chain(stadia, fossgis, apple, clock: clock), options: Self.exclusions)
+        try await timeOut(stadia, on: clock)
+        await fossgis.waitForRequests(1)
+        try await clock.waitForSleepers(1)
+        clock.advance(by: FallbackRoutingService.chainBudget - FallbackRoutingService.defaultTimeout)
+
+        await #expect(throws: RoutingError.exclusionsRejected) { try await routing.value }
+        await fossgis.waitForCancellations(1)
+        #expect(await apple.calls == 0)
+    }
+
+    @Test
+    func noServerIsAskedOnceTheChainBudgetIsSpent() async throws {
+        let stadia = FakeRouting(.hangs)
+        let fossgis = FakeRouting(.hangs)
+        let third = FakeRouting(.returns(Self.valhallaRoute))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+        let service = FallbackRoutingService(primaries: [stadia, fossgis, third], fallback: apple, clock: clock)
+
+        let routing = request(service)
+        try await timeOut(stadia, on: clock)
+        await fossgis.waitForRequests(1)
+        try await clock.waitForSleepers(1)
+        clock.advance(by: FallbackRoutingService.chainBudget - FallbackRoutingService.defaultTimeout)
+
+        #expect(try await routing.value.source == .appleMaps)
+        #expect(await third.calls == 0)
+    }
+
+    /// FOSSGIS, cut short by the chain's budget, is skipped like any server that timed out.
+    @Test
+    func aServerCutShortByTheChainBudgetIsRememberedAsTimedOut() async throws {
+        let stadia = FakeRouting(.hangs)
+        let fossgis = FakeRouting(byCall: { $0 == 0 ? .hangs : .returns(Self.valhallaRoute) })
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+        let service = chain(stadia, fossgis, apple, clock: clock)
+
+        let first = request(service)
+        try await timeOut(stadia, on: clock)
+        await fossgis.waitForRequests(1)
+        try await clock.waitForSleepers(1)
+        clock.advance(by: FallbackRoutingService.chainBudget - FallbackRoutingService.defaultTimeout)
+        _ = try await first.value
+
+        #expect(try await request(service).value == Self.backupRoute)
+        #expect(await stadia.calls == 1)
+        #expect(await fossgis.calls == 1)
+        #expect(await apple.calls == 2)
     }
 
     @Test

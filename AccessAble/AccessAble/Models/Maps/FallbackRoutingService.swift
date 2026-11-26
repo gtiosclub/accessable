@@ -5,7 +5,9 @@ import Synchronization
 private let log = Logger(subsystem: "AccessAble", category: "Routing")
 
 /// Asks each of `primaries` (Valhalla servers) in order and, when they all fail or take longer than `timeout`,
-/// `fallback` (Apple Maps), whose routes come back with `source` `.appleMaps` for the caller to tell the user. Moving
+/// `fallback` (Apple Maps). The servers share `chainBudget`: each waits at most what is left of it, and once it is
+/// spent no later server is asked, so two hanging servers cost one wait of `chainBudget` before Apple Maps, not two
+/// of `timeout`. Apple Maps' routes come back with `source` `.appleMaps` for the caller to tell the user. Moving
 /// from one Valhalla server to the next is silent, since their routes are alike. Cancellation is passed on, never
 /// treated as a failure, and no later server is asked.
 ///
@@ -14,11 +16,14 @@ private let log = Logger(subsystem: "AccessAble", category: "Routing")
 /// `ReportAwareRoutingService` to try again with fewer exclusions. Its last try has none, so a route it gets from
 /// Apple Maps still lists the reports it passes.
 ///
-/// After a timeout, a rejected key or an exhausted usage limit, that server is skipped for `timeoutMemory`, so a dead
-/// or refusing server doesn't cost the wait or the request again at each of those tries and each reroute: requests go
-/// to the next server, or once none is left, are rejected at once with exclusions and go to Apple Maps without.
+/// After a timeout (including one cut short by `chainBudget`), a rejected key or an exhausted usage limit, that
+/// server is skipped for `timeoutMemory`, so a dead or refusing server doesn't cost the wait or the request again at
+/// each of those tries and each reroute: requests go to the next server, or once none is left, are rejected at once
+/// with exclusions and go to Apple Maps without.
 struct FallbackRoutingService: RoutingService {
     static let defaultTimeout: Duration = .seconds(6)
+    /// How long all the Valhalla servers of one request may take together before Apple Maps is asked.
+    static let chainBudget: Duration = .seconds(8)
     /// After a timeout or a refusal, how long requests skip that server, so each try and each reroute doesn't repeat it.
     static let timeoutMemory: Duration = .seconds(120)
 
@@ -57,6 +62,7 @@ struct FallbackRoutingService: RoutingService {
     ) async throws -> NavigationRoute {
         let excludes = !options.excludeLocations.isEmpty || !options.excludePolygons.isEmpty
         var primaryErrors: [RoutingError] = []
+        let elapsed = clock.stopwatch()
         for (index, primary) in primaries.enumerated() {
             try Task.checkCancellation()
             let server = index + 1
@@ -67,14 +73,20 @@ struct FallbackRoutingService: RoutingService {
                 if let refusal = outage.refusal { primaryErrors.append(refusal) }
                 continue
             }
+            let wait = min(timeout, Self.chainBudget - elapsed())
+            guard wait > .zero else {
+                log.notice("Valhalla servers used their \(String(describing: Self.chainBudget), privacy: .public), skipping server \(server)")
+                continue
+            }
             do {
-                let route = try await primaryRoute(primary, from: origin, to: destination, options: options)
+                let route = try await primaryRoute(primary, timeout: wait, from: origin, to: destination,
+                                                   options: options)
                 lastTimeout.clear()
                 return route
             } catch is CancellationError where Task.isCancelled {
                 throw CancellationError()
             } catch is PrimaryTimedOut {
-                log.error("Valhalla server \(server) took longer than \(String(describing: timeout), privacy: .public)")
+                log.error("Valhalla server \(server) took longer than \(String(describing: wait), privacy: .public)")
                 lastTimeout.record(clock.stopwatch(), refusal: nil)
             } catch {
                 log.error("Valhalla server \(server) failed: \(String(describing: error), privacy: .public)")
@@ -109,7 +121,7 @@ struct FallbackRoutingService: RoutingService {
     /// `primary`'s route or error, or `PrimaryTimedOut` after `timeout`, whichever comes first; the other is
     /// cancelled, as is `primary` when the caller is.
     private func primaryRoute(
-        _ primary: any RoutingService,
+        _ primary: any RoutingService, timeout: Duration,
         from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
     ) async throws -> NavigationRoute {
         let outcome = FirstOutcome<NavigationRoute>()
@@ -125,7 +137,7 @@ struct FallbackRoutingService: RoutingService {
                         outcome.finish(.failure(error))
                     }
                 })
-                outcome.cancelsOnFinish(Task { [clock, timeout] in
+                outcome.cancelsOnFinish(Task { [clock] in
                     do { try await clock.sleep(for: timeout) } catch { return }
                     outcome.finish(.failure(PrimaryTimedOut()))
                 })
