@@ -371,6 +371,21 @@ struct ReportAwareRoutingServiceTests {
         #expect(actual.avoidedReports.isEmpty)
     }
 
+    /// Valhalla excludes the edge nearest a report, so a route can still pass it on the path beside it.
+    @Test
+    func anExcludedReportTheRouteStillPassesIsWarnedOf() async throws {
+        let report = report(at: corner)
+        let base = RoutingServiceFake([.success(try route(via: corner))])
+        let clock = ManualClock()
+
+        let actual = try await route(with: service(.reports([report]), base: base, clock: clock), base: base,
+                                     clock: clock)
+
+        #expect(await base.receivedOptions.map(\.excludeLocations) == [[corner]])
+        #expect(actual.unavoidedReports == [report])
+        #expect(actual.avoidedReports.isEmpty)
+    }
+
     @Test
     func aRouteWithoutExclusionsAvoidsNone() async throws {
         let base = RoutingServiceFake([.failure(.noRouteFound), .success(try route(via: otherCorner))])

@@ -4,8 +4,8 @@ import os
 private let log = Logger(subsystem: "AccessAble", category: "Routing")
 
 /// Routes around active community reports. Reports are best effort: if they can't be fetched in time, or no route
-/// avoids them, the route goes without and lists the reports it passes in `unavoidedReports`. Those it goes around
-/// are in `avoidedReports`.
+/// avoids them, the route goes without. Either way it lists the reports it passes in `unavoidedReports`, and those
+/// it goes around in `avoidedReports`.
 struct ReportAwareRoutingService: RoutingService {
     /// How long a route request waits for reports before going without them.
     static let reportTimeout: Duration = .seconds(2)
@@ -94,10 +94,11 @@ struct ReportAwareRoutingService: RoutingService {
         among nearby: [Report]
     ) async throws -> NavigationRoute {
         var route = try await base.route(from: origin, to: destination, options: exclusions.options)
-        let excluded = Set(exclusions.excluded.map(\.id))
-        route.unavoidedReports = ReportExclusions.reports(nearby.filter { !excluded.contains($0.id) }, passedBy: route)
-        // an excluded report the route still passes wasn't avoided
-        let passed = Set(ReportExclusions.reports(exclusions.excluded, passedBy: route).map(\.id))
+        // excluded ones too: Valhalla excludes the edge nearest a report, so a route along the path beside it can
+        // still pass it, and a blind user is safer told of an obstacle that turns out not to be in the way than not
+        // told of one that is
+        route.unavoidedReports = ReportExclusions.reports(nearby, passedBy: route)
+        let passed = Set(route.unavoidedReports.map(\.id))
         route.avoidedReports = ReportExclusions.reports(exclusions.excluded, within: Self.avoidanceCorridor, of: route)
             .filter { !passed.contains($0.id) }
         return route
