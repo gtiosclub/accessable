@@ -34,6 +34,8 @@ struct FallbackRoutingService: RoutingService {
     private let clock: any Clock<Duration>
     /// Each primary's last timeout or refusal, cleared when it answers. Shared by copies.
     private let lastTimeouts: [TimeoutMemory]
+    /// How the logs name each primary: its host, so field logs say which server failed without a key or a query.
+    private let serverNames: [String]
 
     init(
         primaries: [any RoutingService],
@@ -46,6 +48,9 @@ struct FallbackRoutingService: RoutingService {
         self.timeout = timeout
         self.clock = clock
         lastTimeouts = primaries.map { _ in TimeoutMemory() }
+        serverNames = primaries.enumerated().map { index, primary in
+            (primary as? ValhallaRoutingService)?.endpoint.baseURL.host() ?? "\(index + 1)"
+        }
     }
 
     init(
@@ -65,17 +70,17 @@ struct FallbackRoutingService: RoutingService {
         let elapsed = clock.stopwatch()
         for (index, primary) in primaries.enumerated() {
             try Task.checkCancellation()
-            let server = index + 1
+            let server = serverNames[index]
             let lastTimeout = lastTimeouts[index]
             if let outage = lastTimeout.outage, outage.elapsed < Self.timeoutMemory {
                 let what = outage.refusal.map { String(describing: $0) } ?? "timed out"
-                log.notice("Valhalla server \(server) \(what, privacy: .public) \(String(describing: outage.elapsed), privacy: .public) ago, skipping it")
+                log.notice("Valhalla server \(server, privacy: .public) \(what, privacy: .public) \(String(describing: outage.elapsed), privacy: .public) ago, skipping it")
                 if let refusal = outage.refusal { primaryErrors.append(refusal) }
                 continue
             }
             let wait = min(timeout, Self.chainBudget - elapsed())
             guard wait > .zero else {
-                log.notice("Valhalla servers used their \(String(describing: Self.chainBudget), privacy: .public), skipping server \(server)")
+                log.notice("Valhalla servers used their \(String(describing: Self.chainBudget), privacy: .public), skipping \(server, privacy: .public)")
                 continue
             }
             do {
@@ -86,10 +91,10 @@ struct FallbackRoutingService: RoutingService {
             } catch is CancellationError where Task.isCancelled {
                 throw CancellationError()
             } catch is PrimaryTimedOut {
-                log.error("Valhalla server \(server) took longer than \(String(describing: wait), privacy: .public)")
+                log.error("Valhalla server \(server, privacy: .public) took longer than \(String(describing: wait), privacy: .public)")
                 lastTimeout.record(clock.stopwatch(), refusal: nil)
             } catch {
-                log.error("Valhalla server \(server) failed: \(String(describing: error), privacy: .public)")
+                log.error("Valhalla server \(server, privacy: .public) failed: \(String(describing: error), privacy: .public)")
                 let routingError = error as? RoutingError ?? .invalidResponse
                 if routingError == .notAuthorized || routingError == .usageLimitReached {
                     lastTimeout.record(clock.stopwatch(), refusal: routingError)
