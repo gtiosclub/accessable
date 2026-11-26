@@ -99,17 +99,7 @@ struct TripPlan: Hashable, Sendable {
 
 // `Volunteer` now lives in Models/Calls/Volunteer.swift.
 
-struct ChatMessage: Identifiable, Hashable, Sendable {
-    let id: UUID
-    var text: String
-    var isFromMe: Bool
-
-    init(id: UUID = UUID(), text: String, isFromMe: Bool) {
-        self.id = id
-        self.text = text
-        self.isFromMe = isFromMe
-    }
-}
+// `ChatMessage` now lives in Models/Calls/Chat.swift.
 
 struct TripAnnouncement: Identifiable, Hashable, Sendable {
     enum Kind: Hashable, Sendable {
@@ -278,10 +268,6 @@ enum SampleContent {
         Volunteer(id: "catherine", name: "Catherine", availableUntil: "Until 4 PM", isOnline: true),
         Volunteer(id: "mahati", name: "Mahati", availableUntil: "Until 4 PM", isOnline: true),
     ]
-
-    static func conversation(with volunteer: Volunteer) -> [ChatMessage] {
-        [ChatMessage(text: "Hi! Will you be available at around 5:30 PM tomorrow to help me see my road?", isFromMe: true)]
-    }
 
     static let initialAnnouncements: [TripAnnouncement] = [
         TripAnnouncement(text: "Walk straight for 10 min; turn left", kind: .info),
