@@ -46,33 +46,35 @@ struct PlaceDetailView: View {
                         .accessibilityLabel("From \(origin?.name ?? "my location")")
                     RoutePreview(details: details, origin: origin)
                         .padding(.top, 4)
-                    VStack(spacing: 14) {
-                        Button("Start & Record New Route") {
-                            router.push(.trip(TripPlan(
-                                place: place, route: nil, isRecording: true, origin: origin,
-                                plannedRoute: details.plannedRoute
-                            )))
-                        }
-                        .buttonStyle(.pill(.destructive))
-                        .accessibilityHint("Starts walking and saves the route you take")
-
-                        if place.recordedRouteCount > 0 {
-                            Button("Start Recorded Route") { router.push(.routes(place, .recorded, origin: origin)) }
-                                .buttonStyle(.pill(.primary))
-                        }
-                        Button("Start New Route") {
-                            router.push(.routes(place, .new, origin: origin, planned: details.plannedRoute))
-                        }
-                            .buttonStyle(.pill(.primary))
-                        Button("Back") { router.pop() }
-                            .buttonStyle(.pill(.outline))
-                    }
-                    .padding(.top, 8)
                 }
                 .foregroundStyle(.white)
             }
             .defaultScrollAnchor(.bottom)
             .scrollBounceBehavior(.basedOnSize)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                BottomCardActions {
+                    Button("Start & Record New Route") {
+                        router.push(.trip(TripPlan(
+                            place: place, route: nil, isRecording: true, origin: origin,
+                            plannedRoute: details.plannedRoute
+                        )))
+                    }
+                    .buttonStyle(.pill(.destructive))
+                    .accessibilityHint("Starts walking and saves the route you take")
+
+                    if place.recordedRouteCount > 0 {
+                        Button("Start Recorded Route") { router.push(.routes(place, .recorded, origin: origin)) }
+                            .buttonStyle(.pill(.primary))
+                    }
+                    Button("Start New Route") {
+                        router.push(.routes(place, .new, origin: origin, planned: details.plannedRoute))
+                    }
+                        .buttonStyle(.pill(.primary))
+                    Button("Back") { router.pop() }
+                        .buttonStyle(.pill(.outline))
+                }
+                .foregroundStyle(.white)
+            }
         }
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }

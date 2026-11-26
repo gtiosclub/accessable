@@ -47,6 +47,17 @@ struct RoutePickerView: View {
                     case .new: walkingRoute
                     case .recorded: recordedRoute
                     }
+                }
+                .foregroundStyle(.white)
+            }
+            .defaultScrollAnchor(.bottom)
+            .scrollBounceBehavior(.basedOnSize)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                BottomCardActions {
+                    switch mode {
+                    case .new: walkingRouteActions
+                    case .recorded: recordedRouteActions
+                    }
                     Button("Back") { router.pop() }
                         .buttonStyle(.plain)
                         .font(.subheadline)
@@ -54,8 +65,6 @@ struct RoutePickerView: View {
                 }
                 .foregroundStyle(.white)
             }
-            .defaultScrollAnchor(.bottom)
-            .scrollBounceBehavior(.basedOnSize)
         }
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
@@ -74,6 +83,9 @@ struct RoutePickerView: View {
             .accessibilityAddTraits(.isHeader)
         RoutePreview(details: details, origin: origin)
             .padding(.top, 4)
+    }
+
+    private var walkingRouteActions: some View {
         Button("Pick Route") {
             guard let planned = details.plannedRoute else { return }
             router.push(.trip(TripPlan(place: place, route: nil, isRecording: false, origin: origin, plannedRoute: planned)))
@@ -82,7 +94,6 @@ struct RoutePickerView: View {
         .disabled(details.plannedRoute == nil)
         .opacity(details.plannedRoute == nil ? Theme.dimmedOpacity : 1)
         .accessibilityHint(details.plannedRoute == nil ? "Available once the route is found" : "Starts walking this route")
-        .padding(.top, 8)
     }
 
     // MARK: - Recorded: samples
@@ -96,25 +107,26 @@ struct RoutePickerView: View {
             .font(.title2)
         RouteStepsList(steps: sampleRoute.steps)
             .padding(.top, 4)
-        VStack(spacing: 14) {
-            Button("Pick Route") {
-                router.push(.trip(TripPlan(place: place, route: sampleRoute, isRecording: false, origin: origin)))
-            }
-            .buttonStyle(.pill(.primary))
-            .accessibilityHint("Starts walking this route")
+    }
 
-            if sampleRoutes.count > 1 {
-                HStack(spacing: 16) {
-                    Button("Last Route") { index -= 1 }
-                        .buttonStyle(.pill(.outline))
-                        .disabled(index == 0)
-                    Button("Next Route") { index += 1 }
-                        .buttonStyle(.pill(.primary))
-                        .disabled(index == sampleRoutes.count - 1)
-                }
+    @ViewBuilder
+    private var recordedRouteActions: some View {
+        Button("Pick Route") {
+            router.push(.trip(TripPlan(place: place, route: sampleRoute, isRecording: false, origin: origin)))
+        }
+        .buttonStyle(.pill(.primary))
+        .accessibilityHint("Starts walking this route")
+
+        if sampleRoutes.count > 1 {
+            HStack(spacing: 16) {
+                Button("Last Route") { index -= 1 }
+                    .buttonStyle(.pill(.outline))
+                    .disabled(index == 0)
+                Button("Next Route") { index += 1 }
+                    .buttonStyle(.pill(.primary))
+                    .disabled(index == sampleRoutes.count - 1)
             }
         }
-        .padding(.top, 8)
     }
 
     private var sampleRoute: SampleRoute { sampleRoutes[index] }

@@ -209,6 +209,24 @@ struct BottomCard<Content: View>: View {
     }
 }
 
+/// The buttons under a `BottomCard` that scrolls. Goes in the scroll view's bottom
+/// `safeAreaInset`: a ScrollView clips its content's background, so only a view outside it
+/// can fill the black down to the bottom edge.
+struct BottomCardActions<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: 14) {
+            content
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 4)
+        .padding(.bottom, 16)
+        .frame(maxWidth: .infinity)
+        .background(Color.black.ignoresSafeArea(edges: .bottom))
+    }
+}
+
 /// Light-gray rounded square where a place photo will go.
 struct PlaceThumbnail: View {
     var size: CGFloat = 72
