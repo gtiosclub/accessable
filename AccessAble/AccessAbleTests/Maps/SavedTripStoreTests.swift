@@ -76,6 +76,17 @@ struct SavedTripStoreTests {
     }
 
     @Test
+    func theFileIsLeftOutOfBackups() throws {
+        let harness = StoreHarness()
+        harness.store.save(harness.trip())
+        harness.store.save(harness.trip())
+        _ = harness.store.load()
+
+        let values = try URL(filePath: harness.store.url.path()).resourceValues(forKeys: [.isExcludedFromBackupKey])
+        #expect(values.isExcludedFromBackup == true)
+    }
+
+    @Test
     func theFileHoldsNoReports() throws {
         let harness = StoreHarness()
         var trip = harness.trip()

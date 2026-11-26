@@ -67,6 +67,11 @@ final class SavedTripStore: Sendable {
                 try JSONEncoder().encode(trip).write(
                     to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
                 )
+                // where the user walked stays on the phone; set on each save, since the atomic write replaces the file
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                var written = url
+                try written.setResourceValues(values)
             } catch {
                 logError("Couldn't save the trip: \(error.localizedDescription)")
             }
