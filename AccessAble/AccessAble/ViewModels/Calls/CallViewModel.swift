@@ -114,11 +114,11 @@ final class CallViewModel {
 
     func flipCamera() async {
         controlError = nil
+        // The session turns the light off before switching, even if the switch then fails.
+        isFlashlightOn = false
         do {
             try await services.videoCall.flipCamera()
             isUsingBackCamera.toggle()
-            // Only the back camera has a light, and flipping turns it off.
-            if !isUsingBackCamera { isFlashlightOn = false }
         } catch {
             controlError = "Couldn't switch cameras."
         }
@@ -167,8 +167,8 @@ final class CallViewModel {
             try Task.checkCancellation()
             let ticket = try await services.callSignaling.requestCall(preferring: preferred?.id) { [weak self] progress in
                 Task { @MainActor in
-                    guard let self, attemptGeneration == generation else { return }
-                    await receive(progress)
+                    guard let self, self.attemptGeneration == generation else { return }
+                    await self.receive(progress)
                 }
             }
             self.ticket = ticket

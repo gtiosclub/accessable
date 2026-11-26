@@ -57,16 +57,16 @@ private final class CycleSignaling: CallSignaling {
     var requests = 0
     var active: Set<String> = []
     var ended: [String] = []
-    func requestCall(preferring volunteerID: String?, progress: @Sendable (CallRequestProgress) -> Void) async throws -> CallTicket {
+    @MainActor func requestCall(preferring volunteerID: String?, progress: @Sendable (CallRequestProgress) -> Void) async throws -> CallTicket {
         requests += 1
         let id = "cycle-\(requests)"
         active.insert(id)
         return CallTicket(callID: id, roomName: id, token: "fake", callerID: "caller", volunteerID: "helper", expiresAt: .now.addingTimeInterval(60))
     }
-    func accept(callID: String) async throws -> CallTicket { throw CycleError.failed }
-    func decline(callID: String) async throws {}
-    func skip(callID: String) async throws {}
-    func endCall(callID: String) async { active.remove(callID); ended.append(callID) }
+    @MainActor func accept(callID: String) async throws -> CallTicket { throw CycleError.failed }
+    @MainActor func decline(callID: String) async throws {}
+    @MainActor func skip(callID: String) async throws {}
+    @MainActor func endCall(callID: String) async { active.remove(callID); ended.append(callID) }
 }
 
 @MainActor
@@ -77,19 +77,19 @@ private final class CycleVideo: VideoCallSession {
     var failNext = false
     init() { events.send(.idle) }
     nonisolated func states() -> AsyncStream<CallState> { events.stream() }
-    func connect(with ticket: CallTicket) async throws {
+    @MainActor func connect(with ticket: CallTicket) async throws {
         connections += 1
         events.send(.connecting)
         if failNext { failNext = false; events.send(.failed("fixture failure")); throw CycleError.failed }
         connected = true
         events.send(.connected)
     }
-    func disconnect() async {
+    @MainActor func disconnect() async {
         guard connected else { return }
         connected = false
         events.send(.ended(.hungUp))
     }
-    func setMicrophoneMuted(_ muted: Bool) async throws {}
-    func flipCamera() async throws {}
-    func setFlashlight(_ on: Bool) async throws {}
+    @MainActor func setMicrophoneMuted(_ muted: Bool) async throws {}
+    @MainActor func flipCamera() async throws {}
+    @MainActor func setFlashlight(_ on: Bool) async throws {}
 }

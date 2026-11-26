@@ -98,6 +98,10 @@ struct RoutePreview: View {
             VStack(alignment: .leading, spacing: 8) {
                 Label(summary, systemImage: "figure.walk")
                     .font(.headline)
+                if let note = details.backupNote {
+                    Label(note, systemImage: "exclamationmark.triangle")
+                        .font(.footnote)
+                }
                 if origin != nil {
                     Text("Walking directions start where you are.")
                         .font(.footnote)

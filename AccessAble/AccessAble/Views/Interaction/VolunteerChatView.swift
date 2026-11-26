@@ -7,7 +7,6 @@ struct VolunteerChatView: View {
     let volunteer: Volunteer
     @State private var messages: [ChatMessage]
     @State private var draft = ""
-    @State private var isCalling = false
 
     init(volunteer: Volunteer) {
         self.volunteer = volunteer
@@ -36,9 +35,6 @@ struct VolunteerChatView: View {
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
-        .fullScreenCover(isPresented: $isCalling) {
-            CallingView(volunteer: volunteer) { isCalling = false }
-        }
     }
 
     private var header: some View {
@@ -70,7 +66,8 @@ struct VolunteerChatView: View {
                 foreground: .white,
                 diameter: 54
             ) {
-                isCalling = true
+                // The real call flow: consent screen first, then rings this volunteer.
+                router.push(.call(volunteer))
             }
         }
         .padding(.horizontal, 20)

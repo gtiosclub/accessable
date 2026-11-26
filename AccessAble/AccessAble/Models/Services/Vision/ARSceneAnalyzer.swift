@@ -15,7 +15,7 @@ import UIKit
 /// Every feature shares this one camera. `start()` and `stop()` nest: tracking starts with
 /// the first `start()`, later ones join it without resetting the world, and the session
 /// only pauses when every `start()` has had its `stop()`.
-final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, GuidanceStatusProviding, Sendable {
+final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedImageProviding, SceneNavigating, GuidanceStatusProviding, GeoTrackingProviding, Sendable {
     let sessionManager: ARSessionManager
     let perception: ScenePerception
     /// Idle unless a field test is being recorded from the Live detection screen.
@@ -27,6 +27,10 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     private let steering: SteeringTones?
     private let broadcaster = Broadcaster<SceneObservation>(replaysLatest: true)
     private let processor: LatestOnlyProcessor<CapturedFrame>
+    /// Returns whether tracking had to restart; see `ARSessionManager.setMeshReconstruction`.
+    private let setMeshReconstruction: @MainActor @Sendable (Bool) -> Bool
+    /// `ARSessionManager.start()`.
+    private let startSession: @MainActor @Sendable () throws -> Void
     /// Announcements go through a stream drained by one task, so they reach the sink in
     /// order without the analysis queue ever waiting on it.
     private let announcementQueue: AsyncStream<AnnouncementEvent>.Continuation
@@ -39,8 +43,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         var modeTask: Task<Void, Never>?
         /// The still the latest Ask AI question was answered from.
         var lastAskedImage: Data?
-        /// Whether a "take me to…" request is active, which needs the mesh in any mode.
-        var isNavigating = false
+        /// The active "take me to…" request, which needs the mesh in any mode.
+        var navigationQuery: String?
     }
 
     private let state = Mutex(State())
@@ -58,9 +62,13 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         performance: any PerformanceModeProviding,
         announcements: any AnnouncementSink,
         askAI: AskAI = AskAI(),
-        steering: SteeringTones? = nil
+        steering: SteeringTones? = nil,
+        setMeshReconstruction: (@MainActor @Sendable (Bool) -> Bool)? = nil,
+        startSession: (@MainActor @Sendable () throws -> Void)? = nil
     ) {
         self.sessionManager = sessionManager
+        self.setMeshReconstruction = setMeshReconstruction ?? { sessionManager.setMeshReconstruction($0) }
+        self.startSession = startSession ?? { try sessionManager.start() }
         self.perception = perception
         self.performance = performance
         self.askAI = askAI
@@ -142,9 +150,10 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
             return
         }
         // A new session starts with no "take me to…" request; the mode decides the mesh.
-        state.withLock { $0.isNavigating = false }
-        sessionManager.setMeshReconstruction(perception.mode.usesMesh)
-        try sessionManager.start()
+        state.withLock { $0.navigationQuery = nil }
+        // the session isn't running yet, so this never restarts it
+        _ = setMeshReconstruction(perception.mode.usesMesh)
+        try startSession()
         clientCount = 1
         // Tracking restarts from scratch, so nothing remembered about the old world holds.
         perception.reset()
@@ -211,8 +220,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     /// A session that could not relocalize comes back as a different world, so tracking is
     /// re-run from scratch and the remembered floor and occupancy map, anchored in
-    /// coordinates that no longer mean anything, are cleared. It doesn't go through
-    /// `start()`: that would add a camera hold nobody releases.
+    /// coordinates that no longer mean anything, are cleared; an active "take me to…" request
+    /// is kept. It doesn't go through `start()`: that would add a camera hold nobody releases.
     func restartGuidance() async throws {
         try await restartTracking()
     }
@@ -220,8 +229,16 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     @MainActor
     private func restartTracking() throws {
         guard clientCount > 0 else { return }
-        try sessionManager.start()
+        try startSession()
+        resetPerceptionKeepingNavigation()
+    }
+
+    /// Forgets the old world after tracking restarted, but not the "take me to…" request: the
+    /// user still wants it. The latest one is put back, so a request made meanwhile isn't undone.
+    @MainActor
+    private func resetPerceptionKeepingNavigation() {
         perception.reset()
+        if let query = state.withLock({ $0.navigationQuery }) { perception.navigate(to: query) }
     }
 
     /// Tells the analyzer how the device is held, so Vision gets the right image
@@ -339,8 +356,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     // MARK: - SceneNavigating
 
     func navigate(to query: String?) {
+        state.withLock { $0.navigationQuery = query }
         perception.navigate(to: query)
-        state.withLock { $0.isNavigating = query != nil }
         updateMesh()
     }
 
@@ -352,8 +369,22 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     /// Doors come from the mesh, which is only built in Find or during a "take me to…".
     private func updateMesh() {
-        let wanted = perception.mode.usesMesh || state.withLock { $0.isNavigating }
-        Task { @MainActor [sessionManager] in sessionManager.setMeshReconstruction(wanted) }
+        let wanted = perception.mode.usesMesh || state.withLock { $0.navigationQuery != nil }
+        Task { @MainActor [self] in
+            // leaving geo-tracking for the mesh restarts the world
+            guard setMeshReconstruction(wanted) else { return }
+            resetPerceptionKeepingNavigation()
+        }
+    }
+
+    // MARK: - GeoTrackingProviding (AR-2)
+
+    func setGeoTrackingWanted(_ wanted: Bool) async {
+        await MainActor.run { sessionManager.setGeoTracking(wanted) }
+    }
+
+    func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> {
+        sessionManager.geoTrackingUpdates()
     }
 
     var navigationStatus: NavigationStatus? { perception.navigationStatus }

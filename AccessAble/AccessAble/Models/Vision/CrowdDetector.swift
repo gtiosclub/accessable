@@ -7,10 +7,10 @@ import simd
 // starts and roughly where it lies is what a walker needs; the individuals are noise.
 //
 // Grouping reuses `clusterFootprints` from T11 on a floor-plane footprint. World space is
-// gravity-aligned (`ARSessionManager` runs `worldAlignment = .gravity`), so dropping the
-// world Y axis gives that footprint directly, with no corridor or fitted floor needed. That
-// keeps crowd detection a pure function of the detections, so the description layer can call
-// it without being handed the camera's geometry.
+// gravity-aligned (`ARSessionManager` runs `worldAlignment = .gravity`, or geo-tracking, whose
+// world keeps +Y up too), so dropping the world Y axis gives that footprint directly, with no
+// corridor or fitted floor needed. That keeps crowd detection a pure function of the
+// detections, so the description layer can call it without being handed the camera's geometry.
 //
 // Single-link clustering chains: A joins B, B joins C, C joins D. For a chair's legs and seat
 // that is wanted. For people it is a trap — a queue spaced every metre and a half becomes one
