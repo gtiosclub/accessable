@@ -1,8 +1,8 @@
 import Foundation
 
-/// The reports on the trip map, for its one VoiceOver label: "2 reports nearby: construction, 40 metres ahead on your
-/// route; closed entrance, 120 metres at 2 o'clock." Nearest first, and only the nearest few, so the label stays
-/// short enough to listen to.
+/// The reports on the trip map, for its one VoiceOver label: "2 reports on or near your route: construction, 40 metres
+/// ahead on your route; closed entrance, 120 metres at 2 o'clock." Nearest first, and only the nearest few, so the
+/// label stays short enough to listen to.
 enum MapReportsDescription {
     static let maximumDescribed = 3
 
@@ -41,7 +41,7 @@ enum MapReportsDescription {
         var parts = Array(described.prefix(maximumDescribed))
         if described.count > maximumDescribed { parts.append("and \(described.count - maximumDescribed) more") }
         let count = reports.count == 1 ? "1 report" : "\(reports.count) reports"
-        return "\(count) nearby: \(parts.joined(separator: "; "))."
+        return "\(count) on or near your route: \(parts.joined(separator: "; "))."
     }
 
     private static func name(of kind: ReportKind) -> String {

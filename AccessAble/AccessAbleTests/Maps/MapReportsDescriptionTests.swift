@@ -41,39 +41,40 @@ struct MapReportsDescriptionTests {
     func onTheRouteAheadAndOffIt() {
         let ahead = report(.construction, at: TripWalk.point(on: route, along: 60))
         let off = report(.closedEntrance, at: TripWalk.destination(from: user, bearing: 60, distance: 120))
-        #expect(text([off, ahead]) == "2 reports nearby: construction, 40 metres ahead on your route; "
+        #expect(text([off, ahead]) == "2 reports on or near your route: construction, 40 metres ahead on your route; "
             + "closed entrance, 120 metres at 2 o'clock.")
     }
 
     @Test
     func inTheUsersUnits() {
         let ahead = report(.blockedPath, at: TripWalk.point(on: route, along: 60))
-        #expect(text([ahead], distances: .imperial) == "1 report nearby: blocked path, 125 feet ahead on your route.")
+        #expect(text([ahead], distances: .imperial)
+            == "1 report on or near your route: blocked path, 125 feet ahead on your route.")
     }
 
     /// Behind the user isn't ahead on the route, so it is placed from where they are.
     @Test
     func aReportBehindIsPlacedFromTheUser() {
         let behind = report(.elevatorOut, at: start)
-        #expect(text([behind]) == "1 report nearby: elevator out of service, 20 metres at 6 o'clock.")
+        #expect(text([behind]) == "1 report on or near your route: elevator out of service, 20 metres at 6 o'clock.")
     }
 
     @Test
     func withoutAHeadingOnlyTheDistance() {
         let off = report(.other, at: TripWalk.destination(from: user, bearing: 90, distance: 50))
-        #expect(text([off], heading: nil) == "1 report nearby: reported problem, 50 metres away.")
+        #expect(text([off], heading: nil) == "1 report on or near your route: reported problem, 50 metres away.")
     }
 
     @Test
     func withoutALocationOnlyTheKind() {
         let off = report(.other, at: TripWalk.destination(from: user, bearing: 90, distance: 50))
-        #expect(text([off], location: nil) == "1 report nearby: reported problem.")
+        #expect(text([off], location: nil) == "1 report on or near your route: reported problem.")
     }
 
     @Test
     func onlyTheNearestThree() {
         let reports = [150, 60, 120, 30, 90].map { report(.construction, at: TripWalk.point(on: route, along: $0)) }
-        #expect(text(reports) == "5 reports nearby: construction, 10 metres ahead on your route; "
+        #expect(text(reports) == "5 reports on or near your route: construction, 10 metres ahead on your route; "
             + "construction, 40 metres ahead on your route; construction, 70 metres ahead on your route; and 2 more.")
     }
 }
