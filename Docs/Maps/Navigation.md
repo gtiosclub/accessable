@@ -168,6 +168,20 @@ Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at e
 - Stairs, elevators, escalators and crosswalks are listed only when there are some.
 - Place details counts a route's crossings once, when the route arrives, and words the summary in the user's current units each time it is read.
 
+## Routing servers
+
+`FallbackRoutingService` asks the Valhalla servers named in the `ROUTING_SERVERS` build setting in order, then Apple Maps, which is always last and can't be configured away. Changing the servers needs no code change.
+
+- **Configuration.** `ROUTING_SERVERS` is set to `stadia,fossgis` in `Config/Shared.xcconfig`; a member's `Secrets.xcconfig` can override it. It reaches the app as `RoutingServers` in `Info.plist`, read by `RoutingConfig.servers(from:apiKey:)`.
+  - Names are separated by commas; spaces and case don't matter. `stadia` is Stadia Maps' hosted Valhalla, `fossgis` the free FOSSGIS demo server (fair use only, no uptime guarantee).
+  - `stadia` is dropped without a usable `STADIA_API_KEY`, and unknown names are ignored; both are logged. A value naming no known server gives the default, `stadia,fossgis`.
+- **Each Valhalla server** gets 6 s to answer. After a timeout, a rejected key (`.notAuthorized`) or an exhausted usage limit (`.usageLimitReached`), that server is skipped for 2 minutes, so each staged report try and each reroute doesn't wait on it or spend the request again. An answer from it clears that.
+- **Exclusions.** A request that avoids reported places never reaches Apple Maps, which can't avoid them. When every Valhalla server fails it throws `.noRouteFound` if one found no route, else `.exclusionsRejected`, so `ReportAwareRoutingService` (which wraps the chain) tries again with fewer exclusions. Its last try has none, so a route from Apple Maps still lists the reports it passes.
+- **Errors.** When every server fails, the most informative error wins: no route, then rejected exclusions, then unavailable, then usage limit, then rejected key, then a bad response.
+- **Cancellation** by the caller cancels the request in flight and asks no later server.
+- **Speech.** Moving from Stadia to FOSSGIS is silent: both are Valhalla, with the same step-free routing. Only a route from Apple Maps (`source` `.appleMaps`) is announced, as backup directions that may include stairs. The routing layer itself never speaks.
+- **Stadia credits.** Every Stadia route request spends the team's credits, and one trip can send about 27 requests or more (see `ValhallaEndpoint.stadia`). FOSSGIS and Apple Maps cost none.
+
 ## TripManager
 
 - **Starting.**

@@ -31,15 +31,39 @@ struct ValhallaEndpoint: Sendable {
             baseURL: URL(string: "https://api.stadiamaps.com")!, routePath: "route/v1", stadiaAPIKey: apiKey
         )
     }
+}
 
-    /// Stadia when this build has a key. Without one, falls back to the public demo server so a build
-    /// made without the key still launches and routes. It is read at launch, so it must never crash.
-    static var live: ValhallaEndpoint { live(apiKey: StadiaConfig.apiKey) }
+/// The Valhalla servers to ask, in order, come from the ROUTING_SERVERS build setting through Info.plist: names
+/// separated by commas, set in Shared.xcconfig and overridable in Secrets.xcconfig. Apple Maps is always asked last
+/// and can't be configured away.
+enum RoutingConfig {
+    /// The servers asked when ROUTING_SERVERS names none this build knows.
+    static let defaultServers = ["stadia", "fossgis"]
 
-    static func live(apiKey: String?) -> ValhallaEndpoint {
-        if let apiKey { return .stadia(apiKey: apiKey) }
-        log.error("STADIA_API_KEY missing from Secrets.xcconfig; routing through the public demo server")
-        return .publicDemo
+    /// Read at launch, so it must never crash.
+    static var servers: [ValhallaEndpoint] {
+        servers(from: Bundle.main.object(forInfoDictionaryKey: "RoutingServers"), apiKey: StadiaConfig.apiKey)
+    }
+
+    /// `stadia` is dropped without a usable key, so a build made without one still routes through the rest.
+    /// Unknown names are ignored, and a value naming no known server gives `defaultServers`.
+    static func servers(from value: Any?, apiKey: String?) -> [ValhallaEndpoint] {
+        let names = ((value as? String) ?? "").split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+        let known = names.filter { name in
+            guard name == "stadia" || name == "fossgis" else {
+                log.error("Unknown routing server \(name, privacy: .public) in ROUTING_SERVERS, ignoring it")
+                return false
+            }
+            return true
+        }
+        return (known.isEmpty ? defaultServers : known).compactMap { name in
+            guard name == "stadia" else { return .publicDemo }
+            if let apiKey { return .stadia(apiKey: apiKey) }
+            log.error("STADIA_API_KEY missing from Secrets.xcconfig; skipping Stadia")
+            return nil
+        }
     }
 }
 

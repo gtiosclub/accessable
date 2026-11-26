@@ -504,4 +504,211 @@ struct FallbackRoutingServiceTests {
         #expect(await valhalla.calls == 1)
         #expect(await apple.calls == 2)
     }
+
+    // MARK: - Several Valhalla servers
+
+    private func chain(
+        _ stadia: FakeRouting, _ fossgis: FakeRouting, _ apple: FakeRouting, clock: ManualClock = ManualClock()
+    ) -> FallbackRoutingService {
+        FallbackRoutingService(primaries: [stadia, fossgis], fallback: apple, clock: clock)
+    }
+
+    @Test
+    func theFirstServerToAnswerIsTheOnlyOneAsked() async throws {
+        let stadia = FakeRouting(.returns(Self.valhallaRoute))
+        let fossgis = FakeRouting(.returns(Self.valhallaRoute))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+
+        let route = try await request(chain(stadia, fossgis, apple)).value
+
+        #expect(route.source == .valhalla)
+        #expect(await stadia.calls == 1)
+        #expect(await fossgis.calls == 0)
+        #expect(await apple.calls == 0)
+    }
+
+    @Test
+    func asksTheNextValhallaServerBeforeApple() async throws {
+        let stadia = FakeRouting(.fails(RoutingError.serverUnavailable))
+        let fossgis = FakeRouting(.returns(Self.valhallaRoute))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+
+        let route = try await request(chain(stadia, fossgis, apple)).value
+
+        #expect(route == Self.valhallaRoute)
+        #expect(route.source == .valhalla)
+        #expect(await fossgis.receivedOptions == [RouteOptions()])
+        #expect(await apple.calls == 0)
+    }
+
+    @Test
+    func aSlowFirstServerGivesWayToTheNextAfterItsTimeout() async throws {
+        let stadia = FakeRouting(.hangs)
+        let fossgis = FakeRouting(.returns(Self.valhallaRoute))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+
+        let routing = request(chain(stadia, fossgis, apple, clock: clock))
+        await stadia.waitForRequests(1)
+        try await clock.waitForSleepers(1)
+        #expect(await fossgis.calls == 0)
+        clock.advance(by: FallbackRoutingService.defaultTimeout)
+        let route = try await routing.value
+
+        #expect(route.source == .valhalla)
+        await stadia.waitForCancellations(1)
+        #expect(await fossgis.calls == 1)
+        #expect(await apple.calls == 0)
+    }
+
+    @Test
+    func eachServerGetsItsOwnTimeoutBeforeApple() async throws {
+        let stadia = FakeRouting(.hangs)
+        let fossgis = FakeRouting(.hangs)
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+
+        let routing = request(chain(stadia, fossgis, apple, clock: clock))
+        try await timeOut(stadia, on: clock)
+        try await timeOut(fossgis, on: clock)
+        let route = try await routing.value
+
+        #expect(route.source == .appleMaps)
+        await stadia.waitForCancellations(1)
+        await fossgis.waitForCancellations(1)
+        #expect(await apple.calls == 1)
+    }
+
+    @Test
+    func fallsBackToAppleWhenEveryValhallaServerFails() async throws {
+        let stadia = FakeRouting(.fails(RoutingError.serverUnavailable))
+        let fossgis = FakeRouting(.fails(RoutingError.invalidResponse))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+
+        let route = try await request(chain(stadia, fossgis, apple)).value
+
+        #expect(route == Self.backupRoute)
+        #expect(route.source == .appleMaps)
+        #expect(await stadia.calls == 1)
+        #expect(await fossgis.calls == 1)
+    }
+
+    @Test(arguments: [RoutingError.notAuthorized, .usageLimitReached])
+    func aRefusingServerIsSkippedForTwoMinutesWhileTheNextAnswers(_ error: RoutingError) async throws {
+        let stadia = FakeRouting(byCall: { $0 == 0 ? .fails(error) : .returns(Self.valhallaRoute) })
+        let fossgis = FakeRouting(.returns(Self.valhallaRoute))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+        let service = chain(stadia, fossgis, apple, clock: clock)
+
+        #expect(try await request(service).value.source == .valhalla)
+        #expect(try await request(service).value.source == .valhalla)
+        #expect(try await request(service, options: Self.exclusions).value.source == .valhalla)
+        #expect(await stadia.calls == 1)
+        #expect(await fossgis.calls == 3)
+
+        clock.advance(by: FallbackRoutingService.timeoutMemory)
+        #expect(try await request(service).value.source == .valhalla)
+        // Stadia answered, so it is asked again at once
+        #expect(try await request(service).value.source == .valhalla)
+        #expect(await stadia.calls == 3)
+        #expect(await fossgis.calls == 3)
+        #expect(await apple.calls == 0)
+    }
+
+    @Test
+    func aTimeoutIsRememberedForThatServerOnly() async throws {
+        let stadia = FakeRouting(.hangs)
+        let fossgis = FakeRouting(.returns(Self.valhallaRoute))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+        let service = chain(stadia, fossgis, apple, clock: clock)
+        let first = request(service)
+        try await timeOut(stadia, on: clock)
+        _ = try await first.value
+
+        #expect(try await request(service).value == Self.valhallaRoute)
+        #expect(await stadia.calls == 1)
+        #expect(await fossgis.calls == 2)
+    }
+
+    @Test(arguments: [
+        (RoutingError.serverUnavailable, RoutingError.serverUnavailable, RoutingError.exclusionsRejected),
+        (.notAuthorized, .usageLimitReached, .exclusionsRejected),
+        (.exclusionsRejected, .invalidResponse, .exclusionsRejected),
+        (.noRouteFound, .serverUnavailable, .noRouteFound),
+        (.serverUnavailable, .noRouteFound, .noRouteFound),
+    ])
+    func exclusionsAreTriedOnEveryValhallaServerButNeverApple(
+        _ stadiaError: RoutingError, _ fossgisError: RoutingError, _ expected: RoutingError
+    ) async {
+        let stadia = FakeRouting(.fails(stadiaError))
+        let fossgis = FakeRouting(.fails(fossgisError))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+
+        await #expect(throws: expected) {
+            try await request(chain(stadia, fossgis, apple), options: Self.exclusions).value
+        }
+        #expect(await stadia.receivedOptions == [Self.exclusions])
+        #expect(await fossgis.receivedOptions == [Self.exclusions])
+        #expect(await apple.calls == 0)
+    }
+
+    @Test(arguments: [
+        (RoutingError.notAuthorized, RoutingError.serverUnavailable, RoutingError.invalidResponse,
+         RoutingError.serverUnavailable),
+        (.noRouteFound, .serverUnavailable, .serverUnavailable, .noRouteFound),
+        (.invalidResponse, .usageLimitReached, .notAuthorized, .usageLimitReached),
+        (.invalidResponse, .invalidResponse, .notAuthorized, .notAuthorized),
+    ])
+    func keepsTheMostInformativeErrorAcrossEveryServer(
+        _ stadiaError: RoutingError, _ fossgisError: RoutingError, _ appleError: RoutingError,
+        _ expected: RoutingError
+    ) async {
+        let service = chain(FakeRouting(.fails(stadiaError)), FakeRouting(.fails(fossgisError)),
+                            FakeRouting(.fails(appleError)))
+
+        await #expect(throws: expected) { try await request(service).value }
+    }
+
+    @Test
+    func cancellingTheCallerDuringTheFirstRaceAsksNoLaterServer() async throws {
+        let stadia = FakeRouting(.hangs)
+        let fossgis = FakeRouting(.returns(Self.valhallaRoute))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+
+        let routing = request(chain(stadia, fossgis, apple, clock: clock))
+        await stadia.waitForRequests(1)
+        try await clock.waitForSleepers(1)
+        routing.cancel()
+
+        await #expect(throws: CancellationError.self) { try await routing.value }
+        await stadia.waitForCancellations(1)
+        #expect(await fossgis.calls == 0)
+        #expect(await apple.calls == 0)
+    }
+
+    @Test
+    func reportAwareRoutingOverTheChainWarnsOfReportsOnAnAppleRoute() async throws {
+        let stadia = FakeRouting(.fails(RoutingError.serverUnavailable))
+        let fossgis = FakeRouting(.fails(RoutingError.serverUnavailable))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let spacingClock = ManualClock()
+        let service = ReportAwareRoutingService(
+            base: chain(stadia, fossgis, apple), reports: FakeReports([Self.report]), clock: spacingClock
+        )
+
+        let routing = request(service)
+        await fossgis.waitForRequests(1)
+        try await spacingClock.waitForSleepers(1)
+        spacingClock.advance(by: ReportAwareRoutingService.retrySpacing)
+        let route = try await routing.value
+
+        #expect(route.source == .appleMaps)
+        #expect(route.unavoidedReports.map(\.id) == [Self.report.id])
+        #expect(await stadia.receivedOptions.map(\.excludeLocations) == [[Self.corner], []])
+        #expect(await fossgis.receivedOptions.map(\.excludeLocations) == [[Self.corner], []])
+        #expect(await apple.receivedOptions == [RouteOptions()])
+    }
 }
