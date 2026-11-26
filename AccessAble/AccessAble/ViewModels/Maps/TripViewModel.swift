@@ -286,7 +286,7 @@ final class TripViewModel {
                 guard !Task.isCancelled else { return }
                 self.route = route
                 routeRequestedAt = requestedAt
-                // a refresh for Start leaves the warning to the trip's start announcement
+                // a refresh for Start leaves the warnings to the trip's start announcement
                 if !route.unavoidedReports.isEmpty, !isStartingTrip {
                     await services.announcements.submit(AnnouncementEvent(
                         category: .hazard,
@@ -294,6 +294,16 @@ final class TripViewModel {
                         text: ReportExclusions.warning,
                         source: .navigation,
                         dedupKey: "route-report-fallback"
+                    ))
+                }
+                if route.source == .appleMaps, !isStartingTrip {
+                    await services.announcements.submit(AnnouncementEvent(
+                        category: .system,
+                        priority: .high,
+                        text: RouteSource.backupNotice,
+                        haptic: .attention,
+                        source: .navigation,
+                        dedupKey: "route-backup"
                     ))
                 }
             } catch {

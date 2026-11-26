@@ -72,7 +72,8 @@ struct AppServices: Sendable {
             scene: scene,
             sceneDescriber: scene,
             location: location,
-            routing: ValhallaRoutingService(endpoint: .live),
+            // Apple Maps when Valhalla fails or is slow; its routes don't know about stairs, so the user is told
+            routing: FallbackRoutingService(primary: ValhallaRoutingService(endpoint: .live), fallback: AppleMapsRoutingService()),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
             tripActivity: ActivityKitTripActivityClient(),
