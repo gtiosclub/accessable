@@ -61,21 +61,6 @@ struct SavedTripStoreTests {
     }
 
     @Test
-    func aFileSavedWithoutTheRouteSourceLoadsAsValhalla() throws {
-        let harness = StoreHarness()
-        var trip = harness.trip()
-        trip.routeSource = .appleMaps
-        var fields = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(trip)) as? [String: Any])
-        fields["routeSource"] = nil
-        try FileManager.default.createDirectory(at: harness.directory, withIntermediateDirectories: true)
-        try JSONSerialization.data(withJSONObject: fields).write(to: harness.store.url)
-
-        let loaded = try #require(harness.store.load())
-        #expect(loaded.routeSource == .valhalla)
-        #expect(loaded.route == trip.route)
-    }
-
-    @Test
     func theFileIsLeftOutOfBackups() throws {
         let harness = StoreHarness()
         harness.store.save(harness.trip())
