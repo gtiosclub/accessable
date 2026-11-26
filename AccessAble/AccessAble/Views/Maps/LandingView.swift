@@ -75,6 +75,8 @@ struct CampusMap: View {
     var routeLine: [CLLocationCoordinate2D]?
     var destination: Destination?
     var accessibilityLabel = "Map"
+    /// Shown as warning markers; `accessibilityLabel` should say what they are.
+    var reports: [Report] = []
     @Environment(\.colorSchemeContrast) private var contrast
 
     /// Shown until a location arrives, and in previews.
@@ -99,6 +101,20 @@ struct CampusMap: View {
             }
             if let destination {
                 Marker(destination.name, systemImage: "flag.checkered", coordinate: destination.coordinate.clCoordinate)
+            }
+            // black on yellow, the warning colours, stands out over any imagery
+            ForEach(reports) { report in
+                Annotation(report.kind.title, coordinate: report.coordinate.clCoordinate, anchor: .center) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.black)
+                        .padding(9)
+                        .background(.yellow, in: Circle())
+                        .overlay(Circle().stroke(.black, lineWidth: 2))
+                        // much larger and it would hide the route it marks
+                        .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                        .accessibilityHidden(true)
+                }
             }
             // The real location, so it moves with each fix (and with a simulated GPX walk).
             UserAnnotation { user in

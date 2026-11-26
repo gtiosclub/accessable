@@ -2561,6 +2561,65 @@ struct TripManagerReportTests {
         await waitUntil { !harness.reports.isListening }
         #expect(harness.reports.subscriptionCount == 1)
     }
+
+    /// What a map opening now would show first: the IDs of the reports it is sent.
+    private func shownOnTheMap(_ harness: Harness) async -> [String]? {
+        var shown = harness.manager.mapReports().makeAsyncIterator()
+        return await shown.next()?.map(\.id)
+    }
+
+    @Test
+    func theMapShowsLiveReportsNearTheRouteTheUsersOwnIncluded() async throws {
+        let harness = try Harness()
+        await harness.start()
+        let own = report("own", at: harness.point(30), by: reporterSelf)
+        let beside = report("beside", at: harness.point(50, lateral: -40))
+        let far = report("far", at: harness.point(50, lateral: -200))
+        var ended = report("ended", at: harness.point(60))
+        ended.expiresAt = harness.clock.now()
+
+        await harness.reports.publish([own, beside, far, ended])
+
+        #expect(await shownOnTheMap(harness) == ["own", "beside"])
+    }
+
+    /// Before the reroute, the report beside the new route is too far from the old one to show, and after it the
+    /// one at the old route's corner is.
+    @Test
+    func aRerouteShowsTheReportsNearTheNewRoute() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let newRoute = try eastRoute(from: origin)
+        let harness = try Harness(reroutes: [.success(newRoute)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        let ahead = report("ahead", at: harness.point(60))
+        let corner = report("corner", at: harness.point(100))
+        // about 82 m from the old route and 40 m from the new one's end
+        let beside = report("beside", at: TripWalk.destination(from: newRoute.coordinates[1], bearing: 180,
+                                                                 distance: 40))
+
+        await harness.reports.publish([ahead, corner, beside])
+        #expect(await shownOnTheMap(harness) == ["ahead", "corner"])
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+        await waitUntil { await harness.engine.texts.contains(newRouteSpeech) }
+
+        #expect(await shownOnTheMap(harness) == ["ahead", "beside"])
+    }
+
+    @Test
+    func theMapStartsEachTripWithoutTheLastTripsReports() async throws {
+        let harness = try Harness()
+        await harness.start()
+        await harness.reports.publish([report("own", at: harness.point(30), by: reporterSelf)])
+        #expect(await shownOnTheMap(harness) == ["own"])
+
+        await harness.manager.endTrip()
+        #expect(await shownOnTheMap(harness) == [])
+
+        await harness.start()
+        #expect(await shownOnTheMap(harness) == [])
+    }
 }
 
 /// The questions a trip asks, in order. Like the trip screen, it ends each at once with `outcome`, unless given none.
