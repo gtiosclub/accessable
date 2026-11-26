@@ -58,6 +58,11 @@ final class ManualClock: Clock, @unchecked Sendable {
 
     var minimumResolution: Duration { .zero }
 
+    /// The sleeps waiting on the clock; a cancelled one stops waiting at once.
+    var sleeperCount: Int {
+        state.withLock { $0.sleepers.count }
+    }
+
     func sleep(until deadline: Instant, tolerance: Duration? = nil) async throws {
         let id = UUID()
         // After the cancellation handler is gone, so it can't record this sleep again.

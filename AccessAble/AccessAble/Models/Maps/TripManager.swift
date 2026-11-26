@@ -4,7 +4,7 @@ import os
 private let log = Logger(subsystem: "AccessAble", category: "TripManager")
 
 /// Guides a walk along a route: follows location fixes with `RouteProgressTracker`, speaks its cues, reroutes when
-/// the user leaves the route, and warns when GPS is too weak to guide.
+/// the user leaves the route, and warns when GPS is too weak to guide or the battery runs low.
 ///
 /// Every `await` is a point where `endTrip` or another `startTrip` can run, so each task and handler carries the
 /// `generation` it was started for and does nothing once it is stale. State changes happen before the next `await`.
@@ -34,6 +34,9 @@ actor TripManager: TripStateProviding {
     private let distances: DistanceSettings
     /// Writes nothing unless recording is on, and fix rows aren't even built then.
     private let recorder: TripRecorder?
+    /// Nil where the battery isn't watched, as in tests of everything else. Its warnings are spoken from here, so
+    /// they wait for the start announcement and are recorded.
+    private let battery: BatteryMonitor?
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
 
@@ -66,6 +69,8 @@ actor TripManager: TripStateProviding {
     /// Turn cues submitted and waiting for their delivery check, and those of them the engine has delivered.
     private var pendingCueIDs: Set<UUID> = []
     private var deliveredIDs: Set<UUID> = []
+    /// Battery warnings submitted and not yet delivered, which the monitor gives again until one is.
+    private var batteryWarningIDs: [UUID: BatteryMonitor.Level] = [:]
     private var missedTurnStep: Int?
     private var rerouteCount = 0
     private var lastRerouteRequest: Date?
@@ -168,6 +173,7 @@ actor TripManager: TripStateProviding {
         setTripTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
         distances: DistanceSettings = DistanceSettings(units: .metres),
         recorder: TripRecorder? = nil,
+        battery: BatteryMonitor? = nil,
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
@@ -182,6 +188,7 @@ actor TripManager: TripStateProviding {
         self.setTripTracking = setTripTracking
         self.distances = distances
         self.recorder = recorder
+        self.battery = battery
         self.now = now
         self.sleep = sleep
         states.send(TripState(phase: .planning, updatedAt: now()))
@@ -224,6 +231,7 @@ actor TripManager: TripStateProviding {
         entranceGuide = EntranceGuide()
         pendingCueIDs = []
         deliveredIDs = []
+        batteryWarningIDs = [:]
         missedTurnStep = nil
         rerouteCount = 0
         lastRerouteRequest = nil
@@ -280,6 +288,7 @@ actor TripManager: TripStateProviding {
     func pauseTrip() async {
         guard phase == .active else { return }
         phase = .paused
+        battery?.setPaused(true)
         publish(at: now())
         await submit(confirmation("Trip paused."))
     }
@@ -297,6 +306,7 @@ actor TripManager: TripStateProviding {
             return
         }
         phase = .active
+        battery?.setPaused(false)
         publish(at: now())
         let guidance = resumeAnnouncement()
         await submit(confirmation("Trip resumed."))
@@ -315,6 +325,7 @@ actor TripManager: TripStateProviding {
         generation += 1
         let generation = generation
         cancelTasks()
+        battery?.stop()
         phase = .planning
         tracker = nil
         progress = nil
@@ -449,6 +460,8 @@ actor TripManager: TripStateProviding {
         cueChecks = []
         pendingCueIDs = []
         deliveredIDs = []
+        batteryWarningIDs = [:]
+        battery?.stop()
         if phase == .paused {
             arrivedWhilePaused = true
             publish(at: time)
@@ -466,8 +479,12 @@ actor TripManager: TripStateProviding {
     }
 
     private func markDelivered(_ id: UUID, generation: Int) {
-        guard self.generation == generation, pendingCueIDs.contains(id) else { return }
-        deliveredIDs.insert(id)
+        guard self.generation == generation else { return }
+        if let level = batteryWarningIDs.removeValue(forKey: id) {
+            battery?.delivered(level)
+        } else if pendingCueIDs.contains(id) {
+            deliveredIDs.insert(id)
+        }
     }
 
     private func publish(at time: Date) {
@@ -863,11 +880,27 @@ actor TripManager: TripStateProviding {
 
     private func announceStart(generation: Int) async {
         do { try await sleep(Self.startDelay) } catch { return }
-        guard self.generation == generation, phase == .active, let route, let destination else { return }
-        let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
-            + Self.reportWarning(on: route) + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "")
-            + departure(on: route)
-        await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
+        guard self.generation == generation else { return }
+        if phase == .active, let route, let destination {
+            let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
+                + Self.reportWarning(on: route) + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "")
+                + departure(on: route)
+            await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
+        }
+        // after the start, so a warning neither goes first nor is cut off as VoiceOver's focus moves
+        guard self.generation == generation, phase == .active || phase == .paused else { return }
+        battery?.start(isPaused: phase == .paused) { warning in
+            await self.warnBattery(warning, generation: generation)
+        }
+    }
+
+    /// Spoken only while guiding; one the engine drops is given again at the monitor's next check.
+    private func warnBattery(_ warning: BatteryMonitor.Warning, generation: Int) async {
+        guard self.generation == generation, phase == .active else { return }
+        let event = AnnouncementEvent(category: .system, priority: .high, text: warning.text, source: .navigation,
+                                      createdAt: now(), dedupKey: "\(tripID)-battery-\(warning.level)")
+        batteryWarningIDs[event.id] = warning.level
+        await submit(event)
     }
 
     /// Clock-based rather than fix-based, so it notices when fixes stop arriving at all.
