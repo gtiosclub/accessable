@@ -9,6 +9,24 @@ import os
 
 private let log = Logger(subsystem: "AccessAble", category: "Placeholder")
 
+actor PlaceholderCallSafety: CallSafetyService {
+    private var consent = false
+    private var blocked: Set<String> = []
+    func hasConsent() async throws -> Bool { consent }
+    func acceptConsent() async throws { consent = true }
+    func report(callID: String, subjectID: String, reason: CallReportReason, details: String) async throws {
+        guard CallSafetyReportLimit.length(of: details) <= CallSafetyReportLimit.maxLength else { throw CallSafetyError.invalidReport }
+    }
+    func block(volunteerID: String, callID: String) async throws { blocked.insert(volunteerID) }
+}
+
+actor PlaceholderVolunteerSettings: VolunteerSettingsStore {
+    private var value = VolunteerPreferences()
+    func preferences() async throws -> VolunteerPreferences { value }
+    func save(_ preferences: VolunteerPreferences) async throws { value = preferences }
+    func isInvited() async throws -> Bool { true }
+}
+
 /// Logs events and republishes them; no priority queue or speech. Replaced by 3.3.
 actor PlaceholderAnnouncementEngine: AnnouncementEngineProtocol {
     private nonisolated let delivered = Broadcaster<AnnouncementEvent>()
@@ -16,10 +34,17 @@ actor PlaceholderAnnouncementEngine: AnnouncementEngineProtocol {
     private var isPaused = false
     private var isInCall = false
     private var last: AnnouncementEvent?
+    private let callSettings: CallerSettings
+
+    init(callSettings: CallerSettings = CallerSettings()) {
+        self.callSettings = callSettings
+    }
 
     func submit(_ event: AnnouncementEvent) async {
+        // The same in-call rule as the real engine, so previews and tests behave like the app.
         guard !isPaused, profile.allows(event), !event.isExpired(),
-              !isInCall || event.category == .maneuver || event.priority == .critical else { return }
+              CallAnnouncementPolicy.allows(event, duringCall: isInCall, preferences: callSettings.preferences)
+        else { return }
         log.info("[\(event.category.rawValue)/\(event.priority.rawValue)] \(event.text)")
         last = event
         delivered.send(event)
@@ -286,24 +311,37 @@ actor PlaceholderPresenceService: PresenceService {
 }
 
 struct PlaceholderCallSignaling: CallSignaling {
-    func requestCall(preferring volunteerID: String?) async throws -> CallTicket {
-        sampleTicket(volunteerID: volunteerID ?? "placeholder-volunteer")
+    func requestCall(
+        preferring volunteerID: String?,
+        progress: @Sendable (CallRequestProgress) -> Void
+    ) async throws -> CallTicket {
+        progress(.ringing(attempt: 1))
+        return sampleTicket(volunteerID: volunteerID ?? "placeholder-volunteer")
     }
 
     func accept(callID: String) async throws -> CallTicket {
-        sampleTicket(volunteerID: "placeholder-volunteer")
+        sampleTicket(volunteerID: "placeholder-volunteer", callID: callID)
     }
 
     func decline(callID: String) async throws {}
     func skip(callID: String) async throws {}
     func endCall(callID: String) async {}
 
-    private func sampleTicket(volunteerID: String) -> CallTicket {
+    private func sampleTicket(volunteerID: String, callID: String = UUID().uuidString) -> CallTicket {
         CallTicket(
-            callID: UUID().uuidString, roomName: "placeholder-room", token: "placeholder-token",
+            callID: callID, roomName: "placeholder-room", token: "placeholder-token",
             callerID: "placeholder-caller", volunteerID: volunteerID,
             expiresAt: Date().addingTimeInterval(60)
         )
+    }
+}
+
+/// No unsolicited incoming calls in normal previews. Supply an offer for a ringing preview.
+struct PlaceholderIncomingCalls: IncomingCallProviding {
+    var call: IncomingCall? = nil
+
+    @MainActor func incomingCalls(volunteerID: String) -> AsyncThrowingStream<IncomingCall?, Error> {
+        AsyncThrowingStream { continuation in continuation.yield(call) }
     }
 }
 

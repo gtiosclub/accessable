@@ -8,6 +8,8 @@
 	<string>$(LIVEKIT_URL)</string>
 	<key>StadiaAPIKey</key>
 	<string>$(STADIA_API_KEY)</string>
+	<key>RoutingServers</key>
+	<string>$(ROUTING_SERVERS)</string>
 	<key>NSCameraUsageDescription</key>
 	<string>AccessAble uses your camera to detect obstacles, read signs, describe your surroundings, and share live video with a volunteer during calls. Call video is transmitted to the other participants through LiveKit.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>

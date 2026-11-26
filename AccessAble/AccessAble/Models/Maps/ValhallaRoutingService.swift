@@ -5,7 +5,7 @@ private let log = Logger(subsystem: "AccessAble", category: "Routing")
 
 /// Asks a Valhalla server for walking routes.
 struct ValhallaRoutingService: RoutingService {
-    private let endpoint: ValhallaEndpoint
+    let endpoint: ValhallaEndpoint
     private let send: @Sendable (URLRequest) async throws -> (Data, URLResponse)
 
     /// `send` performs the HTTP request; tests replace it so they never reach the network.

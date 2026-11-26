@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, increment, serverTimestamp, Timestamp, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, increment, serverTimestamp, Timestamp, writeBatch } from 'firebase/firestore';
 
 export const MINUTE = 60 * 1000;
 export const HOUR = 60 * MINUTE;
@@ -47,6 +47,20 @@ export async function seedReport(env, uid, id, ageMs = 2 * 60 * 1000, overrides 
     const batch = writeBatch(db);
     batch.set(doc(db, 'reports', id), reportData(uid, id, { createdAt: at, ...overrides }));
     batch.set(doc(db, 'rateLimits', uid), { lastReportAt: at, lastReportId: id });
+    await batch.commit();
+  });
+}
+
+// Trusted fixture prerequisites: the caller's consent, and the volunteer's account, which the app
+// creates at sign-up. There are no invites; a volunteer account is enough to be rung.
+export async function seedCallPrerequisites(env, caller, volunteer) {
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'callConsents', caller), { version: 1, acceptedAt: Timestamp.now() });
+    if (!(await getDoc(doc(db, 'users', volunteer))).exists()) {
+      batch.set(doc(db, 'users', volunteer), { role: 'volunteer', displayName: volunteer, languages: ['English'], createdAt: Timestamp.now() });
+    }
     await batch.commit();
   });
 }

@@ -4,6 +4,9 @@ compatibility_date = "2026-01-01"
 workers_dev = true
 preview_urls = false
 
+[secrets]
+required = ["LIVEKIT_API_KEY", "LIVEKIT_API_SECRET"]
+
 # Free plan only. Secrets are NOT stored here:
 #   npx wrangler secret put LIVEKIT_API_KEY
 #   npx wrangler secret put LIVEKIT_API_SECRET
