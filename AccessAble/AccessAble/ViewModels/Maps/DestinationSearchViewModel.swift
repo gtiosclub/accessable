@@ -35,6 +35,7 @@ final class DestinationSearchViewModel {
     @ObservationIgnored private let search: any DestinationSearching
     @ObservationIgnored private let locationProvider: (any LocationProvider)?
     @ObservationIgnored private let distances: DistanceSettings?
+    @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var selectionTask: Task<Void, Never>?
     @ObservationIgnored private var lastSearchedQuery = ""
     @ObservationIgnored private var headingEstimator = HeadingEstimator()
@@ -48,14 +49,17 @@ final class DestinationSearchViewModel {
         )
     }
 
+    /// - Parameter now: The time, for how old a fix or heading is.
     init(
         search: any DestinationSearching,
         location: (any LocationProvider)? = nil,
-        distances: DistanceSettings? = nil
+        distances: DistanceSettings? = nil,
+        now: @escaping () -> Date = { .now }
     ) {
         self.search = search
         locationProvider = location
         self.distances = distances
+        self.now = now
     }
 
     var trimmedQuery: String {
@@ -76,11 +80,12 @@ final class DestinationSearchViewModel {
     }
 
     func spokenLabel(for suggestion: SearchSuggestion, at index: Int) -> String {
-        SearchResultSpeech.label(
+        let time = now()
+        return SearchResultSpeech.label(
             for: suggestion,
             at: index,
-            from: location?.coordinate,
-            heading: heading,
+            from: SearchResultSpeech.origin(of: location, at: time),
+            heading: headingEstimator.heading(at: time),
             distances: distances?.formatter ?? DistanceSettings().formatter
         )
     }

@@ -33,6 +33,14 @@ enum CardinalDirection: CaseIterable, Sendable {
 /// `CardinalDirection`) for the top 5 results only.
 enum SearchResultSpeech {
     static let maxSpokenResults = 5
+    /// Seconds; from an older fix, how far and which way a result lies isn't said.
+    static let maximumFixAge: TimeInterval = 5
+
+    /// Where to measure from: `fix`, or nil when there is none or it is older than `maximumFixAge` at `time`.
+    static func origin(of fix: LocationSample?, at time: Date) -> GeoCoordinate? {
+        guard let fix, time.timeIntervalSince(fix.timestamp) <= maximumFixAge else { return nil }
+        return fix.coordinate
+    }
 
     static func directionPhrase(
         from origin: GeoCoordinate,

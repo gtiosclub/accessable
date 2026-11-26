@@ -226,7 +226,7 @@ struct SearchResultSpeechIntegrationTests {
         let searchService = StubDestinationSearch(suggestions: [
             SearchSuggestion(title: "Clough Commons", subtitle: "", coordinate: target)
         ])
-        let viewModel = PlaceSearchViewModel(services: services, search: searchService)
+        let viewModel = PlaceSearchViewModel(services: services, search: searchService, now: { sampleTime + 1 })
 
         let task = Task { await viewModel.start() }
         defer { task.cancel() }
@@ -271,7 +271,8 @@ struct SearchResultSpeechIntegrationTests {
         let viewModel = DestinationSearchViewModel(
             search: searchService,
             location: locationProvider,
-            distances: settings
+            distances: settings,
+            now: { sampleTime + 1 }
         )
 
         let task = Task { await viewModel.start() }
@@ -287,6 +288,71 @@ struct SearchResultSpeechIntegrationTests {
         try await Task.sleep(for: .milliseconds(50))
 
         #expect(viewModel.spokenLabel(for: viewModel.suggestions[0], at: 0) == "Tech Tower, 120 metres, south, 225 North Ave")
+    }
+
+    @Test func staleFixDropsDistanceAndStaleHeadingFallsBackToCompassPoints() async throws {
+        let locationProvider = ControllableLocationProvider()
+        var services = AppServices.preview
+        services.location = locationProvider
+        services.distanceSettings.units = .feet
+        var time = sampleTime + 1
+
+        let target = coordinate(distanceMetres: 106.7, bearingDegrees: 45)
+        let searchService = StubDestinationSearch(suggestions: [
+            SearchSuggestion(title: "Clough Commons", subtitle: "", coordinate: target)
+        ])
+        let viewModel = PlaceSearchViewModel(services: services, search: searchService, now: { time })
+
+        let task = Task { await viewModel.start() }
+        defer { task.cancel() }
+
+        viewModel.query = "Clough"
+        viewModel.search()
+        let label = { viewModel.spokenLabel(for: viewModel.suggestions[0], at: 0) }
+
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(label() == "Clough Commons")
+
+        locationProvider.yieldAuthorization(.authorized(preciseAccuracy: true))
+        locationProvider.yieldLocation(LocationSample(coordinate: origin, horizontalAccuracy: 5, timestamp: sampleTime))
+        locationProvider.yieldHeading(HeadingSample(
+            trueHeading: 90, magneticHeading: 92, accuracy: 10, timestamp: sampleTime
+        ))
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(label() == "Clough Commons, 350 feet, slightly left")
+
+        time = sampleTime + HeadingEstimator.maximumSampleAge + 1
+        #expect(label() == "Clough Commons, 350 feet, northeast")
+
+        time = sampleTime + SearchResultSpeech.maximumFixAge + 1
+        #expect(label() == "Clough Commons")
+    }
+
+    @Test func destinationSearchDropsDistanceAndDirectionFromAStaleFix() async throws {
+        let locationProvider = ControllableLocationProvider()
+        let settings = DistanceSettings()
+        settings.units = .metres
+        var time = sampleTime + 1
+
+        let target = coordinate(distanceMetres: 120, bearingDegrees: 180)
+        let searchService = StubDestinationSearch(suggestions: [
+            SearchSuggestion(title: "Tech Tower", subtitle: "225 North Ave", coordinate: target)
+        ])
+        let viewModel = DestinationSearchViewModel(
+            search: searchService, location: locationProvider, distances: settings, now: { time }
+        )
+
+        let task = Task { await viewModel.start() }
+        defer { task.cancel() }
+
+        viewModel.query = "Tech"
+        viewModel.queryChanged()
+        locationProvider.yieldLocation(LocationSample(coordinate: origin, horizontalAccuracy: 5, timestamp: sampleTime))
+        try await Task.sleep(for: .milliseconds(50))
+        #expect(viewModel.spokenLabel(for: viewModel.suggestions[0], at: 0) == "Tech Tower, 120 metres, south, 225 North Ave")
+
+        time = sampleTime + SearchResultSpeech.maximumFixAge + 1
+        #expect(viewModel.spokenLabel(for: viewModel.suggestions[0], at: 0) == "Tech Tower, 225 North Ave")
     }
 }
 

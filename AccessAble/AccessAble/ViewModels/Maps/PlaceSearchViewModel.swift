@@ -64,6 +64,7 @@ final class PlaceSearchViewModel {
     static let renameDistance: Double = 30
 
     @ObservationIgnored private let services: AppServices?
+    @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let places: [SamplePlace]
     let savedPlacesStore: SavedPlacesStore
     let recentPlacesStore: RecentPlacesStore
@@ -73,15 +74,17 @@ final class PlaceSearchViewModel {
     @ObservationIgnored private var newestReadingTime: Date?
 
     /// `search` overrides `services.destinationSearch`; without either it searches a few
-    /// sample places, for previews and tests.
+    /// sample places, for previews and tests. `now` is the time, for how old a fix or heading is.
     init(
         services: AppServices? = nil,
         search: (any DestinationSearching)? = nil,
         places: [SamplePlace] = SampleContent.places,
         savedPlaces: SavedPlacesStore? = nil,
-        recentPlaces: RecentPlacesStore? = nil
+        recentPlaces: RecentPlacesStore? = nil,
+        now: @escaping () -> Date = { .now }
     ) {
         self.services = services
+        self.now = now
         self.places = places
         self.savedPlacesStore = savedPlaces ?? SavedPlacesStore(places: [])
         self.recentPlacesStore = recentPlaces ?? RecentPlacesStore(places: [])
@@ -211,20 +214,21 @@ final class PlaceSearchViewModel {
     /// VoiceOver label for a live search result: includes distance (WIRE-7 units) and direction
     /// (relative when NAV-2 knows the heading, otherwise cardinal) for the top 5 results only.
     func spokenLabel(for suggestion: SearchSuggestion, at index: Int) -> String {
-        SearchResultSpeech.label(
+        let time = now()
+        return SearchResultSpeech.label(
             for: suggestion,
             at: index,
-            from: searchOriginCoordinate,
-            heading: origin == .myLocation ? heading : nil,
+            from: searchOriginCoordinate(at: time),
+            heading: origin == .myLocation ? headingEstimator.heading(at: time) : nil,
             distances: services?.distanceSettings.formatter ?? DistanceSettings().formatter
         )
     }
 
-    private var searchOriginCoordinate: GeoCoordinate? {
+    private func searchOriginCoordinate(at time: Date) -> GeoCoordinate? {
         if let place = origin.place {
             return GeoCoordinate(latitude: place.latitude, longitude: place.longitude)
         }
-        return location?.coordinate
+        return SearchResultSpeech.origin(of: location, at: time)
     }
 
     static func distanceText(metres: Double, distances: DistanceFormatter) -> String {
