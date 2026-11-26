@@ -139,7 +139,8 @@ struct AppServices: Sendable {
             landmarks: services.landmarks,
             setTripTracking: { await gps.setTripTracking($0) },
             distances: distanceSettings,
-            recorder: services.tripRecorder
+            recorder: services.tripRecorder,
+            battery: BatteryMonitor(battery: DeviceBattery())
         )
 
         let analyzer = scene as? ARSceneAnalyzer
