@@ -124,6 +124,32 @@ struct CampusNicknamesTests {
                 == ["McCamish Pavilion Lot"]
         )
     }
+
+    @Test
+    func deduplicateRemovesResultsWithinFiftyMetresOfAMatch() throws {
+        let dictionary = CampusNicknameDictionary.bundled
+        let crc = try #require(dictionary.matches(for: "crc").first)
+        let near = GeoCoordinate(latitude: crc.coordinate.latitude + 0.0003, longitude: crc.coordinate.longitude)
+        let far = GeoCoordinate(latitude: crc.coordinate.latitude + 0.0006, longitude: crc.coordinate.longitude)
+        #expect(GeoMath.distance(from: crc.coordinate, to: near) < 50)
+        #expect(GeoMath.distance(from: crc.coordinate, to: far) > 50)
+
+        let mapKit = [
+            SearchSuggestion(title: "GT Rec Aquatic Center", subtitle: "Ferst Dr NW", coordinate: near),
+            SearchSuggestion(title: "Fitten Hall", subtitle: "Ferst Dr NW", coordinate: far),
+        ]
+        #expect(dictionary.deduplicate(mapKit, against: [crc]).map(\.title) == ["Fitten Hall"])
+    }
+
+    @Test
+    func malformedFileGivesAnEmptyDictionary() throws {
+        let url = FileManager.default.temporaryDirectory.appending(path: "campus-nicknames-\(UUID()).json")
+        try Data("{ \"places\": [ { \"name\": ".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        #expect(CampusNicknameDictionary.load(from: url).places.isEmpty)
+        #expect(CampusNicknameDictionary.load(from: nil).places.isEmpty)
+    }
 }
 
 @MainActor
@@ -212,6 +238,44 @@ struct DestinationAutocompleterNicknameTests {
             Issue.record("Expected .failure(.suggestionsUnavailable), got \(unavailable)")
         }
     }
+
+    @Test
+    func searchStillWorksWhenTheDictionaryIsMalformed() async throws {
+        let url = FileManager.default.temporaryDirectory.appending(path: "campus-nicknames-\(UUID()).json")
+        try Data("not json".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let fakeMapKit = FakeMapKitAutocompleter()
+        let autocompleter = DestinationAutocompleter(dictionary: .load(from: url), mapKit: fakeMapKit)
+
+        var iterator = autocompleter.suggestions().makeAsyncIterator()
+        autocompleter.update(query: "culc")
+        #expect(fakeMapKit.recordedFragments == ["culc"])
+        fakeMapKit.onResults?([SearchSuggestion(title: "Clough Commons", subtitle: "266 4th St NW")])
+
+        let results = try #require(await iterator.next())
+        #expect(try results.get().map(\.title) == ["Clough Commons"])
+    }
+
+    @Test
+    func dropsAMapKitResultOnceItsCoordinateIsWithinFiftyMetresOfAMatch() async throws {
+        let fakeMapKit = FakeMapKitAutocompleter()
+        let autocompleter = DestinationAutocompleter(dictionary: .bundled, mapKit: fakeMapKit)
+        let crc = try #require(CampusNicknameDictionary.bundled.matches(for: "crc").first)
+        let aquatic = SearchSuggestion(title: "GT Rec Aquatic Center", subtitle: "Ferst Dr NW")
+        fakeMapKit.coordinates[aquatic.id] = GeoCoordinate(
+            latitude: crc.coordinate.latitude + 0.0003, longitude: crc.coordinate.longitude
+        )
+
+        var iterator = autocompleter.suggestions().makeAsyncIterator()
+        autocompleter.update(query: "crc")
+        _ = await iterator.next()
+        fakeMapKit.onResults?([aquatic])
+
+        let merged = try #require(await iterator.next())
+        #expect(try merged.get().map(\.title) == ["Campus Recreation Center", "GT Rec Aquatic Center"])
+        let located = try #require(await iterator.next())
+        #expect(try located.get().map(\.title) == ["Campus Recreation Center"])
+    }
 }
 
 @MainActor
@@ -221,6 +285,11 @@ private final class FakeMapKitAutocompleter: MapKitAutocompleting {
     private(set) var recordedFragments: [String] = []
     private(set) var resolvedSuggestions: [SearchSuggestion] = []
     private(set) var cancelCount = 0
+    var coordinates: [SearchSuggestion.ID: GeoCoordinate] = [:]
+
+    func coordinate(for suggestion: SearchSuggestion) async -> GeoCoordinate? {
+        coordinates[suggestion.id]
+    }
 
     func update(fragment: String) {
         recordedFragments.append(fragment)

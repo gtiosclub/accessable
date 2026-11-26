@@ -92,8 +92,7 @@ final class DestinationAutocompleter: DestinationSearching {
         resultsGeneration += 1
         let generation = resultsGeneration
 
-        let merged = dictionary.merge(matches: dictionaryMatches, mapKitResults: mapKitResults)
-        let enriched = applyCachedCoordinates(to: merged)
+        let enriched = mergedWithCachedCoordinates(mapKitResults)
         results.send(.success(enriched))
 
         let unresolvedTop = enriched.prefix(SearchResultSpeech.maxSpokenResults).filter { $0.coordinate == nil }
@@ -122,11 +121,16 @@ final class DestinationAutocompleter: DestinationSearching {
             for (id, coordinate) in resolved {
                 self.resolvedCoordinates[id] = coordinate
             }
-            let updated = self.applyCachedCoordinates(to: enriched)
+            // A coordinate can show a MapKit result to be a nickname match under another name.
+            let updated = self.mergedWithCachedCoordinates(mapKitResults)
             if updated != enriched {
                 self.results.send(.success(updated))
             }
         }
+    }
+
+    private func mergedWithCachedCoordinates(_ mapKitResults: [SearchSuggestion]) -> [SearchSuggestion] {
+        dictionary.merge(matches: dictionaryMatches, mapKitResults: applyCachedCoordinates(to: mapKitResults))
     }
 
     private func applyCachedCoordinates(to suggestions: [SearchSuggestion]) -> [SearchSuggestion] {

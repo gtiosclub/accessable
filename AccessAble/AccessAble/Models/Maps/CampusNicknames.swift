@@ -30,8 +30,11 @@ struct CampusNicknameDictionary: Sendable {
 
     /// Loaded from `campus-nicknames.json` in the app bundle. Empty if missing or unreadable;
     /// search then falls back to MapKit alone, and the failure is logged.
-    static let bundled: CampusNicknameDictionary = {
-        guard let url = Bundle.main.url(forResource: "campus-nicknames", withExtension: "json") else {
+    static let bundled = load(from: Bundle.main.url(forResource: "campus-nicknames", withExtension: "json"))
+
+    /// The dictionary in the file at `url`, or an empty one, logged, when there is no file or it can't be read.
+    static func load(from url: URL?) -> CampusNicknameDictionary {
+        guard let url else {
             log.error("campus-nicknames.json is missing from the app bundle")
             return CampusNicknameDictionary(places: [])
         }
@@ -41,7 +44,7 @@ struct CampusNicknameDictionary: Sendable {
             log.error("Could not read campus-nicknames.json: \(error.localizedDescription, privacy: .public)")
             return CampusNicknameDictionary(places: [])
         }
-    }()
+    }
 
     init(places: [CampusNicknamePlace]) {
         self.places = places
@@ -97,8 +100,12 @@ struct CampusNicknameDictionary: Sendable {
         matches.map(\.suggestion) + deduplicate(mapKitResults, against: matches)
     }
 
+    /// A MapKit result this close to a matched place, in metres, is taken to be the same place.
+    static let duplicateDistance: Double = 50
+
     /// Filters out MapKit suggestions that duplicate any of `matchedPlaces` (by canonical name,
-    /// nickname, or case/punctuation-normalized campus variants) as well as duplicate MapKit rows.
+    /// nickname, case/punctuation-normalized campus variants, or a coordinate within
+    /// `duplicateDistance`) as well as duplicate MapKit rows.
     func deduplicate(_ mapKitResults: [SearchSuggestion], against matchedPlaces: [CampusNicknamePlace]) -> [SearchSuggestion] {
         let matchedIDs = Set(matchedPlaces.map(\.suggestion.id))
         let matchedKeys = Set(
@@ -111,6 +118,11 @@ struct CampusNicknameDictionary: Sendable {
         return mapKitResults.filter { suggestion in
             guard !matchedIDs.contains(suggestion.id) else { return false }
             guard seenIDs.insert(suggestion.id).inserted else { return false }
+            if let coordinate = suggestion.coordinate, matchedPlaces.contains(where: {
+                GeoMath.distance(from: coordinate, to: $0.coordinate) <= Self.duplicateDistance
+            }) {
+                return false
+            }
             return !Self.isDuplicateTitle(suggestion.title, matchingKeys: matchedKeys)
         }
     }
