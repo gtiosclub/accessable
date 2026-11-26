@@ -126,11 +126,9 @@ struct ValhallaRoutingService: RoutingService {
     private func makeRequest(
         from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
     ) throws -> URLRequest {
-        // Valhalla documents 0.5–25 km/h for walking_speed.
-        let walkingSpeed = min(max(options.walkingSpeed * 3.6, 0.5), 25)
         let body = RouteRequest(
             locations: [Location(origin), Location(destination)],
-            costingOptions: CostingOptions(pedestrian: Pedestrian(walkingSpeed: walkingSpeed)),
+            costingOptions: CostingOptions(pedestrian: Pedestrian(options)),
             excludeLocations: options.excludeLocations.isEmpty
                 ? nil
                 : options.excludeLocations.map(Location.init),
@@ -192,8 +190,42 @@ struct ValhallaRoutingService: RoutingService {
         let pedestrian: Pedestrian
     }
 
+    /// Unset preferences are left out of the JSON, so Valhalla uses its defaults.
     private struct Pedestrian: Encodable {
         /// Kilometres per hour.
         let walkingSpeed: Double
+        let stepPenalty: Double?
+        let elevatorPenalty: Double?
+        let useHills: Double?
+        let useLit: Double?
+        let walkwayFactor: Double?
+        let sidewalkFactor: Double?
+        let alleyFactor: Double?
+        let drivewayFactor: Double?
+        let servicePenalty: Double?
+        let serviceFactor: Double?
+        let useTracks: Double?
+        let maxHikingDifficulty: Int?
+
+        /// Clamped to the ranges Valhalla documents.
+        init(_ options: RouteOptions) {
+            let use = { (value: Double?) in value.map { min(max($0, 0), 1) } }
+            let penalty = { (value: Double?) in value.map { min(max($0, 0), 43_200) } }
+            let factor = { (value: Double?) in value.map { min(max($0, 0.1), 100_000) } }
+            // Valhalla documents 0.5–25 km/h for walking_speed.
+            walkingSpeed = min(max(options.walkingSpeed * 3.6, 0.5), 25)
+            stepPenalty = penalty(options.stepPenalty)
+            elevatorPenalty = penalty(options.elevatorPenalty)
+            useHills = use(options.useHills)
+            useLit = use(options.useLit)
+            walkwayFactor = factor(options.walkwayFactor)
+            sidewalkFactor = factor(options.sidewalkFactor)
+            alleyFactor = factor(options.alleyFactor)
+            drivewayFactor = factor(options.drivewayFactor)
+            servicePenalty = penalty(options.servicePenalty)
+            serviceFactor = factor(options.serviceFactor)
+            useTracks = use(options.useTracks)
+            maxHikingDifficulty = options.maxHikingDifficulty.map { min(max($0, 0), 6) }
+        }
     }
 }
