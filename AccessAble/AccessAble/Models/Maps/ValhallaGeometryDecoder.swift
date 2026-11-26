@@ -62,8 +62,8 @@ enum ValhallaGeometryDecoder {
                     kind: try maneuverKind(for: maneuver.type),
                     coordinateIndex: maneuver.beginShapeIndex,
                     instruction: maneuver.instruction,
-                    spokenInstruction: verbal.flatMap { $0.isEmpty ? nil : $0 }
-                        ?? maneuver.instruction,
+                    spokenInstruction: RouteStep.withLowercaseThen(verbal.flatMap { $0.isEmpty ? nil : $0 }
+                        ?? maneuver.instruction),
                     announcesNextStep: maneuver.verbalMultiCue ?? false
                 )
             }

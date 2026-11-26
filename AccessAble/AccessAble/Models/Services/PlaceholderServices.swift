@@ -181,6 +181,7 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 
     func currentLocationDescription() async -> String? { nil }
 }
@@ -215,6 +216,7 @@ struct PreviewTripProvider: TripStateProviding {
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 }
 
 actor PlaceholderAuthService: AuthService {
@@ -251,7 +253,7 @@ actor PlaceholderAuthService: AuthService {
 
 // MARK: - Calls
 
-/// Fixed sample volunteers so the Calls screen works with no backend. Replaced by MATCH-x.
+/// Fixed sample volunteers so the Calls screen works with no backend. Replaced by VOLUNTEER-6.
 struct PlaceholderVolunteerDirectory: VolunteerDirectory {
     var volunteers: [Volunteer] = SampleContent.activeVolunteers
 
@@ -269,7 +271,7 @@ struct PlaceholderVolunteerDirectory: VolunteerDirectory {
     }
 }
 
-/// Remembers the toggle in memory only. Replaced by MATCH-x.
+/// Remembers the toggle in memory only. Replaced by VOLUNTEER-6.
 actor PlaceholderPresenceService: PresenceService {
     private nonisolated let states = Broadcaster<Bool>(replaysLatest: true)
 
@@ -282,7 +284,6 @@ actor PlaceholderPresenceService: PresenceService {
         states.send(isOnline)
     }
 }
-
 
 struct PlaceholderCallSignaling: CallSignaling {
     func requestCall(preferring volunteerID: String?) async throws -> CallTicket {
@@ -306,7 +307,7 @@ struct PlaceholderCallSignaling: CallSignaling {
     }
 }
 
-/// Walks through the states without touching LiveKit or the camera. Replaced by MATCH-x.
+/// Walks through the states without touching LiveKit or the camera. Replaced by VOLUNTEER-6.
 actor PlaceholderVideoCallSession: VideoCallSession {
     private nonisolated let broadcaster = Broadcaster<CallState>(replaysLatest: true)
 
@@ -322,18 +323,18 @@ actor PlaceholderVideoCallSession: VideoCallSession {
     func disconnect() async {
         broadcaster.send(.ended(.hungUp))
     }
-    
+
     func setMicrophoneMuted(_ muted: Bool) async throws {
-            log.info("call muted=\(muted)")
-        }
+        log.info("call muted=\(muted)")
+    }
 
-        func flipCamera() async throws {
-            log.info("call flip camera")
-        }
+    func flipCamera() async throws {
+        log.info("call flip camera")
+    }
 
-        func setFlashlight(_ on: Bool) async throws {
-            log.info("call flashlight=\(on)")
-        }
+    func setFlashlight(_ on: Bool) async throws {
+        log.info("call flashlight=\(on)")
+    }
 }
 
 /// In-memory profiles for tests and previews, keyed by the shared auth UID.
@@ -355,5 +356,91 @@ actor PlaceholderUserProfileStore: UserProfileStore {
                                   languages: languages, createdAt: profiles[userID]?.createdAt ?? .now)
         profiles[userID] = profile
         return profile
+    }
+}
+
+/// The in-memory stand-in for reports, used in previews and tests. It refuses the votes the rules refuse, so they
+/// behave as they would with Firestore.
+actor PlaceholderReportService: ReportService {
+    private var storedReports: [Report] = []
+    private nonisolated let changes = Broadcaster<[Report]>(replaysLatest: true)
+    private let auth: any AuthService
+    private let now: @Sendable () -> Date
+    private var votes: [String: Set<String>] = [:]
+    private var lastVote: [String: Date] = [:]
+
+    init(auth: any AuthService = PlaceholderAuthService(), now: @escaping @Sendable () -> Date = { .now }) {
+        self.auth = auth
+        self.now = now
+        changes.send([])
+    }
+
+    func submit(_ report: Report) async throws {
+        storedReports.removeAll { $0.id == report.id }
+        storedReports.append(report)
+        changes.send(storedReports)
+    }
+
+    func reports(
+        near coordinate: GeoCoordinate,
+        radius: Double
+    ) async throws -> [Report] {
+        let time = now()
+        return storedReports.filter { $0.expiresAt > time && $0.isNear(coordinate, within: radius) }
+    }
+
+    nonisolated func reportChanges(
+        near coordinate: GeoCoordinate,
+        radius: Double
+    ) -> AsyncStream<[Report]> {
+        let source = changes.stream()
+
+        return AsyncStream { continuation in
+            let task = Task {
+                for await reports in source {
+                    let time = self.now()
+                    continuation.yield(reports.filter {
+                        $0.expiresAt > time && $0.isNear(coordinate, within: radius)
+                    })
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    @discardableResult
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool {
+        guard let user = await auth.currentUser() else { throw ReportServiceError.notSignedIn }
+        let time = now()
+        guard !FirestoreReportService.isRateLimited(lastReportAt: lastVote[user.id], now: time) else {
+            throw ReportServiceError.rateLimited
+        }
+        guard let index = storedReports.firstIndex(where: { $0.id == reportID }) else {
+            throw ReportServiceError.invalidReport
+        }
+        let report = storedReports[index]
+        guard FirestoreReportService.canVote(on: report, as: user.id, isStillPresent: isStillPresent, now: time),
+              votes[reportID, default: []].insert(user.id).inserted else {
+            throw ReportServiceError.permissionDenied
+        }
+        lastVote[user.id] = time
+
+        var voted = report
+        var extends = false
+        if isStillPresent {
+            voted.confirmations += 1
+            voted.negativesSinceConfirm = 0
+            let renewed = time.addingTimeInterval(report.kind.lifetime)
+            extends = renewed > report.expiresAt
+            if extends { voted.expiresAt = renewed }
+        } else {
+            voted.negativeConfirmations += 1
+            voted.negativesSinceConfirm += 1
+            if voted.negativesSinceConfirm >= FirestoreReportService.removalDenials { voted.expiresAt = time }
+        }
+        storedReports[index] = voted
+        changes.send(storedReports)
+        return extends
     }
 }

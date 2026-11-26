@@ -33,9 +33,9 @@ final class TripRecorder: Sendable {
         var lastError: String?
     }
 
-    static let header = "kind,time,latitude,longitude,horizontal_accuracy_m,speed_mps,course_deg,course_accuracy_deg,"
-        + "heading_deg,heading_source,compass_accuracy_deg,progress_m,side_offset_m,next_step,off_route,events,"
-        + "announcement"
+    static let header = "kind,time,latitude,longitude,horizontal_accuracy_m,location_source,speed_mps,course_deg,"
+        + "course_accuracy_deg,heading_deg,heading_source,compass_accuracy_deg,progress_m,side_offset_m,next_step,"
+        + "off_route,events,announcement"
 
     let directory: URL
     private let state = Mutex(State())
@@ -114,8 +114,9 @@ final class TripRecorder: Sendable {
         write([
             "fix", Self.rowTime.format(sample.timestamp),
             Self.format(sample.coordinate.latitude, digits: 7), Self.format(sample.coordinate.longitude, digits: 7),
-            Self.format(sample.horizontalAccuracy), Self.format(sample.speed), Self.format(sample.course),
-            Self.format(sample.courseAccuracy), Self.format(fix.heading?.degrees), fix.heading?.source.rawValue ?? "",
+            Self.format(sample.horizontalAccuracy), sample.source.rawValue, Self.format(sample.speed),
+            Self.format(sample.course), Self.format(sample.courseAccuracy), Self.format(fix.heading?.degrees),
+            fix.heading?.source.rawValue ?? "",
             Self.format(fix.compassAccuracy), Self.format(fix.progress), Self.format(fix.sideOffset),
             String(fix.nextStepIndex), fix.isOffRoute ? "1" : "0",
             fix.events.map(Self.describe).joined(separator: " "), "",
@@ -124,7 +125,15 @@ final class TripRecorder: Sendable {
 
     /// Everything the trip submits to the announcement engine, whether or not it was then spoken.
     func record(announcement text: String, at time: Date) {
-        write(["announcement", Self.rowTime.format(time)] + Array(repeating: "", count: 14) + [text])
+        write(["announcement", Self.rowTime.format(time)] + Array(repeating: "", count: 15) + [text])
+    }
+
+    /// A sign the camera read, matched or not, so a walk's missed buildings can be told from its misreads (LAND-5).
+    /// The text goes in the announcement column, and its kind and confidence in events.
+    func record(sighting: LandmarkObservation, progress: Double, at time: Date) {
+        write(["sighting", Self.rowTime.format(time)] + Array(repeating: "", count: 10)
+            + [Self.format(progress), "", "", "", "\(sighting.kind.rawValue) \(Self.format(Double(sighting.confidence), digits: 2))",
+               sighting.text ?? ""])
     }
 
     /// The recordings on this phone, newest first.

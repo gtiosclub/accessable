@@ -12,6 +12,11 @@ struct ActiveTripView: View {
     @Environment(AppRouter.self) private var router
     @State private var session: TripSessionViewModel
     @State private var showsCommands = false
+    /// Where a report goes, set by the button that opens the choices, so it is what that button said.
+    @State private var reportSource: ReportSource?
+    /// Report was tried from Voice Commands: its choices open once the sheet has closed, since a
+    /// dialog can't open while the sheet is still going.
+    @State private var reportsAfterCommands = false
     private let services: AppServices?
 
     init(plan: TripPlan, services: AppServices? = nil) {
@@ -38,10 +43,23 @@ struct ActiveTripView: View {
                         .accessibilityAddTraits(.updatesFrequently)
                 }
 
+                if session.isReportingAvailable {
+                    Button("Report a problem here") {
+                        reportSource = .here
+                    }
+                    .buttonStyle(.pill(.outline, size: .compact))
+                    .accessibilityHint("Choose the problem at your location")
+                }
+
                 Spacer()
 
                 AnnouncementStack(announcements: session.announcements)
                     .padding(.horizontal, 24)
+                if let question = session.reportQuestion {
+                    reportQuestionBar(question)
+                        .padding(.horizontal, 24)
+                        .transition(.opacity)
+                }
                 if let state = voiceState {
                     voiceCaption(state)
                         .padding(.horizontal, 24)
@@ -51,7 +69,12 @@ struct ActiveTripView: View {
                     isMicMuted: session.isMicOff,
                     onCallHelp: { router.push(.callHelp) },
                     onMicrophone: { Task { await session.toggleMicrophone() } },
-                    onPauseTrip: { session.pause() }
+                    onPauseTrip: { session.pause() },
+                    hasArrived: session.hasArrived,
+                    onEndTrip: {
+                        session.exit()
+                        router.popToRoot()
+                    }
                 )
             }
             .accessibilityHidden(session.isRouteBlocked || session.isPaused)
@@ -62,7 +85,8 @@ struct ActiveTripView: View {
                     onCallHelp: { router.push(.callHelp) },
                     onReroute: { session.reroute() },
                     onPause: { session.pause() },
-                    onContinue: { session.resume() }
+                    onContinue: { session.resume() },
+                    onReport: session.isReportingAvailable ? { reportSource = .routeAhead } : nil
                 )
                 .transition(.opacity)
             }
@@ -94,6 +118,7 @@ struct ActiveTripView: View {
             session.showsMap.toggle()
         }
         .animation(.easeInOut(duration: 0.2), value: voiceState)
+        .animation(.easeInOut(duration: 0.2), value: session.reportQuestion)
         .toolbar(.hidden, for: .navigationBar)
         .task {
             session.onCallHelp = { router.push(.callHelp) }
@@ -105,20 +130,51 @@ struct ActiveTripView: View {
             guard let announcement, !session.isSpokenByEngine else { return }
             AccessibilityNotification.Announcement(announcement.text).post()
         }
-        .sheet(isPresented: $showsCommands) {
+        .confirmationDialog(
+            "What kind of problem?",
+            isPresented: Binding(get: { reportSource != nil }, set: { if !$0 { reportSource = nil } }),
+            titleVisibility: .visible,
+            presenting: reportSource
+        ) { source in
+            ForEach(ReportKind.allCases) { kind in
+                Button(kind.title) {
+                    Task { await session.submitReport(kind: kind, useRouteAhead: source == .routeAhead) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { source in
+            Text(source == .routeAhead
+                 ? "Choose the problem just ahead on your route."
+                 : "Choose the problem at your location.")
+        }
+        .sheet(isPresented: $showsCommands, onDismiss: {
+            guard reportsAfterCommands else { return }
+            reportsAfterCommands = false
+            reportSource = .here
+        }) {
             VoiceCommandsSheet(
                 onTry: { command in
                     showsCommands = false
-                    if !session.run(command), command == .callHelp {
-                        router.push(.callHelp)
+                    guard !session.run(command) else { return }
+                    switch command {
+                    case .callHelp: router.push(.callHelp)
+                    case .reportProblem: reportsAfterCommands = true
+                    default: break
                     }
                 },
                 onSimulateBlockedRoute: {
                     showsCommands = false
                     session.simulateBlockedRoute()
-                }
+                },
+                listsReport: session.isReportingAvailable
             )
         }
+    }
+
+    /// Where the person is, or just ahead on the route (from Route Blocked Ahead).
+    private enum ReportSource {
+        case here
+        case routeAhead
     }
 
     private enum VoiceState: Equatable {
@@ -163,6 +219,36 @@ struct ActiveTripView: View {
         .accessibilityHidden(true)
     }
 
+    /// Yes and No for the report question that was just said, while its answer is waited for. Not a dialog, so the
+    /// trip screen stays usable and the question goes away by itself.
+    private func reportQuestionBar(_ question: OpenReportQuestion) -> some View {
+        VStack(spacing: 10) {
+            Text(question.text)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                // said aloud already; the buttons carry it for VoiceOver
+                .accessibilityHidden(true)
+            HStack(spacing: 12) {
+                Button("Yes") { Task { await session.answer(question, isStillPresent: true) } }
+                    .buttonStyle(.pill(.primary, size: .compact))
+                    .accessibilityLabel("Yes, still there")
+                    .accessibilityHint(question.text)
+                Button("No") { Task { await session.answer(question, isStillPresent: false) } }
+                    .buttonStyle(.pill(.outline, size: .compact))
+                    .accessibilityLabel("No, it's gone")
+                    .accessibilityHint(question.text)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.white.opacity(0.4)))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(question.text)
+    }
+
     /// The live camera, or the map with the real route once there is one. Leaving the camera
     /// view doesn't stop obstacle warnings: the session holds the camera for the whole trip.
     @ViewBuilder
@@ -175,10 +261,10 @@ struct ActiveTripView: View {
                     name: session.plan.place.name,
                     coordinate: GeoCoordinate(latitude: session.plan.place.latitude, longitude: session.plan.place.longitude)
                 ),
-                accessibilityLabel: session.directions?.mapAccessibilityLabel
-                    ?? "Map showing walking directions to \(session.destinationName)."
+                accessibilityLabel: session.mapAccessibilityLabel,
+                reports: session.mapReports
             )
-        } else if let services {
+        } else if let services, session.isCameraReady {
             LiveSceneView(services: services, mode: .walk, chrome: .cameraOnly)
         } else {
             CameraBackdrop()
@@ -226,6 +312,8 @@ struct RouteBlockedScreen: View {
     let onReroute: () -> Void
     let onPause: () -> Void
     let onContinue: () -> Void
+    /// Nil hides the report button, where reporting isn't available.
+    let onReport: (() -> Void)?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -244,7 +332,8 @@ struct RouteBlockedScreen: View {
                     onCallHelp: onCallHelp,
                     onReroute: onReroute,
                     onPause: onPause,
-                    onContinue: onContinue
+                    onContinue: onContinue,
+                    onReport: onReport
                 )
             }
         }
@@ -305,6 +394,8 @@ struct RouteBlockedCard: View {
     let onReroute: () -> Void
     let onPause: () -> Void
     let onContinue: () -> Void
+    /// Nil hides the report button, where reporting isn't available.
+    let onReport: (() -> Void)?
 
     @AccessibilityFocusState private var isTitleFocused: Bool
 
@@ -320,6 +411,11 @@ struct RouteBlockedCard: View {
                     .multilineTextAlignment(.center)
                 Button("Call Help", action: onCallHelp)
                     .buttonStyle(.pill(.outline))
+                if let onReport {
+                    Button("Report the blockage", action: onReport)
+                        .buttonStyle(.pill(.outline))
+                        .accessibilityHint("Reports the problem just ahead on your route")
+                }
                 Button("Re-Route", action: onReroute)
                     .buttonStyle(.pill(.destructive))
                     .accessibilityHint("Finds a safer route")

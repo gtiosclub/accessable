@@ -5,6 +5,8 @@ import SwiftUI
 struct VoiceCommandsSheet: View {
     var onTry: ((VoiceCommandHint) -> Void)?
     var onSimulateBlockedRoute: (() -> Void)?
+    /// Lists the report command; only where reporting is available.
+    var listsReport = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -22,7 +24,7 @@ struct VoiceCommandsSheet: View {
                      : "Unmute the microphone and say any of these, or tap one to try it.")
                     .font(.body)
 
-                ForEach(VoiceCommandHint.allCases) { command in
+                ForEach(VoiceCommandHint.allCases.filter { listsReport || $0 != .reportProblem }) { command in
                     commandRow(command)
                 }
 

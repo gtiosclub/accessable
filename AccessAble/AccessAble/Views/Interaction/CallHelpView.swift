@@ -160,5 +160,6 @@ struct CallingView: View {
         CallHelpView()
     }
     .environment(AppRouter())
+    .environment(AppViewModel.preview)
     .preferredColorScheme(.dark)
 }

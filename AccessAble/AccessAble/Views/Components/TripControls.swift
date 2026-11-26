@@ -14,6 +14,9 @@ struct TripControlPanel: View {
     var onCallHelp: () -> Void = {}
     var onMicrophone: () -> Void = {}
     var onPauseTrip: () -> Void = {}
+    /// After arriving there's nothing left to pause, so the button ends the trip instead.
+    var hasArrived = false
+    var onEndTrip: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 16) {
@@ -34,10 +37,16 @@ struct TripControlPanel: View {
                 )
                 .disabled(disabled.contains(.microphone))
             }
-            Button("Pause Trip", action: onPauseTrip)
-                .buttonStyle(.pill(.destructive))
-                .disabled(disabled.contains(.pauseTrip))
-                .accessibilityHint("Opens settings, continue, exit, and call help")
+            if hasArrived {
+                Button("End Trip", action: onEndTrip)
+                    .buttonStyle(.pill(.primary))
+                    .accessibilityHint("Ends the trip and goes back to the start")
+            } else {
+                Button("Pause Trip", action: onPauseTrip)
+                    .buttonStyle(.pill(.destructive))
+                    .disabled(disabled.contains(.pauseTrip))
+                    .accessibilityHint("Opens settings, continue, exit, and call help")
+            }
         }
         .padding(.horizontal, 24)
         .padding(.top, 24)

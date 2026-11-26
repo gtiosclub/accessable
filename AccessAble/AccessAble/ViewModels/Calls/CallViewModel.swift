@@ -5,8 +5,11 @@ import Observation
 @MainActor
 @Observable
 final class CallViewModel {
-    /// Who answered. Starts as the volunteer the caller picked; another volunteer may answer instead.
+    /// Who answered, for the screen's header. Starts as the volunteer the caller picked;
+    /// another volunteer may answer instead.
     private(set) var partnerName: String
+    /// The same name inside a sentence ("Connected to a volunteer").
+    @ObservationIgnored private var partnerInSentence: String
     private(set) var state: CallState = .idle
     private(set) var isMuted = false
     private(set) var isUsingBackCamera = true
@@ -26,6 +29,7 @@ final class CallViewModel {
         self.services = services
         self.partnerID = partnerID
         self.partnerName = partnerName
+        self.partnerInSentence = partnerName
     }
 
     /// What VoiceOver announces on every change, and what the screen shows.
@@ -33,7 +37,7 @@ final class CallViewModel {
         switch state {
         case .idle, .ringing: "Calling a volunteer"
         case .connecting: "Connecting"
-        case .connected: "Connected to \(partnerName)"
+        case .connected: "Connected to \(partnerInSentence)"
         case .ended(.hungUp): "Call ended"
         case .ended(.declined): "\(partnerName) declined the call"
         case .ended(.unanswered): "Nobody answered"
@@ -102,8 +106,16 @@ final class CallViewModel {
         do {
             // Rings the picked volunteer first, then others, 30 seconds each, until one accepts.
             let ticket = try await services.callSignaling.requestCall(preferring: partnerID)
+            // Hung up just as someone answered: hangUp had no ticket to end the call with.
+            if Task.isCancelled {
+                await services.callSignaling.endCall(callID: ticket.callID)
+                return
+            }
             self.ticket = ticket
-            if ticket.volunteerID != partnerID { partnerName = "a volunteer" }
+            if ticket.volunteerID != partnerID {
+                partnerName = "A volunteer"
+                partnerInSentence = "a volunteer"
+            }
             hasStartedConnecting = true
             try await services.videoCall.connect(with: ticket)
         } catch {
