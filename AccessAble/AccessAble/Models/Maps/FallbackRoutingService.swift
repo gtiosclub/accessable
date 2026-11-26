@@ -29,7 +29,8 @@ struct FallbackRoutingService: RoutingService {
 
     /// The Valhalla servers, in the order they are asked.
     let primaries: [any RoutingService]
-    private let fallback: any RoutingService
+    /// Apple Maps, asked after every primary.
+    let fallback: any RoutingService
     private let timeout: Duration
     private let clock: any Clock<Duration>
     /// Each primary's last timeout or refusal, cleared when it answers. Shared by copies.
