@@ -56,6 +56,8 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
     /// of a warning the user just heard, where a buzz says enough. Spoken anyway when the
     /// user has haptics off or the event has no haptic.
     var hapticOnly: Bool
+    /// Uses the caller's prompt volume, including ringing and end-of-call messages.
+    var isCallAnnouncement: Bool
 
     init(
         id: UUID = UUID(),
@@ -69,7 +71,8 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
         createdAt: Date = .now,
         expiresAt: Date? = nil,
         dedupKey: String? = nil,
-        hapticOnly: Bool = false
+        hapticOnly: Bool = false,
+        isCallAnnouncement: Bool = false
     ) {
         self.id = id
         self.category = category
@@ -83,6 +86,7 @@ struct AnnouncementEvent: Identifiable, Hashable, Sendable {
         self.expiresAt = expiresAt
         self.dedupKey = dedupKey
         self.hapticOnly = hapticOnly
+        self.isCallAnnouncement = isCallAnnouncement
     }
 
     func isExpired(at date: Date = .now) -> Bool {

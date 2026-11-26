@@ -57,6 +57,18 @@ async function handle(request, env) {
   if (call.status !== 'accepted') throw new HttpError(409, 'This call has not been accepted.');
   if (call.roomName !== `call-${callId}`) throw new HttpError(403, 'This call has the wrong room.');
 
+  // Eligibility is checked for BOTH ticket recipients; the UI is not a trust boundary. No invites
+  // for the demo: the rules already let only volunteer accounts be rung, so only blocks are checked here.
+  const headers = { Authorization: `Bearer ${idToken}` };
+  const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
+  const blockResponse = await fetch(
+    `${base}/users/${encodeURIComponent(call.callerId)}/blockedVolunteers/${encodeURIComponent(call.volunteerId)}`,
+    { headers });
+  if (blockResponse.status !== 404) {
+    if (blockResponse.ok) throw new HttpError(403, 'This volunteer is blocked for this caller.');
+    throw new HttpError(403, 'Call eligibility could not be verified.');
+  }
+
   // 3. Only then: a token for this call's room and nothing else.
   const now = Math.floor(Date.now() / 1000);
   const expiresAt = now + TOKEN_LIFETIME_SECONDS;
@@ -82,11 +94,17 @@ async function handle(request, env) {
 // ---------- Firebase ID tokens ----------
 
 let googleKeys = null; // { keys: Map<kid, CryptoKey>, expiresAt: ms }
+let lastUnknownKidRefresh = 0; // ms
+// This runs before sign-in is checked, so a made-up kid must not refetch Google's keys every time.
+const UNKNOWN_KID_REFRESH_MS = 60 * 1000;
 
 async function googleKey(kid) {
   const stale = !googleKeys || Date.now() >= googleKeys.expiresAt;
-  // Google rotates its keys; an unknown kid also triggers one refresh.
-  if (stale || !googleKeys.keys.has(kid)) {
+  // Google rotates its keys; an unknown kid triggers a refresh, at most once a minute.
+  const unknown = googleKeys && !googleKeys.keys.has(kid);
+  if (unknown && !stale && Date.now() - lastUnknownKidRefresh < UNKNOWN_KID_REFRESH_MS) return undefined;
+  if (stale || unknown) {
+    if (unknown) lastUnknownKidRefresh = Date.now();
     const response = await fetch(GOOGLE_KEYS_URL);
     if (!response.ok) throw new Error(`Google keys: HTTP ${response.status}`);
     const maxAge = Number(/max-age=(\d+)/.exec(response.headers.get('Cache-Control') ?? '')?.[1] ?? 3600);
@@ -129,7 +147,7 @@ async function verifyFirebaseIdToken(token, projectId) {
   const ok = payload.aud === projectId
     && payload.iss === `https://securetoken.google.com/${projectId}`
     && typeof payload.sub === 'string' && payload.sub.length > 0 && payload.sub.length <= 128
-    && typeof payload.exp === 'number' && payload.exp > now - CLOCK_SKEW_SECONDS
+    && typeof payload.exp === 'number' && payload.exp > now
     && typeof payload.iat === 'number' && payload.iat <= now + CLOCK_SKEW_SECONDS
     && typeof payload.auth_time === 'number' && payload.auth_time <= now + CLOCK_SKEW_SECONDS;
   if (!ok) throw invalid;
@@ -146,6 +164,8 @@ async function readCall(callId, idToken, projectId) {
   if (response.status === 403 || response.status === 404) {
     throw new HttpError(403, 'You are not part of this call.');
   }
+  // Firestore refused the sign-in itself, e.g. it expired between our check and this read.
+  if (response.status === 401) throw new HttpError(401, 'Your sign-in expired. Sign in again.');
   if (!response.ok) throw new Error(`Firestore: HTTP ${response.status}`);
   const { fields = {} } = await response.json();
   const text = (name) => fields[name]?.stringValue;
