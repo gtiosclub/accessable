@@ -52,7 +52,7 @@ struct UserProfileTests {
         try await session.signOut()
 
         #expect(savedTrips.load() == nil)
-        #expect(!FileManager.default.fileExists(atPath: savedTrips.url.path()))
+        #expect(!FileManager.default.fileExists(atPath: savedTrips.url.path(percentEncoded: false)))
     }
 
     @Test
