@@ -56,6 +56,24 @@ struct UserProfileTests {
     }
 
     @Test
+    func signingOutEndsTheTripSoItIsntSavedAgain() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "UserProfileTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let savedTrips = SavedTripStore(directory: directory)
+        let trip = TripManager(location: PlaceholderLocationProvider(), routing: PlaceholderRoutingService(),
+                               announcements: PlaceholderAnnouncementEngine(), savedTrips: savedTrips)
+        await trip.startTrip(route: MapsSamples.route, destination: MapsSamples.destination)
+        #expect(savedTrips.load() != nil)
+        let session = AccountSessionViewModel(auth: PlaceholderAuthService(), profiles: PlaceholderUserProfileStore(),
+                                              savedTrips: savedTrips, trip: trip)
+        try await session.signOut()
+
+        var states = trip.tripStates().makeAsyncIterator()
+        #expect(await states.next()?.phase == .planning)
+        #expect(savedTrips.load() == nil)
+    }
+
+    @Test
     func readFailureDoesNotBecomeNewUserOnboarding() async throws {
         let auth = PlaceholderAuthService()
         let session = AccountSessionViewModel(auth: auth, profiles: UnconfiguredUserProfileStore())
