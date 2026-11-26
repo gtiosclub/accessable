@@ -4,7 +4,7 @@ import os
 private let log = Logger(subsystem: "AccessAble", category: "TripManager")
 
 /// Guides a walk along a route: follows location fixes with `RouteProgressTracker`, speaks its cues, reroutes when
-/// the user leaves the route, and warns when GPS is too weak to guide.
+/// the user leaves the route, and warns when GPS is too weak to guide or the battery runs low.
 ///
 /// Every `await` is a point where `endTrip` or another `startTrip` can run, so each task and handler carries the
 /// `generation` it was started for and does nothing once it is stale. State changes happen before the next `await`.
@@ -34,6 +34,8 @@ actor TripManager: TripStateProviding {
     private let distances: DistanceSettings
     /// Writes nothing unless recording is on, and fix rows aren't even built then.
     private let recorder: TripRecorder?
+    /// Nil where the battery isn't watched, as in tests of everything else.
+    private let battery: BatteryMonitor?
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
 
@@ -168,6 +170,7 @@ actor TripManager: TripStateProviding {
         setTripTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
         distances: DistanceSettings = DistanceSettings(units: .metres),
         recorder: TripRecorder? = nil,
+        battery: BatteryMonitor? = nil,
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
@@ -182,6 +185,7 @@ actor TripManager: TripStateProviding {
         self.setTripTracking = setTripTracking
         self.distances = distances
         self.recorder = recorder
+        self.battery = battery
         self.now = now
         self.sleep = sleep
         states.send(TripState(phase: .planning, updatedAt: now()))
@@ -270,6 +274,7 @@ actor TripManager: TripStateProviding {
         }
         startTask = Task { await self.announceStart(generation: generation) }
         watchdogTask = Task { await self.watchSignal(generation: generation) }
+        battery?.start()
         await setTripTracking(true)
         // an end that ran during the await may have switched it off before this switched it on
         if self.generation != generation, phase == .planning {
@@ -280,6 +285,7 @@ actor TripManager: TripStateProviding {
     func pauseTrip() async {
         guard phase == .active else { return }
         phase = .paused
+        battery?.setPaused(true)
         publish(at: now())
         await submit(confirmation("Trip paused."))
     }
@@ -297,6 +303,7 @@ actor TripManager: TripStateProviding {
             return
         }
         phase = .active
+        battery?.setPaused(false)
         publish(at: now())
         let guidance = resumeAnnouncement()
         await submit(confirmation("Trip resumed."))
@@ -315,6 +322,7 @@ actor TripManager: TripStateProviding {
         generation += 1
         let generation = generation
         cancelTasks()
+        battery?.stop()
         phase = .planning
         tracker = nil
         progress = nil
@@ -449,6 +457,7 @@ actor TripManager: TripStateProviding {
         cueChecks = []
         pendingCueIDs = []
         deliveredIDs = []
+        battery?.stop()
         if phase == .paused {
             arrivedWhilePaused = true
             publish(at: time)

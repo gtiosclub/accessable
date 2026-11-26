@@ -101,6 +101,18 @@ protocol LocationProvider: Sendable {
     func requestAuthorization() async
 }
 
+/// The phone's battery, read for the low-battery warnings on a trip.
+protocol BatteryReading: Sendable {
+    func status() async -> BatteryStatus
+}
+
+struct BatteryStatus: Equatable, Sendable {
+    /// From 0 to 1; nil when the system doesn't know it.
+    let level: Float?
+    /// Plugged in, so a low level isn't worth warning about.
+    let isChargingOrFull: Bool
+}
+
 /// Computes a route without starting navigation or delivering speech.
 protocol RoutingService: Sendable {
     /// - Throws: `RoutingError`, or `CancellationError` if the task is cancelled.

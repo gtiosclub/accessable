@@ -485,7 +485,8 @@ private struct Harness {
         buildings: [CampusBuilding] = [],
         crossings: [CampusCrossing] = [],
         distances: DistanceSettings = DistanceSettings(units: .metres),
-        recorder: TripRecorder? = nil
+        recorder: TripRecorder? = nil,
+        battery: (reading: any BatteryReading, clock: ManualClock)? = nil
     ) throws {
         let route = try route ?? cornerRoute()
         self.route = route
@@ -497,6 +498,9 @@ private struct Harness {
             setTripTracking: { [background] in background.record($0) },
             distances: distances,
             recorder: recorder,
+            battery: battery.map { [engine] in
+                BatteryMonitor(battery: $0.reading, announcements: engine, clock: $0.clock)
+            },
             now: { [clock] in clock.now() },
             sleep: { [clock] in try await clock.sleep($0) }
         )
@@ -1991,6 +1995,63 @@ struct TripManagerDepartureTests {
         let instructions = states.instructions
         #expect(instructions.contains("Turn right onto Atlantic Drive."))
         #expect(!instructions.contains(where: namesACompassDirection), "\(instructions)")
+    }
+}
+
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerBatteryTests {
+    private let veryLow = "Battery is very low, 5 percent. Turning off the camera view saves power."
+
+    @Test
+    func checksWhenTheTripStartsAndStopsWhenItEnds() async throws {
+        let clock = ManualClock()
+        let battery = FakeBattery(level: 0.15)
+        let harness = try Harness(battery: (battery, clock))
+        await harness.start()
+        try await clock.waitForSleepers(1)
+        #expect(await harness.engine.texts == ["Battery is low, 15 percent."])
+
+        await harness.manager.endTrip()
+        battery.set(level: 0.05)
+        clock.advance(by: BatteryMonitor.checkInterval)
+        #expect(battery.reads == 1)
+        #expect(await !harness.engine.texts.contains(veryLow))
+    }
+
+    @Test
+    func skipsChecksWhilePaused() async throws {
+        let clock = ManualClock()
+        let battery = FakeBattery(level: 0.25)
+        let harness = try Harness(battery: (battery, clock))
+        await harness.start()
+        try await clock.waitForSleepers(1)
+        await harness.manager.pauseTrip()
+        battery.set(level: 0.05)
+        clock.advance(by: BatteryMonitor.checkInterval)
+        try await clock.waitForSleepers(1)
+        #expect(battery.reads == 1)
+        #expect(await !harness.engine.texts.contains(veryLow))
+
+        await harness.manager.resumeTrip()
+        clock.advance(by: BatteryMonitor.checkInterval)
+        try await clock.waitForSleepers(1)
+        #expect(await harness.engine.texts.contains(veryLow))
+    }
+
+    @Test
+    func stopsOnArriving() async throws {
+        let clock = ManualClock()
+        let battery = FakeBattery(level: 0.25)
+        let harness = try Harness(battery: (battery, clock))
+        await harness.start()
+        try await clock.waitForSleepers(1)
+        await harness.walk(from: 0, to: 160)
+        await harness.states.waitFor { $0.phase == .arrived }
+
+        battery.set(level: 0.05)
+        clock.advance(by: BatteryMonitor.checkInterval)
+        #expect(battery.reads == 1)
+        #expect(await !harness.engine.texts.contains(veryLow))
     }
 }
 
