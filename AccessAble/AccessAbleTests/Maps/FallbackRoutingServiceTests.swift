@@ -340,6 +340,17 @@ struct FallbackRoutingServiceTests {
     }
 
     @Test(arguments: [RoutingError.notAuthorized, .usageLimitReached])
+    func aRememberedRefusalIsKeptWhenAppleFailsToo(_ error: RoutingError) async throws {
+        let primary = FakeRouting(.fails(error))
+        let fallback = FakeRouting(.fails(URLError(.notConnectedToInternet)))
+        let service = FallbackRoutingService(primary: primary, fallback: fallback, clock: ManualClock())
+
+        await #expect(throws: error) { try await request(service).value }
+        await #expect(throws: error) { try await request(service).value }
+        #expect(await primary.calls == 1)
+    }
+
+    @Test(arguments: [RoutingError.notAuthorized, .usageLimitReached])
     func aRefusedKeyCostsOneValhallaRequestAcrossReportAwareTries(_ error: RoutingError) async throws {
         let valhalla = FakeRouting(.fails(error))
         let apple = FakeRouting(.returns(Self.backupRoute))
@@ -350,6 +361,7 @@ struct FallbackRoutingServiceTests {
         )
 
         let routing = request(service)
+        await valhalla.waitForRequests(1)
         try await spacingClock.waitForSleepers(1)
         spacingClock.advance(by: ReportAwareRoutingService.retrySpacing)
         let route = try await routing.value
