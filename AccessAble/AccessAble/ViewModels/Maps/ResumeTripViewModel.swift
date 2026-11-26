@@ -26,7 +26,10 @@ final class ResumeTripViewModel {
         guard let store else { return }
         var states = trip.tripStates().makeAsyncIterator()
         let phase = await states.next()?.phase
-        guard phase == nil || phase == .planning, let saved = store.load() else { return }
+        guard phase == nil || phase == .planning else { return }
+        // reading the file waits on the disk, which the main actor shouldn't
+        let saved = await Task.detached { store.load() }.value
+        guard let saved else { return }
         offer = saved
         title = "Resume your trip to \(saved.destination.name)?"
     }
