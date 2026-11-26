@@ -7,15 +7,19 @@ struct CallView: View {
     @State private var viewModel: CallViewModel
     @Environment(\.openURL) private var openURL
     private let onClose: () -> Void
+    private let safety: any CallSafetyService
 
     /// `volunteer` is rung first; nil rings whoever is free.
     init(services: AppServices, volunteer: Volunteer?, onClose: @escaping () -> Void) {
         _viewModel = State(initialValue: CallViewModel(services: services, volunteer: volunteer))
         self.onClose = onClose
+        self.safety = services.callSafety
     }
 
     var body: some View {
-        VStack(spacing: 16) {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(spacing: 16) {
             Spacer()
             Text(viewModel.title)
                 .font(.largeTitle.bold())
@@ -47,7 +51,10 @@ struct CallView: View {
                     .foregroundStyle(.red)
             }
         }
-        .padding(24)
+                .padding(24)
+                .frame(minHeight: geometry.size.height)
+            }
+        }
         .foregroundStyle(.white)
         .background(Color.black.ignoresSafeArea())
         // Ringing and failures are spoken by the announcement engine (CallViewModel.say); during
@@ -107,6 +114,9 @@ struct CallView: View {
     /// Every failure gets Try again; a permission that's off also gets Open Settings.
     @ViewBuilder
     private var afterCallActions: some View {
+        if let summary = viewModel.lastCallForSafety {
+            CallSafetyActionsView(summary: summary, service: safety).id(summary.id)
+        }
         if let failure = viewModel.failure, failure.needsSettings {
             AccessibleActionButton(title: "Open Settings", systemImage: "gear",
                                    hint: "Opens AccessAble's settings so you can turn access on") {

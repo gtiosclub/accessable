@@ -34,6 +34,7 @@ struct FirestoreCallSignaling: CallSignaling {
         progress: @Sendable (CallRequestProgress) -> Void
     ) async throws -> CallTicket {
         guard let me = await auth.currentUser()?.id else { throw CallSignalingError.signedOut }
+        guard try await FirestoreCallSafety(auth: auth).hasConsent() else { throw CallSafetyError.consentRequired }
         var tried: Set<String> = [me]
         var attempts = 0
         var lastMiss: CallRequestProgress.Miss?
@@ -236,10 +237,14 @@ struct FirestoreCallSignaling: CallSignaling {
             .whereField("isOnline", isEqualTo: true)
             .limit(to: 100)
             .getDocuments(source: .server)
+        guard let me = await auth.currentUser()?.id else { throw CallSignalingError.signedOut }
+        let blocks = try await Firestore.firestore().collection("users").document(me)
+            .collection("blockedVolunteers").getDocuments(source: .server)
+        let blockedIDs = Set(blocks.documents.map(\.documentID))
         let now = Date()
         return snapshot.documents
             .compactMap { Volunteer(id: $0.documentID, firestoreData: $0.data()) }
-            .filter { !tried.contains($0.id) && $0.isFreeToRing(at: now) }
+            .filter { !tried.contains($0.id) && !blockedIDs.contains($0.id) && $0.isFreeToRing(at: now) }
             .sorted { a, b in
                 if (a.id == preferredID) != (b.id == preferredID) { return a.id == preferredID }
                 return a.lastSeen > b.lastSeen
@@ -257,6 +262,12 @@ struct FirestoreCallSignaling: CallSignaling {
         do {
             let outcome = try await db.runTransaction { transaction, errorPointer -> Any? in
                 do {
+                    // Re-read both gates in the transaction: a concurrent block or revoked
+                    // invitation must win over an earlier directory snapshot/preferred pick.
+                    let block = try transaction.getDocument(db.collection("users").document(me)
+                        .collection("blockedVolunteers").document(volunteerID))
+                    let invite = try transaction.getDocument(db.collection("volunteerInvites").document(volunteerID))
+                    guard !block.exists, invite.data()?["enabled"] as? Bool == true else { return "busy" }
                     let data = try transaction.getDocument(volunteerRef).data() ?? [:]
                     guard let volunteer = Volunteer(id: volunteerID, firestoreData: data),
                           volunteer.isFreeToRing() else { return "busy" }
@@ -301,10 +312,16 @@ struct FirestoreCallSignaling: CallSignaling {
     }
 
     /// Waits until the volunteer answers, declines, or `ringTimeout` passes.
+    /// Not a call status: tells waitForAnswer the listener stopped working.
+    private static let listenerFailed = "listener-failed"
+
     private func waitForAnswer(callID: String) async throws -> Answer {
         let ref = Firestore.firestore().collection("calls").document(callID)
         let statuses = AsyncStream<String>(bufferingPolicy: .bufferingNewest(1)) { continuation in
-            let registration = ref.addSnapshotListener { snapshot, _ in
+            let registration = ref.addSnapshotListener { snapshot, error in
+                // Without the listener we'd sit out the whole 30 seconds; go straight to the
+                // skip, whose transaction reads the real status (and joins if they accepted).
+                if error != nil { continuation.yield(Self.listenerFailed); continuation.finish(); return }
                 if let status = snapshot?.data()?["status"] as? String { continuation.yield(status) }
             }
             let listener = CallListenerHandle(registration)
@@ -313,6 +330,7 @@ struct FirestoreCallSignaling: CallSignaling {
         return try await withThrowingTaskGroup(of: Answer.self) { group in
             group.addTask {
                 for await status in statuses where status != "ringing" {
+                    if status == Self.listenerFailed { return .timedOut }
                     return status == "accepted" ? .accepted : .notAnswered
                 }
                 try Task.checkCancellation()

@@ -226,6 +226,11 @@ protocol PresenceService: Sendable {
     /// Turns the Online toggle on or off. While on and the app is on screen, the implementation
     /// refreshes `lastSeen` about every 30 seconds.
     func setOnline(_ isOnline: Bool) async throws
+    func refreshProfile() async throws
+}
+
+extension PresenceService {
+    func refreshProfile() async throws {} // In-memory/test services have no separate directory copy.
 }
 
 /// Volunteer-side read model. Cancel the stream when the app is no longer on screen.
@@ -233,6 +238,20 @@ protocol PresenceService: Sendable {
 protocol IncomingCallProviding: Sendable {
     @MainActor
     func incomingCalls(volunteerID: String) -> AsyncThrowingStream<IncomingCall?, Error>
+}
+
+
+protocol CallSafetyService: Sendable {
+    func hasConsent() async throws -> Bool
+    func acceptConsent() async throws
+    func report(callID: String, subjectID: String, reason: CallReportReason, details: String) async throws
+    func block(volunteerID: String, callID: String) async throws
+}
+
+protocol VolunteerSettingsStore: Sendable {
+    func preferences() async throws -> VolunteerPreferences
+    func save(_ preferences: VolunteerPreferences) async throws
+    func isInvited() async throws -> Bool
 }
 
 /// What a caller hears while `requestCall` works (VOLUNTEER-7).

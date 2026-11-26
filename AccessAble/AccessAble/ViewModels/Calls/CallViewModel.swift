@@ -18,6 +18,7 @@ final class CallViewModel {
     private(set) var controlError: String?
     /// The volunteer who answered, once known. Nil while ringing, or if it isn't the one picked.
     private(set) var volunteerName: String?
+    private(set) var lastCallForSafety: CallSafetySummary?
 
     @ObservationIgnored private let services: AppServices
     /// The volunteer the caller picked, rung first. Nil for "Call a volunteer".
@@ -141,6 +142,7 @@ final class CallViewModel {
     // MARK: - Placing the call
 
     private func placeCall() async {
+        lastCallForSafety = nil
         let generation = UUID()
         attemptGeneration = generation
         failure = nil
@@ -172,6 +174,7 @@ final class CallViewModel {
                 }
             }
             self.ticket = ticket
+            lastCallForSafety = CallSafetySummary(id: ticket.callID, otherUserID: ticket.volunteerID, canBlockVolunteer: true)
             try Task.checkCancellation()
             if ticket.volunteerID == preferred?.id { volunteerName = preferred?.name }
             hasStartedConnecting = true

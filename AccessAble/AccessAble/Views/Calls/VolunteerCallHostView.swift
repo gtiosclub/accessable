@@ -7,11 +7,16 @@ struct VolunteerCallHostView: View {
     let signOut: () async throws -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var model: IncomingCallViewModel
+    @State private var settings: VolunteerSettingsViewModel
 
     init(profile: UserProfile, services: AppServices, signOut: @escaping () async throws -> Void) {
         self.profile = profile
         self.services = services
         self.signOut = signOut
+        _settings = State(initialValue: VolunteerSettingsViewModel(
+            profile: profile, store: services.volunteerSettings, profiles: services.userProfiles,
+            presence: services.presence, screen: ScreenAwakeController()
+        ))
         _model = State(initialValue: IncomingCallViewModel(
             volunteerID: profile.userID, source: services.incomingCalls,
             signaling: services.callSignaling, video: services.videoCall,
@@ -26,8 +31,15 @@ struct VolunteerCallHostView: View {
 
     var body: some View {
         ZStack {
-            VolunteerHomeView(profile: profile, presence: services.presence, signOut: signOut)
+            VolunteerHomeView(settings: settings, signOut: signOut)
                 .safeAreaInset(edge: .bottom) {
+                    if let summary = model.lastCallForSafety, model.call == nil {
+                        VStack {
+                            Text("Previous call").font(.headline)
+                            CallSafetyActionsView(summary: summary, service: services.callSafety).id(summary.id)
+                            Button("Dismiss previous call") { model.dismissSafetySummary() }.frame(minHeight: 44)
+                        }.padding().background(.black)
+                    }
                     if let error = model.listenerError {
                         VStack {
                             Text(error)
@@ -52,7 +64,10 @@ struct VolunteerCallHostView: View {
             if scenePhase == .active { await model.listen() }
             else { model.suspendListening() }
         }
-        .onDisappear { model.shutdown() }
+        .task { await settings.load() }
+        .task { await settings.observePresence() }
+        .task(id: scenePhase) { await settings.setForeground(scenePhase == .active) }
+        .onDisappear { model.shutdown(); settings.shutdown() }
     }
 }
 

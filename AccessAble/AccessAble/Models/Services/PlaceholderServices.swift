@@ -9,6 +9,24 @@ import os
 
 private let log = Logger(subsystem: "AccessAble", category: "Placeholder")
 
+actor PlaceholderCallSafety: CallSafetyService {
+    private var consent = false
+    private var blocked: Set<String> = []
+    func hasConsent() async throws -> Bool { consent }
+    func acceptConsent() async throws { consent = true }
+    func report(callID: String, subjectID: String, reason: CallReportReason, details: String) async throws {
+        guard CallSafetyReportLimit.length(of: details) <= CallSafetyReportLimit.maxLength else { throw CallSafetyError.invalidReport }
+    }
+    func block(volunteerID: String, callID: String) async throws { blocked.insert(volunteerID) }
+}
+
+actor PlaceholderVolunteerSettings: VolunteerSettingsStore {
+    private var value = VolunteerPreferences()
+    func preferences() async throws -> VolunteerPreferences { value }
+    func save(_ preferences: VolunteerPreferences) async throws { value = preferences }
+    func isInvited() async throws -> Bool { true }
+}
+
 /// Logs events and republishes them; no priority queue or speech. Replaced by 3.3.
 actor PlaceholderAnnouncementEngine: AnnouncementEngineProtocol {
     private nonisolated let delivered = Broadcaster<AnnouncementEvent>()

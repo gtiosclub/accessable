@@ -10,9 +10,9 @@ const jwk = await webcrypto.subtle.exportKey('jwk', keys.publicKey);
 jwk.kid = 'offline-test-key';
 const env = { FIREBASE_PROJECT_ID: project, LIVEKIT_API_KEY: 'fixture-key', LIVEKIT_API_SECRET: 'fixture-secret-not-a-real-key' };
 const originalFetch = globalThis.fetch;
-let callStatus, callerID, firestoreStatus;
+let callStatus, callerID, firestoreStatus, invited, blocked, inviteStatus, blockStatus;
 beforeEach(() => {
-  callStatus = 'accepted'; callerID = 'caller'; firestoreStatus = 200;
+  callStatus = 'accepted'; callerID = 'caller'; firestoreStatus = 200; invited = true; blocked = false; inviteStatus = 200; blockStatus = null;
   globalThis.fetch = async (url, options) => {
     url = String(url);
     if (url.includes('googleapis.com/service_accounts/v1/jwk/')) {
@@ -21,6 +21,10 @@ beforeEach(() => {
     assert.ok(url.startsWith(`https://firestore.googleapis.com/v1/projects/${project}/`));
     assert.ok(options.headers.Authorization.startsWith('Bearer '));
     if (firestoreStatus !== 200) return new Response('', { status: firestoreStatus });
+    if (url.includes('/volunteerInvites/') && inviteStatus !== 200) return new Response('', { status: inviteStatus });
+    if (url.includes('/blockedVolunteers/') && blockStatus !== null) return new Response('', { status: blockStatus });
+    if (url.includes('/volunteerInvites/')) return Response.json({ fields: { enabled: { booleanValue: invited } } });
+    if (url.includes('/blockedVolunteers/')) return blocked ? Response.json({ fields: {} }) : new Response('', { status: 404 });
     const id = url.split('/').at(-1);
     return Response.json({ fields: {
       callerId: { stringValue: callerID }, volunteerId: { stringValue: 'helper' },
@@ -94,4 +98,33 @@ test('Firestore denial and missing calls remain forbidden', async () => {
 test('missing server secrets fail closed; invalid call IDs are rejected', async () => {
   assert.equal((await request(await idToken(), 'one', { FIREBASE_PROJECT_ID: project })).response.status, 500);
   assert.equal((await request(await idToken(), '../other')).response.status, 400);
+});
+
+test('both caller and volunteer tokens are refused after a block or invitation revocation', async () => {
+  for (const uid of ['caller', 'helper']) {
+    blocked = true;
+    assert.equal((await request(await idToken(uid))).response.status, 403);
+    blocked = false; invited = false;
+    assert.equal((await request(await idToken(uid))).response.status, 403);
+    invited = true;
+  }
+});
+
+test('missing, forbidden or unavailable invitation never produces a media token', async () => {
+  for (const status of [403, 404, 503]) {
+    inviteStatus = status;
+    const result = await request(await idToken());
+    assert.equal(result.response.status, 403);
+    assert.equal(result.body.token, undefined);
+  }
+});
+test('block lookup errors fail closed for both participants', async () => {
+  for (const uid of ['caller', 'helper']) {
+    for (const status of [403, 500, 503]) {
+      blockStatus = status;
+      const result = await request(await idToken(uid));
+      assert.equal(result.response.status, 403);
+      assert.equal(result.body.token, undefined);
+    }
+  }
 });

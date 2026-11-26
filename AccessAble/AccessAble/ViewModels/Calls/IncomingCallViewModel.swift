@@ -12,6 +12,9 @@ final class IncomingCallViewModel {
     private(set) var listenerError: String?
     private(set) var isMuted = false
     private(set) var listenerAttempt = 0
+    private(set) var lastCallForSafety: CallSafetySummary?
+
+    func dismissSafetySummary() { lastCallForSafety = nil }
 
     @ObservationIgnored private let volunteerID: String
     @ObservationIgnored private let source: any IncomingCallProviding
@@ -136,6 +139,7 @@ final class IncomingCallViewModel {
             guard ticket.callID == offer.id, ticket.volunteerID == volunteerID,
                   !ticket.isExpired(at: now()) else { throw CallSignalingError.callTaken }
             phase = .connecting
+            lastCallForSafety = CallSafetySummary(id: ticket.callID, otherUserID: ticket.callerID, canBlockVolunteer: false)
             joining = true
             await announcements.setInCall(true)
             try Task.checkCancellation()

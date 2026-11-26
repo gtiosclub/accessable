@@ -57,6 +57,21 @@ async function handle(request, env) {
   if (call.status !== 'accepted') throw new HttpError(409, 'This call has not been accepted.');
   if (call.roomName !== `call-${callId}`) throw new HttpError(403, 'This call has the wrong room.');
 
+  // Eligibility is checked for BOTH ticket recipients; the UI is not a trust boundary.
+  const headers = { Authorization: `Bearer ${idToken}` };
+  const base = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents`;
+  const [inviteResponse, blockResponse] = await Promise.all([
+    fetch(`${base}/volunteerInvites/${encodeURIComponent(call.volunteerId)}`, { headers }),
+    fetch(`${base}/users/${encodeURIComponent(call.callerId)}/blockedVolunteers/${encodeURIComponent(call.volunteerId)}`, { headers }),
+  ]);
+  if (!inviteResponse.ok) throw new HttpError(403, 'This volunteer is not approved for calls.');
+  const invite = await inviteResponse.json();
+  if (invite.fields?.enabled?.booleanValue !== true) throw new HttpError(403, 'This volunteer is not approved for calls.');
+  if (blockResponse.status !== 404) {
+    if (blockResponse.ok) throw new HttpError(403, 'This volunteer is blocked for this caller.');
+    throw new HttpError(403, 'Call eligibility could not be verified.');
+  }
+
   // 3. Only then: a token for this call's room and nothing else.
   const now = Math.floor(Date.now() / 1000);
   const expiresAt = now + TOKEN_LIFETIME_SECONDS;

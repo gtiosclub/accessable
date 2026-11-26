@@ -23,6 +23,8 @@ struct AppServices: Sendable {
     var auth: any AuthService
     var reports: any ReportService = PlaceholderReportService()
     var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
+    var callSafety: any CallSafetyService = UnavailableCallSettings()
+    var volunteerSettings: any VolunteerSettingsStore = UnavailableCallSettings()
     /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
     var accountsAvailable = false
     /// True once a real report service is wired (REPORT-3); until then the trip screen offers no reporting.
@@ -106,6 +108,8 @@ struct AppServices: Sendable {
             services.reportsAvailable = true
             services.routing = ReportAwareRoutingService(base: services.routing, reports: services.reports)
             services.userProfiles = FirestoreUserProfileStore()
+            services.callSafety = FirestoreCallSafety(auth: services.auth)
+            services.volunteerSettings = FirestoreVolunteerSettings(auth: services.auth)
             services.volunteers = FirestoreVolunteerDirectory()
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
@@ -180,6 +184,8 @@ struct AppServices: Sendable {
             commands: FoundationModelCommandInterpreter(), auth: PlaceholderAuthService()
         )
         services.distanceSettings = DistanceSettings(units: .metres)
+        services.callSafety = PlaceholderCallSafety()
+        services.volunteerSettings = PlaceholderVolunteerSettings()
         services.userProfiles = PlaceholderUserProfileStore(profiles: [
             UserProfile(userID: PlaceholderAuthService.sampleUser.id, role: .caller,
                         displayName: "Preview caller", languages: ["English"], createdAt: .now)
