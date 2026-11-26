@@ -23,7 +23,15 @@ Swift: `Report` in `Models/Maps/Report.swift`. Firestore: one document per repor
 | `createdAt` | `Date` | timestamp | Must be the server timestamp, not the phone's clock. |
 | `expiresAt` | `Date` | timestamp | After this the report is ignored. At most 30 days after `createdAt`. |
 | `confirmations` | `Int` | number | Always 0 for now. Other users can't confirm reports yet; confirming will need its own rule. |
-| `reporterID` | `String` | string | The reporter's `AuthUser` ID. The only user data a report holds. |
+| `reporterID` | — | string | Always `""`. Kept only because apps from before the private list below need it to read reports; remove it once every app reads without it. A report doesn't say who made it. |
+
+`Report.isOwn` is not stored: the app sets it from the signed-in user's private list, so their own reports don't reroute their trip and aren't asked about.
+
+### The reporter's private list
+
+`users/{userID}/reports/{id}` holds one field, `createdAt` (server timestamp), for each report that user made. Only that user can read it. The rules use it to refuse a reporter's vote on their own report and to let them delete it. Reports from before the list name their reporter in `reporterID`, and the rules honour that until they expire.
+
+The app reads the list once per user (newest 200 made within the longest report lifetime) and adds each report it submits.
 
 ### Rate limits
 
@@ -33,8 +41,9 @@ Swift: `Report` in `Models/Maps/Report.swift`. Firestore: one document per repor
 
 A new report must be written in **one batch** with the reporter's rate-limit stamp:
 
-1. Set `reports/{id}` with every field above, `reporterID` set to the signed-in user's ID, `confirmations` set to 0, and `createdAt` set to `FieldValue.serverTimestamp()`.
+1. Set `reports/{id}` with every field above, `reporterID` set to `""`, `confirmations` set to 0, and `createdAt` set to `FieldValue.serverTimestamp()`.
 2. In the same batch, set `rateLimits/{userID}` to `{ lastReportAt: FieldValue.serverTimestamp(), lastReportId: id }`.
+3. In the same batch, set `users/{userID}/reports/{id}` to `{ createdAt: FieldValue.serverTimestamp() }`.
 
 The rules reject a report written any other way.
 
@@ -49,7 +58,7 @@ The rules reject a report written any other way.
 The rules are in `firebase/firestore.rules`.
 
 - **Signed-in writes only:** every write requires a signed-in user.
-- **Own reports only:** only the reporter can update or delete a report. `id`, `reporterID`, `createdAt`, and `confirmations` can never change. The reporter may change `kind`, `coordinate`, `area`, and `expiresAt` (for example, to end a report early).
+- **Own reports only:** only the reporter, whose private list has the report, can update or delete it. `id`, `reporterID`, `createdAt`, and `confirmations` can never change. The reporter may change `kind`, `coordinate`, `area`, and `expiresAt` (for example, to end a report early).
 - **Rate limit:** at most one new report per user per minute. The stamp names the report it was written with, so one batch can't create several reports. The `rateLimits` document can't be deleted, so the limit can't be reset.
 - **No personal data:** a report may contain only the fields in the table above, each with the right type and range.
 
