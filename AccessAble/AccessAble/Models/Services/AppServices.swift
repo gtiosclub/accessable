@@ -137,7 +137,7 @@ struct AppServices: Sendable {
             setTripTracking: { await gps.setTripTracking($0) },
             distances: distanceSettings,
             recorder: services.tripRecorder,
-            battery: BatteryMonitor(battery: DeviceBattery(), announcements: services.announcements)
+            battery: BatteryMonitor(battery: DeviceBattery())
         )
 
         let analyzer = scene as? ARSceneAnalyzer

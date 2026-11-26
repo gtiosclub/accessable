@@ -104,6 +104,8 @@ protocol LocationProvider: Sendable {
 /// The phone's battery, read for the low-battery warnings on a trip.
 protocol BatteryReading: Sendable {
     func status() async -> BatteryStatus
+    /// Lets the system stop tracking the battery until the next `status()`.
+    func stopReading() async
 }
 
 struct BatteryStatus: Equatable, Sendable {

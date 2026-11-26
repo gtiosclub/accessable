@@ -11,4 +11,9 @@ struct DeviceBattery: BatteryReading {
         return BatteryStatus(level: level < 0 ? nil : level,
                              isChargingOrFull: device.batteryState == .charging || device.batteryState == .full)
     }
+
+    @MainActor
+    func stopReading() async {
+        UIDevice.current.isBatteryMonitoringEnabled = false
+    }
 }

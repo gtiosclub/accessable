@@ -2,30 +2,37 @@ import Foundation
 import Testing
 @testable import AccessAble
 
-private actor RecordingSink: AnnouncementSink {
-    private(set) var submitted: [AnnouncementEvent] = []
+/// Records the monitor's warnings, reporting each as delivered unless set not to, as the engine drops some.
+private actor WarningSink {
+    private(set) var warnings: [BatteryMonitor.Warning] = []
+    private var delivers = true
 
-    func submit(_ event: AnnouncementEvent) async {
-        submitted.append(event)
+    func receive(_ warning: BatteryMonitor.Warning, from monitor: BatteryMonitor) {
+        warnings.append(warning)
+        if delivers { monitor.delivered(warning.level) }
     }
 
-    var texts: [String] { submitted.map(\.text) }
+    func setDelivers(_ value: Bool) {
+        delivers = value
+    }
+
+    var texts: [String] { warnings.map(\.text) }
 }
 
 private struct Rig {
     let clock = ManualClock()
     let battery: FakeBattery
-    let sink = RecordingSink()
+    let sink = WarningSink()
     let monitor: BatteryMonitor
 
     init(level: Float?, isChargingOrFull: Bool = false) {
         battery = FakeBattery(level: level, isChargingOrFull: isChargingOrFull)
-        monitor = BatteryMonitor(battery: battery, announcements: sink, clock: clock)
+        monitor = BatteryMonitor(battery: battery, clock: clock)
     }
 
     /// Starts watching and waits for the first check, which ends in the wait for the next.
     func start() async throws {
-        monitor.start()
+        monitor.start(isPaused: false) { [sink, monitor] in await sink.receive($0, from: monitor) }
         try await clock.waitForSleepers(1)
     }
 
@@ -34,6 +41,11 @@ private struct Rig {
         clock.advance(by: BatteryMonitor.checkInterval)
         try await clock.waitForSleepers(1)
     }
+}
+
+/// Yields until `condition` holds, for a check the test can't join.
+private func waitUntil(_ condition: () async -> Bool) async {
+    while await !condition() { await Task.yield() }
 }
 
 private let low18 = "Battery is low, 18 percent."
@@ -49,7 +61,7 @@ struct BatteryMonitorTests {
         try await rig.tick()
 
         #expect(rig.battery.reads == 2)
-        #expect(await rig.sink.submitted.isEmpty)
+        #expect(await rig.sink.warnings.isEmpty)
     }
 
     @Test
@@ -62,11 +74,7 @@ struct BatteryMonitorTests {
         try await rig.tick()
 
         #expect(rig.battery.reads == 4)
-        let warnings = await rig.sink.submitted
-        #expect(warnings.map(\.text) == [low18])
-        #expect(warnings.first?.category == .system)
-        #expect(warnings.first?.priority == .high)
-        #expect(warnings.first?.dedupKey == "battery-20")
+        #expect(await rig.sink.warnings == [BatteryMonitor.Warning(level: .low, text: low18)])
     }
 
     @Test
@@ -77,11 +85,9 @@ struct BatteryMonitorTests {
         try await rig.tick()
         try await rig.tick()
 
-        let warnings = await rig.sink.submitted
+        let warnings = await rig.sink.warnings
         #expect(warnings.map(\.text) == [low18, veryLow9])
-        #expect(warnings.last?.category == .system)
-        #expect(warnings.last?.priority == .high)
-        #expect(warnings.last?.dedupKey == "battery-10")
+        #expect(warnings.last?.level == .veryLow)
     }
 
     @Test
@@ -96,6 +102,34 @@ struct BatteryMonitorTests {
         ])
     }
 
+    // a warning the engine dropped, as during a call or while announcements are paused, would be lost
+    @Test
+    func warnsAgainUntilDelivered() async throws {
+        let rig = Rig(level: 0.18)
+        await rig.sink.setDelivers(false)
+        try await rig.start()
+        try await rig.tick()
+        #expect(await rig.sink.texts == [low18, low18])
+
+        await rig.sink.setDelivers(true)
+        try await rig.tick()
+        try await rig.tick()
+        #expect(await rig.sink.texts == [low18, low18, low18])
+    }
+
+    // the threshold is on the level read, and the number said stays under it
+    @Test(arguments: [
+        (Float(0.189999), "Battery is low, 19 percent."),
+        (Float(0.195), "Battery is low, 19 percent."),
+        (Float(0.0951), "Battery is very low, 9 percent. Turning off the camera view saves power."),
+    ])
+    func saysTheRoundedPercentUnderTheThreshold(level: Float, text: String) async throws {
+        let rig = Rig(level: level)
+        try await rig.start()
+
+        #expect(await rig.sink.texts == [text])
+    }
+
     @Test
     func unknownLevelSaysNothing() async throws {
         let rig = Rig(level: nil)
@@ -103,7 +137,7 @@ struct BatteryMonitorTests {
         try await rig.tick()
 
         #expect(rig.battery.reads == 2)
-        #expect(await rig.sink.submitted.isEmpty)
+        #expect(await rig.sink.warnings.isEmpty)
     }
 
     @Test
@@ -112,7 +146,7 @@ struct BatteryMonitorTests {
         try await rig.start()
         try await rig.tick()
         #expect(rig.battery.reads == 2)
-        #expect(await rig.sink.submitted.isEmpty)
+        #expect(await rig.sink.warnings.isEmpty)
 
         rig.battery.set(level: 0.09)
         try await rig.tick()
@@ -120,31 +154,44 @@ struct BatteryMonitorTests {
     }
 
     @Test
-    func pausedSkipsChecks() async throws {
+    func pausedSkipsChecksAndResumingChecksAtOnce() async throws {
         let rig = Rig(level: 0.25)
         try await rig.start()
         rig.monitor.setPaused(true)
         rig.battery.set(level: 0.09)
         try await rig.tick()
         #expect(rig.battery.reads == 1)
-        #expect(await rig.sink.submitted.isEmpty)
+        #expect(await rig.sink.warnings.isEmpty)
 
         rig.monitor.setPaused(false)
-        try await rig.tick()
-        #expect(await rig.sink.texts == [veryLow9])
+        await waitUntil { await rig.sink.texts == [veryLow9] }
+        #expect(rig.battery.reads == 2)
     }
 
     @Test
-    func stopEndsChecks() async throws {
+    func startingPausedSkipsTheFirstCheck() async throws {
+        let rig = Rig(level: 0.09)
+        rig.monitor.start(isPaused: true) { [sink = rig.sink, monitor = rig.monitor] in
+            await sink.receive($0, from: monitor)
+        }
+        try await rig.clock.waitForSleepers(1)
+
+        #expect(rig.battery.reads == 0)
+    }
+
+    @Test
+    func stopEndsChecksAndTheReading() async throws {
         let rig = Rig(level: 0.25)
         try await rig.start()
         rig.monitor.stop()
+        // the next check's wait is cancelled, so no advance can wake it
+        #expect(rig.clock.sleeperCount == 0)
         rig.battery.set(level: 0.09)
-        rig.clock.advance(by: BatteryMonitor.checkInterval)
         rig.clock.advance(by: BatteryMonitor.checkInterval)
 
         #expect(rig.battery.reads == 1)
-        #expect(await rig.sink.submitted.isEmpty)
+        #expect(await rig.sink.warnings.isEmpty)
+        await waitUntil { rig.battery.stops == 1 }
     }
 
     @Test
