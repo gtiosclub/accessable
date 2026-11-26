@@ -519,8 +519,9 @@ actor TripManager: TripStateProviding {
     /// Keeps the route being followed and how far along its steps the user is, for resuming after the app closes.
     private func saveTrip() {
         guard let savedTrips, let route, let destination, let progress else { return }
-        savedTrips.save(SavedTrip(tripID: tripID, route: route, destination: destination,
-                                  passedStepCount: progress.nextStepIndex, startedAt: tripStartedAt, savedAt: now()))
+        savedTrips.save(SavedTrip(tripID: tripID, route: route, routeSource: route.source,
+                                  destination: destination, passedStepCount: progress.nextStepIndex,
+                                  startedAt: tripStartedAt, savedAt: now()))
     }
 
     private var offRouteInstruction: String {

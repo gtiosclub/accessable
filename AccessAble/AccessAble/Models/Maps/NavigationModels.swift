@@ -218,7 +218,7 @@ extension RouteStep {
     }
 }
 
-enum RouteSource: Sendable {
+enum RouteSource: String, Codable, Sendable {
     /// Valhalla, which knows about stairs, kerbs and step-free paths.
     case valhalla
     /// Apple Maps, the backup when Valhalla fails or is slow. It knows nothing of stairs or crossings.

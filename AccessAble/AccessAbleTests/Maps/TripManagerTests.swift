@@ -2105,6 +2105,19 @@ struct TripManagerSavedTripTests {
     }
 
     @Test
+    func savesWhichServiceFoundTheRoute() async throws {
+        let directory = Self.directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var backup = try cornerRoute()
+        backup.source = .appleMaps
+        let harness = try Harness(route: backup, savedTripsDirectory: directory)
+        let store = try #require(harness.savedTrips)
+        await harness.start()
+
+        #expect(store.load()?.routeSource == .appleMaps)
+    }
+
+    @Test
     func savesTheNewRouteAfterAReroute() async throws {
         let directory = Self.directory()
         defer { try? FileManager.default.removeItem(at: directory) }

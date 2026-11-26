@@ -4,15 +4,35 @@ import os
 private let log = Logger(subsystem: "AccessAble", category: "SavedTrip")
 
 /// The trip in progress, kept on disk so it can be resumed after the app is closed. Only the route and the
-/// destination: `NavigationRoute` encodes no reports and no source, and nothing here names the user.
+/// destination: `NavigationRoute` encodes no reports, and nothing here names the user.
 struct SavedTrip: Codable, Equatable, Sendable {
     var tripID: UUID
     var route: NavigationRoute
+    /// `route.source`, which `NavigationRoute` doesn't encode, so a resumed backup route still says it is one.
+    var routeSource: RouteSource
     var destination: Destination
     /// Steps of `route` before the next one, the departure counted from the start.
     var passedStepCount: Int
     var startedAt: Date
     var savedAt: Date
+}
+
+extension SavedTrip {
+    private enum CodingKeys: String, CodingKey {
+        case tripID, route, routeSource, destination, passedStepCount, startedAt, savedAt
+    }
+
+    /// A file saved before `routeSource` was resumes as a Valhalla route, as it did then.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tripID = try container.decode(UUID.self, forKey: .tripID)
+        route = try container.decode(NavigationRoute.self, forKey: .route)
+        routeSource = try container.decodeIfPresent(RouteSource.self, forKey: .routeSource) ?? .valhalla
+        destination = try container.decode(Destination.self, forKey: .destination)
+        passedStepCount = try container.decode(Int.self, forKey: .passedStepCount)
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        savedAt = try container.decode(Date.self, forKey: .savedAt)
+    }
 }
 
 /// Keeps one `SavedTrip` as JSON in Application Support.

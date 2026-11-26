@@ -37,9 +37,11 @@ final class ResumeTripViewModel {
     func resume() -> TripPlan? {
         guard let offer else { return nil }
         self.offer = nil
+        var route = offer.route
+        route.source = offer.routeSource
         return TripPlan(
             place: SamplePlace(destination: offer.destination), route: nil, isRecording: false,
-            plannedRoute: PlannedRoute(destination: offer.destination, route: offer.route, requestedAt: now(),
+            plannedRoute: PlannedRoute(destination: offer.destination, route: route, requestedAt: now(),
                                        resumingAtStep: offer.passedStepCount)
         )
     }

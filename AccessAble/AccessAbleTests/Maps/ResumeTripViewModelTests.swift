@@ -59,10 +59,10 @@ private final class ResumeHarness: Sendable {
     var fileExists: Bool { FileManager.default.fileExists(atPath: store.url.path()) }
 
     @discardableResult
-    func saveTrip() -> SavedTrip {
+    func saveTrip(source: RouteSource = .valhalla) -> SavedTrip {
         let now = time.now
-        let trip = SavedTrip(tripID: UUID(), route: route, destination: MapsSamples.destination, passedStepCount: 1,
-                             startedAt: now.addingTimeInterval(-300), savedAt: now)
+        let trip = SavedTrip(tripID: UUID(), route: route, routeSource: source, destination: MapsSamples.destination,
+                             passedStepCount: 1, startedAt: now.addingTimeInterval(-300), savedAt: now)
         store.save(trip)
         return trip
     }
@@ -127,6 +127,17 @@ struct ResumeTripViewModelTests {
         #expect(model.offer == nil)
         #expect(harness.store.load() == nil)
         #expect(!harness.fileExists)
+    }
+
+    @Test
+    func aResumedBackupRouteIsStillOne() async throws {
+        let harness = ResumeHarness()
+        harness.saveTrip(source: .appleMaps)
+        let model = ResumeTripViewModel(store: harness.store, trip: PlaceholderTripProvider())
+        await model.check()
+        let plan = try #require(model.resume())
+
+        #expect(plan.plannedRoute?.route.source == .appleMaps)
     }
 
     @Test

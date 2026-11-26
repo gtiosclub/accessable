@@ -33,8 +33,8 @@ private final class StoreHarness: Sendable {
 
     func trip() -> SavedTrip {
         let now = time.now
-        return SavedTrip(tripID: UUID(), route: MapsSamples.route, destination: MapsSamples.destination,
-                         passedStepCount: 1, startedAt: now.addingTimeInterval(-60), savedAt: now)
+        return SavedTrip(tripID: UUID(), route: MapsSamples.route, routeSource: .valhalla,
+                         destination: MapsSamples.destination, passedStepCount: 1, startedAt: now.addingTimeInterval(-60), savedAt: now)
     }
 }
 
@@ -48,6 +48,31 @@ struct SavedTripStoreTests {
 
         #expect(harness.store.load() == trip)
         #expect(harness.store.url.lastPathComponent == "SavedTrip.json")
+    }
+
+    @Test
+    func aBackupRouteLoadsBackAsOne() {
+        let harness = StoreHarness()
+        var trip = harness.trip()
+        trip.routeSource = .appleMaps
+        harness.store.save(trip)
+
+        #expect(harness.store.load()?.routeSource == .appleMaps)
+    }
+
+    @Test
+    func aFileSavedWithoutTheRouteSourceLoadsAsValhalla() throws {
+        let harness = StoreHarness()
+        var trip = harness.trip()
+        trip.routeSource = .appleMaps
+        var fields = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(trip)) as? [String: Any])
+        fields["routeSource"] = nil
+        try FileManager.default.createDirectory(at: harness.directory, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: fields).write(to: harness.store.url)
+
+        let loaded = try #require(harness.store.load())
+        #expect(loaded.routeSource == .valhalla)
+        #expect(loaded.route == trip.route)
     }
 
     @Test
