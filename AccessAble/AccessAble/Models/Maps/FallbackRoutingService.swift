@@ -24,7 +24,7 @@ private let log = Logger(subsystem: "AccessAble", category: "Routing")
 struct FallbackRoutingService: RoutingService {
     static let defaultTimeout: Duration = .seconds(6)
     /// How long all the Valhalla servers of one request may take together before Apple Maps is asked.
-    static let chainBudget: Duration = .seconds(8)
+    static let defaultChainBudget: Duration = .seconds(8)
     /// After a timeout or a refusal, how long requests skip that server, so each try and each reroute doesn't repeat it.
     static let timeoutMemory: Duration = .seconds(120)
 
@@ -33,6 +33,8 @@ struct FallbackRoutingService: RoutingService {
     /// Apple Maps, asked after every primary.
     let fallback: any RoutingService
     private let timeout: Duration
+    /// Caps every server's wait, `timeout` included, by what the request's earlier servers left of it.
+    private let chainBudget: Duration
     private let clock: any Clock<Duration>
     /// Each primary's last timeout or refusal, cleared when it answers. Shared by copies.
     private let lastTimeouts: [TimeoutMemory]
@@ -43,11 +45,13 @@ struct FallbackRoutingService: RoutingService {
         primaries: [any RoutingService],
         fallback: any RoutingService,
         timeout: Duration = FallbackRoutingService.defaultTimeout,
+        chainBudget: Duration = FallbackRoutingService.defaultChainBudget,
         clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.primaries = primaries
         self.fallback = fallback
         self.timeout = timeout
+        self.chainBudget = chainBudget
         self.clock = clock
         lastTimeouts = primaries.map { _ in TimeoutMemory() }
         serverNames = primaries.enumerated().map { index, primary in
@@ -59,9 +63,10 @@ struct FallbackRoutingService: RoutingService {
         primary: any RoutingService,
         fallback: any RoutingService,
         timeout: Duration = FallbackRoutingService.defaultTimeout,
+        chainBudget: Duration = FallbackRoutingService.defaultChainBudget,
         clock: any Clock<Duration> = ContinuousClock()
     ) {
-        self.init(primaries: [primary], fallback: fallback, timeout: timeout, clock: clock)
+        self.init(primaries: [primary], fallback: fallback, timeout: timeout, chainBudget: chainBudget, clock: clock)
     }
 
     func route(
@@ -80,9 +85,9 @@ struct FallbackRoutingService: RoutingService {
                 if let refusal = outage.refusal { primaryErrors.append(refusal) }
                 continue
             }
-            let wait = min(timeout, Self.chainBudget - elapsed())
+            let wait = min(timeout, chainBudget - elapsed())
             guard wait > .zero else {
-                log.notice("Valhalla servers used their \(String(describing: Self.chainBudget), privacy: .public), skipping \(server, privacy: .public)")
+                log.notice("Valhalla servers used their \(String(describing: chainBudget), privacy: .public), skipping \(server, privacy: .public)")
                 continue
             }
             do {

@@ -563,7 +563,7 @@ struct FallbackRoutingServiceTests {
 
     @Test
     func chainBudgetIsEightSeconds() {
-        #expect(FallbackRoutingService.chainBudget == .seconds(8))
+        #expect(FallbackRoutingService.defaultChainBudget == .seconds(8))
     }
 
     /// Two hanging servers cost the chain's budget before Apple Maps, not a full timeout each.
@@ -578,7 +578,7 @@ struct FallbackRoutingServiceTests {
         try await timeOut(stadia, on: clock)
         await fossgis.waitForRequests(1)
         try await clock.waitForSleepers(1)
-        clock.advance(by: FallbackRoutingService.chainBudget - FallbackRoutingService.defaultTimeout - .seconds(1))
+        clock.advance(by: FallbackRoutingService.defaultChainBudget - FallbackRoutingService.defaultTimeout - .seconds(1))
         #expect(await apple.calls == 0)
         clock.advance(by: .seconds(1))
         let route = try await routing.value
@@ -587,6 +587,22 @@ struct FallbackRoutingServiceTests {
         await stadia.waitForCancellations(1)
         await fossgis.waitForCancellations(1)
         #expect(await apple.calls == 1)
+    }
+
+    @Test
+    func aGivenChainBudgetCapsTheTimeout() async throws {
+        let valhalla = FakeRouting(.hangs)
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+        let service = FallbackRoutingService(primaries: [valhalla], fallback: apple, chainBudget: .seconds(3),
+                                             clock: clock)
+
+        let routing = request(service)
+        await valhalla.waitForRequests(1)
+        try await clock.waitForSleepers(1)
+        clock.advance(by: .seconds(3))
+
+        #expect(try await routing.value == Self.backupRoute)
     }
 
     @Test
@@ -619,7 +635,7 @@ struct FallbackRoutingServiceTests {
         try await timeOut(stadia, on: clock)
         await fossgis.waitForRequests(1)
         try await clock.waitForSleepers(1)
-        clock.advance(by: FallbackRoutingService.chainBudget - FallbackRoutingService.defaultTimeout)
+        clock.advance(by: FallbackRoutingService.defaultChainBudget - FallbackRoutingService.defaultTimeout)
 
         await #expect(throws: RoutingError.exclusionsRejected) { try await routing.value }
         await fossgis.waitForCancellations(1)
@@ -639,7 +655,7 @@ struct FallbackRoutingServiceTests {
         try await timeOut(stadia, on: clock)
         await fossgis.waitForRequests(1)
         try await clock.waitForSleepers(1)
-        clock.advance(by: FallbackRoutingService.chainBudget - FallbackRoutingService.defaultTimeout)
+        clock.advance(by: FallbackRoutingService.defaultChainBudget - FallbackRoutingService.defaultTimeout)
 
         #expect(try await routing.value.source == .appleMaps)
         #expect(await third.calls == 0)
@@ -660,7 +676,7 @@ struct FallbackRoutingServiceTests {
         try await timeOut(stadia, on: clock)
         await fossgis.waitForRequests(1)
         try await clock.waitForSleepers(1)
-        clock.advance(by: FallbackRoutingService.chainBudget - FallbackRoutingService.defaultTimeout)
+        clock.advance(by: FallbackRoutingService.defaultChainBudget - FallbackRoutingService.defaultTimeout)
         _ = try await first.value
 
         let second = request(service)
