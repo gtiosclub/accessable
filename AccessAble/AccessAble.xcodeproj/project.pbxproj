@@ -312,7 +312,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "if [ \"$CONFIGURATION\" = \"Release\" ] && [ -z \"$STADIA_API_KEY\" ]; then\n  echo \"error: STADIA_API_KEY is not set (see Config/Secrets.example.xcconfig)\"\n  exit 1\nfi\n";
+			shellScript = "if [ \"$CONFIGURATION\" = \"Release\" ]; then\n  # Mirrors StadiaConfig.apiKey(from:): these values ship as no key.\n  key=$(printf %s \"$STADIA_API_KEY\" | tr -d \"[:space:]\" | sed -e 's/^\"\\(.*\\)\"$/\\1/' -e \"s/^'\\\\(.*\\\\)'$/\\\\1/\")\n  case \"$key\" in\n    \"\"|\\<*\\>|[Pp][Aa][Ss][Tt][Ee]-*|[Yy][Oo][Uu][Rr]_*|[Yy][Oo][Uu][Rr]-*)\n      echo \"error: STADIA_API_KEY is not set (see Config/Secrets.example.xcconfig)\"\n      exit 1\n      ;;\n  esac\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
