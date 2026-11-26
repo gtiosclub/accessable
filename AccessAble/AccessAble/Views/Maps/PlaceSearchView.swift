@@ -9,6 +9,7 @@ struct PlaceSearchView: View {
     @State private var search: PlaceSearchViewModel
     @State private var showsAllSaved = false
     @State private var showsAllRecents = false
+    @State private var confirmsClearRecents = false
     @State private var renamingPlace: SavedPlace?
     @State private var renameText = ""
     @FocusState private var focusedField: PlaceSearchViewModel.Field?
@@ -106,6 +107,16 @@ struct PlaceSearchView: View {
             if let renamingPlace {
                 Text("Leave blank to use \(renamingPlace.name).")
             }
+        }
+        .alert("Clear recent places?", isPresented: $confirmsClearRecents) {
+            Button("Clear", role: .destructive) {
+                showsAllRecents = false
+                search.clearRecents()
+                AccessibilityNotification.Announcement("Cleared recent places").post()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("All recent destinations will be removed. Saved places stay.")
         }
     }
 
@@ -559,11 +570,7 @@ struct PlaceSearchView: View {
                 sectionTitle(title, systemImage: "clock.arrow.circlepath")
                 Spacer()
                 if showsClearAction && !places.isEmpty {
-                    Button("Clear recents") {
-                        showsAllRecents = false
-                        search.clearRecents()
-                        AccessibilityNotification.Announcement("Cleared recent places").post()
-                    }
+                    Button("Clear recents") { confirmsClearRecents = true }
                     .buttonStyle(.plain)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Theme.cyan)
