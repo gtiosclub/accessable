@@ -890,7 +890,7 @@ actor TripManager: TripStateProviding {
             await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
         }
         // after the start, so a warning neither goes first nor is cut off as VoiceOver's focus moves
-        guard self.generation == generation, phase == .active || phase == .paused else { return }
+        guard self.generation == generation, phase == .active || phase == .paused, !arrivedWhilePaused else { return }
         battery?.start(isPaused: phase == .paused) { warning in
             await self.warnBattery(warning, generation: generation)
         }
