@@ -3,7 +3,7 @@ import Foundation
 import LiveKit
 
 /// Debug only: call tickets from LiveKit's development token server, so two phones can test a call
-/// before MATCH-1's Worker exists. Joins the same room as the media test, so a phone running
+/// before VOLUNTEER-6's Worker exists. Joins the same room as the media test, so a phone running
 /// Developer Tools' LiveKit media test as "Volunteer" picks up.
 struct DevelopmentCallSignaling: CallSignaling {
     static let roomName = "accessable-call-test"   // same room as LiveKitMediaTestModel

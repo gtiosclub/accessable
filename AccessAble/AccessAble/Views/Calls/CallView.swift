@@ -41,6 +41,9 @@ struct CallView: View {
         .onChange(of: viewModel.statusText) { _, text in
             AccessibilityNotification.Announcement(text).post()
         }
+        .onChange(of: viewModel.controlError) { _, message in
+            if let message { AccessibilityNotification.Announcement(message).post() }
+        }
         .task { await viewModel.start() }
         // Leaving the screen mid-call hangs up, which also gives the camera back to AR.
         .onDisappear { Task { await viewModel.hangUp() } }

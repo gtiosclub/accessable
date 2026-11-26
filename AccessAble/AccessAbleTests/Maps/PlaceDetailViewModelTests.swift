@@ -44,6 +44,35 @@ private final class FlakyRouting: RoutingService {
     }
 }
 
+/// Answers with `route`.
+private struct FixedRouting: RoutingService {
+    let route: NavigationRoute
+
+    func route(
+        from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
+    ) async throws -> NavigationRoute {
+        route
+    }
+}
+
+private actor SubmittedAnnouncements: AnnouncementEngineProtocol {
+    private(set) var texts: [String] = []
+
+    func submit(_ event: AnnouncementEvent) async {
+        texts.append(event.text)
+    }
+
+    nonisolated func deliveredEvents() -> AsyncStream<AnnouncementEvent> {
+        AsyncStream { $0.finish() }
+    }
+
+    func repeatLast() async {}
+    func pause() async {}
+    func resume() async {}
+    func updateProfile(_ profile: GuidanceProfile) async {}
+    func setInCall(_ inCall: Bool) async {}
+}
+
 private let origin = GeoCoordinate(latitude: 33.775, longitude: -84.399)
 private let clough = Destination(
     name: "Clough Undergraduate Learning Commons",
@@ -166,6 +195,16 @@ struct PlaceDetailViewModelTests {
         #expect(details.plannedRoute == planned)
     }
 
+    @Test(arguments: [(RouteSource.appleMaps, "Backup directions: may include stairs." as String?), (.valhalla, nil)])
+    func onlyABackupRouteIsNotedOnScreen(_ source: RouteSource, _ note: String?) {
+        var route = plannedRoute
+        route.source = source
+        let planned = PlannedRoute(destination: clough, route: route, requestedAt: .now)
+        let details = PlaceDetailViewModel(destination: clough, services: .preview, planned: planned,
+                                           campusCrossings: { campusCrossings })
+        #expect(details.backupNote == note)
+    }
+
     @Test
     func switchingUnitsChangesTheSummary() async {
         let distances = DistanceSettings(units: .metres)
@@ -181,6 +220,31 @@ struct PlaceDetailViewModelTests {
 
         distances.units = .feet
         #expect(details.summary == "About 4 minutes, 0.2 miles. No turns.")
+    }
+
+    /// The route-ready summary goes to VoiceOver only, and the planner's warning to the app's speech, which speaks
+    /// through VoiceOver when it runs: so with VoiceOver the summary says it, and without it the warning does.
+    @Test(arguments: [true, false])
+    func aPassedReportIsSaidOnce(withVoiceOver voiceOver: Bool) async {
+        var route = plannedRoute
+        route.unavoidedReports = [Report(id: "blocked-1", kind: .blockedPath, coordinate: crossing(at: 0.5).coordinate,
+                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600),
+                                         reporterID: "user-1")]
+        let announcements = SubmittedAnnouncements()
+        var services = AppServices.preview
+        services.location = OneFixLocationProvider()
+        services.routing = FixedRouting(route: route)
+        services.trip = PlaceholderTripProvider()
+        services.announcements = announcements
+        let details = PlaceDetailViewModel(destination: clough, services: services, campusCrossings: { [] },
+                                           isVoiceOverRunning: { voiceOver })
+
+        await details.start()
+        await details.planner.routeTask?.value
+
+        #expect(details.routeReadyAnnouncement
+            == "Route ready. About 4 minutes, 240 metres. No turns. 1 reported blocked path is on this route.")
+        #expect(await announcements.texts == (voiceOver ? [] : ["A reported obstacle is on this route."]))
     }
 
     @Test

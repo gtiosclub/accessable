@@ -50,7 +50,9 @@ final class LiveKitVideoCallSession: VideoCallSession {
         broadcaster.send(.connecting)
         do {
             // The caller sends their back camera; the volunteer sends only their voice.
-            let isCaller = await auth.currentUser()?.id == ticket.callerID
+            // Volunteers always have an account, so a phone with nobody signed in is the caller.
+            let me = await auth.currentUser()?.id
+            let isCaller = me == nil || me == ticket.callerID
             try await requestPermission(.audio)
             if isCaller { try await requestPermission(.video) }
             configureAudio()
@@ -125,7 +127,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
     private func configureAudio() {
         AudioManager.shared.sessionConfiguration = AudioSessionConfiguration(
             category: .playAndRecord,
-            categoryOptions: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP],
+            categoryOptions: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP],
             mode: .voiceChat
         )
         AudioManager.shared.isSpeakerOutputPreferred = true

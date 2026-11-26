@@ -9,8 +9,8 @@
 /* Begin PBXBuildFile section */
 		3960989530A8CB2200EE8EF3 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 3960989430A8CB2200EE8EF3 /* FirebaseAuth */; };
 		3960989730A8CB2200EE8EF3 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = 3960989630A8CB2200EE8EF3 /* FirebaseFirestore */; };
-		7A1C000F306C188100B311DF /* AccessAbleWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7A1C0004306C188100B311DF /* AccessAbleWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		A1C0FF04306C188100B311DF /* LiveKit in Frameworks */ = {isa = PBXBuildFile; productRef = A1C0FF03306C188100B311DF /* LiveKit */; };
+		7A1C000F306C188100B311DF /* AccessAbleWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 7A1C0004306C188100B311DF /* AccessAbleWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -47,8 +47,8 @@
 /* Begin PBXFileReference section */
 		21101010306C188100B311DF /* AccessAble.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = AccessAble.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4E5A1701306C188100B311DF /* AccessAbleTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AccessAbleTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		7A1C0004306C188100B311DF /* AccessAbleWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AccessAbleWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1C0FF01306C188100B311DF /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
+		7A1C0004306C188100B311DF /* AccessAbleWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = AccessAbleWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -115,6 +115,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A1C0FF05306C188100B311DF /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A1C0FF01306C188100B311DF /* Shared.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
 		21101007306C188100B311DF = {
 			isa = PBXGroup;
 			children = (
@@ -137,14 +145,6 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
-		A1C0FF05306C188100B311DF /* Config */ = {
-			isa = PBXGroup;
-			children = (
-				A1C0FF01306C188100B311DF /* Shared.xcconfig */,
-			);
-			path = Config;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -152,6 +152,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2110101B306C188400B311DF /* Build configuration list for PBXNativeTarget "AccessAble" */;
 			buildPhases = (
+				B5E0C0DE306C188100B311DF /* Require STADIA_API_KEY in Release */,
 				2110100C306C188100B311DF /* Sources */,
 				2110100D306C188100B311DF /* Frameworks */,
 				2110100E306C188100B311DF /* Resources */,
@@ -212,8 +213,8 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				7A1C0001306C188100B311DF /* TripActivity */,
 				7A1C0002306C188100B311DF /* AccessAbleWidgets */,
+				7A1C0001306C188100B311DF /* TripActivity */,
 			);
 			name = AccessAbleWidgets;
 			packageProductDependencies = (
@@ -292,6 +293,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		B5E0C0DE306C188100B311DF /* Require STADIA_API_KEY in Release */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Require STADIA_API_KEY in Release";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"$CONFIGURATION\" = \"Release\" ]; then\n  # Mirrors StadiaConfig.apiKey(from:): these values ship as no key.\n  key=$(printf %s \"$STADIA_API_KEY\" | tr -d \"[:space:]\" | sed -e 's/^\"\\(.*\\)\"$/\\1/' -e \"s/^'\\\\(.*\\\\)'$/\\\\1/\")\n  case \"$key\" in\n    \"\"|\\<*\\>|[Pp][Aa][Ss][Tt][Ee]-*|[Yy][Oo][Uu][Rr]_*|[Yy][Oo][Uu][Rr]-*)\n      echo \"error: STADIA_API_KEY is not set (see Config/Secrets.example.xcconfig)\"\n      exit 1\n      ;;\n  esac\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		2110100C306C188100B311DF /* Sources */ = {

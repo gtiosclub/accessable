@@ -9,6 +9,10 @@ struct AppServices: Sendable {
     var performance: any PerformanceModeProviding
     var scene: any SceneObservationProviding
     var sceneDescriber: any SceneDescribing
+    /// Lets trips ask the camera for geo-tracking (AR-2); nil where it can't (the sample scene).
+    var geoTracking: (any GeoTrackingProviding)?
+    /// Whether Apple has geo-tracking imagery here; capped, so the camera never waits long on it.
+    var isGeoTrackingAvailableHere: @Sendable () async -> Bool = { await ARSessionManager.isGeoTrackingAvailableHere() }
     var location: any LocationProvider
     var routing: any RoutingService
     var destinationSearch: any DestinationSearching
@@ -17,12 +21,14 @@ struct AppServices: Sendable {
     var locationContext: any LocationContextProviding
     var commands: any CommandInterpreting
     var auth: any AuthService
+    var reports: any ReportService = PlaceholderReportService()
     var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
     /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
     var accountsAvailable = false
-    // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
+    /// True once a real report service is wired (REPORT-3); until then the trip screen offers no reporting.
+    var reportsAvailable = false
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
-    // TODO(MATCH-x): replace these four placeholders with the real call services.
+    // TODO(VOLUNTEER-6): replace these four placeholders with the real call services.
     var volunteers: any VolunteerDirectory = PlaceholderVolunteerDirectory()
     var presence: any PresenceService = PlaceholderPresenceService()
     var callSignaling: any CallSignaling = PlaceholderCallSignaling()
@@ -53,7 +59,10 @@ struct AppServices: Sendable {
             askAISettings: askAISettings, alertSettings: alertSettings
         )
         let trip = PlaceholderTripProvider()        // TODO(Maps 2.2): TripManager / RouteProgressTracker
-        let location = CoreLocationProvider()
+        let gps = CoreLocationProvider()
+        let geoTracking = scene as? any GeoTrackingProviding
+        // AR readings only flow while a trip has the camera geo-tracking (AR-2)
+        let location = FusedLocationProvider(gps: gps, geoTracking: geoTracking)
         var services = AppServices(
             // The same engine the camera pipeline submits to, so what the UI hears and shows
             // is what CV emitted. A second instance here would receive nothing.
@@ -63,18 +72,33 @@ struct AppServices: Sendable {
             scene: scene,
             sceneDescriber: scene,
             location: location,
-            routing: ValhallaRoutingService(),
+            // Apple Maps when Valhalla fails or is slow; its routes don't know about stairs, so the user is told
+            routing: FallbackRoutingService(primary: ValhallaRoutingService(endpoint: .live), fallback: AppleMapsRoutingService()),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
             tripActivity: ActivityKitTripActivityClient(),
-            locationContext: LocationDescriber(location: location, distances: distanceSettings),
+            // GPS alone: "where am I" is asked outside trips too, where the camera doesn't geo-track
+            locationContext: LocationDescriber(location: gps, distances: distanceSettings),
             commands: FoundationModelCommandInterpreter(),
             auth: FirebaseApp.app() != nil ? FirebaseAuthService() : PlaceholderAuthService(signedIn: false),
             askAISettings: askAISettings,
             alertSettings: alertSettings,
             distanceSettings: distanceSettings
         )
+        services.geoTracking = geoTracking
+        if let analyzer = scene as? ARSceneAnalyzer {
+            let perception = analyzer.perception
+            services.landmarks = CameraLandmarkProvider(
+                scene: analyzer,
+                setReadsText: { perception.setReadsLandmarkText($0) },
+                // Find and Read speak the signs SignInterpreter knows, so Maps doesn't name them again
+                isAnnouncedByCamera: { perception.mode.announcesSigns && SignInterpreter.interpret($0) != nil }
+            )
+        }
         if FirebaseApp.app() != nil {
+            services.reports = FirestoreReportService(auth: services.auth)
+            services.reportsAvailable = true
+            services.routing = ReportAwareRoutingService(base: services.routing, reports: services.reports)
             services.userProfiles = FirestoreUserProfileStore()
             services.volunteers = FirestoreVolunteerDirectory()
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
@@ -82,12 +106,14 @@ struct AppServices: Sendable {
         }
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
+            reports: services.reportsAvailable ? services.reports : nil,
+            currentUserID: { [auth = services.auth] in await auth.currentUser()?.id },
             landmarks: services.landmarks,
-            setTripTracking: { await location.setTripTracking($0) },
+            setTripTracking: { await gps.setTripTracking($0) },
             distances: distanceSettings,
             recorder: services.tripRecorder
         )
-        
+
         if LiveKitConfig.serverURL != nil {
             let analyzer = scene as? ARSceneAnalyzer
             services.videoCall = LiveKitVideoCallSession(
@@ -96,9 +122,9 @@ struct AppServices: Sendable {
                 resumeCamera: { try analyzer?.resumeAfterCall($0) }
             )
         }
-        
+
         #if DEBUG
-        // Until MATCH-1's Worker exists, test calls use LiveKit's development token server.
+        // Until VOLUNTEER-6's Worker exists, test calls use LiveKit's development token server.
         if let id = ProcessInfo.processInfo.environment["LIVEKIT_DEV_TOKEN_SERVER_ID"],
            !id.isEmpty, !id.contains("$(") {
             services.callSignaling = DevelopmentCallSignaling(serverID: id, auth: services.auth)
@@ -127,6 +153,11 @@ struct AppServices: Sendable {
         )
     }
 
+    /// How trips open the camera: the trip screen and `TripCameraCoordinator` both go through it.
+    var tripCamera: TripCamera {
+        TripCamera(scene: scene, geoTracking: geoTracking, isGeoTrackingAvailableHere: isGeoTrackingAvailableHere)
+    }
+
     /// For SwiftUI previews and unit tests.
     @MainActor
     static var preview: AppServices {
@@ -153,6 +184,9 @@ struct AppServices: Sendable {
         services.volunteers = PlaceholderVolunteerDirectory()
         services.presence = PlaceholderPresenceService()
         services.videoCall = PlaceholderVideoCallSession()
+        // Reports stay in memory, so previews and tests can report a problem.
+        services.reports = PlaceholderReportService()
+        services.reportsAvailable = true
         return services
     }
 }

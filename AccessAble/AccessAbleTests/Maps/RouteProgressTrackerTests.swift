@@ -117,6 +117,23 @@ private struct Walk {
     }
 }
 
+/// The fixes, each marked as coming from `source(index)`.
+private func sourced(_ fixes: [LocationSample], _ source: (Int) -> LocationSource) -> [LocationSample] {
+    fixes.enumerated().map { index, fix in
+        var fix = fix
+        fix.source = source(index)
+        return fix
+    }
+}
+
+/// Whether the event says the user moved: off route, the wrong way or past a turn.
+private func isMovement(_ logged: Logged) -> Bool {
+    switch logged.event {
+    case .offRoute, .wrongWay, .missedTurn: true
+    default: false
+    }
+}
+
 private func noisyFixtureWalk(_ route: NavigationRoute) -> [(along: Double, lateral: Double)] {
     var generator = SeededGenerator(seed: 2026)
     return TripWalk.distances(from: 0, to: route.totalDistance).enumerated().map { index, along in
@@ -270,6 +287,172 @@ struct RouteProgressTrackerTests {
         let firstPast = start + 14
         #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(firstPast + 5, .offRoute)])
         #expect(walk.states[..<(firstPast + 5)].allSatisfy { !$0.isOffRoute })
+    }
+
+    // GPS and AR place someone standing still apart; the step between them when the source switches isn't movement
+    @Test
+    func switchingSourceAtTheStartIsNotTheWrongWay() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        // AR puts the user 20 m west of GPS, and the source switches every 3 s
+        let isGPS = { (index: Int) in (index / 3).isMultiple(of: 2) }
+        let path = (0..<60).map { (along: 0.0, lateral: isGPS($0) ? 0.0 : -20) }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: path, start: walk.nextTime)) { isGPS($0) ? .gps : .ar })
+
+        #expect(!walk.logged.contains(where: isMovement))
+    }
+
+    @Test
+    func switchingSourceFarFromTheRouteIsNotLeavingIt() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        // standing 32 m off, where AR puts the user 23 m further
+        let path = (0..<30).map { (along: 99.4, lateral: (5..<25).contains($0) ? -55.0 : -32) }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: path, start: walk.nextTime)) {
+            (5..<25).contains($0) ? .ar : .gps
+        })
+
+        #expect(!walk.logged.contains(where: isMovement))
+        #expect(walk.states.allSatisfy { !$0.isOffRoute })
+    }
+
+    @Test
+    func switchingSourceAtATurnIsNotMissingIt() throws {
+        let route = try turnRoute(90)
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 99)))
+        // just before the turn, where AR puts the user 20 m straight on past it; the source switches every fix
+        let ahead = TripWalk.destination(from: route.coordinates[1], bearing: 0, distance: 20)
+        let coordinates = (0..<30).map { $0.isMultiple(of: 2) ? TripWalk.point(on: route, along: 99) : ahead }
+        walk.feed(sourced(TripWalk.fixes(at: coordinates, start: walk.nextTime)) { $0.isMultiple(of: 2) ? .gps : .ar })
+
+        #expect(!walk.logged.contains(where: isMovement))
+    }
+
+    @Test
+    func walkingOffWhileTheSourceKeepsSwitchingIsStillOffRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        // AR puts the user 20 m further out than GPS, and the source switches every 3 s
+        let isGPS = { (index: Int) in (index / 3).isMultiple(of: 2) }
+        let detour = (0..<40).map { index in
+            (along: 99.4, lateral: -1.4 * Double(index + 1) - (isGPS(index) ? 0 : 20))
+        }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: detour, start: walk.nextTime)) { isGPS($0) ? .gps : .ar })
+
+        // both sources are past 30 m from detour fix 22, and 10 s and 9.8 m of walking later the run is complete;
+        // on GPS alone it is off route on the same fix
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 31, .offRoute)])
+    }
+
+    @Test
+    func comingBackWhileTheSourceKeepsSwitchingIsBackOnRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        walk.feed((1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) })
+        #expect(walk.states.last?.isOffRoute == true)
+        let start = walk.fixCount
+        // AR puts the user 10 m further out than GPS, and the source switches every 2 fixes, faster than the 2 s a
+        // rejoin takes
+        let isGPS = { (index: Int) in (index / 2).isMultiple(of: 2) }
+        let back = (0..<40).map { index in
+            (along: 99.4, lateral: -max(40 - 1.4 * Double(index), 0) - (isGPS(index) ? 0 : 10))
+        }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: back, start: walk.nextTime)) { isGPS($0) ? .gps : .ar })
+
+        // every fix is within 15 m from fix 24, so back on route 2 s later
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 26, .backOnRoute)])
+    }
+
+    // fusion switches within 4 s of the last fix it passed on, so a longer gap holds walking and the runs start over
+    @Test(arguments: zip([4.0, 4.1], [4, 10]))
+    func aSwitchShiftsTheRunsUpToFourSecondsAfterTheLastFix(gap: TimeInterval, firesAfter: Int) throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        // walking off on GPS, past 30 m from detour fix 22, then nothing for `gap`, then AR 20 m further out
+        walk.feed((1...24).map { (along: 99.4, lateral: -1.4 * Double($0)) })
+        let arStart = walk.fixCount
+        let resumed = walk.nextTime.addingTimeInterval(gap - 1)
+        let path = (0..<12).map { (along: 99.4, lateral: -1.4 * (24 + gap + Double($0)) - 20) }
+        walk.feed(sourced(TripWalk.fixes(on: route, path: path, start: resumed)) { _ in .ar })
+
+        // shifted, the GPS run goes on and has 8.4 m of walking 4 fixes later; restarted, it needs 10 s from the
+        // first AR fix
+        #expect(Array(walk.logged.drop { $0.fix < arStart }) == [Logged(arStart + firesAfter, .offRoute)])
+    }
+
+    @Test
+    func aShortFixForgivenOnOneSourceCantBeConfirmedByTheOther() throws {
+        let route = try turnRoute(61)
+        let vertex = route.coordinates[1]
+        let past = { (distance: Double) in TripWalk.destination(from: vertex, bearing: 0, distance: distance) }
+        // past the turn, short of it, then past it again 2 s after the first
+        let fixes = TripWalk.fixes(at: [past(21), TripWalk.point(on: route, along: 99), past(22)],
+                                   start: TripWalk.start.addingTimeInterval(80))
+
+        var gpsOnly = Walk(route)
+        gpsOnly.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = gpsOnly.fixCount
+        gpsOnly.feed(fixes)
+        #expect(gpsOnly.logged.drop { $0.fix < start }.map(\.fix) == [start + 2])
+
+        var switching = Walk(route)
+        switching.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        switching.feed(sourced(fixes) { $0 == 2 ? .ar : .gps })
+        #expect(!switching.logged.contains(where: isMovement))
+    }
+
+    @Test
+    func walkingOffAfterAGapAndASwitchStartsTheRunsOver() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        // walking off on GPS, nothing for 8 s, then AR, which puts the user 20 m further out
+        let path = (1...50).map { (along: 99.4, lateral: -1.4 * Double($0) - ($0 > 32 ? 20 : 0)) }
+        let fixes = sourced(TripWalk.fixes(on: route, path: path, start: walk.nextTime)) { $0 >= 32 ? .ar : .gps }
+        walk.feed(Array(fixes[..<24]) + Array(fixes[32...]))
+
+        // the step after the gap holds walking as well as the sources' difference, so the run starts over at the
+        // first AR fix and is complete 10 s and 14 m later
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 34, .offRoute)])
+    }
+
+    @Test
+    func walkingPastATurnWhileTheSourceKeepsSwitchingIsAMissedTurn() throws {
+        let route = try turnRoute(61)
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        // AR puts the user 3 m further on than GPS, and the source switches every 2 fixes
+        let isGPS = { (index: Int) in (index / 2).isMultiple(of: 2) }
+        let fixes = straightOn(past: route, count: 18, start: walk.nextTime) { isGPS($0 - 1) ? (0, 0) : (3, 0) }
+        walk.feed(sourced(fixes) { isGPS($0) ? .gps : .ar })
+
+        // AR is 15 m from the outgoing leg first at fix 11, and GPS confirms it 2 s later; on GPS alone that comes
+        // at fix 15
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [
+            Logged(start + 12, .missedTurn(step: 1, distanceBack: 18.2)),
+        ])
+    }
+
+    @Test
+    func walkingAwayRightAfterSwitchingSourceIsStillOffRoute() throws {
+        let route = try cornerRoute()
+        var walk = Walk(route)
+        walk.feed(onRoute(TripWalk.distances(from: 0, to: 100)))
+        let start = walk.fixCount
+        let detour = (1...40).map { (along: 99.4, lateral: -min(1.4 * Double($0), 40)) }
+        let fixes = walking(TripWalk.fixes(on: route, path: detour, start: walk.nextTime), course: 270)
+        walk.feed(sourced(fixes) { _ in .ar })
+
+        // as on GPS alone: past 20 m first at detour fix 15, and off route 5 s later
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [Logged(start + 19, .offRoute)])
     }
 
     // a gap in fixes mustn't let two of them alone decide it
