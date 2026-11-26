@@ -28,7 +28,7 @@ struct AppServices: Sendable {
     /// True once a real report service is wired (REPORT-3); until then the trip screen offers no reporting.
     var reportsAvailable = false
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
-    // TODO(VOLUNTEER-6): replace these four placeholders with the real call services.
+    // Defaults for lightweight initializers; live() explicitly replaces every call dependency.
     var volunteers: any VolunteerDirectory = PlaceholderVolunteerDirectory()
     var presence: any PresenceService = PlaceholderPresenceService()
     var callSignaling: any CallSignaling = PlaceholderCallSignaling()
@@ -86,6 +86,11 @@ struct AppServices: Sendable {
             alertSettings: alertSettings,
             distanceSettings: distanceSettings
         )
+        let unavailable = UnavailableCallServices(message: "Calls require the shared Firebase configuration on this phone.")
+        services.volunteers = unavailable
+        services.presence = unavailable
+        services.callSignaling = unavailable
+        services.incomingCalls = unavailable
         services.geoTracking = geoTracking
         if let analyzer = scene as? ARSceneAnalyzer {
             let perception = analyzer.perception
@@ -106,8 +111,15 @@ struct AppServices: Sendable {
             services.accountsAvailable = true
             if let tokenURL = LiveKitConfig.callTokenURL {
                 services.callSignaling = FirestoreCallSignaling(auth: services.auth, tokenURL: tokenURL)
-                // Only with real signaling: the placeholder's Accept can't accept a real call.
                 services.incomingCalls = FirestoreIncomingCalls(presence: services.presence)
+            } else {
+                // Without the token Worker nobody can place or accept a call, so a volunteer can't go
+                // Online either: they would be rung for calls whose Accept can only fail.
+                let unconfigured = UnavailableCallServices(
+                    message: CallSignalingError.notConfigured.localizedDescription)
+                services.presence = unconfigured
+                services.callSignaling = unconfigured
+                services.incomingCalls = unconfigured
             }
         }
         services.trip = TripManager(
@@ -120,17 +132,12 @@ struct AppServices: Sendable {
             recorder: services.tripRecorder
         )
 
-        // Real calls need both halves: the placeholder's fake token would make LiveKit refuse
-        // every call, so without real signaling the placeholder session stays too.
-        if LiveKitConfig.serverURL != nil, services.callSignaling is FirestoreCallSignaling {
-            let analyzer = scene as? ARSceneAnalyzer
-            services.videoCall = LiveKitVideoCallSession(
-                auth: services.auth,
-                pauseCamera: { try analyzer?.pauseForCall() },
-                resumeCamera: { try analyzer?.resumeAfterCall($0) }
-            )
-        }
-
+        let analyzer = scene as? ARSceneAnalyzer
+        services.videoCall = LiveKitVideoCallSession(
+            auth: services.auth,
+            pauseCamera: { try analyzer?.pauseForCall() },
+            resumeCamera: { try analyzer?.resumeAfterCall($0) }
+        )
         return services
     }
 
@@ -162,22 +169,17 @@ struct AppServices: Sendable {
     /// For SwiftUI previews and unit tests.
     @MainActor
     static var preview: AppServices {
-        var services = live(performance: PerformanceModeMonitor())
-        // Nor speak aloud: tests build many of these at once, and real speech from several of them has frozen
-        // the whole test run inside the system's speech framework.
-        services.announcements = PlaceholderAnnouncementEngine()
-        // Previews and tests must not reach the network or spend the public server's fair-use budget.
-        services.routing = PlaceholderRoutingService()
-        // A real trip would start GPS tracking and background location from a preview or test.
-        services.trip = PlaceholderTripProvider()
-        // Nor put a trip on the simulator's lock screen.
-        services.tripActivity = PlaceholderTripActivityClient()
-        // Nor wait on GPS and Apple Maps for "where am I".
-        services.locationContext = PlaceholderTripProvider()
-        // Wording that doesn't change with the simulator's region.
+        let scene = PlaceholderSceneProvider()
+        // Construct previews directly: never initialize Firebase listeners, LiveKit, GPS or speech.
+        var services = AppServices(
+            announcements: PlaceholderAnnouncementEngine(), haptics: PlaceholderHaptics(),
+            performance: PerformanceModeMonitor(), scene: scene, sceneDescriber: scene,
+            location: PlaceholderLocationProvider(), routing: PlaceholderRoutingService(),
+            destinationSearch: PlaceholderDestinationSearch(), trip: PlaceholderTripProvider(),
+            tripActivity: PlaceholderTripActivityClient(), locationContext: PlaceholderTripProvider(),
+            commands: FoundationModelCommandInterpreter(), auth: PlaceholderAuthService()
+        )
         services.distanceSettings = DistanceSettings(units: .metres)
-        // Nor sign in to the real Firebase project.
-        services.auth = PlaceholderAuthService()
         services.userProfiles = PlaceholderUserProfileStore(profiles: [
             UserProfile(userID: PlaceholderAuthService.sampleUser.id, role: .caller,
                         displayName: "Preview caller", languages: ["English"], createdAt: .now)

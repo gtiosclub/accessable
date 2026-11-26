@@ -25,13 +25,18 @@ final class CallViewModel {
     @ObservationIgnored private var ticket: CallTicket?
     /// Ringing volunteers one at a time; cancelled when the caller hangs up or leaves the screen.
     @ObservationIgnored private var placing: Task<Void, Never>?
+    @ObservationIgnored private var observing: Task<Void, Never>?
+    @ObservationIgnored private var attemptGeneration = UUID()
     /// The session replays its last state, which may be the end of an earlier call;
     /// states are only taken once this call has started connecting.
     @ObservationIgnored private var hasStartedConnecting = false
+    @ObservationIgnored private var isFinishing = false
+    @ObservationIgnored private let permissionCheck: (@MainActor () async -> CallFailure?)?
 
-    init(services: AppServices, volunteer: Volunteer?) {
+    init(services: AppServices, volunteer: Volunteer?, permissionCheck: (@MainActor () async -> CallFailure?)? = nil) {
         self.services = services
         self.preferred = volunteer
+        self.permissionCheck = permissionCheck
     }
 
     var title: String { volunteerName ?? "Volunteer call" }
@@ -52,24 +57,47 @@ final class CallViewModel {
     }
 
     func start() async {
+        guard state == .idle else { return }
         placing = Task { await placeCall() }
-        for await state in services.videoCall.states() {
-            await receive(state)
-        }
+        await placing?.value
     }
 
     /// Every failure, and the end of a call, offers this.
     func retry() {
-        placing?.cancel()
-        placing = Task { await placeCall() }
+        guard !state.isActive, !isFinishing else { return }
+        attemptGeneration = UUID()
+        observing?.cancel()
+        observing = nil
+        hasStartedConnecting = false
+        let previous = placing
+        previous?.cancel()
+        state = .ringing
+        placing = Task {
+            await previous?.value
+            guard !Task.isCancelled else { return }
+            await services.videoCall.disconnect()
+            guard !Task.isCancelled else { return }
+            await placeCall()
+        }
     }
 
     func hangUp() async {
-        placing?.cancel()
-        guard state.isActive else { return }
+        guard !isFinishing else { return }
+        let pending = placing
+        pending?.cancel()
+        guard state.isActive || ticket != nil else { return }
+        isFinishing = true
+        defer { isFinishing = false }
+        attemptGeneration = UUID()
+        observing?.cancel()
+        observing = nil
+        hasStartedConnecting = false
+        // A late token/connect result must finish before another attempt can use the session.
+        await pending?.value
         await services.videoCall.disconnect()
         if let ticket { await services.callSignaling.endCall(callID: ticket.callID) }
-        if state.isActive { state = .ended(.hungUp) }
+        ticket = nil
+        state = .ended(.hungUp)
         await services.announcements.setInCall(false)
         await say("Call ended.", haptic: nil)
     }
@@ -113,6 +141,8 @@ final class CallViewModel {
     // MARK: - Placing the call
 
     private func placeCall() async {
+        let generation = UUID()
+        attemptGeneration = generation
         failure = nil
         ticket = nil
         volunteerName = nil
@@ -124,7 +154,9 @@ final class CallViewModel {
         state = .ringing
 
         // Checked before ringing anyone, so a volunteer is never left waiting for a call that can't connect.
-        if let missing = await missingPermission() {
+        let missing = await missingPermission()
+        guard !Task.isCancelled else { return }
+        if let missing {
             await fail(missing)
             return
         }
@@ -132,24 +164,43 @@ final class CallViewModel {
 
         do {
             // Rings the picked volunteer first, then others, 30 seconds each, until one accepts.
+            try Task.checkCancellation()
             let ticket = try await services.callSignaling.requestCall(preferring: preferred?.id) { [weak self] progress in
-                Task { @MainActor in await self?.receive(progress) }
-            }
-            // Hung up just as someone answered: hangUp had no ticket to end the call with.
-            if Task.isCancelled {
-                await services.callSignaling.endCall(callID: ticket.callID)
-                return
+                Task { @MainActor in
+                    guard let self, self.attemptGeneration == generation else { return }
+                    await self.receive(progress)
+                }
             }
             self.ticket = ticket
+            try Task.checkCancellation()
             if ticket.volunteerID == preferred?.id { volunteerName = preferred?.name }
             hasStartedConnecting = true
+            state = .connecting
+            await services.announcements.setInCall(true)
+            try Task.checkCancellation()
             try await services.videoCall.connect(with: ticket)
+            try Task.checkCancellation()
+            // Subscribe only after this join, with a generation fence. An old session's
+            // replayed/queued terminal state must not end a subsequent call.
+            let video = services.videoCall
+            observing = Task { [weak self] in
+                for await state in video.states() {
+                    guard !Task.isCancelled, let self, attemptGeneration == generation else { return }
+                    await receive(state, generation: generation)
+                    guard hasStartedConnecting, attemptGeneration == generation else { return }
+                }
+            }
         } catch {
+            let connecting = hasStartedConnecting
+            hasStartedConnecting = false
+            observing?.cancel()
+            observing = nil
+            await services.videoCall.disconnect()
+            if let ticket { await services.callSignaling.endCall(callID: ticket.callID) }
+            ticket = nil
             // Hanging up or leaving the screen cancels the call; that isn't a failure.
             guard !Task.isCancelled else { return }
-            // Accepted but couldn't join: free the volunteer for the next caller.
-            if let ticket { await services.callSignaling.endCall(callID: ticket.callID) }
-            await fail(Self.failure(for: error, connecting: hasStartedConnecting))
+            await fail(Self.failure(for: error, connecting: connecting))
         }
     }
 
@@ -168,27 +219,34 @@ final class CallViewModel {
         }
     }
 
-    private func receive(_ newState: CallState) async {
-        guard hasStartedConnecting else { return }
-        // The session only fails while joining, and then also throws from connect: placeCall's
-        // catch reports it once, with the real cause (like a denied camera).
-        if case .failed = newState { return }
-        state = newState
-        // From connecting on, only turn cues and critical alerts are spoken (VOLUNTEER-5).
-        await services.announcements.setInCall(newState.isActive)
-        if newState == .connected {
-            await services.haptics.play(.arrived, intensity: 1)
+    private func receive(_ newState: CallState, generation: UUID) async {
+        guard hasStartedConnecting, attemptGeneration == generation, !Task.isCancelled else { return }
+        if newState.isActive {
+            state = newState
+            await services.announcements.setInCall(true)
+            if newState == .connected, hasStartedConnecting, attemptGeneration == generation {
+                await services.haptics.play(.arrived, intensity: 1)
+            }
+            return
         }
-        guard !newState.isActive else { return }
-        // The other person left or the connection dropped: mark the call ended so the
-        // volunteer is free for the next caller.
+        // A failed connect is cleaned up by placeCall first. Do not expose Retry early.
+        await placing?.value
+        guard hasStartedConnecting, !isFinishing, attemptGeneration == generation, !Task.isCancelled else { return }
+        isFinishing = true
+        hasStartedConnecting = false
+        // Let this observer finish cleanup without cancelling its Firestore operation.
+        observing = nil
         if let ticket { await services.callSignaling.endCall(callID: ticket.callID) }
-        switch newState {
-        case .ended(.hungUp):
-            break // hangUp() already said it
-        default:
-            await say(statusText, haptic: .attention)
+        ticket = nil
+        await services.announcements.setInCall(false)
+        isFinishing = false
+        // Set terminal UI only after cleanup. A new attempt can no longer race old writes.
+        if case .failed = newState {
+            await fail(.connectionFailed)
+            return
         }
+        state = newState
+        if newState != .ended(.hungUp) { await say(statusText, haptic: .attention) }
     }
 
     private func fail(_ failure: CallFailure) async {
@@ -209,6 +267,7 @@ final class CallViewModel {
 
     /// The caller sends their camera and voice, so both permissions are needed.
     private func missingPermission() async -> CallFailure? {
+        if let permissionCheck { return await permissionCheck() }
         // Previews and tests use the placeholder call, which needs neither.
         guard !(services.videoCall is PlaceholderVideoCallSession) else { return nil }
         for (type, name) in [(AVMediaType.audio, "microphone"), (AVMediaType.video, "camera")] {

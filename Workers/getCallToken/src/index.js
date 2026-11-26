@@ -82,11 +82,17 @@ async function handle(request, env) {
 // ---------- Firebase ID tokens ----------
 
 let googleKeys = null; // { keys: Map<kid, CryptoKey>, expiresAt: ms }
+let lastUnknownKidRefresh = 0; // ms
+// This runs before sign-in is checked, so a made-up kid must not refetch Google's keys every time.
+const UNKNOWN_KID_REFRESH_MS = 60 * 1000;
 
 async function googleKey(kid) {
   const stale = !googleKeys || Date.now() >= googleKeys.expiresAt;
-  // Google rotates its keys; an unknown kid also triggers one refresh.
-  if (stale || !googleKeys.keys.has(kid)) {
+  // Google rotates its keys; an unknown kid triggers a refresh, at most once a minute.
+  const unknown = googleKeys && !googleKeys.keys.has(kid);
+  if (unknown && !stale && Date.now() - lastUnknownKidRefresh < UNKNOWN_KID_REFRESH_MS) return undefined;
+  if (stale || unknown) {
+    if (unknown) lastUnknownKidRefresh = Date.now();
     const response = await fetch(GOOGLE_KEYS_URL);
     if (!response.ok) throw new Error(`Google keys: HTTP ${response.status}`);
     const maxAge = Number(/max-age=(\d+)/.exec(response.headers.get('Cache-Control') ?? '')?.[1] ?? 3600);

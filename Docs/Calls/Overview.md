@@ -2,6 +2,8 @@
 
 Shared decisions for the video-call feature. Every call task builds on these.
 
+Release integration: [live services, rule hardening, deployment and the two-phone test log](Integration.md).
+
 Volunteer ringing and answers: [incoming-call flow, rules contract and testing](IncomingCalls.md).
 
 Two-iPhone media test: [LiveKit Debug harness and acceptance checklist](MediaTest.md).
