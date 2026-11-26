@@ -39,6 +39,23 @@ struct UserProfileTests {
     }
 
     @Test
+    func signingOutDeletesTheSavedTrip() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "UserProfileTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let savedTrips = SavedTripStore(directory: directory)
+        savedTrips.save(SavedTrip(tripID: UUID(), route: MapsSamples.route, routeSource: .valhalla,
+                                  destination: MapsSamples.destination, passedStepCount: 1, startedAt: .now,
+                                  savedAt: .now))
+        #expect(savedTrips.load() != nil)
+        let session = AccountSessionViewModel(auth: PlaceholderAuthService(), profiles: PlaceholderUserProfileStore(),
+                                              savedTrips: savedTrips)
+        try await session.signOut()
+
+        #expect(savedTrips.load() == nil)
+        #expect(!FileManager.default.fileExists(atPath: savedTrips.url.path()))
+    }
+
+    @Test
     func readFailureDoesNotBecomeNewUserOnboarding() async throws {
         let auth = PlaceholderAuthService()
         let session = AccountSessionViewModel(auth: auth, profiles: UnconfiguredUserProfileStore())

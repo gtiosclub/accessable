@@ -34,7 +34,8 @@ private struct AccountGateView: View {
 
     init(services: AppServices) {
         _session = State(initialValue: AccountSessionViewModel(
-            auth: services.auth, profiles: services.userProfiles, presence: services.presence))
+            auth: services.auth, profiles: services.userProfiles, presence: services.presence,
+            savedTrips: services.savedTrips))
     }
 
     var body: some View {

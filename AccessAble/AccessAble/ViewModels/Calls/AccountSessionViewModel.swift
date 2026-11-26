@@ -16,14 +16,18 @@ final class AccountSessionViewModel {
     private let auth: any AuthService
     private let profiles: any UserProfileStore
     private let presence: any PresenceService
+    /// The trip saved for resuming, which the next account on the phone mustn't be offered.
+    private let savedTrips: SavedTripStore?
     private var activeUser: AuthUser?
     private var loadTask: Task<Void, Never>?
     private var generation = UUID()
 
-    init(auth: any AuthService, profiles: any UserProfileStore, presence: any PresenceService = PlaceholderPresenceService()) {
+    init(auth: any AuthService, profiles: any UserProfileStore, presence: any PresenceService = PlaceholderPresenceService(),
+         savedTrips: SavedTripStore? = nil) {
         self.auth = auth
         self.profiles = profiles
         self.presence = presence
+        self.savedTrips = savedTrips
     }
 
     func listen() async {
@@ -78,6 +82,7 @@ final class AccountSessionViewModel {
     func signOut() async throws {
         try? await presence.setOnline(false)
         try await auth.signOut()
+        savedTrips?.clear()
         loadTask?.cancel()
         generation = UUID()
         activeUser = nil
