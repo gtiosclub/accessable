@@ -34,7 +34,8 @@ private struct AccountGateView: View {
 
     init(services: AppServices) {
         _session = State(initialValue: AccountSessionViewModel(
-            auth: services.auth, profiles: services.userProfiles, presence: services.presence))
+            auth: services.auth, profiles: services.userProfiles, presence: services.presence,
+            savedTrips: services.savedTrips, trip: services.trip))
     }
 
     var body: some View {
@@ -85,6 +86,7 @@ private struct AccountGateView: View {
 struct MainFlowView: View {
     @Environment(AppViewModel.self) private var app
     @State private var router = AppRouter()
+    @State private var resumeTrip: ResumeTripViewModel?
     private let intents = IntentsModel.shared
 
     var body: some View {
@@ -96,6 +98,26 @@ struct MainFlowView: View {
                 }
         }
         .environment(router)
+        .task {
+            let resume = ResumeTripViewModel(store: app.services.savedTrips, trip: app.services.trip)
+            resumeTrip = resume
+            await resume.check()
+        }
+        .alert(
+            resumeTrip?.title ?? "",
+            isPresented: Binding(
+                get: { resumeTrip?.offer != nil },
+                // SwiftUI can close the alert before running a button's action, so closing isn't an answer
+                set: { if !$0 { resumeTrip?.dismiss() } }
+            ),
+            presenting: resumeTrip?.offer
+        ) { offer in
+            Button("Resume trip") {
+                guard let plan = resumeTrip?.resume(offer) else { return }
+                router.path = [.trip(plan)]
+            }
+            Button("No thanks", role: .cancel) { resumeTrip?.decline() }
+        }
         .onChange(of: intents.pending, initial: true) { _, destination in
             guard let destination else { return }
             router.path = [.feature(destination)]

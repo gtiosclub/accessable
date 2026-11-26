@@ -138,7 +138,9 @@ protocol TripStateProviding: Sendable {
     func tripRoutes() -> AsyncStream<NavigationRoute?>
     /// Starts guidance along `route`, replacing any trip in progress. Progress arrives on `tripStates()`.
     /// Voice "start trip" needs a planned route first; a future `planTrip`/`startTrip()` split is expected.
-    func startTrip(route: NavigationRoute, destination: Destination) async
+    /// - Parameter resumingAtStep: For a trip resumed after the app closed, the step of `route` that was next, so the
+    ///   trip places the user along the route from their first fix rather than at its start; nil starts at the start.
+    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async
     func pauseTrip() async
     func resumeTrip() async
     func endTrip() async
@@ -155,6 +157,10 @@ protocol TripStateProviding: Sendable {
 }
 
 extension TripStateProviding {
+    func startTrip(route: NavigationRoute, destination: Destination) async {
+        await startTrip(route: route, destination: destination, resumingAtStep: nil)
+    }
+
     func reportQuestions() -> AsyncStream<ReportQuestion> {
         AsyncStream { $0.finish() }
     }

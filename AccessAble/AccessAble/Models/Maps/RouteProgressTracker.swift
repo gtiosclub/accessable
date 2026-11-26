@@ -38,6 +38,17 @@ struct RouteProgressTracker {
         case arrived
     }
 
+    /// Where a resumed trip's fixes have put the user along the route.
+    enum Placement: Equatable, Sendable {
+        /// No usable fix near enough the route yet. Progress stands at the last step passed, cues wait, and only the
+        /// off-route rules apply, measured from the whole route.
+        case awaitingFix
+        /// Progress is where a fix projected onto the route.
+        case onRoute
+        /// Off route before any fix came near enough to place the user; rejoining places them.
+        case farFromRoute
+    }
+
     struct Update: Equatable, Sendable {
         var state: Progress
         /// In delivery order.
@@ -49,6 +60,8 @@ struct RouteProgressTracker {
     let route: NavigationRoute
     /// Metres along the route of each street crossing on it, ascending.
     let crossings: [Double]
+    /// Nil for a trip followed from the start.
+    private(set) var placement: Placement?
 
     private let startedAt: Date
     /// Per step, the direction of travel arriving at its vertex, when the turn there is sharp enough that walking
@@ -165,7 +178,10 @@ struct RouteProgressTracker {
     private static let rawArrivalAccuracy: Double = 15
     private static let rawArrivalWindow: Double = 50
 
-    init(route: NavigationRoute, startedAt: Date, crossings: [Double] = []) {
+    /// - Parameter resumingAtStep: For a trip resumed after the app closed, the step that was next. The user is then
+    ///   somewhere along the route, perhaps far past where its forward window and progress gate could follow them
+    ///   to, so the first usable fix near the route places them: see `Placement`.
+    init(route: NavigationRoute, startedAt: Date, crossings: [Double] = [], resumingAtStep: Int? = nil) {
         self.route = route
         self.crossings = crossings
         self.startedAt = startedAt
@@ -176,11 +192,22 @@ struct RouteProgressTracker {
         nowDone = prepareDone
         missedTurnDone = prepareDone
         crossingDone = Array(repeating: false, count: crossings.count)
-        // the start announcement speaks the first instruction, which covers a step this close; stairs still get
-        // their own warning on the first fix
-        if distance(toStep: nextStepIndex) <= Self.prepareDistance, route.steps[nextStepIndex].kind != .stairs {
+        if let resumingAtStep {
+            placement = .awaitingFix
+            // read from a file, so kept within the route
+            nextStepIndex = min(max(resumingAtStep, nextStepIndex), route.steps.count - 1)
+            progress = lastPassedPosition
+            previousProgress = progress
+        } else if distance(toStep: nextStepIndex) <= Self.prepareDistance, route.steps[nextStepIndex].kind != .stairs {
+            // the start announcement speaks the first instruction, which covers a step this close; stairs still get
+            // their own warning on the first fix
             prepareDone[nextStepIndex] = true
         }
+    }
+
+    /// Metres from the route start to the vertex of the last step passed, the start before the first.
+    private var lastPassedPosition: Double {
+        nextStepIndex > 0 ? position(ofStep: nextStepIndex - 1) : 0
     }
 
     /// Records that the caller has already spoken the step's prepare, as when resuming, so the tracker doesn't
@@ -215,7 +242,9 @@ struct RouteProgressTracker {
             lastFixTime = sample.timestamp
             return Update(state: state, events: [])
         }
-        let projection = isOffRoute ? route.projection(of: sample.coordinate) : forwardFirstProjection(of: sample)
+        if placement == .awaitingFix { place(sample) }
+        let projection = isOffRoute || placement == .awaitingFix
+            ? route.projection(of: sample.coordinate) : forwardFirstProjection(of: sample)
         guard projection.distanceAlongRoute.isFinite, projection.sideOffset.isFinite else {
             return Update(state: state, events: [])
         }
@@ -232,6 +261,11 @@ struct RouteProgressTracker {
         var events: [GuidanceEvent] = []
         if isOffRoute {
             if rejoins(sample, at: projection) { events.append(.backOnRoute) }
+        } else if placement == .awaitingFix {
+            if leavesRoute(sample, at: projection) || walksAwayFromRoute(sample, at: projection) {
+                placement = .farFromRoute
+                events.append(.offRoute)
+            }
         } else {
             moveProgress(sample, to: projection)
             if wrongWayOrigin == nil, sample.horizontalAccuracy <= Self.wrongWayMaximumAccuracy {
@@ -252,12 +286,12 @@ struct RouteProgressTracker {
         }
 
         let passed = passSteps()
-        if isAtDestination(sample) {
+        if placement != .awaitingFix, isAtDestination(sample) {
             hasArrived = true
             nextStepIndex = route.steps.count - 1
             return Update(state: state, events: [.arrived], sideOffset: projection.sideOffset)
         }
-        if emitsCues, !isOffRoute {
+        if emitsCues, !isOffRoute, placement != .awaitingFix {
             events += turnCues(passed: passed)
             events += crossingCues()
         }
@@ -270,6 +304,30 @@ struct RouteProgressTracker {
               sample.timestamp.timeIntervalSinceReferenceDate.isFinite,
               sample.timestamp >= startedAt.addingTimeInterval(-Self.maximumFixAgeAtStart) else { return false }
         return lastFixTime.map { sample.timestamp > $0 } ?? true
+    }
+
+    /// Puts progress where the fix projects nearest onto the route, within the off-route limit. A route can come back
+    /// near itself, where a fix projects onto two legs about as near as each other, within its accuracy: of those, the
+    /// first at or past the last step passed, which the user was on or past when the trip was saved. A fix further
+    /// from the route than the limit changes nothing.
+    private mutating func place(_ sample: LocationSample) {
+        let limit = max(Self.offRouteDistance, Self.offRouteAccuracyFactor * sample.horizontalAccuracy)
+        let near = (0..<route.coordinates.count - 1)
+            .map { route.projection(of: sample.coordinate, segments: $0..<$0 + 1) }
+            .filter { abs($0.sideOffset) <= limit }
+        let passed = lastPassedPosition
+        let ahead = near.filter { $0.distanceAlongRoute >= passed }
+        let candidates = ahead.isEmpty ? near : ahead
+        let tolerance = max(sample.horizontalAccuracy, Self.sharedGeometryTolerance)
+        guard let nearest = candidates.map({ abs($0.sideOffset) }).min(),
+              let best = candidates.first(where: { abs($0.sideOffset) <= nearest + tolerance }) else { return }
+        placement = .onRoute
+        progress = best.distanceAlongRoute
+        previousProgress = progress
+        progressTime = sample.timestamp
+        while nextStepIndex < route.steps.count - 1, progress - position(ofStep: nextStepIndex) >= Self.passedMargin {
+            nextStepIndex += 1
+        }
     }
 
     /// Searches ahead of accepted progress first, so on switchbacks and out-and-back legs the fix lands on the leg

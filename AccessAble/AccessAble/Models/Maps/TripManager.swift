@@ -34,6 +34,8 @@ actor TripManager: TripStateProviding {
     private let distances: DistanceSettings
     /// Writes nothing unless recording is on, and fix rows aren't even built then.
     private let recorder: TripRecorder?
+    /// Where the trip in progress is kept for resuming after the app closes; nil keeps nothing.
+    private let savedTrips: SavedTripStore?
     /// Nil where the battery isn't watched, as in tests of everything else. Its warnings are spoken from here, so
     /// they wait for the start announcement and are recorded.
     private let battery: BatteryMonitor?
@@ -47,6 +49,15 @@ actor TripManager: TripStateProviding {
     private var tripID = UUID()
     private var phase: TripPhase = .planning
     private var arrivedWhilePaused = false
+    private enum ResumedStart {
+        /// Waiting out `startDelay`.
+        case delayed
+        /// Said, but the first usable fix hasn't placed the user yet, so the way on comes when it does.
+        case awaitingPlacement
+    }
+    /// A resumed trip's start announcement not yet said in full. Its turn cues wait for it, so the first is never
+    /// said before the trip is.
+    private var resumedStart: ResumedStart?
     private var destination: Destination?
     private var route: NavigationRoute?
     private var tracker: RouteProgressTracker?
@@ -173,6 +184,7 @@ actor TripManager: TripStateProviding {
         setTripTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
         distances: DistanceSettings = DistanceSettings(units: .metres),
         recorder: TripRecorder? = nil,
+        savedTrips: SavedTripStore? = nil,
         battery: BatteryMonitor? = nil,
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
@@ -188,6 +200,7 @@ actor TripManager: TripStateProviding {
         self.setTripTracking = setTripTracking
         self.distances = distances
         self.recorder = recorder
+        self.savedTrips = savedTrips
         self.battery = battery
         self.now = now
         self.sleep = sleep
@@ -210,7 +223,7 @@ actor TripManager: TripStateProviding {
         shownReports.stream()
     }
 
-    func startTrip(route: NavigationRoute, destination: Destination) async {
+    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async {
         generation += 1
         let generation = generation
         cancelTasks()
@@ -218,11 +231,13 @@ actor TripManager: TripStateProviding {
         routeVersion = 0
         phase = .active
         arrivedWhilePaused = false
+        resumedStart = resumingAtStep.map { _ in .delayed }
         self.destination = destination
         self.route = route
         routeCrossings = RouteCrossings.along(route, crossings: campusCrossings())
         let tracker = RouteProgressTracker(route: route, startedAt: now(),
-                                           crossings: routeCrossings.map(\.distanceAlongRoute))
+                                           crossings: routeCrossings.map(\.distanceAlongRoute),
+                                           resumingAtStep: resumingAtStep)
         self.tracker = tracker
         progress = tracker.state
         landmarkMatcher = LandmarkMatcher(
@@ -256,6 +271,7 @@ actor TripManager: TripStateProviding {
         notAskedAt = [:]
         routes.send(route)
         publish(at: now())
+        saveTrip()
         recorder?.tripStarted(at: now())
 
         // subscribed before any await, so a fix or delivery can't slip past while this trip is set up
@@ -288,6 +304,8 @@ actor TripManager: TripStateProviding {
     func pauseTrip() async {
         guard phase == .active else { return }
         phase = .paused
+        // "Trip resumed." says what to do next instead, once a fix has placed the user to say it from
+        if tracker?.placement != .awaitingFix { resumedStart = nil }
         battery?.setPaused(true)
         publish(at: now())
         await submit(confirmation("Trip paused."))
@@ -308,6 +326,8 @@ actor TripManager: TripStateProviding {
         phase = .active
         battery?.setPaused(false)
         publish(at: now())
+        // "Trip resumed." stands for a start announcement not said, and the way on comes with the placing fix
+        if resumedStart != nil { resumedStart = tracker?.placement == .awaitingFix ? .awaitingPlacement : nil }
         let guidance = resumeAnnouncement()
         await submit(confirmation("Trip resumed."))
         if self.generation == generation, phase == .active, unavoidedReportOnResume {
@@ -325,6 +345,7 @@ actor TripManager: TripStateProviding {
         generation += 1
         let generation = generation
         cancelTasks()
+        savedTrips?.clear()
         battery?.stop()
         phase = .planning
         tracker = nil
@@ -399,7 +420,9 @@ actor TripManager: TripStateProviding {
         }
         headingEstimator.update(with: sample)
 
-        let update = tracker.update(with: sample, emitsCues: phase == .active)
+        let previousStep = progress?.nextStepIndex
+        let wasAwaitingPlacement = resumedStart == .awaitingPlacement
+        let update = tracker.update(with: sample, emitsCues: phase == .active && resumedStart == nil)
         self.tracker = tracker
         progress = update.state
         record(sample, update, on: tracker.route)
@@ -407,6 +430,7 @@ actor TripManager: TripStateProviding {
             await arrive(at: sample.timestamp, generation: generation)
             return
         }
+        if update.state.nextStepIndex != previousStep { saveTrip() }
         if let step = missedTurnStep, update.state.nextStepIndex != step { missedTurnStep = nil }
         for case let .missedTurn(step, _) in update.events { missedTurnStep = step }
         if update.events.contains(.backOnRoute) { missedTurnStep = nil }
@@ -418,6 +442,11 @@ actor TripManager: TripStateProviding {
         }
 
         guard phase == .active else { return }
+        if wasAwaitingPlacement, tracker.placement != .awaitingFix {
+            resumedStart = nil
+            let guidance = resumedGuidance()
+            if !guidance.isEmpty { pending.append((maneuver(guidance, .high, expiresIn: 15, key: "placed"), nil)) }
+        }
         pending += update.events.compactMap { event in
             announcement(for: event, progress: update.state).map { ($0, Self.cueStep(of: event)) }
         }
@@ -452,6 +481,7 @@ actor TripManager: TripStateProviding {
     }
 
     private func arrive(at time: Date, generation: Int) async {
+        savedTrips?.clear()
         // the heading only words guidance, and the compass runs while it is subscribed
         for task in [watchdogTask, rerouteTask, deliveryTask, headingTask, reportTask] {
             task?.cancel()
@@ -505,6 +535,14 @@ actor TripManager: TripStateProviding {
             hasArrived: phase == .arrived || arrivedWhilePaused,
             updatedAt: time
         ))
+    }
+
+    /// Keeps the route being followed and how far along its steps the user is, for resuming after the app closes.
+    private func saveTrip() {
+        guard let savedTrips, let route, let destination, let progress else { return }
+        savedTrips.save(SavedTrip(tripID: tripID, route: route, routeSource: route.source,
+                                  destination: destination, passedStepCount: progress.nextStepIndex,
+                                  startedAt: tripStartedAt, savedAt: now()))
     }
 
     private var offRouteInstruction: String {
@@ -842,6 +880,7 @@ actor TripManager: TripStateProviding {
             landmarkMatcher?.replaceLandmarks(
                 RouteLandmarks.along(newRoute, destination: destination, buildings: campusBuildings())
             )
+            saveTrip()
             routes.send(newRoute)
             publish(at: now())
             publishMapReports()
@@ -884,10 +923,14 @@ actor TripManager: TripStateProviding {
         do { try await sleep(Self.startDelay) } catch { return }
         guard self.generation == generation else { return }
         if phase == .active, let route, let destination {
-            let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
-                + Self.reportWarning(on: route) + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "")
-                + departure(on: route)
-            await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
+            if tracker?.placement != nil {
+                await announceResumedStart(on: route, to: destination)
+            } else {
+                let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
+                    + Self.reportWarning(on: route)
+                    + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "") + departure(on: route)
+                await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
+            }
         }
         // after the start, so a warning neither goes first nor is cut off as VoiceOver's focus moves
         guard self.generation == generation, phase == .active || phase == .paused, !arrivedWhilePaused else { return }
@@ -903,6 +946,30 @@ actor TripManager: TripStateProviding {
                                       createdAt: now(), dedupKey: "\(tripID)-battery-\(warning.level)")
         batteryWarningIDs[event.id] = warning.level
         await submit(event)
+    }
+
+    /// "Resuming directions to Library, about 160 metres.", then the way on from where the first usable fix placed
+    /// the user, unless already given. Before that fix, without the distance, and the way on comes with it.
+    private func announceResumedStart(on route: NavigationRoute, to destination: Destination) async {
+        let placement = tracker?.placement
+        let remaining = placement == .onRoute ? progress.map { ", " + spoken($0.distanceRemaining) } : nil
+        var text = "Resuming directions to \(destination.name)\(remaining ?? ""). " + Self.reportWarning(on: route)
+            + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "")
+        if placement == .awaitingFix {
+            resumedStart = .awaitingPlacement
+        } else if resumedStart != nil {
+            // nil once the placing fix or "Trip resumed." gave the way on
+            resumedStart = nil
+            text += resumedGuidance()
+        }
+        await submit(maneuver(text.trimmingCharacters(in: .whitespaces), .high, expiresIn: 15, key: "start"))
+    }
+
+    /// Which way the path is and the next step, from where a resumed trip's first usable fix placed the user; nothing
+    /// for one it found far from the route, whom the off-route rules guide.
+    private func resumedGuidance() -> String {
+        guard tracker?.placement == .onRoute else { return "" }
+        return [pathSentence(), nextStepPrepare()].compactMap { $0 }.joined(separator: " ")
     }
 
     /// Clock-based rather than fix-based, so it notices when fixes stop arriving at all.
@@ -1094,13 +1161,20 @@ actor TripManager: TripStateProviding {
         return " " + prepareText(step, in: distance)
     }
 
-    /// What to do next, spoken after "Trip resumed.". Nothing within `nowDistance` of a turn, where the user may
-    /// already have walked past it: the next fix's turn cue, confirmation or missed turn says the right thing.
+    /// What to do next, spoken after "Trip resumed.".
     private func resumeAnnouncement() -> AnnouncementEvent? {
-        guard let route, let progress, var tracker else { return nil }
+        // measured from the saved step, not where the user is
+        guard let progress, tracker?.placement != .awaitingFix else { return nil }
         if progress.isOffRoute {
             return maneuver(offRouteSpeech, .high, haptic: .attention, expiresIn: 10, key: nil)
         }
+        return nextStepPrepare().map { maneuver($0, .normal, expiresIn: 8, key: nil) }
+    }
+
+    /// The next step's prepare, for picking up guidance mid-route. Nothing within `nowDistance` of it, where the user
+    /// may already have walked past it: the next fix's turn cue, confirmation or missed turn says the right thing.
+    private func nextStepPrepare() -> String? {
+        guard let route, let progress, var tracker else { return nil }
         let index = progress.nextStepIndex
         let distance = progress.distanceToNextStep
         guard distance > RouteProgressTracker.nowDistance, missedTurnStep != index else { return nil }
@@ -1109,7 +1183,7 @@ actor TripManager: TripStateProviding {
             tracker.markPrepared(step: index)
             self.tracker = tracker
         }
-        return maneuver(prepareText(route.steps[index], in: distance), .normal, expiresIn: 8, key: nil)
+        return prepareText(route.steps[index], in: distance)
     }
 
     /// "In about 30 feet, turn left onto Ferst Drive." Stairs say which way they go instead of Valhalla's "Take the

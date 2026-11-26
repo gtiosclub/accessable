@@ -48,6 +48,8 @@ struct AppServices: Sendable {
     var distanceSettings = DistanceSettings()
     /// Field-test recording of trips, off until turned on in Developer Tools.
     var tripRecorder = TripRecorder()
+    /// The trip in progress, kept for resuming after the app closes; nil where trips aren't kept.
+    var savedTrips: SavedTripStore?
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
@@ -132,6 +134,7 @@ struct AppServices: Sendable {
                 services.incomingCalls = unconfigured
             }
         }
+        services.savedTrips = SavedTripStore()
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
             reports: services.reportsAvailable ? services.reports : nil,
@@ -140,6 +143,7 @@ struct AppServices: Sendable {
             setTripTracking: { await gps.setTripTracking($0) },
             distances: distanceSettings,
             recorder: services.tripRecorder,
+            savedTrips: services.savedTrips,
             battery: BatteryMonitor(battery: DeviceBattery())
         )
 

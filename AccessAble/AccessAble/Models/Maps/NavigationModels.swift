@@ -131,6 +131,8 @@ struct PlannedRoute: Hashable, Sendable {
     var route: NavigationRoute
     /// When it was requested, so the trip can tell if it is too old to start on.
     var requestedAt: Date
+    /// For a saved trip being resumed, the step of `route` that was next; nil for a trip from the route's start.
+    var resumingAtStep: Int? = nil
 }
 
 struct RouteOptions: Equatable, Sendable {
@@ -216,7 +218,7 @@ extension RouteStep {
     }
 }
 
-enum RouteSource: Sendable {
+enum RouteSource: String, Codable, Sendable {
     /// Valhalla, which knows about stairs, kerbs and step-free paths.
     case valhalla
     /// Apple Maps, the backup when Valhalla fails or is slow. It knows nothing of stairs or crossings.

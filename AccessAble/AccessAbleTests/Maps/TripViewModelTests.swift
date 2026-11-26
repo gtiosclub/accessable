@@ -103,7 +103,9 @@ private final class ControlledTripProvider: TripStateProviding, Sendable {
 
     func tripStates() -> AsyncStream<TripState> { states.stream() }
     func tripRoutes() -> AsyncStream<NavigationRoute?> { routes.stream() }
-    func startTrip(route: NavigationRoute, destination: Destination) async { started.withLock { $0.append(route) } }
+    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async {
+        started.withLock { $0.append(route) }
+    }
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
@@ -199,16 +201,6 @@ private let pickedRoute = try! NavigationRoute(coordinates: [origin, library.coo
     RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Head north.", spokenInstruction: "Head north."),
     RouteStep(kind: .arrive, coordinateIndex: 1, instruction: "Arrive", spokenInstruction: "You have arrived."),
 ], estimatedDuration: 95)
-
-private final class ManualDate: Sendable {
-    private let date = Mutex(Date(timeIntervalSince1970: 1_700_000_000))
-
-    var now: Date { date.withLock { $0 } }
-
-    func advance(by seconds: TimeInterval) {
-        date.withLock { $0 = $0.addingTimeInterval(seconds) }
-    }
-}
 
 @MainActor
 private final class TripScreen {

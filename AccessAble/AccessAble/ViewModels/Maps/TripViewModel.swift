@@ -22,6 +22,8 @@ final class TripViewModel {
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let warnsOfPassedReports: @MainActor () -> Bool
     @ObservationIgnored private var routeRequestedAt: Date?
+    /// The resumed trip's next step, while `route` is its saved route.
+    @ObservationIgnored private var resumingAtStep: Int?
     @ObservationIgnored private var latestPreciseFix: LocationSample?
     // internal so tests can wait for the first fix
     @ObservationIgnored private(set) var lastLocation: GeoCoordinate?
@@ -69,6 +71,7 @@ final class TripViewModel {
         destination = planned.destination
         route = planned.route
         routeRequestedAt = planned.requestedAt
+        resumingAtStep = planned.resumingAtStep
         routeError = nil
     }
 
@@ -220,7 +223,7 @@ final class TripViewModel {
         }
         // the destination or route may have changed during the refresh
         guard let route = self.route, let destination, tripState.phase == .planning else { return false }
-        await services.trip.startTrip(route: route, destination: destination)
+        await services.trip.startTrip(route: route, destination: destination, resumingAtStep: resumingAtStep)
         return true
     }
 
@@ -297,6 +300,8 @@ final class TripViewModel {
                 guard !Task.isCancelled else { return }
                 self.route = route
                 routeRequestedAt = requestedAt
+                // a fresh route starts where the user is
+                resumingAtStep = nil
                 // a refresh for Start leaves the warnings to the trip's start announcement
                 if !route.unavoidedReports.isEmpty, !isStartingTrip, warnsOfPassedReports() {
                     await services.announcements.submit(AnnouncementEvent(
