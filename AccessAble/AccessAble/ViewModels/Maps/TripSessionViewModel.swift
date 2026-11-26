@@ -44,6 +44,8 @@ final class TripSessionViewModel {
     private(set) var isLookingAgain = false
     /// A question about a report just walked past, open for its answer by voice or the on-screen buttons.
     private(set) var reportQuestion: OpenReportQuestion?
+    /// Active reports near the route, for the map; none without a real trip or where reporting isn't available.
+    private(set) var mapReports: [Report] = []
     let dictation = SpeechDictation()
     /// Opens Call Help; set by the screen, which owns navigation.
     @ObservationIgnored var onCallHelp: (() -> Void)?
@@ -136,6 +138,29 @@ final class TripSessionViewModel {
 
     var hasArrived: Bool { directions?.tripState.phase == .arrived }
 
+    /// VoiceOver reads the map as this one element, the reports on it included.
+    var mapAccessibilityLabel: String {
+        let map = directions?.mapAccessibilityLabel ?? "Map showing walking directions to \(destinationName)."
+        let route = directions?.route
+        let fix = directions?.currentFix
+        guard let reports = MapReportsDescription.text(
+            mapReports,
+            route: route,
+            walked: route.flatMap { route in
+                directions?.tripState.distanceRemaining.map { route.totalDistance - $0 }
+            },
+            location: fix?.coordinate,
+            // only a course the user is walking on, and only while it is fresh: standing, or from a fix seconds old,
+            // the way they face may be any way
+            heading: fix.flatMap { fix in
+                now().timeIntervalSince(fix.timestamp) <= HeadingEstimator.maximumSampleAge
+                    ? HeadingEstimator.walkingDirection(of: fix) : nil
+            },
+            distances: services?.distanceSettings.formatter ?? .metric
+        ) else { return map }
+        return "\(map) \(reports)"
+    }
+
     /// One line on where directions stand, or nil while walking normally.
     var directionsStatus: String? {
         guard let directions else { return nil }
@@ -198,9 +223,19 @@ final class TripSessionViewModel {
                     await self.askAbout(question)
                 }
             }
+            group.addTask {
+                for await reports in services.trip.mapReports() {
+                    await self.showOnMap(reports)
+                }
+            }
         }
         stopListening()
         await closeCamera(camera)
+    }
+
+    /// Shows the reports TripManager sends for the map.
+    func showOnMap(_ reports: [Report]) {
+        mapReports = reports
     }
 
     /// Opens the camera beside the route request rather than before it, since asking Apple about

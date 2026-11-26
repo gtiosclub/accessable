@@ -57,8 +57,13 @@ struct ReportExclusions: Equatable, Sendable {
 
     /// The reports whose point or any area corner is within `passingDistance` of `route`.
     static func reports(_ reports: [Report], passedBy route: NavigationRoute) -> [Report] {
+        self.reports(reports, within: passingDistance, of: route)
+    }
+
+    /// The reports whose point or any area corner is within `distance` metres of `route`.
+    static func reports(_ reports: [Report], within distance: Double, of route: NavigationRoute) -> [Report] {
         reports.filter { report in
-            points(of: report).contains { abs(route.projection(of: $0).sideOffset) <= passingDistance }
+            points(of: report).contains { abs(route.projection(of: $0).sideOffset) <= distance }
         }
     }
 

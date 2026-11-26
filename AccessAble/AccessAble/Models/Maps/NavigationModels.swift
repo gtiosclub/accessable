@@ -232,6 +232,8 @@ struct NavigationRoute: Codable, Hashable, Sendable {
     let cumulativeDistances: [Double]
     /// Active reports this route passes because it couldn't avoid them. Not encoded: reports name their reporter.
     var unavoidedReports: [Report] = []
+    /// Active reports near this route that it goes around. Not encoded: reports name their reporter.
+    var avoidedReports: [Report] = []
     /// Which service found the route, for telling the user about a backup route. Not encoded: only the trip it was
     /// found for announces it.
     var source: RouteSource = .valhalla
