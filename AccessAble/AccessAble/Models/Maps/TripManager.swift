@@ -338,7 +338,7 @@ actor TripManager: TripStateProviding {
         // a trip started meanwhile shouldn't hear that it ended, and has its own recording
         guard self.generation == generation else { return }
         await submit(confirmation("Trip ended."))
-        recorder?.tripEnded()
+        await recorder?.tripEnded()
     }
 
     private func cancelTasks() {
@@ -458,7 +458,7 @@ actor TripManager: TripStateProviding {
             if let arrival = arrivalAnnouncement() { await submit(arrival) }
         }
         guard self.generation == generation else { return }
-        recorder?.tripEnded()
+        await recorder?.tripEnded()
         // last, since this runs inside the tracking task
         trackingTask?.cancel()
         trackingTask = nil

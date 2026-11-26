@@ -1,5 +1,6 @@
 import Foundation
 import Synchronization
+import UIKit
 import os
 
 private let log = Logger(subsystem: "AccessAble", category: "TripRecorder")
@@ -31,6 +32,7 @@ final class TripRecorder: Sendable {
         var isEnabled = false
         var file: FileHandle?
         var lastError: String?
+        var batteryTask: Task<Void, Never>?
     }
 
     static let header = "kind,time,latitude,longitude,horizontal_accuracy_m,location_source,speed_mps,course_deg,"
@@ -38,10 +40,24 @@ final class TripRecorder: Sendable {
         + "off_route,events,announcement"
 
     let directory: URL
+    private let batteryReader: @Sendable () async -> Float?
+    private let clock: any Clock<Duration> & Sendable
     private let state = Mutex(State())
 
-    init(directory: URL = .documentsDirectory.appending(path: "TripRecordings")) {
+    init(
+        directory: URL = .documentsDirectory.appending(path: "TripRecordings"),
+        batteryReader: (@Sendable () async -> Float?)? = nil,
+        clock: (any Clock<Duration> & Sendable)? = nil
+    ) {
         self.directory = directory
+        self.batteryReader = batteryReader ?? {
+            await MainActor.run {
+                UIDevice.current.isBatteryMonitoringEnabled = true
+                let level = UIDevice.current.batteryLevel
+                return level < 0 ? nil : level * 100
+            }
+        }
+        self.clock = clock ?? ContinuousClock()
     }
 
     var isEnabled: Bool {
@@ -60,22 +76,28 @@ final class TripRecorder: Sendable {
 
     /// Turning it off finishes the file being written; turning it on records from the next trip.
     func setEnabled(_ enabled: Bool) {
-        let file = state.withLock { state in
+        let (file, task) = state.withLock { state -> (FileHandle?, Task<Void, Never>?) in
             state.isEnabled = enabled
-            guard !enabled else { return FileHandle?.none }
+            guard !enabled else { return (nil, nil) }
+            let t = state.batteryTask
+            state.batteryTask = nil
             defer { state.file = nil }
-            return state.file
+            return (state.file, t)
         }
+        task?.cancel()
         close(file)
     }
 
     /// Starts a new file for a trip, when recording is on.
     func tripStarted(at time: Date) {
         // a trip replacing one that never ended finishes that one's file, so rows never mix two trips
-        let previous = state.withLock { state -> FileHandle? in
+        let (previous, previousTask) = state.withLock { state -> (FileHandle?, Task<Void, Never>?) in
+            let t = state.batteryTask
+            state.batteryTask = nil
             defer { state.file = nil }
-            return state.file
+            return (state.file, t)
         }
+        previousTask?.cancel()
         close(previous)
         guard isEnabled else { return }
         do {
@@ -95,13 +117,26 @@ final class TripRecorder: Sendable {
             state.withLock { state in
                 state.file = file
                 state.lastError = nil
+                state.batteryTask = Task { [weak self] in
+                    guard let self else { return }
+                    await runBatteryLoop(startTime: time)
+                }
             }
         } catch {
             fail(error)
         }
     }
 
-    func tripEnded() {
+    func tripEnded() async {
+        let task = state.withLock { state -> Task<Void, Never>? in
+            let t = state.batteryTask
+            state.batteryTask = nil
+            return t
+        }
+        task?.cancel()
+        if let pct = await batteryReader() {
+            record(battery: pct, at: Date())
+        }
         let file = state.withLock { state -> FileHandle? in
             defer { state.file = nil }
             return state.file
@@ -136,6 +171,13 @@ final class TripRecorder: Sendable {
                sighting.text ?? ""])
     }
 
+    /// Battery level sampled at trip start, once a minute, and at trip end. Percent (0–100) in the announcement
+    /// column; the `battery` kind distinguishes it from spoken text.
+    func record(battery percent: Float, at time: Date) {
+        write(["battery", Self.rowTime.format(time)] + Array(repeating: "", count: 15)
+            + [Self.format(Double(percent))])
+    }
+
     /// The recordings on this phone, newest first.
     func recordings() throws -> [URL] {
         guard FileManager.default.fileExists(atPath: directory.path()) else { return [] }
@@ -146,9 +188,36 @@ final class TripRecorder: Sendable {
 
     /// Deletes every recording, finishing the one being written first.
     func deleteRecordings() throws {
-        tripEnded()
+        closeCurrent()
         for url in try recordings() {
             try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    private func closeCurrent() {
+        let (file, task) = state.withLock { state -> (FileHandle?, Task<Void, Never>?) in
+            let t = state.batteryTask
+            state.batteryTask = nil
+            defer { state.file = nil }
+            return (state.file, t)
+        }
+        task?.cancel()
+        close(file)
+    }
+
+    private func runBatteryLoop(startTime: Date) async {
+        if let pct = await batteryReader() {
+            record(battery: pct, at: startTime)
+        }
+        do {
+            while true {
+                try await clock.sleep(for: .seconds(60))
+                if let pct = await batteryReader() {
+                    record(battery: pct, at: Date())
+                }
+            }
+        } catch {
+            // Task cancelled — loop ended normally
         }
     }
 

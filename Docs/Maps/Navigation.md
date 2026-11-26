@@ -150,7 +150,36 @@ Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at e
 
 - A `fix` row for every location fix: time, position, accuracy, where the fix came from (`gps` or `ar`), speed, course and its accuracy, the heading used and where it came from (`ar`, `walkingDirection` or `compass`), the compass accuracy, progress along the route, the tracker's side offset, the next step, whether off route, and the tracker's events.
 - An `announcement` row for everything submitted to the announcement engine, whether or not it was then spoken.
+- A `battery` row at trip start, once a minute during the trip, and at trip end. The battery level (0–100 %) is in the announcement column; the `battery` kind distinguishes it from spoken text. Rows are omitted when the device reports an unknown level (simulator, low-power charging edge cases).
 - `TripManager` builds no fix row unless the recorder is recording, so it costs nothing while off. Rows are written as they happen, under the recorder's lock. A file that can't be written is logged, stops, and its error shows on the recorder screen; the trip carries on.
+
+## Battery
+
+Measures how much battery a walk drains with guidance running. Run walks on a real device; the simulator has no battery.
+
+### Protocol
+
+- Same phone for every walk in a comparison.
+- Start charge 80–100 %; note the exact percentage.
+- Screen brightness fixed at the same level for each walk.
+- Low Power Mode off.
+- Same route, same start point.
+- 20 minutes each condition.
+- Record the phone model, iOS version, ambient temperature, and battery % at start and end.
+
+### Conditions
+
+| | Camera off | Camera on | AR on |
+| --- | --- | --- | --- |
+| Phone model | | | |
+| iOS version | | | |
+| Temperature | | | |
+| Battery start % | | | |
+| Battery end % | | | |
+| Drain % | | | |
+| Notes | | | |
+
+AR on requires AR-6 (geo-tracking accuracy walk) to be complete before the AR heading figures are trusted.
 
 ## Crosswalks
 
