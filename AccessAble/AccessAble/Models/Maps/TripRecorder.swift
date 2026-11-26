@@ -128,18 +128,18 @@ final class TripRecorder: Sendable {
     }
 
     func tripEnded() async {
-        let task = state.withLock { state -> Task<Void, Never>? in
+        // Take the file and task before any await, so a new tripStarted can't inherit this
+        // file or get closed by this end.
+        let (file, task) = state.withLock { state -> (FileHandle?, Task<Void, Never>?) in
             let t = state.batteryTask
             state.batteryTask = nil
-            return t
+            defer { state.file = nil }
+            return (state.file, t)
         }
         task?.cancel()
-        if let pct = await batteryReader() {
-            record(battery: pct, at: Date())
-        }
-        let file = state.withLock { state -> FileHandle? in
-            defer { state.file = nil }
-            return state.file
+        if let file, let pct = await batteryReader() {
+            write(["battery", Self.rowTime.format(Date())] + Array(repeating: "", count: 15)
+                + [Self.format(Double(pct))], to: file)
         }
         close(file)
     }
@@ -225,11 +225,19 @@ final class TripRecorder: Sendable {
     /// keeps rows in the order they happened.
     private func write(_ fields: [String]) {
         guard isRecording else { return }
+        let file = state.withLock { $0.file }
+        guard let file else { return }
+        write(fields, to: file)
+    }
+
+    /// Writes to a specific handle. Does not touch `state.file`, so ending one trip can't close the next.
+    private func write(_ fields: [String], to file: FileHandle) {
         let line = Data((fields.map(Self.escape).joined(separator: ",") + "\n").utf8)
         do {
-            try state.withLock { state in try state.file?.write(contentsOf: line) }
+            try file.write(contentsOf: line)
         } catch {
-            fail(error)
+            log.error("Trip recording write failed: \(error.localizedDescription, privacy: .public)")
+            state.withLock { $0.lastError = error.localizedDescription }
         }
     }
 
