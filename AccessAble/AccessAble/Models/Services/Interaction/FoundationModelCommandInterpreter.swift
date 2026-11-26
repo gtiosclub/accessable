@@ -12,7 +12,8 @@ struct FoundationModelCommandInterpreter: CommandInterpreting {
  
     private static let commandInstructions = """
         You turn what a blind or low-vision pedestrian says to a walking-guidance app into exactly one action.
-        Choose the action that best matches what they want. If they ask a general question, choose askQuestion \
+        Choose the action that best matches what they want. If they want to talk to a person, call a volunteer, \
+        or get help from someone, choose callVolunteer. If they ask a general question, choose askQuestion \
         and put the question in detail. If nothing fits, choose unknown.
         """
  
@@ -88,6 +89,7 @@ enum GeneratedAction {
     case pauseTrip
     case resumeTrip
     case endTrip
+    case callVolunteer
     case askQuestion
     case unknown
 }
@@ -101,6 +103,7 @@ extension GeneratedCommand {
         case .pauseTrip: .pauseTrip
         case .resumeTrip: .resumeTrip
         case .endTrip: .endTrip
+        case .callVolunteer: .callVolunteer
         case .askQuestion: .ask(detail.isEmpty ? original : detail)
         case .unknown: .unknown(original)
         }

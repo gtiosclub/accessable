@@ -6,6 +6,9 @@ struct KeywordCommandInterpreter: CommandInterpreting {
         let t = text.lowercased()
         func has(_ phrases: String...) -> Bool { phrases.contains { t.contains($0) } }
  
+        if has("call a volunteer", "call volunteer", "call help", "call for help", "call someone", "video call", "get help") {
+            return .callVolunteer
+        }
         if has("describe", "surroundings", "around me", "what do you see") { return .describeSurroundings }
         if has("where am i", "where are we") { return .whereAmI }
         if has("repeat", "say that again", "what did you say") { return .repeatLast }

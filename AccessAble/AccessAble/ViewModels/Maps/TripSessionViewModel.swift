@@ -47,7 +47,7 @@ final class TripSessionViewModel {
     /// Active reports near the route, for the map; none without a real trip or where reporting isn't available.
     private(set) var mapReports: [Report] = []
     let dictation = SpeechDictation()
-    /// Opens Call Help; set by the screen, which owns navigation.
+    /// Starts a call with a volunteer (VOLUNTEER-7); set by the screen, which owns navigation.
     @ObservationIgnored var onCallHelp: (() -> Void)?
 
     /// Listening stops after this long without new words.
@@ -816,6 +816,8 @@ final class TripSessionViewModel {
             // Ending is one tap away, but not by voice: a misheard word mustn't drop the route.
             pause()
             await say("Trip paused. To end it, choose Exit Trip.", category: .system)
+        case .callVolunteer:
+            onCallHelp?()
         case .ask(let question):
             await ask(question, with: services)
         case .unknown:
@@ -841,11 +843,12 @@ final class TripSessionViewModel {
         await say(lastSaid ?? "Nothing to repeat yet.", category: .system)
     }
 
-    /// "Call help", "call for help", "call a volunteer". The command parser has no such
-    /// command; Call Help is a screen, so the screen opens it.
+    /// "Call help", "call for help", "call a volunteer": starts a call. Caught before the
+    /// command parser so a slow model never delays it.
     static func asksForHelp(_ text: String) -> Bool {
         let text = text.lowercased()
-        return ["call help", "call for help", "call a volunteer", "call volunteer", "get help"].contains { text.contains($0) }
+        return ["call help", "call for help", "call a volunteer", "call volunteer", "call someone", "video call", "get help"]
+            .contains { text.contains($0) }
     }
 
     /// Asks about the camera view. When the answer is that it isn't in view, says to turn
