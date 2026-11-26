@@ -46,10 +46,12 @@ struct Report: Codable, Hashable, Identifiable, Sendable {
     var expiresAt: Date
     /// "Yes, still there" answers.
     var confirmations: Int = 0
-    var reporterID: String
     /// "No" answers, and those since the last "yes": the second of those ends the report.
     var negativeConfirmations: Int = 0
     var negativesSinceConfirm: Int = 0
+    /// Whether the signed-in user reported it. Reports don't say who reported them, so this comes from the user's
+    /// private list of their own, and is never encoded.
+    var isOwn: Bool = false
 
     /// Metres to the report's point or the nearest corner of its area.
     func distance(from coordinate: GeoCoordinate) -> Double {
@@ -82,7 +84,7 @@ enum ReportQuestionOutcome: Equatable, Sendable {
 
 extension Report {
     private enum CodingKeys: String, CodingKey {
-        case id, kind, coordinate, area, createdAt, expiresAt, confirmations, reporterID
+        case id, kind, coordinate, area, createdAt, expiresAt, confirmations
         case negativeConfirmations, negativesSinceConfirm
     }
 
@@ -97,7 +99,6 @@ extension Report {
             createdAt: try container.decode(Date.self, forKey: .createdAt),
             expiresAt: try container.decode(Date.self, forKey: .expiresAt),
             confirmations: try container.decodeIfPresent(Int.self, forKey: .confirmations) ?? 0,
-            reporterID: try container.decode(String.self, forKey: .reporterID),
             negativeConfirmations: try container.decodeIfPresent(Int.self, forKey: .negativeConfirmations) ?? 0,
             negativesSinceConfirm: try container.decodeIfPresent(Int.self, forKey: .negativesSinceConfirm) ?? 0
         )

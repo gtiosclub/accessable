@@ -406,6 +406,8 @@ actor PlaceholderReportService: ReportService {
     private let now: @Sendable () -> Date
     private var votes: [String: Set<String>] = [:]
     private var lastVote: [String: Date] = [:]
+    /// Who was signed in when each report was submitted, so it is that user's own, as Firestore's private index says.
+    private var reporters: [String: String] = [:]
 
     init(auth: any AuthService = PlaceholderAuthService(), now: @escaping @Sendable () -> Date = { .now }) {
         self.auth = auth
@@ -414,6 +416,8 @@ actor PlaceholderReportService: ReportService {
     }
 
     func submit(_ report: Report) async throws {
+        let reporter = await auth.currentUser()?.id
+        reporters[report.id] = reporter
         storedReports.removeAll { $0.id == report.id }
         storedReports.append(report)
         changes.send(storedReports)
@@ -424,7 +428,17 @@ actor PlaceholderReportService: ReportService {
         radius: Double
     ) async throws -> [Report] {
         let time = now()
-        return storedReports.filter { $0.expiresAt > time && $0.isNear(coordinate, within: radius) }
+        return await markingOwn(storedReports.filter { $0.expiresAt > time && $0.isNear(coordinate, within: radius) })
+    }
+
+    /// The reports, each marked as the signed-in user's own or not.
+    private func markingOwn(_ reports: [Report]) async -> [Report] {
+        let userID = await auth.currentUser()?.id
+        return reports.map { report in
+            var report = report
+            report.isOwn = userID != nil && reporters[report.id] == userID
+            return report
+        }
     }
 
     nonisolated func reportChanges(
@@ -437,9 +451,9 @@ actor PlaceholderReportService: ReportService {
             let task = Task {
                 for await reports in source {
                     let time = self.now()
-                    continuation.yield(reports.filter {
+                    continuation.yield(await self.markingOwn(reports.filter {
                         $0.expiresAt > time && $0.isNear(coordinate, within: radius)
-                    })
+                    }))
                 }
                 continuation.finish()
             }
@@ -457,8 +471,9 @@ actor PlaceholderReportService: ReportService {
         guard let index = storedReports.firstIndex(where: { $0.id == reportID }) else {
             throw ReportServiceError.invalidReport
         }
-        let report = storedReports[index]
-        guard FirestoreReportService.canVote(on: report, as: user.id, isStillPresent: isStillPresent, now: time),
+        var report = storedReports[index]
+        report.isOwn = reporters[reportID] == user.id
+        guard FirestoreReportService.canVote(on: report, isStillPresent: isStillPresent, now: time),
               votes[reportID, default: []].insert(user.id).inserted else {
             throw ReportServiceError.permissionDenied
         }
