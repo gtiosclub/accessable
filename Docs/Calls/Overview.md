@@ -2,6 +2,10 @@
 
 Shared decisions for the video-call feature. Every call task builds on these.
 
+Release integration: [live services, rule hardening, deployment and the two-phone test log](Integration.md).
+
+Volunteer ringing and answers: [incoming-call flow, rules contract and testing](IncomingCalls.md).
+
 Two-iPhone media test: [LiveKit Debug harness and acceptance checklist](MediaTest.md).
 
 Email/password accounts and role routing: [VOLUNTEER-2 setup and verification](SignIn.md).
@@ -48,3 +52,11 @@ pause with it and resume when the call ends.
 
 1. Copy `AccessAble/Config/Secrets.example.xcconfig` to `Secrets.xcconfig` and set `LIVEKIT_URL`.
 2. Open the LiveKit Cloud and Cloudflare dashboards (shared logins/invites from the project owner).
+
+## Volunteer settings and safety
+
+See [Volunteer settings and call safety](VolunteerSettingsSafety.md) for persistent settings, invitation approval, consent, Report/Block, rules and rollout checks.
+
+## Caller settings and accessible call results
+
+See [Caller settings and accessibility](CallerSettingsAccessibility.md) for VOLUNTEER-11 preferences, audio/camera boundaries, end-of-call controls, validation and the required independent VoiceOver/Dynamic Type device pass.

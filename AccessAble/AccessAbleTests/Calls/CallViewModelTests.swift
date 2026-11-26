@@ -9,7 +9,8 @@ struct CallViewModelTests {
         var services = AppServices.preview
         services.callSignaling = PlaceholderCallSignaling()
         services.videoCall = PlaceholderVideoCallSession()
-        return CallViewModel(services: services, partnerID: "volunteer-1", partnerName: "Sam")
+        let sam = Volunteer(id: "volunteer-1", name: "Sam", availableUntil: "Until 4 PM", isOnline: true)
+        return CallViewModel(services: services, volunteer: sam)
     }
 
     private func waitUntil(_ condition: () -> Bool) async {

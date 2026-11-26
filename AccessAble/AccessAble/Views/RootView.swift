@@ -51,7 +51,7 @@ private struct AccountGateView: View {
                 .id(user.id)
             case .ready(let profile):
                 if profile.role == .volunteer {
-                    VolunteerHomeView(profile: profile, presence: app.services.presence, signOut: { try await session.signOut() })
+                    VolunteerCallHostView(profile: profile, services: app.services, signOut: { try await session.signOut() })
                         .id(profile.userID)
                 } else if app.hasCompletedOnboarding {
                     MainFlowView().id(profile.userID)
@@ -143,6 +143,8 @@ struct MainFlowView: View {
             CallHelpView()
         case .volunteers:
             VolunteerListView(services: app.services)
+        case .call(let volunteer):
+            CallFlowView(volunteer: volunteer)
         case .chat(let volunteer):
             VolunteerChatView(volunteer: volunteer)
         case .developerTools:

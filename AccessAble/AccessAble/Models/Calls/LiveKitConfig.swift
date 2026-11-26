@@ -7,16 +7,20 @@ enum LiveKitConfig {
     /// Nil until the member has made their own AccessAble/Config/Secrets.xcconfig.
     static var serverURL: URL? {
         guard let raw = Bundle.main.object(forInfoDictionaryKey: "LiveKitURL") as? String,
-              !raw.isEmpty, !raw.contains("$(") else { return nil }
-        return URL(string: raw)
+              !raw.isEmpty, !raw.contains("$("), !raw.contains("YOUR-"),
+              let url = URL(string: raw), url.scheme?.lowercased() == "wss",
+              let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else { return nil }
+        return url
     }
     
     /// The getCallToken Worker (VOLUNTEER-6), from Secrets.xcconfig (CALL_TOKEN_URL) through Info.plist.
     /// Nil until it's set; calls then stay on the placeholder.
     static var callTokenURL: URL? {
         guard let raw = Bundle.main.object(forInfoDictionaryKey: "CallTokenURL") as? String,
-              !raw.isEmpty, !raw.contains("$("), !raw.contains("YOUR-SUBDOMAIN") else { return nil }
-        return URL(string: raw)
+              !raw.isEmpty, !raw.contains("$("), !raw.contains("YOUR-"),
+              let url = URL(string: raw), url.scheme?.lowercased() == "https",
+              let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else { return nil }
+        return url
     }
 
     /// The LiveKit room type; the real `VideoCallSession` builds on it. Referencing it here keeps the
