@@ -1,6 +1,9 @@
 import AVFoundation
 import Foundation
 import LiveKit
+import OSLog
+
+private let log = Logger(subsystem: "AccessAble", category: "Call")
 
 /// Owner: Calls (VOLUNTEER-5). The real `VideoCallSession`: one LiveKit room per call.
 ///
@@ -98,10 +101,13 @@ final class LiveKitVideoCallSession: VideoCallSession {
             if sawPartner { broadcaster.send(.connected) }
             startMonitoring()
         } catch is CancellationError {
+            log.notice("call join cancelled")
             await cleanUp()
             broadcaster.send(.ended(.hungUp))
             throw CancellationError()
         } catch {
+            // The screen only says "couldn't connect"; the real reason goes to the console.
+            log.error("call join failed: \(String(describing: error), privacy: .public)")
             // An in-flight room.connect may complete after disconnect invalidated this join.
             // Stop that local Room even if it was already removed from self.room.
             if let attemptedRoom { await attemptedRoom.disconnect() }
