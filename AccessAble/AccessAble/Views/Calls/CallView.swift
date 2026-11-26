@@ -1,32 +1,45 @@
 import SwiftUI
 
-/// Owner: Calls (VOLUNTEER-5). The in-call screen: status, Mute, Flip camera, flashlight and End.
+/// Owner: Calls (VOLUNTEER-5, connecting and failures from VOLUNTEER-7). The call screen: ringing
+/// progress, then Mute, Flip camera, flashlight and End; after a failure or the end of a call,
+/// Try again (and Open Settings when a permission is off).
 struct CallView: View {
     @State private var viewModel: CallViewModel
+    @Environment(\.openURL) private var openURL
     private let onClose: () -> Void
 
-    init(services: AppServices, partnerID: String, partnerName: String, onClose: @escaping () -> Void) {
-        _viewModel = State(initialValue: CallViewModel(
-            services: services, partnerID: partnerID, partnerName: partnerName))
+    /// `volunteer` is rung first; nil rings whoever is free.
+    init(services: AppServices, volunteer: Volunteer?, onClose: @escaping () -> Void) {
+        _viewModel = State(initialValue: CallViewModel(services: services, volunteer: volunteer))
         self.onClose = onClose
     }
 
     var body: some View {
         VStack(spacing: 16) {
             Spacer()
-            Text(viewModel.partnerName)
+            Text(viewModel.title)
                 .font(.largeTitle.bold())
                 .accessibilityAddTraits(.isHeader)
+            if viewModel.state == .ringing {
+                ProgressView()
+                    .controlSize(.large)
+                    .tint(.white)
+                    .accessibilityHidden(true)
+            }
             Text(viewModel.statusText)
                 .font(.title3)
                 .multilineTextAlignment(.center)
             Spacer()
 
-            if viewModel.state.isActive {
+            if viewModel.state == .ringing {
+                AccessibleActionButton(title: "Cancel call", systemImage: "phone.down.fill",
+                                       hint: "Stops calling volunteers", role: .destructive) {
+                    Task { await viewModel.hangUp() }
+                }
+            } else if viewModel.state.isActive {
                 controls
-            } else {
-                AccessibleActionButton(title: "Close", systemImage: "xmark",
-                                       hint: "Returns to the previous screen", action: onClose)
+            } else if viewModel.state != .idle {
+                afterCallActions
             }
 
             if let error = viewModel.controlError {
@@ -37,9 +50,12 @@ struct CallView: View {
         .padding(24)
         .foregroundStyle(.white)
         .background(Color.black.ignoresSafeArea())
-        // Every state change is spoken, so a VoiceOver user always knows where the call is.
+        // Ringing and failures are spoken by the announcement engine (CallViewModel.say); during
+        // the call the engine stays quiet, so VoiceOver announces connecting and connected.
         .onChange(of: viewModel.statusText) { _, text in
-            AccessibilityNotification.Announcement(text).post()
+            if viewModel.state == .connecting || viewModel.state == .connected {
+                AccessibilityNotification.Announcement(text).post()
+            }
         }
         .onChange(of: viewModel.controlError) { _, message in
             if let message { AccessibilityNotification.Announcement(message).post() }
@@ -47,6 +63,10 @@ struct CallView: View {
         .task { await viewModel.start() }
         // Leaving the screen mid-call hangs up, which also gives the camera back to AR.
         .onDisappear { Task { await viewModel.hangUp() } }
+        .accessibilityAction(.escape) {
+            Task { await viewModel.hangUp() }
+            onClose()
+        }
     }
 
     @ViewBuilder
@@ -83,9 +103,30 @@ struct CallView: View {
             Task { await viewModel.hangUp() }
         }
     }
+
+    /// Every failure gets Try again; a permission that's off also gets Open Settings.
+    @ViewBuilder
+    private var afterCallActions: some View {
+        if let failure = viewModel.failure, failure.needsSettings {
+            AccessibleActionButton(title: "Open Settings", systemImage: "gear",
+                                   hint: "Opens AccessAble's settings so you can turn access on") {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            }
+        }
+
+        AccessibleActionButton(
+            title: viewModel.failure == nil ? "Call again" : "Try again",
+            systemImage: "arrow.clockwise",
+            hint: "Calls a volunteer again"
+        ) {
+            viewModel.retry()
+        }
+
+        AccessibleActionButton(title: "Close", systemImage: "xmark",
+                               hint: "Returns to the previous screen", action: onClose)
+    }
 }
 
 #Preview {
-    CallView(services: .preview, partnerID: "shruthi", partnerName: "Shruthi") {}
-        .environment(AppViewModel.preview)
+    CallView(services: .preview, volunteer: SampleContent.activeVolunteers.first) {}
 }

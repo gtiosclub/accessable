@@ -1,5 +1,7 @@
 import SwiftUI
 
+/// Owner: Calls (VOLUNTEER-4, Call action from VOLUNTEER-7). Every volunteer with live
+/// online/offline status, online first.
 struct VolunteerListView: View {
     @Environment(AppRouter.self) private var router
     @State private var viewModel: VolunteerListViewModel
@@ -26,7 +28,9 @@ struct VolunteerListView: View {
                         .font(.title3)
                         .padding(.vertical, 8)
                     ForEach(viewModel.rows) { row in
-                        VolunteerStatusRow(row: row)
+                        VolunteerStatusRow(row: row) {
+                            router.push(.call(Volunteer(id: row.id, name: row.name, availableUntil: "", isOnline: true)))
+                        }
                     }
                 }
             }
@@ -43,28 +47,45 @@ struct VolunteerListView: View {
 
 private struct VolunteerStatusRow: View {
     let row: VolunteerListViewModel.Row
+    let onCall: () -> Void
 
     var body: some View {
         HStack(spacing: 16) {
-            HelperAvatar(isOnline: row.isOnline)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(row.name)
-                    .font(.title3.bold())
-                Text(row.isOnline ? "Online" : "Offline")
-                    .font(.subheadline)
-                if !row.languages.isEmpty {
-                    Text("Speaks \(row.languages)")
+            // One VoiceOver stop for who they are ("Sam, online, speaks English") and a separate
+            // one for the Call button, so the button stays reachable.
+            HStack(spacing: 16) {
+                HelperAvatar(isOnline: row.isOnline)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(row.name)
+                        .font(.title3.bold())
+                    Text(row.isOnline ? "Online" : "Offline")
                         .font(.subheadline)
+                    if !row.languages.isEmpty {
+                        Text("Speaks \(row.languages)")
+                            .font(.subheadline)
+                    }
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(row.accessibilityLabel)
+
             Spacer(minLength: 0)
+
+            if row.isOnline {
+                CircleIconButton(
+                    systemImage: "phone",
+                    label: "Video call \(row.name)",
+                    fill: Theme.red,
+                    foreground: .white,
+                    diameter: 54,
+                    action: onCall
+                )
+            }
         }
         .padding(.vertical, 14)
         .overlay(alignment: .bottom) {
             Rectangle().fill(Theme.cyan.opacity(0.6)).frame(height: 1)
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(row.accessibilityLabel)
     }
 }
 

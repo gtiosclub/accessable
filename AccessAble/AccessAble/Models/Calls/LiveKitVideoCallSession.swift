@@ -20,6 +20,10 @@ final class LiveKitVideoCallSession: VideoCallSession {
     private var monitor: Task<Void, Never>?
     /// Whether the other person has joined, so their leaving can be noticed.
     private var sawPartner = false
+    /// When this phone joined the room, to give up if the other person never arrives.
+    private var joinedAt: Date?
+    /// How long to wait in the room for the other person before ending the call.
+    private static let partnerJoinTimeout: TimeInterval = 30
 
     init(
         auth: any AuthService,
@@ -71,8 +75,10 @@ final class LiveKitVideoCallSession: VideoCallSession {
             if isCaller { try await publishCamera(position: .back) }
             try Task.checkCancellation()
 
+            // Connected means the other person is here too; until then the call stays connecting.
             sawPartner = !room.remoteParticipants.isEmpty
-            broadcaster.send(.connected)
+            if sawPartner { broadcaster.send(.connected) }
+            joinedAt = Date()
             startMonitoring()
         } catch is CancellationError {
             await cleanUp()
@@ -101,6 +107,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
         cameraTrack = nil
         cameraPosition = .back
         sawPartner = false
+        joinedAt = nil
         // Camera rule: AR (and CV with it) resumes only after LiveKit has let go.
         if let token = cameraToken {
             cameraToken = nil
@@ -124,9 +131,15 @@ final class LiveKitVideoCallSession: VideoCallSession {
         if room.connectionState == .disconnected {
             await leave(.remoteLeft)
         } else if !room.remoteParticipants.isEmpty {
-            sawPartner = true
+            if !sawPartner {
+                sawPartner = true
+                broadcaster.send(.connected)
+            }
         } else if sawPartner {
             await leave(.remoteLeft)
+        } else if let joinedAt, Date().timeIntervalSince(joinedAt) > Self.partnerJoinTimeout {
+            // Accepted, but their app never joined (it crashed or lost its connection).
+            await leave(.unanswered)
         }
     }
 

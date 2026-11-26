@@ -121,7 +121,7 @@ struct ActiveTripView: View {
         .animation(.easeInOut(duration: 0.2), value: session.reportQuestion)
         .toolbar(.hidden, for: .navigationBar)
         .task {
-            session.onCallHelp = { router.push(.callHelp) }
+            session.onCallHelp = { router.push(.call(nil)) }
             await session.run()
         }
         .onChange(of: session.latestAnnouncement) { _, announcement in

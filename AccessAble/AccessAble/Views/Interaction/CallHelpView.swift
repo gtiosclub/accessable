@@ -6,7 +6,6 @@ struct CallHelpView: View {
     @Environment(AppRouter.self) private var router
     @Environment(AppViewModel.self) private var app
     @State private var tab: Tab = .live
-    @State private var calling: Volunteer?
 
     enum Tab: String, CaseIterable {
         case live = "Live"
@@ -32,11 +31,6 @@ struct CallHelpView: View {
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
-        .fullScreenCover(item: $calling) { volunteer in
-            CallView(services: app.services, partnerID: volunteer.id, partnerName: volunteer.name) {
-                calling = nil
-            }
-        }
     }
 
     private var tabPicker: some View {
@@ -77,7 +71,7 @@ struct CallHelpView: View {
             ForEach(volunteers) { volunteer in
                 VolunteerRow(
                     volunteer: volunteer,
-                    onCall: { calling = volunteer },
+                    onCall: { router.push(.call(volunteer)) },
                     onMessage: { router.push(.chat(volunteer)) }
                 )
             }
@@ -125,33 +119,6 @@ private struct VolunteerRow: View {
                 .frame(height: 1)
                 .accessibilityHidden(true)
         }
-    }
-}
-
-/// Placeholder call screen until video calling is built.
-struct CallingView: View {
-    let volunteer: Volunteer
-    let onEnd: () -> Void
-
-    var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            HelperAvatar(isOnline: volunteer.isOnline, size: 140)
-            Text(volunteer.name)
-                .font(.largeTitle.bold())
-            Text("Calling…")
-                .font(.title3)
-                .accessibilityLabel("Calling \(volunteer.name)")
-            Spacer()
-            Button("End Call", action: onEnd)
-                .buttonStyle(.pill(.destructive))
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
-        }
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity)
-        .background(Color.black.ignoresSafeArea())
-        .accessibilityAction(.escape, onEnd)
     }
 }
 

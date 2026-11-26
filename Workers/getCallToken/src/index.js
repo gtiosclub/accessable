@@ -129,7 +129,7 @@ async function verifyFirebaseIdToken(token, projectId) {
   const ok = payload.aud === projectId
     && payload.iss === `https://securetoken.google.com/${projectId}`
     && typeof payload.sub === 'string' && payload.sub.length > 0 && payload.sub.length <= 128
-    && typeof payload.exp === 'number' && payload.exp > now - CLOCK_SKEW_SECONDS
+    && typeof payload.exp === 'number' && payload.exp > now
     && typeof payload.iat === 'number' && payload.iat <= now + CLOCK_SKEW_SECONDS
     && typeof payload.auth_time === 'number' && payload.auth_time <= now + CLOCK_SKEW_SECONDS;
   if (!ok) throw invalid;
@@ -146,6 +146,8 @@ async function readCall(callId, idToken, projectId) {
   if (response.status === 403 || response.status === 404) {
     throw new HttpError(403, 'You are not part of this call.');
   }
+  // Firestore refused the sign-in itself, e.g. it expired between our check and this read.
+  if (response.status === 401) throw new HttpError(401, 'Your sign-in expired. Sign in again.');
   if (!response.ok) throw new Error(`Firestore: HTTP ${response.status}`);
   const { fields = {} } = await response.json();
   const text = (name) => fields[name]?.stringValue;

@@ -122,6 +122,8 @@ struct MainFlowView: View {
             CallHelpView()
         case .volunteers:
             VolunteerListView(services: app.services)
+        case .call(let volunteer):
+            CallFlowView(volunteer: volunteer)
         case .chat(let volunteer):
             VolunteerChatView(volunteer: volunteer)
         case .developerTools:
