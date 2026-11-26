@@ -5,7 +5,7 @@ import Testing
 
 /// A temporary directory, a clock the test sets, and the errors the store logged.
 private final class StoreHarness: Sendable {
-    let directory = FileManager.default.temporaryDirectory.appending(path: "SavedTripStoreTests-\(UUID())")
+    let directory = FileManager.default.temporaryDirectory.appending(path: "Saved Trip Store Tests \(UUID())")
     let time = ManualDate()
     let errors = ErrorLog()
     let store: SavedTripStore
@@ -29,7 +29,7 @@ private final class StoreHarness: Sendable {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    var fileExists: Bool { FileManager.default.fileExists(atPath: store.url.path()) }
+    var fileExists: Bool { FileManager.default.fileExists(atPath: store.url.path(percentEncoded: false)) }
 
     func trip() -> SavedTrip {
         let now = time.now
@@ -67,7 +67,7 @@ struct SavedTripStoreTests {
         harness.store.save(harness.trip())
         _ = harness.store.load()
 
-        let values = try URL(filePath: harness.store.url.path()).resourceValues(forKeys: [.isExcludedFromBackupKey])
+        let values = try URL(filePath: harness.store.url.path(percentEncoded: false)).resourceValues(forKeys: [.isExcludedFromBackupKey])
         #expect(values.isExcludedFromBackup == true)
     }
 

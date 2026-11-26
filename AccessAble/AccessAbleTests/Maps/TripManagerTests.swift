@@ -2299,7 +2299,7 @@ struct TripManagerSavedTripTests {
         await harness.manager.endTrip()
 
         #expect(store.load() == nil)
-        #expect(!FileManager.default.fileExists(atPath: store.url.path()))
+        #expect(!FileManager.default.fileExists(atPath: store.url.path(percentEncoded: false)))
     }
 
     @Test
@@ -2313,7 +2313,7 @@ struct TripManagerSavedTripTests {
         await harness.states.waitFor { $0.phase == .arrived }
 
         #expect(store.load() == nil)
-        #expect(!FileManager.default.fileExists(atPath: store.url.path()))
+        #expect(!FileManager.default.fileExists(atPath: store.url.path(percentEncoded: false)))
     }
 }
 
@@ -2494,7 +2494,7 @@ struct TripManagerReportTests {
         await waitUntil { await harness.engine.texts.contains(newRouteSpeech) }
         #expect(await harness.engine.texts.filter { !$0.hasPrefix("Starting directions") }
             == [reportReroute, newRouteSpeech])
-        let rerouted = try #require(await harness.states.current)
+        let rerouted = await harness.states.waitFor { $0.nextManeuver?.instruction == "Arrive" }
         #expect(abs((rerouted.distanceRemaining ?? 0) - 80) < 0.5)
     }
 

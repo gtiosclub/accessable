@@ -68,7 +68,7 @@ final class SavedTripStore: Sendable {
     /// is deleted and gives nil.
     func load() -> SavedTrip? {
         queue.sync {
-            guard FileManager.default.fileExists(atPath: url.path()) else { return nil }
+            guard FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) else { return nil }
             let trip: SavedTrip
             do {
                 trip = try JSONDecoder().decode(SavedTrip.self, from: Data(contentsOf: url))

@@ -56,7 +56,7 @@ private final class ResumeHarness: Sendable {
         try? FileManager.default.removeItem(at: directory)
     }
 
-    var fileExists: Bool { FileManager.default.fileExists(atPath: store.url.path()) }
+    var fileExists: Bool { FileManager.default.fileExists(atPath: store.url.path(percentEncoded: false)) }
 
     @discardableResult
     func saveTrip(source: RouteSource = .valhalla) -> SavedTrip {
