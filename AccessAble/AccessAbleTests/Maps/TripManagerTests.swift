@@ -669,6 +669,30 @@ struct TripManagerTests {
         #expect(events[2].haptic == .attention)
     }
 
+    /// Apple's turn onto stairs is still warned of as stairs, and its cue keeps the turn.
+    @Test
+    func appleStairsWithATurnAreWarnedOfWhichWay() async throws {
+        let corner = try cornerRoute()
+        let route = try NavigationRoute(
+            appleMapsCoordinates: corner.coordinates,
+            steps: [
+                AppleMapsStep(instructions: "", start: corner.coordinates[0]),
+                AppleMapsStep(instructions: "Turn left and take the stairs down", start: corner.coordinates[1]),
+                AppleMapsStep(instructions: "Arrive at the destination", start: corner.coordinates.last),
+            ],
+            estimatedDuration: corner.estimatedDuration
+        )
+        let harness = try Harness(route: route)
+        await harness.start()
+        await harness.walk(from: 0, to: 160)
+
+        let events = await harness.engine.waitForCount(5)
+        #expect(events[1].text == "In about 40 metres, stairs going down.")
+        #expect(events[1].priority == .high)
+        #expect(events[2].text == "Turn left and take the stairs down.")
+        #expect(events[2].haptic == .attention)
+    }
+
     @Test
     func pausedTripKeepsTrackingAndSpeaksTheMissedCueOnResume() async throws {
         let harness = try Harness()
@@ -879,6 +903,47 @@ struct TripManagerTests {
         let start = try #require(await harness.engine.waitForCount(1).first)
         #expect(start.text == "Starting directions to Library, about 160 metres. A reported obstacle is on this route. "
             + setOff)
+    }
+
+    @Test
+    func startingOnABackupRouteSaysItMayIncludeStairs() async throws {
+        var route = try cornerRoute()
+        route.source = .appleMaps
+        let harness = try Harness(route: route)
+        await harness.start()
+
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+
+        let start = try #require(await harness.engine.waitForCount(1).first)
+        #expect(start.text == "Starting directions to Library, about 160 metres. \(RouteSource.backupNotice) " + setOff)
+    }
+
+    /// Said only when the new route comes from a different service than the one being followed.
+    @Test(arguments: [
+        (RouteSource.valhalla, RouteSource.appleMaps, "New route. \(RouteSource.backupNotice) \(setOff)"),
+        (.appleMaps, .appleMaps, "New route. \(setOff)"),
+        (.appleMaps, .valhalla, "New route. Back to accessible directions. \(setOff)"),
+        (.valhalla, .valhalla, "New route. \(setOff)"),
+    ])
+    func aRerouteSaysWhenTheDirectionsChangeService(_ from: RouteSource, _ to: RouteSource, _ expected: String)
+        async throws {
+        let walked = TripWalk.distances(from: 0, to: 20).last ?? 0
+        var route = try cornerRoute()
+        route.source = from
+        let origin = TripWalk.point(on: route, along: walked)
+        var newRoute = try eastRoute(from: origin)
+        newRoute.source = to
+        let harness = try Harness(route: route, reroutes: [.success(newRoute)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        #expect(await harness.engine.texts.filter { $0.hasPrefix("New route.") } == [expected])
     }
 
     @Test

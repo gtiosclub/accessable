@@ -16,7 +16,7 @@ struct ReportAwareRoutingService: RoutingService {
     /// Between attempts, for the public Valhalla server's fair use of about one request a second.
     static let retrySpacing: Duration = .seconds(1)
 
-    private let base: any RoutingService
+    let base: any RoutingService
     private let reports: any ReportService
     private let clock: any Clock<Duration>
 

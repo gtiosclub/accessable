@@ -500,6 +500,34 @@ struct TripStartTests {
     }
 
     @Test
+    func aBackupRouteSaysItMayIncludeStairs() async {
+        var route = plannedRoute
+        route.source = .appleMaps
+        let screen = TripScreen(route: route)
+        await screen.plan()
+
+        while await screen.announcements.texts.isEmpty { await Task.yield() }
+        #expect(await screen.announcements.texts == [RouteSource.backupNotice])
+        screen.stop()
+    }
+
+    @Test
+    func aRefreshForStartLeavesTheBackupNoticeToTheTrip() async {
+        var route = plannedRoute
+        route.source = .appleMaps
+        let screen = TripScreen(route: route)
+        await screen.plan()
+        while await screen.announcements.texts.isEmpty { await Task.yield() }
+        screen.advance(by: 121)
+
+        await screen.viewModel.startTrip()
+
+        #expect(await screen.routing.requestCount == 2)
+        #expect(await screen.announcements.texts == [RouteSource.backupNotice])
+        screen.stop()
+    }
+
+    @Test
     func routeReadyAnnouncementRoundsTheDistance() async {
         let screen = TripScreen()
         await screen.plan()
