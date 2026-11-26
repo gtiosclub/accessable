@@ -397,6 +397,17 @@ actor PlaceholderUserProfileStore: UserProfileStore {
     }
 }
 
+/// In-memory route preferences for previews, keyed by the shared auth UID.
+actor PlaceholderRoutePreferencesSync: RoutePreferencesSyncing {
+    private var preferences: [String: RoutePreferences] = [:]
+
+    func load(userID: String) async throws -> RoutePreferences? { preferences[userID] }
+
+    func save(_ preferences: RoutePreferences, userID: String) async throws {
+        self.preferences[userID] = preferences
+    }
+}
+
 /// The in-memory stand-in for reports, used in previews and tests. It refuses the votes the rules refuse, so they
 /// behave as they would with Firestore.
 actor PlaceholderReportService: ReportService {

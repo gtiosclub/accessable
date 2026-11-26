@@ -325,3 +325,11 @@ protocol UserProfileStore: Sendable {
     func save(userID: String, role: UserRole, displayName: String,
               languages: [String]) async throws -> UserProfile
 }
+
+// MARK: - Route preferences (PREF-2)
+
+/// The signed-in user's route preferences on the server. A missing document loads as nil; a failed read throws.
+protocol RoutePreferencesSyncing: Sendable {
+    func load(userID: String) async throws -> RoutePreferences?
+    func save(_ preferences: RoutePreferences, userID: String) async throws
+}
