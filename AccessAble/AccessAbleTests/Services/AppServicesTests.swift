@@ -55,6 +55,23 @@ struct AppServicesTests {
         }
     }
 
+    /// Shared.xcconfig's stadia,fossgis, ahead of Apple Maps. Without a Stadia key, as in CI, only FOSSGIS is left.
+    @Test
+    func liveAsksTheConfiguredValhallaServersInOrder() throws {
+        let routing = AppServices.live(performance: PerformanceModeMonitor()).routing
+        let chain = try #require(((routing as? ReportAwareRoutingService)?.base ?? routing) as? FallbackRoutingService)
+        let servers = try #require(chain.primaries as? [ValhallaRoutingService])
+
+        // Shared.xcconfig sets it, and a member's Secrets.xcconfig may change it
+        let configured = try #require(Bundle.main.object(forInfoDictionaryKey: "RoutingServers") as? String)
+        #expect(!configured.isEmpty && !configured.contains("$("))
+        let fossgis = URL(string: "https://valhalla1.openstreetmap.de")!
+        let stadia = URL(string: "https://api.stadiamaps.com")!
+        let expected = StadiaConfig.apiKey == nil ? [fossgis] : [stadia, fossgis]
+        #expect(servers.map(\.endpoint.baseURL) == expected)
+        #expect(chain.fallback is AppleMapsRoutingService)
+    }
+
     @Test
     func liveGuidesTripsWithTripManager() {
         #expect(AppServices.live(performance: PerformanceModeMonitor()).trip is TripManager)
