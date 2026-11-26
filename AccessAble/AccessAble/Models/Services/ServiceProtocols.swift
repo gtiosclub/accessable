@@ -199,6 +199,12 @@ protocol AuthService: Sendable {
     func signIn(email: String, password: String) async throws -> AuthUser
     func createAccount(email: String, password: String) async throws -> AuthUser
     func signOut() async throws
+    func idToken() async throws -> String
+}
+
+extension AuthService {
+    /// Stand-ins have no real sign-in to prove.
+    func idToken() async throws -> String { throw AuthError.unknown }
 }
 
 // MARK: - Calls (MATCH-x)
@@ -222,15 +228,21 @@ protocol PresenceService: Sendable {
     func setOnline(_ isOnline: Bool) async throws
 }
 
-/// Ringing: asking a volunteer for a call and answering one.
+
+/// Matching (VOLUNTEER-6): the caller's app rings one volunteer at a time as Firestore transactions,
+/// and firestore.rules enforce every step. Tickets come only from the getCallToken Worker.
 protocol CallSignaling: Sendable {
-    /// Calls for the signed-in volunteer. Silent while the app is off screen (no push, no CallKit).
-    func incomingCalls() -> AsyncStream<CallTicket>
-    /// Asks `getCallToken` for a ticket and rings the volunteer.
-    func startCall(to volunteerID: String) async throws -> CallTicket
-    func accept(_ ticket: CallTicket) async throws
-    func decline(_ ticket: CallTicket) async throws
-    func end(_ ticket: CallTicket) async
+    /// Caller: rings online volunteers one at a time (`volunteerID` first, if given) until one accepts,
+    /// then returns the ticket. A decline or 30 seconds moves on to the next volunteer.
+    func requestCall(preferring volunteerID: String?) async throws -> CallTicket
+    /// Volunteer: answers a call that's ringing them. Throws if it was taken or ended.
+    func accept(callID: String) async throws -> CallTicket
+    /// Volunteer: turns down a call that's ringing them.
+    func decline(callID: String) async throws
+    /// Caller: stops ringing this volunteer. Fails if they already picked up.
+    func skip(callID: String) async throws
+    /// Either side: hangs up, or gives up while it's still ringing.
+    func endCall(callID: String) async
 }
 
 /// The live video call. While connected it owns the camera: `ARSessionManager` pauses, CV and AR

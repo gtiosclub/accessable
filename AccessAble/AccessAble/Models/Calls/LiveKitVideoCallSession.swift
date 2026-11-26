@@ -55,6 +55,9 @@ final class LiveKitVideoCallSession: VideoCallSession {
             let isCaller = me == nil || me == ticket.callerID
             try await requestPermission(.audio)
             if isCaller { try await requestPermission(.video) }
+            // Hanging up while joining cancels the join. `leave` has nothing to tear down yet,
+            // so each step after a wait checks for it instead.
+            try Task.checkCancellation()
             configureAudio()
             // Camera rule: AR lets go of the camera before LiveKit takes it.
             if isCaller { cameraToken = try pauseCamera() }
@@ -62,12 +65,19 @@ final class LiveKitVideoCallSession: VideoCallSession {
             let room = Room()
             self.room = room
             try await room.connect(url: url.absoluteString, token: ticket.token)
+            try Task.checkCancellation()
             try await room.localParticipant.setMicrophone(enabled: true)
+            try Task.checkCancellation()
             if isCaller { try await publishCamera(position: .back) }
+            try Task.checkCancellation()
 
             sawPartner = !room.remoteParticipants.isEmpty
             broadcaster.send(.connected)
             startMonitoring()
+        } catch is CancellationError {
+            await cleanUp()
+            broadcaster.send(.ended(.hungUp))
+            throw CancellationError()
         } catch {
             await cleanUp()
             broadcaster.send(.failed((error as? LocalizedError)?.errorDescription ?? "Couldn't connect the call."))

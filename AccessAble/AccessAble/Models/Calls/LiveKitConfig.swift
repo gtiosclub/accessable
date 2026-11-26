@@ -10,6 +10,14 @@ enum LiveKitConfig {
               !raw.isEmpty, !raw.contains("$(") else { return nil }
         return URL(string: raw)
     }
+    
+    /// The getCallToken Worker (VOLUNTEER-6), from Secrets.xcconfig (CALL_TOKEN_URL) through Info.plist.
+    /// Nil until it's set; calls then stay on the placeholder.
+    static var callTokenURL: URL? {
+        guard let raw = Bundle.main.object(forInfoDictionaryKey: "CallTokenURL") as? String,
+              !raw.isEmpty, !raw.contains("$("), !raw.contains("YOUR-SUBDOMAIN") else { return nil }
+        return URL(string: raw)
+    }
 
     /// The LiveKit room type; the real `VideoCallSession` builds on it. Referencing it here keeps the
     /// package linked, so a broken package setup fails the build now instead of in MATCH-x.

@@ -7,4 +7,8 @@ preview_urls = false
 # Free plan only. Secrets are NOT stored here:
 #   npx wrangler secret put LIVEKIT_API_KEY
 #   npx wrangler secret put LIVEKIT_API_SECRET
-#   (LIVEKIT_URL is not secret; set it under [vars] if the Worker needs it)
+
+[vars]
+# The Firebase project from REPORT-1. Not a secret: it's in every copy of the app.
+# Find it with: plutil -extract PROJECT_ID raw AccessAble/AccessAble/GoogleService-Info.plist
+FIREBASE_PROJECT_ID = "accessable-2f8fc"

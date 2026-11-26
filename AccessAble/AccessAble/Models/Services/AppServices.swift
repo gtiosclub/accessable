@@ -103,6 +103,9 @@ struct AppServices: Sendable {
             services.volunteers = FirestoreVolunteerDirectory()
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
+            if let tokenURL = LiveKitConfig.callTokenURL {
+                services.callSignaling = FirestoreCallSignaling(auth: services.auth, tokenURL: tokenURL)
+            }
         }
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
@@ -114,7 +117,9 @@ struct AppServices: Sendable {
             recorder: services.tripRecorder
         )
 
-        if LiveKitConfig.serverURL != nil {
+        // Real calls need both halves: the placeholder's fake token would make LiveKit refuse
+        // every call, so without real signaling the placeholder session stays too.
+        if LiveKitConfig.serverURL != nil, services.callSignaling is FirestoreCallSignaling {
             let analyzer = scene as? ARSceneAnalyzer
             services.videoCall = LiveKitVideoCallSession(
                 auth: services.auth,
@@ -123,13 +128,6 @@ struct AppServices: Sendable {
             )
         }
 
-        #if DEBUG
-        // Until VOLUNTEER-6's Worker exists, test calls use LiveKit's development token server.
-        if let id = ProcessInfo.processInfo.environment["LIVEKIT_DEV_TOKEN_SERVER_ID"],
-           !id.isEmpty, !id.contains("$(") {
-            services.callSignaling = DevelopmentCallSignaling(serverID: id, auth: services.auth)
-        }
-        #endif
         return services
     }
 
@@ -184,6 +182,7 @@ struct AppServices: Sendable {
         services.volunteers = PlaceholderVolunteerDirectory()
         services.presence = PlaceholderPresenceService()
         services.videoCall = PlaceholderVideoCallSession()
+        services.callSignaling = PlaceholderCallSignaling()
         // Reports stay in memory, so previews and tests can report a problem.
         services.reports = PlaceholderReportService()
         services.reportsAvailable = true

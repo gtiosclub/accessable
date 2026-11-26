@@ -170,13 +170,102 @@ service cloud.firestore {
         && isValidVolunteer(request.resource.data)
         && request.resource.data.lastSeen == request.time
         && get(/databases/$(database)/documents/users/$(uid)).data.role == 'volunteer';
-      allow update: if signedIn() && request.auth.uid == uid
-        && isValidVolunteer(request.resource.data)
-        && request.resource.data.lastSeen == request.time
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeen'])
-            || request.time >= resource.data.lastSeen + duration.value(20, 's'));
+            allow update: if signedIn() && isValidVolunteer(request.resource.data)
+        && (isOwnUpdate() || isRing() || isCallerClear());
+
+      function isOwnUpdate() {
+        return request.auth.uid == uid
+          && request.resource.data.lastSeen == request.time
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeen'])
+              || request.time >= resource.data.lastSeen + duration.value(20, 's'));
+      }
+
+      function isRing() {
+        return request.auth.uid != uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ringingCallId', 'ringingSince'])
+          && request.resource.data.ringingCallId is string
+          && request.resource.data.ringingSince == request.time
+          // Free: nobody is ringing them, or that ring is more than 45 seconds old.
+          && (resource.data.get('ringingCallId', null) == null
+              || request.time > resource.data.get('ringingSince', timestamp.value(0)) + duration.value(45, 's'))
+          // Reachable: Online, not in a call, heard from in the last 90 seconds.
+          && resource.data.isOnline == true
+          && resource.data.inCall == false
+          && request.time < resource.data.lastSeen + duration.value(90, 's')
+          && isNewRingFromMe(request.resource.data.ringingCallId);
+      }
+
+      function isNewRingFromMe(callId) {
+        let call = getAfter(/databases/$(database)/documents/calls/$(callId)).data;
+        return call.callerId == request.auth.uid && call.volunteerId == uid && call.status == 'ringing';
+      }
+
+      function isCallerClear() {
+        return request.auth.uid != uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ringingCallId', 'ringingSince'])
+          && resource.data.get('ringingCallId', null) is string
+          && request.resource.data.get('ringingCallId', null) == null
+          && request.resource.data.get('ringingSince', null) == null
+          && isFinishedRingFromMe(resource.data.ringingCallId);
+      }
+
+      function isFinishedRingFromMe(callId) {
+        let call = getAfter(/databases/$(database)/documents/calls/$(callId)).data;
+        return call.callerId == request.auth.uid && call.status in ['skipped', 'ended'];
+      }
 
       allow delete: if signedIn() && request.auth.uid == uid;
+    }
+    
+    match /calls/{callId} {
+      function isParty() {
+        return request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.volunteerId;
+      }
+
+      function moves(from, to) {
+        return resource.data.status == from && request.resource.data.status == to;
+      }
+
+      // The call was still ringing this volunteer, and the same write marks them in the call.
+      function isAccept() {
+        let path = /databases/$(database)/documents/volunteers/$(resource.data.volunteerId);
+        let before = get(path).data;
+        let after = getAfter(path).data;
+        return before.get('ringingCallId', null) == callId
+          && after.inCall == true
+          && after.get('ringingCallId', null) == null;
+      }
+
+      allow get: if signedIn() && isParty();
+
+      allow create: if signedIn()
+        && request.resource.data.keys().hasAll(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt'])
+        && request.resource.data.callerId == request.auth.uid
+        && request.resource.data.volunteerId is string
+        && request.resource.data.volunteerId != request.auth.uid
+        && request.resource.data.status == 'ringing'
+        && request.resource.data.roomName == 'call-' + callId
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        // The same write must ring the volunteer; the volunteers rules check they were free.
+        && getAfter(/databases/$(database)/documents/volunteers/$(request.resource.data.volunteerId))
+             .data.get('ringingCallId', null) == callId;
+
+      allow update: if signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.updatedAt == request.time
+        && (
+          // Caller: skip or give up while ringing; hang up once accepted.
+          (request.auth.uid == resource.data.callerId
+            && (moves('ringing', 'skipped') || moves('ringing', 'ended') || moves('accepted', 'ended')))
+          // Volunteer: accept or decline while ringing; hang up once accepted.
+          || (request.auth.uid == resource.data.volunteerId
+            && ((moves('ringing', 'accepted') && isAccept())
+                || moves('ringing', 'declined')
+                || moves('accepted', 'ended')))
+        );
+      // No delete, so a finished call can never be reused.
     }
 
     match /reports/{reportId} {
