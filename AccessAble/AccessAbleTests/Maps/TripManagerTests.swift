@@ -2066,7 +2066,7 @@ struct TripManagerBatteryTests {
     func recordsTheWarning() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerBatteryTests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let recorder = TripRecorder(directory: directory)
+        let recorder = TripRecorder(directory: directory, battery: FakeBattery(level: nil))
         recorder.setEnabled(true)
         let clock = ManualClock()
         let harness = try Harness(recorder: recorder, battery: (FakeBattery(level: 0.15), clock))
@@ -2132,12 +2132,37 @@ struct TripManagerBatteryTests {
 
 @Suite(.timeLimit(.minutes(1)))
 struct TripManagerRecordingTests {
+    // ending the recording reads the battery, and a trip started during that read mustn't lose its tracking
+    @Test
+    func aTripStartedWhileTheArrivalReadsTheBatteryKeepsTracking() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        // the trip's first reading, then the arrival's
+        let battery = BlockingBattery(level: 0.5, blockingRead: 2)
+        let recorderClock = ManualClock()
+        let recorder = TripRecorder(directory: directory, battery: battery, clock: recorderClock)
+        recorder.setEnabled(true)
+        let harness = try Harness(recorder: recorder)
+        await harness.start()
+        try await recorderClock.waitForSleepers(1)
+        await harness.walk(from: 0, to: 160)
+        await harness.states.waitFor { $0.phase == .arrived }
+        await waitUntil { battery.isBlocked && harness.background.values == [true, false] }
+
+        await harness.start()
+        battery.release()
+        #expect(harness.background.values == [true, false, true])
+        // the new trip still follows fixes
+        let state = await harness.fix(harness.point(0))
+        #expect(state.phase == .active)
+    }
+
     // a walk's misreads and missed buildings only show if signs that matched nothing are kept too
     @Test
     func recordsEverySignTheCameraReads() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let recorder = TripRecorder(directory: directory)
+        let recorder = TripRecorder(directory: directory, battery: FakeBattery(level: nil))
         recorder.setEnabled(true)
         let skiles = try building("Skiles", along: 50, lateral: 15)
         let harness = try Harness(buildings: [skiles], recorder: recorder)
@@ -2160,7 +2185,7 @@ struct TripManagerRecordingTests {
     func recordsEachFixAndAnnouncementWhileOn() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let recorder = TripRecorder(directory: directory)
+        let recorder = TripRecorder(directory: directory, battery: FakeBattery(level: nil))
         recorder.setEnabled(true)
         let harness = try Harness(recorder: recorder)
         await harness.start()
@@ -2187,7 +2212,7 @@ struct TripManagerRecordingTests {
     func recordsNothingWhileOff() async throws {
         let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerRecordingTests-\(UUID())")
         defer { try? FileManager.default.removeItem(at: directory) }
-        let recorder = TripRecorder(directory: directory)
+        let recorder = TripRecorder(directory: directory, battery: FakeBattery(level: nil))
         let harness = try Harness(recorder: recorder)
         await harness.start()
         await harness.walk(from: 0, to: 20)
