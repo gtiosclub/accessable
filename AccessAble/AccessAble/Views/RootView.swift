@@ -85,6 +85,7 @@ private struct AccountGateView: View {
 struct MainFlowView: View {
     @Environment(AppViewModel.self) private var app
     @State private var router = AppRouter()
+    @State private var resumeTrip: ResumeTripViewModel?
     private let intents = IntentsModel.shared
 
     var body: some View {
@@ -96,6 +97,26 @@ struct MainFlowView: View {
                 }
         }
         .environment(router)
+        .task {
+            let resume = ResumeTripViewModel(store: app.services.savedTrips, trip: app.services.trip)
+            resumeTrip = resume
+            await resume.check()
+        }
+        .alert(
+            resumeTrip?.title ?? "",
+            isPresented: Binding(
+                get: { resumeTrip?.offer != nil },
+                // Only decline when an offer is still up. Resume clears offer first, so a
+                // system dismiss after Resume must not delete the file startTrip will use.
+                set: { if !$0, resumeTrip?.offer != nil { resumeTrip?.decline() } }
+            )
+        ) {
+            Button("Resume trip") {
+                guard let plan = resumeTrip?.resume() else { return }
+                router.path = [.trip(plan)]
+            }
+            Button("No thanks", role: .cancel) { resumeTrip?.decline() }
+        }
         .onChange(of: intents.pending, initial: true) { _, destination in
             guard let destination else { return }
             router.path = [.feature(destination)]

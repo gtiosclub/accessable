@@ -232,6 +232,15 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 | weak / back | "Location signal is weak. Directions may be delayed." / "Location signal is back." (system category) | high / normal | 10 s / 6 s |
 | pause, resume, end | "Trip paused." / "Trip resumed." / "Trip ended.", with no dedup key, so the engine merges them with the voice command's | high | none |
 
+## Resuming a trip
+
+If the app is closed mid-trip, the next launch offers to pick it up again.
+
+- **Saving.** `TripManager` saves the trip through `SavedTripStore` when it starts, each time the next step changes, and after a reroute, so the saved route always goes with its saved step. The file is `SavedTrip.json` in Application Support, written atomically on the store's own queue so fix handling never waits on the disk, and protected until the phone's first unlock. It holds the trip ID, the route, the destination, how many steps are passed, and when the trip started and was saved. `NavigationRoute` encodes no reports and no source, and nothing names the user. A failed write is logged and the trip carries on.
+- **Deleting.** Ending the trip or arriving, paused or not, deletes the file. So does "No thanks", and so does loading one saved 2 hours or more ago, or one that can't be read, which is logged.
+- **Offering.** Once past sign-in and onboarding, the main screen asks "Resume your trip to {destination}?" with "Resume trip" and "No thanks", when a file under 2 hours old is there and no trip is running.
+- **Resuming** opens the trip screen as a normal start would, with the saved route counted as just found, so the start doesn't swap it for a new one because of its age. The trip then starts with a fresh tracker; the saved step count is not restored. The tracker places the user from their fixes, and if they are far from the route the off-route rules reroute as on any trip. The trip screen's usual start rule still applies too: a precise fix over 20 m from the route asks for a fresh route before starting.
+
 ## Live Activity
 
 `TripActivityController` puts the trip on the lock screen and in the Dynamic Island, through `TripActivityPlanner`'s rules. It's updated locally, never by push.
