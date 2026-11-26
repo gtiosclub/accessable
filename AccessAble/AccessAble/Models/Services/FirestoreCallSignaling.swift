@@ -70,7 +70,7 @@ struct FirestoreCallSignaling: CallSignaling {
 
             switch answer {
             case .accepted:
-                return try await ticket(for: callID)
+                return try await acceptedTicket(for: callID)
             case .notAnswered:
                 lastMiss = .declined
             case .timedOut:
@@ -78,7 +78,12 @@ struct FirestoreCallSignaling: CallSignaling {
                     try await skip(callID: callID)
                 } catch CallSignalingError.callAccepted {
                     // They picked up just as the 30 seconds ran out: join instead of skipping.
-                    return try await ticket(for: callID)
+                    return try await acceptedTicket(for: callID)
+                } catch {
+                    // The skip itself failed. Stop ringing them, then move on, or stop if
+                    // the caller left or went offline.
+                    await endCall(callID: callID)
+                    if error is CancellationError || Self.isOffline(error) { throw error }
                 }
                 lastMiss = .noAnswer
             }
@@ -264,7 +269,8 @@ struct FirestoreCallSignaling: CallSignaling {
                         "createdAt": FieldValue.serverTimestamp(),
                         "updatedAt": FieldValue.serverTimestamp(),
                     ]
-                    if let name = profile?["displayName"] as? String, !name.isEmpty {
+                    if let name = profile?["displayName"] as? String,
+                       !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         callData["callerFirstName"] = IncomingCall.firstName(from: name)
                     }
                     transaction.setData(callData, forDocument: callRef)
@@ -279,9 +285,12 @@ struct FirestoreCallSignaling: CallSignaling {
                 }
             } as? String
             return outcome == "rang" ? callID : nil
-        } catch {
-            if Self.isOffline(error) { throw error }
+        } catch let error as NSError
+                    where error.domain == FirestoreErrorDomain
+                    && [FirestoreErrorCode.permissionDenied.rawValue, FirestoreErrorCode.aborted.rawValue]
+                        .contains(error.code) {
             // The rules refused (they're ringing or went offline a moment ago): try the next one.
+            // Anything else, like being offline, is the caller's problem, not a busy volunteer.
             return nil
         }
     }
@@ -330,6 +339,17 @@ struct FirestoreCallSignaling: CallSignaling {
     }
 
     // MARK: - Token Worker
+
+    /// The call is accepted, so if the token can't be fetched the call must be ended here:
+    /// the caller never gets a ticket to hang up with, and the volunteer would stay in the call.
+    private func acceptedTicket(for callID: String) async throws -> CallTicket {
+        do {
+            return try await ticket(for: callID)
+        } catch {
+            await endCall(callID: callID)
+            throw error
+        }
+    }
 
     /// Asks getCallToken for this call's LiveKit token. The Worker checks the Firebase sign-in and
     /// reads the call with it, so the rules decide; it only answers once the call is accepted.

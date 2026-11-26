@@ -20,6 +20,10 @@ final class LiveKitVideoCallSession: VideoCallSession {
     private var monitor: Task<Void, Never>?
     /// Whether the other person has joined, so their leaving can be noticed.
     private var sawPartner = false
+    /// When this phone joined the room, to give up if the other person never arrives.
+    private var joinedAt: Date?
+    /// How long to wait in the room for the other person before ending the call.
+    private static let partnerJoinTimeout: TimeInterval = 30
 
     /// Main-actor read access for the volunteer's renderer; never exposes tokens or the Room.
     var remoteVideoTrack: VideoTrack? {
@@ -56,9 +60,14 @@ final class LiveKitVideoCallSession: VideoCallSession {
         broadcaster.send(.connecting)
         do {
             // The caller sends their back camera; the volunteer sends only their voice.
-            let isCaller = await auth.currentUser()?.id == ticket.callerID
+            // Volunteers always have an account, so a phone with nobody signed in is the caller.
+            let me = await auth.currentUser()?.id
+            let isCaller = me == nil || me == ticket.callerID
             try await requestPermission(.audio)
             if isCaller { try await requestPermission(.video) }
+            // Hanging up while joining cancels the join. `leave` has nothing to tear down yet,
+            // so each step after a wait checks for it instead.
+            try Task.checkCancellation()
             configureAudio()
             // Camera rule: AR lets go of the camera before LiveKit takes it.
             if isCaller { cameraToken = try pauseCamera() }
@@ -66,12 +75,21 @@ final class LiveKitVideoCallSession: VideoCallSession {
             let room = Room()
             self.room = room
             try await room.connect(url: url.absoluteString, token: ticket.token)
+            try Task.checkCancellation()
             try await room.localParticipant.setMicrophone(enabled: true)
+            try Task.checkCancellation()
             if isCaller { try await publishCamera(position: .back) }
+            try Task.checkCancellation()
 
+            // Connected means the other person is here too; until then the call stays connecting.
             sawPartner = !room.remoteParticipants.isEmpty
-            broadcaster.send(.connected)
+            if sawPartner { broadcaster.send(.connected) }
+            joinedAt = Date()
             startMonitoring()
+        } catch is CancellationError {
+            await cleanUp()
+            broadcaster.send(.ended(.hungUp))
+            throw CancellationError()
         } catch {
             await cleanUp()
             broadcaster.send(.failed((error as? LocalizedError)?.errorDescription ?? "Couldn't connect the call."))
@@ -95,6 +113,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
         cameraTrack = nil
         cameraPosition = .back
         sawPartner = false
+        joinedAt = nil
         // Camera rule: AR (and CV with it) resumes only after LiveKit has let go.
         if let token = cameraToken {
             cameraToken = nil
@@ -118,9 +137,15 @@ final class LiveKitVideoCallSession: VideoCallSession {
         if room.connectionState == .disconnected {
             await leave(.remoteLeft)
         } else if !room.remoteParticipants.isEmpty {
-            sawPartner = true
+            if !sawPartner {
+                sawPartner = true
+                broadcaster.send(.connected)
+            }
         } else if sawPartner {
             await leave(.remoteLeft)
+        } else if let joinedAt, Date().timeIntervalSince(joinedAt) > Self.partnerJoinTimeout {
+            // Accepted, but their app never joined (it crashed or lost its connection).
+            await leave(.unanswered)
         }
     }
 
@@ -131,7 +156,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
     private func configureAudio() {
         AudioManager.shared.sessionConfiguration = AudioSessionConfiguration(
             category: .playAndRecord,
-            categoryOptions: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP],
+            categoryOptions: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP],
             mode: .voiceChat
         )
         AudioManager.shared.isSpeakerOutputPreferred = true

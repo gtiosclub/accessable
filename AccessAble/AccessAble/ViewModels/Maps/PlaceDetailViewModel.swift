@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import UIKit
 
 /// Owner: Maps (2.x). State for a place's details and the route picker: the place's name and
 /// address, and the real walking route to it from where the user is: its summary and steps.
@@ -18,15 +19,18 @@ final class PlaceDetailViewModel {
     /// What the current route involves, counted once per route rather than on every read of `summary`.
     @ObservationIgnored private var counted: (route: NavigationRoute, summary: RouteSummary)?
 
-    /// `planned` is a route an earlier screen found; without it one is asked for.
+    /// `planned` is a route an earlier screen found; without it one is asked for. `isVoiceOverRunning` decides who
+    /// says a report the route passes: VoiceOver reads the route-ready summary, which says it, while the app's own
+    /// speech, used without VoiceOver, hears only the planner's warning. Never both, so it isn't said twice.
     init(
         destination: Destination,
         services: AppServices,
         planned: PlannedRoute? = nil,
-        campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all }
+        campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all },
+        isVoiceOverRunning: @escaping @MainActor () -> Bool = { UIAccessibility.isVoiceOverRunning }
     ) {
         self.destination = destination
-        planner = TripViewModel(services: services)
+        planner = TripViewModel(services: services, warnsOfPassedReports: { !isVoiceOverRunning() })
         distanceSettings = services.distanceSettings
         self.campusCrossings = campusCrossings
         if let planned { planner.use(planned) }
@@ -56,6 +60,11 @@ final class PlaceDetailViewModel {
             counted = (route, RouteSummary(route: route, crossings: crossings))
         }
         return counted?.summary.text(distances: distanceSettings.formatter)
+    }
+
+    /// Shown with an Apple Maps route, which knows nothing of stairs.
+    var backupNote: String? {
+        route?.source == .appleMaps ? "Backup directions: may include stairs." : nil
     }
 
     /// Posted once when the route arrives, so the user knows Start is there and what the walk

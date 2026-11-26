@@ -86,11 +86,11 @@ final class CallViewModel {
 
     func flipCamera() async {
         controlError = nil
+        // The session turns the light off before switching, even if the switch then fails.
+        isFlashlightOn = false
         do {
             try await services.videoCall.flipCamera()
             isUsingBackCamera.toggle()
-            // Only the back camera has a light, and flipping turns it off.
-            if !isUsingBackCamera { isFlashlightOn = false }
         } catch {
             controlError = "Couldn't switch cameras."
         }
@@ -135,6 +135,11 @@ final class CallViewModel {
             let ticket = try await services.callSignaling.requestCall(preferring: preferred?.id) { [weak self] progress in
                 Task { @MainActor in await self?.receive(progress) }
             }
+            // Hung up just as someone answered: hangUp had no ticket to end the call with.
+            if Task.isCancelled {
+                await services.callSignaling.endCall(callID: ticket.callID)
+                return
+            }
             self.ticket = ticket
             if ticket.volunteerID == preferred?.id { volunteerName = preferred?.name }
             hasStartedConnecting = true
@@ -142,6 +147,8 @@ final class CallViewModel {
         } catch {
             // Hanging up or leaving the screen cancels the call; that isn't a failure.
             guard !Task.isCancelled else { return }
+            // Accepted but couldn't join: free the volunteer for the next caller.
+            if let ticket { await services.callSignaling.endCall(callID: ticket.callID) }
             await fail(Self.failure(for: error, connecting: hasStartedConnecting))
         }
     }
@@ -163,6 +170,9 @@ final class CallViewModel {
 
     private func receive(_ newState: CallState) async {
         guard hasStartedConnecting else { return }
+        // The session only fails while joining, and then also throws from connect: placeCall's
+        // catch reports it once, with the real cause (like a denied camera).
+        if case .failed = newState { return }
         state = newState
         // From connecting on, only turn cues and critical alerts are spoken (VOLUNTEER-5).
         await services.announcements.setInCall(newState.isActive)
@@ -174,8 +184,6 @@ final class CallViewModel {
         // volunteer is free for the next caller.
         if let ticket { await services.callSignaling.endCall(callID: ticket.callID) }
         switch newState {
-        case .failed:
-            await fail(.connectionFailed)
         case .ended(.hungUp):
             break // hangUp() already said it
         default:

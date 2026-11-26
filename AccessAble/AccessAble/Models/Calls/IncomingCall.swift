@@ -4,13 +4,15 @@ import Foundation
 struct IncomingCall: Identifiable, Equatable, Sendable {
     let id: String
     let callerFirstName: String
+    /// When the ring started, on this phone's clock.
     let ringingSince: Date
 
     static let displayLifetime: TimeInterval = 30
 
     static func firstName(from name: String) -> String {
-        // Match Firestore's RE2 \\s character set, including tabs/newlines.
-        name.components(separatedBy: CharacterSet(charactersIn: " \t\r\n\u{000B}\u{000C}"))
+        // Exactly Firestore's RE2 \\s ([\t\n\f\r ]), which the rules split on. RE2's \\s has no
+        // vertical tab, so splitting on it here would give a name the rules refuse.
+        name.components(separatedBy: CharacterSet(charactersIn: " \t\r\n\u{000C}"))
             .first(where: { !$0.isEmpty }) ?? "Caller"
     }
 

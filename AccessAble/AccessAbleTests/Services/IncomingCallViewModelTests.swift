@@ -176,6 +176,8 @@ struct IncomingCallViewModelTests {
         #expect(IncomingCall.firstName(from: " \tAlex Rivera") == "Alex")
         #expect(IncomingCall.firstName(from: "김 예은") == "김")
         #expect(IncomingCall.firstName(from: "   ") == "Caller")
+        // The rules split on RE2's \\s, which has no vertical tab, so neither may the app.
+        #expect(IncomingCall.firstName(from: "Sam\u{000B}Lee Kim") == "Sam\u{000B}Lee")
         let now = Date()
         let late = IncomingCall(id: "a", callerFirstName: "Alex", ringingSince: now.addingTimeInterval(-20))
         #expect(late.remainingTime(at: now) == 10)
@@ -264,10 +266,10 @@ private final class TestIncomingSignaling: CallSignaling {
     var accepts: [String] = [], declines: [String] = [], ends: [String] = []
     var pending: CheckedContinuation<CallTicket, Error>?
     private var pendingID = ""
-    func requestCall(preferring volunteerID: String?, progress: @Sendable (CallRequestProgress) -> Void) async throws -> CallTicket {
+    @MainActor func requestCall(preferring volunteerID: String?, progress: @Sendable (CallRequestProgress) -> Void) async throws -> CallTicket {
         throw IncomingTestError.failed
     }
-    func accept(callID: String) async throws -> CallTicket {
+    @MainActor func accept(callID: String) async throws -> CallTicket {
         accepts.append(callID)
         switch mode {
         case .taken: throw CallSignalingError.callTaken
@@ -278,9 +280,9 @@ private final class TestIncomingSignaling: CallSignaling {
         }
     }
     func resolve() { pending?.resume(returning: ticket(pendingID)); pending = nil }
-    func decline(callID: String) async throws { declines.append(callID) }
-    func skip(callID: String) async throws {}
-    func endCall(callID: String) async { ends.append(callID) }
+    @MainActor func decline(callID: String) async throws { declines.append(callID) }
+    @MainActor func skip(callID: String) async throws {}
+    @MainActor func endCall(callID: String) async { ends.append(callID) }
     private func ticket(_ id: String) -> CallTicket {
         CallTicket(callID: id, roomName: "call-\(id)", token: "fake", callerID: "caller",
                    volunteerID: "helper", expiresAt: .now.addingTimeInterval(60))
@@ -295,16 +297,16 @@ private final class TestIncomingVideo: VideoCallSession {
     var shouldFail = false
     init() { events.send(.ended(.hungUp)) } // A stale previous session must not end this call.
     nonisolated func states() -> AsyncStream<CallState> { events.stream() }
-    func connect(with ticket: CallTicket) async throws {
+    @MainActor func connect(with ticket: CallTicket) async throws {
         connections.append(ticket)
         if shouldFail { throw IncomingTestError.failed }
         events.send(.connecting)
         events.send(.connected)
     }
-    func disconnect() async { disconnects += 1; events.send(.ended(.hungUp)) }
-    func setMicrophoneMuted(_ muted: Bool) async throws {}
-    func flipCamera() async throws {}
-    func setFlashlight(_ on: Bool) async throws {}
+    @MainActor func disconnect() async { disconnects += 1; events.send(.ended(.hungUp)) }
+    @MainActor func setMicrophoneMuted(_ muted: Bool) async throws {}
+    @MainActor func flipCamera() async throws {}
+    @MainActor func setFlashlight(_ on: Bool) async throws {}
 }
 
 private actor RingSleepRecorder {
