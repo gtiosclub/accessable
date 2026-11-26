@@ -7,7 +7,7 @@ import Synchronization
 /// Advancing only wakes sleeps that have started, so first await `waitForSleepers(_:)` for
 /// the timers the advance is meant to fire. One advance wakes each sleep at most once: a
 /// repeating timer sleeps again only after it runs, so it needs one advance per tick.
-final class ManualClock: Clock, @unchecked Sendable {
+final class ManualClock: Clock {
     struct Instant: InstantProtocol {
         let offset: Duration
 

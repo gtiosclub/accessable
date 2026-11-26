@@ -1,32 +1,14 @@
 import Foundation
-import Synchronization
 import Testing
 @testable import AccessAble
 
-/// Thread-safe mutable Float for injecting battery readings that change mid-test.
-private final class BatterySource: @unchecked Sendable {
-    private let mutex: Mutex<Float>
-    init(_ value: Float) { mutex = Mutex(value) }
-    var value: Float { mutex.withLock { $0 } }
-    func set(_ v: Float) { mutex.withLock { $0 = v } }
-}
-
-/// A recorder writing to its own temporary folder, removed afterwards.
-private func withRecorder(_ body: (TripRecorder) throws -> Void) throws {
+/// A recorder writing to its own temporary folder, removed afterwards. The battery's level is unknown unless given,
+/// so it writes no battery rows.
+private func withRecorder(battery: any BatteryReading = FakeBattery(level: nil), clock: ManualClock = ManualClock(),
+                          _ body: (TripRecorder) async throws -> Void) async throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: "TripRecorderTests-\(UUID())")
     defer { try? FileManager.default.removeItem(at: directory) }
-    try body(TripRecorder(directory: directory))
-}
-
-/// Async variant with injectable battery reader and clock.
-private func withRecorder(
-    batteryReader: (@Sendable () async -> Float?)? = nil,
-    clock: (any Clock<Duration> & Sendable)? = nil,
-    _ body: (TripRecorder) async throws -> Void
-) async throws {
-    let directory = FileManager.default.temporaryDirectory.appending(path: "TripRecorderTests-\(UUID())")
-    defer { try? FileManager.default.removeItem(at: directory) }
-    try await body(TripRecorder(directory: directory, batteryReader: batteryReader, clock: clock))
+    try await body(TripRecorder(directory: directory, battery: battery, clock: clock))
 }
 
 private func lines(of url: URL) throws -> [String] {
@@ -37,8 +19,8 @@ private let start = TripWalk.start
 
 struct TripRecorderTests {
     @Test
-    func isOffByDefaultAndWritesNothing() throws {
-        try withRecorder { recorder in
+    func isOffByDefaultAndWritesNothing() async throws {
+        try await withRecorder { recorder in
             #expect(!recorder.isEnabled)
             recorder.tripStarted(at: start)
             #expect(!recorder.isRecording)
@@ -49,8 +31,7 @@ struct TripRecorderTests {
 
     @Test
     func writesAFixAndAnAnnouncementAsCSVRows() async throws {
-        // Nil battery reader so no battery rows appear; the test asserts the exact row list.
-        try await withRecorder(batteryReader: { nil }) { recorder in
+        try await withRecorder { recorder in
             recorder.setEnabled(true)
             recorder.tripStarted(at: start)
             #expect(recorder.isRecording)
@@ -67,7 +48,7 @@ struct TripRecorderTests {
             recorder.record(sighting: LandmarkObservation(kind: .signText, text: "JOHN LEWIS STUDENT CENTER", key: "sign",
                                                           confidence: 0.876),
                             progress: 98.26, at: start)
-            await recorder.tripEnded()
+            await recorder.tripEnded(at: start).value
             #expect(!recorder.isRecording)
 
             let url = try #require(try recorder.recordings().first)
@@ -85,8 +66,8 @@ struct TripRecorderTests {
     }
 
     @Test
-    func turningOffFinishesTheFileAndEachTripStartsANewOne() throws {
-        try withRecorder { recorder in
+    func turningOffFinishesTheFileAndEachTripStartsANewOne() async throws {
+        try await withRecorder { recorder in
             recorder.setEnabled(true)
             recorder.tripStarted(at: start)
             recorder.tripStarted(at: start.addingTimeInterval(60))
@@ -106,8 +87,8 @@ struct TripRecorderTests {
     }
 
     @Test
-    func keepsRecordingsOutOfBackups() throws {
-        try withRecorder { recorder in
+    func keepsRecordingsOutOfBackups() async throws {
+        try await withRecorder { recorder in
             recorder.setEnabled(true)
             recorder.tripStarted(at: start)
             let values = try recorder.directory.resourceValues(forKeys: [.isExcludedFromBackupKey])
@@ -116,8 +97,8 @@ struct TripRecorderTests {
     }
 
     @Test
-    func deletingFinishesTheFileBeingWrittenAndRemovesEveryRecording() throws {
-        try withRecorder { recorder in
+    func deletingFinishesTheFileBeingWrittenAndRemovesEveryRecording() async throws {
+        try await withRecorder { recorder in
             recorder.setEnabled(true)
             recorder.tripStarted(at: start)
             recorder.tripStarted(at: start.addingTimeInterval(60))
@@ -134,93 +115,93 @@ struct TripRecorderTests {
     }
 
     @Test
-    func batteryLoggingWritesRowAtTripStartAndEnd() async throws {
+    func logsTheBatteryFirstAndLastWithWhetherPluggedIn() async throws {
         let clock = ManualClock()
-        let battery = BatterySource(85)
-        try await withRecorder(batteryReader: { battery.value }, clock: clock) { recorder in
+        let battery = FakeBattery(level: 0.85)
+        try await withRecorder(battery: battery, clock: clock) { recorder in
             recorder.setEnabled(true)
             recorder.tripStarted(at: start)
-            // Wait until the loop has written the start sample and is sleeping on its 60s interval.
+            // before the first reading is in, so held for it
+            recorder.record(announcement: "Starting directions.", at: start)
             try await clock.waitForSleepers(1)
+            battery.set(level: 0.83, isChargingOrFull: true)
+            await recorder.tripEnded(at: start.addingTimeInterval(30)).value
 
-            battery.set(83)
-            await recorder.tripEnded()
-
-            let url = try #require(try recorder.recordings().first)
-            let rows = try lines(of: url)
-            let batteryRows = rows.filter { $0.hasPrefix("battery,") }
-            // Start sample (85) and end sample (83).
-            #expect(batteryRows.count == 2)
-            #expect(batteryRows[0].hasSuffix(",85.0") == true)
-            #expect(batteryRows[1].hasSuffix(",83.0") == true)
+            let rows = try lines(of: try #require(try recorder.recordings().first))
+            #expect(rows == [
+                TripRecorder.header,
+                "battery,2023-11-14T22:13:20.000Z,,,,,,,,,,,,,,,unplugged,85.0",
+                "announcement,2023-11-14T22:13:20.000Z,,,,,,,,,,,,,,,,Starting directions.",
+                "battery,2023-11-14T22:13:50.000Z,,,,,,,,,,,,,,,pluggedIn,83.0",
+            ])
+            let columns = TripRecorder.header.split(separator: ",").count
+            for row in rows where row.hasPrefix("battery,") {
+                #expect(row.split(separator: ",", omittingEmptySubsequences: false).count == columns)
+            }
         }
     }
 
     @Test
-    func batteryLoggingWritesPeriodicSampleEvery60Seconds() async throws {
+    func logsTheBatteryEveryMinute() async throws {
         let clock = ManualClock()
-        let battery = BatterySource(90)
-        try await withRecorder(batteryReader: { battery.value }, clock: clock) { recorder in
+        let battery = FakeBattery(level: 0.9)
+        try await withRecorder(battery: battery, clock: clock) { recorder in
             recorder.setEnabled(true)
             recorder.tripStarted(at: start)
-            // Wait until the loop is sleeping on its 60s interval.
             try await clock.waitForSleepers(1)
-
-            // Advance 60s → second sample.
-            battery.set(89)
-            clock.advance(by: .seconds(60))
-            // Wait for the task to write the sample and go back to sleep.
+            battery.set(level: 0.89)
+            clock.advance(by: TripRecorder.batteryInterval)
             try await clock.waitForSleepers(1)
-
-            // Advance another 60s → third sample.
-            battery.set(88)
-            clock.advance(by: .seconds(60))
+            battery.set(level: 0.88)
+            clock.advance(by: TripRecorder.batteryInterval)
             try await clock.waitForSleepers(1)
+            await recorder.tripEnded(at: start).value
 
-            await recorder.tripEnded()
-
-            let url = try #require(try recorder.recordings().first)
-            let rows = try lines(of: url)
-            let batteryRows = rows.filter { $0.hasPrefix("battery,") }
-            // start (90) + two periodic (89, 88) + end (88 — same as last tick).
-            #expect(batteryRows.count == 4)
-            #expect(batteryRows[0].hasSuffix(",90.0") == true)
-            #expect(batteryRows[1].hasSuffix(",89.0") == true)
-            #expect(batteryRows[2].hasSuffix(",88.0") == true)
+            let rows = try lines(of: try #require(try recorder.recordings().first)).filter { $0.hasPrefix("battery,") }
+            #expect(rows.map { $0.split(separator: ",").last } == ["90.0", "89.0", "88.0", "88.0"])
         }
     }
 
     @Test
     func batteryLoggingStopsWhenRecordingTurnsOff() async throws {
         let clock = ManualClock()
-        try await withRecorder(batteryReader: { 75 }, clock: clock) { recorder in
+        let battery = FakeBattery(level: 0.75)
+        try await withRecorder(battery: battery, clock: clock) { recorder in
             recorder.setEnabled(true)
             recorder.tripStarted(at: start)
             try await clock.waitForSleepers(1)
 
             recorder.setEnabled(false)
-            // After turning off, advancing the clock must not write any new rows.
-            clock.advance(by: .seconds(60))
+            // the next reading's wait is cancelled, so no advance can wake it
+            #expect(clock.sleeperCount == 0)
+            clock.advance(by: TripRecorder.batteryInterval)
 
-            let recordings = try recorder.recordings()
-            #expect(recordings.count == 1)
-            let rows = try lines(of: recordings[0])
-            let batteryRows = rows.filter { $0.hasPrefix("battery,") }
-            // Only the start sample; loop was cancelled before the tick.
-            #expect(batteryRows.count == 1)
+            #expect(battery.reads == 1)
+            let rows = try lines(of: try #require(try recorder.recordings().first))
+            #expect(rows.filter { $0.hasPrefix("battery,") }.count == 1)
         }
     }
 
     @Test
-    func nilBatteryReaderWritesNoBatteryRows() async throws {
-        try await withRecorder(batteryReader: { nil }) { recorder in
+    func aReadingThatLandsAfterItsTripGoesNowhere() async throws {
+        let clock = ManualClock()
+        let battery = BlockingBattery(level: 0.5, blockingRead: 1)
+        try await withRecorder(battery: battery, clock: clock) { recorder in
             recorder.setEnabled(true)
             recorder.tripStarted(at: start)
-            await recorder.tripEnded()
+            while !battery.isBlocked { await Task.yield() }
+            recorder.tripStarted(at: start.addingTimeInterval(60))
+            try await clock.waitForSleepers(1)
+            battery.release()
+            // the first trip's logging, if it went on, would write into the second trip's file and wait again
+            for _ in 0..<100 { await Task.yield() }
+            await recorder.tripEnded(at: start.addingTimeInterval(90)).value
 
-            let url = try #require(try recorder.recordings().first)
-            let rows = try lines(of: url)
-            #expect(rows.filter { $0.hasPrefix("battery,") }.isEmpty)
+            let recordings = try recorder.recordings()
+            #expect(recordings.count == 2)
+            #expect(try lines(of: recordings[0]).filter { $0.hasPrefix("battery,") }.count == 2)
+            #expect(try lines(of: recordings[1]) == [TripRecorder.header])
+            #expect(clock.sleeperCount == 0)
         }
     }
 }

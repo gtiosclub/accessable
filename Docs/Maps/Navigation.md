@@ -150,7 +150,7 @@ Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at e
 
 - A `fix` row for every location fix: time, position, accuracy, where the fix came from (`gps` or `ar`), speed, course and its accuracy, the heading used and where it came from (`ar`, `walkingDirection` or `compass`), the compass accuracy, progress along the route, the tracker's side offset, the next step, whether off route, and the tracker's events.
 - An `announcement` row for everything submitted to the announcement engine, whether or not it was then spoken.
-- A `battery` row at trip start, once a minute during the trip, and at trip end. The battery level (0–100 %) is in the announcement column; the `battery` kind distinguishes it from spoken text. Rows are omitted when the device reports an unknown level (simulator, low-power charging edge cases).
+- A `battery` row when the trip starts, ahead of every other row, then once a minute and when it ends: the level in percent in the announcement column, and `pluggedIn` or `unplugged` in events. There are none while the level is unknown, as on the simulator.
 - `TripManager` builds no fix row unless the recorder is recording, so it costs nothing while off. Rows are written as they happen, under the recorder's lock. A file that can't be written is logged, stops, and its error shows on the recorder screen; the trip carries on.
 
 ## Battery
@@ -166,6 +166,9 @@ Measures how much battery a walk drains with guidance running. Run walks on a re
 - Same route, same start point.
 - 20 minutes each condition.
 - Record the phone model, iOS version, ambient temperature, and battery % at start and end.
+- Before the walk, turn on Developer Tools > Trip recorder; it is off at every launch. Each trip writes its own file.
+- Keep the phone unplugged for the whole walk. A `pluggedIn` battery row means the run doesn't count.
+- After the walk, share the trip's CSV from Developer Tools > Trip recorder, which lists the recordings newest first, to Files, AirDrop or Mail; the drain is the first `battery` row's level minus the last's.
 
 ### Conditions
 
@@ -178,8 +181,6 @@ Measures how much battery a walk drains with guidance running. Run walks on a re
 | Battery end % | | | |
 | Drain % | | | |
 | Notes | | | |
-
-AR on requires AR-6 (geo-tracking accuracy walk) to be complete before the AR heading figures are trusted.
 
 ## Crosswalks
 
