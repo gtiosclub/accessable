@@ -296,8 +296,8 @@ actor TripManager: TripStateProviding {
     func pauseTrip() async {
         guard phase == .active else { return }
         phase = .paused
-        // "Trip resumed." says what to do next instead
-        resumedStart = nil
+        // "Trip resumed." says what to do next instead, once a fix has placed the user to say it from
+        if tracker?.placement != .awaitingFix { resumedStart = nil }
         publish(at: now())
         await submit(confirmation("Trip paused."))
     }
@@ -316,6 +316,8 @@ actor TripManager: TripStateProviding {
         }
         phase = .active
         publish(at: now())
+        // "Trip resumed." stands for a start announcement not said, and the way on comes with the placing fix
+        if resumedStart != nil { resumedStart = tracker?.placement == .awaitingFix ? .awaitingPlacement : nil }
         let guidance = resumeAnnouncement()
         await submit(confirmation("Trip resumed."))
         if self.generation == generation, phase == .active, unavoidedReportOnResume {
@@ -901,7 +903,7 @@ actor TripManager: TripStateProviding {
     private func announceStart(generation: Int) async {
         do { try await sleep(Self.startDelay) } catch { return }
         guard self.generation == generation, phase == .active, let route, let destination else { return }
-        guard resumedStart == nil else {
+        guard tracker?.placement == nil else {
             await announceResumedStart(on: route, to: destination)
             return
         }
@@ -912,7 +914,7 @@ actor TripManager: TripStateProviding {
     }
 
     /// "Resuming directions to Library, about 160 metres.", then the way on from where the first usable fix placed
-    /// the user. Before that fix, without the distance, and the way on comes with it.
+    /// the user, unless already given. Before that fix, without the distance, and the way on comes with it.
     private func announceResumedStart(on route: NavigationRoute, to destination: Destination) async {
         let placement = tracker?.placement
         let remaining = placement == .onRoute ? progress.map { ", " + spoken($0.distanceRemaining) } : nil
@@ -920,7 +922,8 @@ actor TripManager: TripStateProviding {
             + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "")
         if placement == .awaitingFix {
             resumedStart = .awaitingPlacement
-        } else {
+        } else if resumedStart != nil {
+            // nil once the placing fix or "Trip resumed." gave the way on
             resumedStart = nil
             text += resumedGuidance()
         }
@@ -1125,7 +1128,8 @@ actor TripManager: TripStateProviding {
 
     /// What to do next, spoken after "Trip resumed.".
     private func resumeAnnouncement() -> AnnouncementEvent? {
-        guard let progress else { return nil }
+        // measured from the saved step, not where the user is
+        guard let progress, tracker?.placement != .awaitingFix else { return nil }
         if progress.isOffRoute {
             return maneuver(offRouteSpeech, .high, haptic: .attention, expiresIn: 10, key: nil)
         }

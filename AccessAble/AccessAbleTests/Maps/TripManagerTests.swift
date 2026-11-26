@@ -2265,6 +2265,26 @@ struct TripManagerResumeTests {
         #expect(await harness.states.current?.isOffRoute == true)
     }
 
+    /// Before any fix, and so before the start announcement, or while the start delay passes.
+    @Test(arguments: [false, true])
+    func pausingBeforeTheFirstFixStillPlacesTheUser(_ delayPassesWhilePaused: Bool) async throws {
+        let harness = try Harness(route: try longStraightRoute())
+        await harness.resume(atStep: 1)
+        await harness.waitForSleepers(2)
+        await harness.manager.pauseTrip()
+        if delayPassesWhilePaused { harness.clock.advance(by: 1) }
+        await harness.manager.resumeTrip()
+
+        let placed = await harness.fix(harness.point(300))
+        #expect(abs(try #require(placed.distanceRemaining) - 160) < 1)
+        for along in TripWalk.distances(from: 301.4, to: 330) { await harness.fix(harness.point(along)) }
+        let texts = await harness.engine.texts
+        #expect(texts.contains("In about 100 metres, turn right onto Ferst Drive."))
+        #expect(!texts.contains { $0.hasPrefix("Starting directions") || $0.contains("400") || $0.contains("460") })
+        #expect(!texts.contains(where: isOffRouteOrWrongWay))
+        #expect(await harness.router.requests.isEmpty)
+    }
+
     /// The fix 100 m out is 3 m from the way back too, which is within its accuracy.
     @Test(arguments: [(step: 1, remaining: 253.0, next: ManeuverKind.uTurn), (step: 2, remaining: 50, next: .arrive)])
     func onARouteThatComesBackNearItselfTheSavedStepPicksTheLeg(
