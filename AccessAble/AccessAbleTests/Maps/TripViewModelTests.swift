@@ -103,7 +103,9 @@ private final class ControlledTripProvider: TripStateProviding, Sendable {
 
     func tripStates() -> AsyncStream<TripState> { states.stream() }
     func tripRoutes() -> AsyncStream<NavigationRoute?> { routes.stream() }
-    func startTrip(route: NavigationRoute, destination: Destination) async { started.withLock { $0.append(route) } }
+    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async {
+        started.withLock { $0.append(route) }
+    }
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}

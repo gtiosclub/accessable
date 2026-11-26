@@ -515,6 +515,11 @@ private struct Harness {
         await manager.startTrip(route: route, destination: destination)
     }
 
+    /// Starts the trip as one resumed after the app closed, with `step` next when it was saved.
+    func resume(atStep step: Int) async {
+        await manager.startTrip(route: route, destination: library, resumingAtStep: step)
+    }
+
     /// Feeds one fix on the current trip's stream and waits until it is handled, then moves the clock on. A
     /// quarter-second offset keeps fix times apart from the clock times other state changes use. A `course` comes
     /// with a walking speed, so the fix gives the heading, unless a `speed` is given. A `timestamp` stands for a fix
@@ -2145,6 +2150,120 @@ struct TripManagerSavedTripTests {
 
         #expect(store.load() == nil)
         #expect(!FileManager.default.fileExists(atPath: store.url.path()))
+    }
+}
+
+// MARK: Resuming a trip
+
+/// North 400 m, right onto Ferst Drive, then 60 m east to the destination, in 20 m segments up to the corner.
+private func longStraightRoute() throws -> NavigationRoute {
+    let start = GeoCoordinate(latitude: 33.775, longitude: -84.399)
+    let north = (0...20).map { TripWalk.destination(from: start, bearing: 0, distance: Double($0) * 20) }
+    let end = TripWalk.destination(from: north[20], bearing: 90, distance: 60)
+    func step(_ kind: ManeuverKind, _ index: Int, _ text: String) -> RouteStep {
+        RouteStep(kind: kind, coordinateIndex: index, instruction: text, spokenInstruction: text)
+    }
+    return try NavigationRoute(coordinates: north + [end], steps: [
+        step(.depart, 0, "Walk north."),
+        step(.turnRight, 20, "Turn right onto Ferst Drive."),
+        step(.arrive, 21, "Your destination is on the left."),
+    ], estimatedDuration: 330)
+}
+
+/// North 200 m, then back south 150 m on a path 3 m east of the way out, so a fix on one is as near the other.
+private func outAndBackRoute() throws -> NavigationRoute {
+    let start = GeoCoordinate(latitude: 33.775, longitude: -84.399)
+    let top = TripWalk.destination(from: start, bearing: 0, distance: 200)
+    let across = TripWalk.destination(from: top, bearing: 90, distance: 3)
+    let end = TripWalk.destination(from: across, bearing: 180, distance: 150)
+    func step(_ kind: ManeuverKind, _ index: Int, _ text: String) -> RouteStep {
+        RouteStep(kind: kind, coordinateIndex: index, instruction: text, spokenInstruction: text)
+    }
+    return try NavigationRoute(coordinates: [start, top, across, end], steps: [
+        step(.depart, 0, "Walk north."),
+        step(.uTurn, 1, "Make a U-turn."),
+        step(.arrive, 3, "Your destination is on the left."),
+    ], estimatedDuration: 260)
+}
+
+private func isOffRouteOrWrongWay(_ text: String) -> Bool {
+    text.contains("walking away from the route") || text.contains("off the route")
+}
+
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerResumeTests {
+    @Test
+    func theFirstFixPlacesAUserWalkingOnMidRoute() async throws {
+        let harness = try Harness(route: try longStraightRoute())
+        await harness.resume(atStep: 1)
+        await harness.waitForSleepers(2)
+
+        let placed = await harness.fix(harness.point(300))
+        #expect(abs(try #require(placed.distanceRemaining) - 160) < 1)
+        #expect(abs(try #require(placed.distanceToNextManeuver) - 100) < 1)
+        #expect(placed.nextManeuver?.instruction == "Turn right onto Ferst Drive.")
+        let start = await harness.engine.waitForCount(1)
+        #expect(start[0].text
+            == "Resuming directions to Library, about 160 metres. In about 100 metres, turn right onto Ferst Drive.")
+
+        await harness.walk(from: 300, to: 420)
+        let texts = await harness.engine.texts
+        #expect(!texts.contains(where: isOffRouteOrWrongWay))
+        #expect(texts.contains("In about 40 metres, turn right onto Ferst Drive."))
+        #expect(texts.contains("Turn right onto Ferst Drive."))
+        #expect(await harness.router.requests.isEmpty)
+        let state = try #require(await harness.states.current)
+        #expect(state.nextManeuver?.kind == .arrive)
+        #expect(abs(try #require(state.distanceRemaining) - 41) < 1)
+    }
+
+    @Test
+    func aUserStandingStillMidRouteStaysPlaced() async throws {
+        let harness = try Harness(route: try longStraightRoute())
+        await harness.resume(atStep: 1)
+        await harness.waitForSleepers(2)
+
+        for _ in 0..<15 { await harness.fix(harness.point(300)) }
+        let state = try #require(await harness.states.current)
+        #expect(abs(try #require(state.distanceRemaining) - 160) < 1)
+        #expect(abs(try #require(state.distanceToNextManeuver) - 100) < 1)
+        #expect(state.isOffRoute == false)
+        let texts = await harness.engine.texts
+        #expect(texts.first?.hasPrefix("Resuming directions to Library, about 160 metres.") == true)
+        #expect(!texts.contains(where: isOffRouteOrWrongWay))
+        #expect(await harness.router.requests.isEmpty)
+    }
+
+    @Test
+    func aUserFarFromTheRouteIsFoundOffRouteAndRerouted() async throws {
+        let harness = try Harness(route: try longStraightRoute())
+        await harness.resume(atStep: 1)
+        await harness.waitForSleepers(2)
+
+        await harness.fix(harness.point(300, lateral: 80))
+        #expect(await harness.engine.waitForCount(1).first?.text == "Resuming directions to Library.")
+        for along in TripWalk.distances(from: 300, to: 330) {
+            await harness.fix(harness.point(along, lateral: 80))
+        }
+        await harness.router.waitForRequests(1)
+        let texts = await harness.engine.texts
+        #expect(texts.contains("You're off the route. Finding a new route."))
+        #expect(!texts.contains { $0.contains("walking away from the route") })
+        #expect(await harness.states.current?.isOffRoute == true)
+    }
+
+    /// The fix 100 m out is 3 m from the way back too, which is within its accuracy.
+    @Test(arguments: [(step: 1, remaining: 253.0, next: ManeuverKind.uTurn), (step: 2, remaining: 50, next: .arrive)])
+    func onARouteThatComesBackNearItselfTheSavedStepPicksTheLeg(
+        _ resumed: (step: Int, remaining: Double, next: ManeuverKind)
+    ) async throws {
+        let harness = try Harness(route: try outAndBackRoute())
+        await harness.resume(atStep: resumed.step)
+
+        let placed = await harness.fix(harness.point(100))
+        #expect(abs(try #require(placed.distanceRemaining) - resumed.remaining) < 1)
+        #expect(placed.nextManeuver?.kind == resumed.next)
+        #expect(placed.isOffRoute == false)
     }
 }
 

@@ -131,6 +131,8 @@ struct PlannedRoute: Hashable, Sendable {
     var route: NavigationRoute
     /// When it was requested, so the trip can tell if it is too old to start on.
     var requestedAt: Date
+    /// For a saved trip being resumed, the step of `route` that was next; nil for a trip from the route's start.
+    var resumingAtStep: Int? = nil
 }
 
 struct RouteOptions: Equatable, Sendable {

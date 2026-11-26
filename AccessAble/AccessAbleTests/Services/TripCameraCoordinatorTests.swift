@@ -14,7 +14,7 @@ private struct ScriptedTrip: TripStateProviding {
     }
 
     func tripRoutes() -> AsyncStream<NavigationRoute?> { AsyncStream { $0.finish() } }
-    func startTrip(route: NavigationRoute, destination: Destination) async {}
+    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async {}
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}

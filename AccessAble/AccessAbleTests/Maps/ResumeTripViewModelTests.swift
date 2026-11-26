@@ -5,8 +5,14 @@ import Testing
 /// A trip that stays in planning and keeps what each `startTrip` was given.
 private final class StartRecordingTrip: TripStateProviding, Sendable {
     /// One element per `startTrip`, so a test can wait for it without a clock.
-    let starts: AsyncStream<(route: NavigationRoute, destination: Destination)>
-    private let started: AsyncStream<(route: NavigationRoute, destination: Destination)>.Continuation
+    let starts: AsyncStream<Start>
+    private let started: AsyncStream<Start>.Continuation
+
+    struct Start: Sendable {
+        var route: NavigationRoute
+        var destination: Destination
+        var resumingAtStep: Int?
+    }
 
     init() {
         (starts, started) = AsyncStream.makeStream()
@@ -21,8 +27,8 @@ private final class StartRecordingTrip: TripStateProviding, Sendable {
 
     func tripRoutes() -> AsyncStream<NavigationRoute?> { AsyncStream { $0.finish() } }
 
-    func startTrip(route: NavigationRoute, destination: Destination) async {
-        started.yield((route, destination))
+    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async {
+        started.yield(Start(route: route, destination: destination, resumingAtStep: resumingAtStep))
     }
 
     func pauseTrip() async {}
@@ -151,5 +157,6 @@ struct ResumeTripViewModelTests {
 
         #expect(start.route == saved.route)
         #expect(start.destination == saved.destination)
+        #expect(start.resumingAtStep == saved.passedStepCount)
     }
 }
