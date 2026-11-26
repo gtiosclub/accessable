@@ -216,11 +216,32 @@ struct FallbackRoutingServiceTests {
         await #expect(throws: RoutingError.serverUnavailable) { try await request(service).value }
     }
 
+    @Test(arguments: [
+        (RoutingError.noRouteFound, RoutingError.exclusionsRejected, RoutingError.noRouteFound),
+        (.exclusionsRejected, .serverUnavailable, .exclusionsRejected),
+        (.serverUnavailable, .usageLimitReached, .serverUnavailable),
+        (.usageLimitReached, .notAuthorized, .usageLimitReached),
+        (.notAuthorized, .usageLimitReached, .usageLimitReached),
+        (.notAuthorized, .invalidResponse, .notAuthorized),
+        (.usageLimitReached, .invalidResponse, .usageLimitReached),
+    ])
+    func keepsTheMostInformativeErrorWhenBothFail(
+        _ valhalla: RoutingError, _ apple: RoutingError, _ expected: RoutingError
+    ) async {
+        let service = FallbackRoutingService(
+            primary: FakeRouting(.fails(valhalla)), fallback: FakeRouting(.fails(apple)), clock: ManualClock()
+        )
+
+        await #expect(throws: expected) { try await request(service).value }
+    }
+
     // MARK: - Exclusions, which Apple Maps can't honour
 
     @Test(arguments: [
         (RoutingError.serverUnavailable, RoutingError.exclusionsRejected),
         (.invalidResponse, .exclusionsRejected),
+        (.notAuthorized, .exclusionsRejected),
+        (.usageLimitReached, .exclusionsRejected),
         (.exclusionsRejected, .exclusionsRejected),
         (.noRouteFound, .noRouteFound),
     ])
@@ -295,6 +316,60 @@ struct FallbackRoutingServiceTests {
         try await timeOut(primary, on: clock)
 
         await #expect(throws: RoutingError.serverUnavailable) { try await routing.value }
+    }
+
+    @Test(arguments: [RoutingError.notAuthorized, .usageLimitReached])
+    func aRefusalIsRememberedLikeATimeout(_ error: RoutingError) async throws {
+        let primary = FakeRouting(byCall: { $0 == 0 ? .fails(error) : .returns(Self.valhallaRoute) })
+        let fallback = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+        let service = FallbackRoutingService(primary: primary, fallback: fallback, clock: clock)
+
+        #expect(try await request(service).value == Self.backupRoute)
+        #expect(try await request(service).value == Self.backupRoute)
+        await #expect(throws: RoutingError.exclusionsRejected) {
+            try await request(service, options: Self.exclusions).value
+        }
+        #expect(await primary.calls == 1)
+
+        clock.advance(by: FallbackRoutingService.timeoutMemory)
+        #expect(try await request(service).value == Self.valhallaRoute)
+        // Valhalla answered, so it is asked again at once
+        #expect(try await request(service).value == Self.valhallaRoute)
+        #expect(await primary.calls == 3)
+    }
+
+    @Test(arguments: [RoutingError.notAuthorized, .usageLimitReached])
+    func aRememberedRefusalIsKeptWhenAppleFailsToo(_ error: RoutingError) async throws {
+        let primary = FakeRouting(.fails(error))
+        let fallback = FakeRouting(.fails(URLError(.notConnectedToInternet)))
+        let service = FallbackRoutingService(primary: primary, fallback: fallback, clock: ManualClock())
+
+        await #expect(throws: error) { try await request(service).value }
+        await #expect(throws: error) { try await request(service).value }
+        #expect(await primary.calls == 1)
+    }
+
+    @Test(arguments: [RoutingError.notAuthorized, .usageLimitReached])
+    func aRefusedKeyCostsOneValhallaRequestAcrossReportAwareTries(_ error: RoutingError) async throws {
+        let valhalla = FakeRouting(.fails(error))
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let spacingClock = ManualClock()
+        let service = ReportAwareRoutingService(
+            base: FallbackRoutingService(primary: valhalla, fallback: apple, clock: ManualClock()),
+            reports: FakeReports([Self.report]), clock: spacingClock
+        )
+
+        let routing = request(service)
+        await valhalla.waitForRequests(1)
+        try await spacingClock.waitForSleepers(1)
+        spacingClock.advance(by: ReportAwareRoutingService.retrySpacing)
+        let route = try await routing.value
+
+        #expect(route.source == .appleMaps)
+        #expect(route.unavoidedReports.map(\.id) == [Self.report.id])
+        #expect(await valhalla.calls == 1)
+        #expect(await apple.receivedOptions == [RouteOptions()])
     }
 
     @Test

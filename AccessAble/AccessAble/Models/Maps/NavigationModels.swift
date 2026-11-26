@@ -146,6 +146,10 @@ struct RouteOptions: Equatable, Sendable {
 enum RoutingError: Error, Equatable, Sendable {
     case noRouteFound
     case serverUnavailable
+    /// HTTP 429 or 402: the routing service is out of credits or throttling us.
+    case usageLimitReached
+    /// HTTP 401/403 from Stadia: the app's API key is missing, revoked, or rotated. Not fixable by the user.
+    case notAuthorized
     /// Valhalla refused the exclusions themselves: too many points, or too long a polygon perimeter.
     case exclusionsRejected
     /// The request could not be built or was rejected, or the response could not be decoded or failed

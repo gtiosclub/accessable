@@ -12,18 +12,19 @@ private let log = Logger(subsystem: "AccessAble", category: "Routing")
 /// `.exclusionsRejected` instead, for `ReportAwareRoutingService` to try again with fewer exclusions. Its last try has
 /// none, so a route it gets from Apple Maps still lists the reports it passes.
 ///
-/// After a timeout Valhalla is skipped for `timeoutMemory`, so a dead server doesn't cost the wait again at each of
-/// those tries and each reroute: requests with exclusions are rejected at once, and the rest go to Apple Maps.
+/// After a timeout, a rejected key or an exhausted usage limit, Valhalla is skipped for `timeoutMemory`, so a dead or
+/// refusing server doesn't cost the wait or the request again at each of those tries and each reroute: requests with
+/// exclusions are rejected at once, and the rest go to Apple Maps.
 struct FallbackRoutingService: RoutingService {
     static let defaultTimeout: Duration = .seconds(6)
-    /// After a timeout, how long requests skip Valhalla, so each try and each reroute doesn't wait it out again.
+    /// After a timeout or a refusal, how long requests skip Valhalla, so each try and each reroute doesn't repeat it.
     static let timeoutMemory: Duration = .seconds(120)
 
     private let primary: any RoutingService
     private let fallback: any RoutingService
     private let timeout: Duration
     private let clock: any Clock<Duration>
-    /// The primary's last timeout, cleared when it answers. Shared by copies.
+    /// The primary's last timeout or refusal, cleared when it answers. Shared by copies.
     private let lastTimeout = TimeoutMemory()
 
     init(
@@ -42,10 +43,11 @@ struct FallbackRoutingService: RoutingService {
         from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
     ) async throws -> NavigationRoute {
         let excludes = !options.excludeLocations.isEmpty || !options.excludePolygons.isEmpty
-        if let elapsed = lastTimeout.elapsed, elapsed < Self.timeoutMemory {
-            log.notice("Valhalla timed out \(String(describing: elapsed), privacy: .public) ago, skipping it")
+        if let outage = lastTimeout.outage, outage.elapsed < Self.timeoutMemory {
+            let what = outage.refusal.map { String(describing: $0) } ?? "timed out"
+            log.notice("Valhalla \(what, privacy: .public) \(String(describing: outage.elapsed), privacy: .public) ago, skipping it")
             guard !excludes else { throw RoutingError.exclusionsRejected }
-            return try await fallbackRoute(from: origin, to: destination, options: options, after: nil)
+            return try await fallbackRoute(from: origin, to: destination, options: options, after: outage.refusal)
         }
 
         let primaryError: RoutingError?
@@ -57,12 +59,15 @@ struct FallbackRoutingService: RoutingService {
             throw CancellationError()
         } catch is PrimaryTimedOut {
             log.error("Valhalla took longer than \(String(describing: timeout), privacy: .public)")
-            lastTimeout.record(clock.stopwatch())
+            lastTimeout.record(clock.stopwatch(), refusal: nil)
             guard !excludes else { throw RoutingError.exclusionsRejected }
             primaryError = nil
         } catch {
             log.error("Valhalla failed: \(String(describing: error), privacy: .public)")
             let routingError = error as? RoutingError ?? .invalidResponse
+            if routingError == .notAuthorized || routingError == .usageLimitReached {
+                lastTimeout.record(clock.stopwatch(), refusal: routingError)
+            }
             if excludes {
                 // no route at all is the answer; anything else may be the exclusions' fault, so fewer can be tried
                 throw routingError == .noRouteFound ? routingError : RoutingError.exclusionsRejected
@@ -115,28 +120,34 @@ struct FallbackRoutingService: RoutingService {
     }
 
     /// One error for both failures: no route from either beats rejected exclusions, which beat "unavailable", which
-    /// beats a bad response.
+    /// beat a usage limit, which beats a rejected key, which beats a bad response.
     private static func combined(_ primary: RoutingError?, _ fallback: RoutingError) -> RoutingError {
         let errors = [primary, fallback].compactMap { $0 }
         if errors.contains(.noRouteFound) { return .noRouteFound }
         if errors.contains(.exclusionsRejected) { return .exclusionsRejected }
         if errors.contains(.serverUnavailable) { return .serverUnavailable }
+        if errors.contains(.usageLimitReached) { return .usageLimitReached }
+        if errors.contains(.notAuthorized) { return .notAuthorized }
         return .invalidResponse
     }
 }
 
 private struct PrimaryTimedOut: Error {}
 
-/// When the primary last timed out, as time elapsed since.
+/// When the primary last timed out or refused us, as time elapsed since, and the refusal (nil for a timeout).
 private final class TimeoutMemory: Sendable {
-    private let since = Mutex<(@Sendable () -> Duration)?>(nil)
+    private let last = Mutex<(since: @Sendable () -> Duration, refusal: RoutingError?)?>(nil)
 
-    /// Nil until the first timeout.
-    var elapsed: Duration? { since.withLock { $0?() } }
+    /// Nil until the first timeout or refusal.
+    var outage: (elapsed: Duration, refusal: RoutingError?)? {
+        last.withLock { $0.map { ($0.since(), $0.refusal) } }
+    }
 
-    func record(_ elapsed: @escaping @Sendable () -> Duration) { since.withLock { $0 = elapsed } }
+    func record(_ elapsed: @escaping @Sendable () -> Duration, refusal: RoutingError?) {
+        last.withLock { $0 = (elapsed, refusal) }
+    }
 
-    func clear() { since.withLock { $0 = nil } }
+    func clear() { last.withLock { $0 = nil } }
 }
 
 private extension Clock where Duration == Swift.Duration {
