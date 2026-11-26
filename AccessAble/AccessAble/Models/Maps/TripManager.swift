@@ -11,6 +11,8 @@ private let log = Logger(subsystem: "AccessAble", category: "TripManager")
 actor TripManager: TripStateProviding {
     private nonisolated let states = Broadcaster<TripState>(replaysLatest: true)
     private nonisolated let routes = Broadcaster<NavigationRoute?>(replaysLatest: true)
+    // not replayed: a question is for the trip it was asked on
+    private nonisolated let questions = Broadcaster<ReportQuestion>()
 
     private let location: any LocationProvider
     private let routing: any RoutingService
@@ -83,6 +85,15 @@ actor TripManager: TripStateProviding {
     private var reportSubscription = 0
     /// A report reroute kept the route, or failed, while paused: said on resuming, since the route still passes it.
     private var unavoidedReportOnResume = false
+    /// Reports put to the user this trip, or walked too far past to ask; kept across reroutes.
+    private var promptedReportIDs: Set<String> = []
+    /// The question sent and not yet ended by the screen, and when it was sent.
+    private var openQuestion: (reportID: String, askedAt: Date)?
+    /// The nearest each report not yet asked about has been to a precise fix this trip, in metres.
+    private var closestApproaches: [String: Double] = [:]
+    /// When the last question was answered with a vote, and when the screen last didn't ask about each report.
+    private var lastVoteAt: Date?
+    private var notAskedAt: [String: Date] = [:]
 
     // the public routing server is shared and slow to recover; this spaces requests and bounds a bad walk
     private static let rerouteInterval: TimeInterval = 30
@@ -98,6 +109,20 @@ actor TripManager: TripStateProviding {
     private static let reportRetryDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(60)]
     // metres beyond the route's reach that reports are listened for
     private static let reportSearchMargin: Double = 250
+    // metres; a report passed nearer than this is one the user could see, and the distance must then grow by the
+    // margin, more than GPS jitter, before they have passed it
+    private static let questionPassRadius: Double = 10
+    private static let questionPassMargin: Double = 5
+    // metres; a question nearer a turn or crossing than this would talk over its cue, so it waits, unless the user is
+    // this far past the report by then and it is no longer "here"
+    private static let questionManeuverClearance: Double = 30
+    private static let questionGiveUpDistance: Double = 60
+    // seconds from a vote to the next question: the rules allow one vote a minute
+    private static let questionSpacing: TimeInterval = 60
+    // seconds before a question the screen didn't ask is sent again, so it isn't sent on every fix
+    private static let questionRetryDelay: TimeInterval = 10
+    // seconds; a question the screen hasn't ended by then, such as one sent with the screen closed, counts as asked
+    private static let questionReplyLimit: TimeInterval = 60
     private static let unavoidedReportSpeech =
         "Couldn't find a way around the reported obstacle. Keep following the current route carefully."
     // a new route from a rough fix would start on the wrong side of the street, and a direction from one can point
@@ -165,6 +190,10 @@ actor TripManager: TripStateProviding {
         routes.stream()
     }
 
+    nonisolated func reportQuestions() -> AsyncStream<ReportQuestion> {
+        questions.stream()
+    }
+
     func startTrip(route: NavigationRoute, destination: Destination) async {
         generation += 1
         let generation = generation
@@ -201,6 +230,11 @@ actor TripManager: TripStateProviding {
         actedOnReportIDs = []
         reportRerouteCount = 0
         unavoidedReportOnResume = false
+        promptedReportIDs = []
+        closestApproaches = [:]
+        openQuestion = nil
+        lastVoteAt = nil
+        notAskedAt = [:]
         routes.send(route)
         publish(at: now())
         recorder?.tripStarted(at: now())
@@ -280,6 +314,11 @@ actor TripManager: TripStateProviding {
         nearbyReports = []
         actedOnReportIDs = []
         unavoidedReportOnResume = false
+        promptedReportIDs = []
+        closestApproaches = [:]
+        openQuestion = nil
+        lastVoteAt = nil
+        notAskedAt = [:]
         routes.send(nil)
         states.send(TripState(phase: .planning, updatedAt: now()))
         await setTripTracking(false)
@@ -372,6 +411,8 @@ actor TripManager: TripStateProviding {
                                  generation: generation)
             }
         }
+        // after this fix's cues, so a question doesn't go ahead of them
+        askAboutPassedReports(generation: generation)
         await considerReports(generation: generation)
     }
 
@@ -585,6 +626,66 @@ actor TripManager: TripStateProviding {
         guard let first = warned.first else { return }
         actedOnReportIDs.formUnion(warned.map(\.id))
         await submit(maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(first.id)"))
+    }
+
+    /// The screen has ended the question about `reportID`. One it didn't put to the user may be asked again after
+    /// `questionRetryDelay`; after a vote, the next question waits `questionSpacing`.
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {
+        endQuestion(reportID, outcome: outcome)
+    }
+
+    private func endQuestion(_ reportID: String, outcome: ReportQuestionOutcome) {
+        // a vote still counts once the question has ended, as a button pressed as it closed does
+        if outcome == .voted {
+            promptedReportIDs.insert(reportID)
+            lastVoteAt = now()
+        }
+        guard openQuestion?.reportID == reportID else { return }
+        openQuestion = nil
+        switch outcome {
+        case .notAsked:
+            notAskedAt[reportID] = now()
+        case .unanswered:
+            promptedReportIDs.insert(reportID)
+        case .voted:
+            break
+        }
+    }
+
+    /// Asks about a report the user has just walked past: their nearest approach to it was within
+    /// `questionPassRadius`, and they are now `questionPassMargin` further away. Only from a recent precise fix, while
+    /// following the route, and not near a turn or crossing; one question at a time, `questionSpacing` after the
+    /// last vote, and once a report a trip.
+    private func askAboutPassedReports(generation: Int) {
+        guard self.generation == generation, phase == .active, !needsReroute, rerouteTask == nil,
+              let route, let progress, let fix = recentPreciseFix else { return }
+        let time = now()
+        let walked = route.totalDistance - progress.distanceRemaining
+        let nearManeuver = progress.distanceToNextStep < Self.questionManeuverClearance
+            || routeCrossings.contains { (0..<Self.questionManeuverClearance).contains($0.distanceAlongRoute - walked) }
+        if let open = openQuestion, time.timeIntervalSince(open.askedAt) >= Self.questionReplyLimit {
+            log.notice("A report question wasn't ended by the screen; counting it as asked")
+            endQuestion(open.reportID, outcome: .unanswered)
+        }
+        let spaced = lastVoteAt.map { time.timeIntervalSince($0) >= Self.questionSpacing } ?? true
+        var canAsk = openQuestion == nil && spaced && !nearManeuver
+        for report in nearbyReports
+        where report.expiresAt > time && !promptedReportIDs.contains(report.id) && openQuestion?.reportID != report.id
+            && notAskedAt[report.id].map({ time.timeIntervalSince($0) >= Self.questionRetryDelay }) ?? true {
+            let distance = report.distance(from: fix)
+            let closest = min(closestApproaches[report.id] ?? .infinity, distance)
+            closestApproaches[report.id] = closest
+            guard closest < Self.questionPassRadius, distance >= closest + Self.questionPassMargin else { continue }
+            if distance > Self.questionGiveUpDistance {
+                promptedReportIDs.insert(report.id)
+                closestApproaches[report.id] = nil
+                continue
+            }
+            guard canAsk else { continue }
+            canAsk = false
+            openQuestion = (report.id, time)
+            questions.send(ReportQuestion(report: report, askedAt: time))
+        }
     }
 
     // MARK: Rerouting

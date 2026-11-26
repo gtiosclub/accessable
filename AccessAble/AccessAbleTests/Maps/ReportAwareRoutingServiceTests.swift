@@ -41,11 +41,7 @@ private actor ReportRoutingServiceFake: ReportService {
         AsyncStream { $0.finish() }
     }
 
-    func confirm(
-        _ reportID: String,
-        isStillPresent: Bool,
-        userID: String
-    ) async throws {}
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool { false }
 }
 
 private actor RoutingServiceFake: RoutingService {
@@ -155,6 +151,28 @@ struct ReportAwareRoutingServiceTests {
         #expect(options[0].excludeLocations == [report.coordinate])
         #expect(options[0].excludePolygons.isEmpty)
         #expect(actual.unavoidedReports.isEmpty)
+    }
+
+    /// REPORT-6's objective: a report voted gone ends now, and the next route no longer goes around it.
+    @Test
+    func aReportVotedGoneNoLongerShapesTheRoute() async throws {
+        let reports = PlaceholderReportService()
+        var denied = report(at: corner)
+        // old enough for a "no", with one already
+        denied.createdAt = .now.addingTimeInterval(-3600)
+        denied.negativesSinceConfirm = 1
+        try await reports.submit(denied)
+        let base = RoutingServiceFake([.success(try route(via: otherCorner)), .success(try route(via: corner))])
+        let clock = ManualClock()
+        let service = ReportAwareRoutingService(base: base, reports: reports, clock: clock)
+        _ = try await route(with: service, base: base, clock: clock)
+
+        try await reports.confirm(denied.id, isStillPresent: false)
+        let after = try await route(with: service, base: base, clock: clock)
+
+        let options = await base.receivedOptions
+        #expect(options.map(\.excludeLocations) == [[corner], []])
+        #expect(after.unavoidedReports.isEmpty)
     }
 
     @Test

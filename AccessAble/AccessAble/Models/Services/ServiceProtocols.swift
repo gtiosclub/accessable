@@ -24,10 +24,29 @@ protocol AnnouncementSink: Sendable {
 protocol AnnouncementEngineProtocol: AnnouncementSink {
     /// Events as they are actually delivered (after filtering/dedup). UI uses this for the visual banner.
     func deliveredEvents() -> AsyncStream<AnnouncementEvent>
+    /// Delivered events once they have been said, or cut off, so a listener can wait for the end of speech. An event
+    /// dropped before delivery never comes.
+    func finishedEvents() -> AsyncStream<FinishedAnnouncement>
     func repeatLast() async
     func pause() async
     func resume() async
     func updateProfile(_ profile: GuidanceProfile) async
+}
+
+/// An announcement whose speech has ended.
+struct FinishedAnnouncement: Equatable, Sendable {
+    let id: UUID
+    /// Cut off, by a more urgent announcement or a pause, rather than said to the end.
+    let wasInterrupted: Bool
+    /// Nothing else was waiting to be said.
+    let isIdle: Bool
+}
+
+extension AnnouncementEngineProtocol {
+    /// Ends at once, for engines that don't speak, so a listener goes on without waiting.
+    func finishedEvents() -> AsyncStream<FinishedAnnouncement> {
+        AsyncStream { $0.finish() }
+    }
 }
 
 /// Renders a haptic from the shared vocabulary (3.2).
@@ -110,6 +129,17 @@ protocol TripStateProviding: Sendable {
     func endTrip() async
     /// A new route from where the user is now, for a running trip, when they ask for one.
     func reroute() async
+    /// Someone else's report the user has just walked past, to ask whether it is still there; once a report a trip,
+    /// and only as it happens: a new subscriber hears none from before.
+    func reportQuestions() -> AsyncStream<ReportQuestion>
+    /// The screen is done with the question about `reportID`. The next question waits for this.
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async
+}
+
+extension TripStateProviding {
+    func reportQuestions() -> AsyncStream<ReportQuestion> {
+        AsyncStream { $0.finish() }
+    }
 }
 
 /// The trip's Live Activity on the lock screen and in the Dynamic Island; one at a time.
@@ -145,6 +175,13 @@ protocol LocationContextProviding: Sendable {
 protocol ReportService: Sendable {
     func submit(_ report: Report) async throws
     func reports(near coordinate: GeoCoordinate, radius: Double) async throws -> [Report]
+    /// The signed-in user's one vote on someone else's report: a "yes" moves its expiry to one lifetime from now,
+    /// never earlier, and the second "no" since the last "yes" ends it now. Returns whether the expiry moved later.
+    /// - Throws: `ReportServiceError`: `.notSignedIn`; `.rateLimited` within a minute of their last vote;
+    ///   `.permissionDenied` for their own report, a second vote, an expired report, or a "no" on a report under
+    ///   ten minutes old; `.unavailable` when the server can't be reached in time.
+    @discardableResult
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool
     func reportChanges(near coordinate: GeoCoordinate, radius: Double) -> AsyncStream<[Report]>
 }
 

@@ -143,6 +143,87 @@ struct FirestoreReportServiceTests {
         #expect(FirestoreReportService.decode(id: "r1", data: data)?.confirmations == 0)
     }
 
+    /// Reports from before REPORT-6 have no denial counts.
+    @Test
+    func missingDenialsAreNone() throws {
+        var data = document()
+        data["negativeConfirmations"] = nil
+        data["negativesSinceConfirm"] = nil
+        let decoded = try #require(FirestoreReportService.decode(id: "r1", data: data))
+        #expect(decoded.negativeConfirmations == 0)
+        #expect(decoded.negativesSinceConfirm == 0)
+    }
+
+    @Test
+    func decodesTheDenials() throws {
+        var data = document()
+        data["negativeConfirmations"] = 3
+        data["negativesSinceConfirm"] = 1
+        let decoded = try #require(FirestoreReportService.decode(id: "r1", data: data))
+        #expect(decoded.negativeConfirmations == 3)
+        #expect(decoded.negativesSinceConfirm == 1)
+    }
+
+    // MARK: Votes
+
+    @Test
+    func aYesCountsAndRenewsTheExpiryFromNow() throws {
+        let now = created.addingTimeInterval(1800)
+        let change = FirestoreReportService.vote(on: report(), isStillPresent: true, now: now)
+        #expect(change.extends)
+        #expect(change.fields["confirmations"] as? Int == 1)
+        #expect(change.fields["negativesSinceConfirm"] as? Int == 0)
+        let expiry = try #require(change.fields["expiresAt"] as? Timestamp)
+        #expect(expiry.dateValue() == now.addingTimeInterval(ReportKind.construction.lifetime))
+    }
+
+    /// The rules refuse a vote that shortens a report.
+    @Test
+    func aYesNeverShortensTheExpiry() {
+        let lasting = report(expiresIn: 20 * 24 * 60 * 60)
+        let change = FirestoreReportService.vote(on: lasting, isStillPresent: true, now: created)
+        #expect(!change.extends)
+        #expect(change.fields["expiresAt"] == nil)
+        #expect(change.fields["confirmations"] as? Int == 1)
+    }
+
+    @Test
+    func aFirstNoCountsAndKeepsTheExpiry() {
+        let change = FirestoreReportService.vote(on: report(), isStillPresent: false, now: created)
+        #expect(!change.extends)
+        #expect(change.fields["negativeConfirmations"] as? Int == 1)
+        #expect(change.fields["negativesSinceConfirm"] as? Int == 1)
+        #expect(change.fields["expiresAt"] == nil)
+    }
+
+    @Test
+    func theSecondNoSinceAYesEndsTheReportAtTheServersTime() {
+        var denied = report()
+        denied.negativeConfirmations = 3
+        denied.negativesSinceConfirm = 1
+        let change = FirestoreReportService.vote(on: denied, isStillPresent: false, now: created)
+        #expect(change.fields["negativeConfirmations"] as? Int == 4)
+        #expect(change.fields["negativesSinceConfirm"] as? Int == 2)
+        #expect(change.fields["expiresAt"] is FieldValue)
+    }
+
+    @Test
+    func votesTheRulesRefuseAreRefusedFirst() {
+        let live = report()
+        #expect(FirestoreReportService.canVote(on: live, as: "other", isStillPresent: true, now: created))
+        #expect(!FirestoreReportService.canVote(on: live, as: "user", isStillPresent: true, now: created))
+        #expect(!FirestoreReportService.canVote(
+            on: live, as: "other", isStillPresent: true, now: live.expiresAt
+        ))
+        // a no waits ten minutes after the report is made
+        #expect(!FirestoreReportService.canVote(
+            on: live, as: "other", isStillPresent: false, now: created.addingTimeInterval(599)
+        ))
+        #expect(FirestoreReportService.canVote(
+            on: live, as: "other", isStillPresent: false, now: created.addingTimeInterval(600)
+        ))
+    }
+
     @Test(arguments: ["id", "kind", "coordinate", "createdAt", "expiresAt", "reporterID"])
     func skipsADocumentMissing(_ field: String) {
         var data = document()
@@ -249,6 +330,18 @@ struct FirestoreReportServiceTests {
         #expect(FirestoreReportService.isPermissionDenied(denied))
         #expect(!FirestoreReportService.isPermissionDenied(unavailable))
         #expect(!FirestoreReportService.isPermissionDenied(elsewhere))
+    }
+
+    @Test
+    func onlyFirestoresUnreachableServerIsUnavailable() {
+        let unavailable = NSError(domain: FirestoreErrorDomain, code: FirestoreErrorCode.unavailable.rawValue)
+        let late = NSError(domain: FirestoreErrorDomain, code: FirestoreErrorCode.deadlineExceeded.rawValue)
+        let denied = NSError(domain: FirestoreErrorDomain, code: FirestoreErrorCode.permissionDenied.rawValue)
+        let elsewhere = NSError(domain: NSURLErrorDomain, code: FirestoreErrorCode.unavailable.rawValue)
+        #expect(FirestoreReportService.isUnavailable(unavailable))
+        #expect(FirestoreReportService.isUnavailable(late))
+        #expect(!FirestoreReportService.isUnavailable(denied))
+        #expect(!FirestoreReportService.isUnavailable(elsewhere))
     }
 
     // MARK: Feed

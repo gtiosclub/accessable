@@ -108,6 +108,7 @@ private final class ControlledTripProvider: TripStateProviding, Sendable {
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 }
 
 /// Yields fixed fixes with a fixed permission, then finishes.

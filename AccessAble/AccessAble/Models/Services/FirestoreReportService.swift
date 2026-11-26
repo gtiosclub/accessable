@@ -13,6 +13,8 @@ enum ReportServiceError: Error, Equatable, Sendable {
     case rateLimited
     /// The server didn't confirm in time. Firestore keeps the write and sends it once online.
     case queuedOffline
+    /// The server couldn't be reached in time, and the write was not kept: a vote, which runs as a transaction.
+    case unavailable
 }
 
 /// Reports in Firestore's shared `reports` collection, readable by every signed-in user.
@@ -35,6 +37,8 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
     /// When this phone last sent or queued a report for each user, so the next one inside the
     /// window fails fast.
     private let lastSubmit = Mutex<[String: Date]>([:])
+    /// When this phone last sent a vote for each user, likewise.
+    private let lastVote = Mutex<[String: Date]>([:])
 
     init(
         auth: any AuthService,
@@ -69,7 +73,9 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
             "createdAt": FieldValue.serverTimestamp(),
             "expiresAt": Timestamp(date: report.expiresAt),
             "confirmations": 0,
-            "reporterID": user.id
+            "reporterID": user.id,
+            "negativeConfirmations": 0,
+            "negativesSinceConfirm": 0
         ]
 
         if let area = report.area {
@@ -150,6 +156,95 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         }
     }
 
+    @discardableResult
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool {
+        guard let user = await auth.currentUser() else {
+            throw ReportServiceError.notSignedIn
+        }
+        guard !Self.isRateLimited(lastReportAt: lastVote.withLock { $0[user.id] }, now: now()) else {
+            throw ReportServiceError.rateLimited
+        }
+
+        let reportReference = database.collection("reports").document(reportID)
+        let voteReference = reportReference.collection("votes").document(user.id)
+        let rateLimitReference = database.collection("rateLimits").document(user.id)
+        let extended = Mutex(false)
+        // The phone's clock: a yes sets the expiry from it, and the rules allow it only within
+        // their clock tolerance of the server's.
+        let time = now()
+
+        do {
+            try await Self.commit(
+                within: Self.commitTimeout,
+                clock: clock,
+                onLateOutcome: { error in
+                    if let error {
+                        logger.error("Late vote on report \(reportID, privacy: .public) failed: \(error.localizedDescription, privacy: .public)")
+                    } else {
+                        logger.notice("Late vote on report \(reportID, privacy: .public) reached the server")
+                    }
+                },
+                { completion in
+                    database.runTransaction({ transaction, errorPointer -> Any? in
+                        do {
+                            let snapshot = try transaction.getDocument(reportReference)
+                            let vote = try transaction.getDocument(voteReference)
+                            guard let data = snapshot.data(), let report = Self.decode(id: reportID, data: data) else {
+                                throw ReportServiceError.invalidReport
+                            }
+                            guard Self.canVote(on: report, as: user.id, isStillPresent: isStillPresent, now: time),
+                                  !vote.exists else {
+                                throw ReportServiceError.permissionDenied
+                            }
+                            let change = Self.vote(on: report, isStillPresent: isStillPresent, now: time)
+                            transaction.setData(
+                                ["isStillPresent": isStillPresent, "votedAt": FieldValue.serverTimestamp()],
+                                forDocument: voteReference
+                            )
+                            transaction.updateData(change.fields, forDocument: reportReference)
+                            // names the report, as the rules require, so one stamp can't cover votes on several
+                            transaction.setData(
+                                ["lastVoteAt": FieldValue.serverTimestamp(), "lastVoteReportId": reportID],
+                                forDocument: rateLimitReference, merge: true
+                            )
+                            return change.extends
+                        } catch {
+                            errorPointer?.pointee = error as NSError
+                            return nil
+                        }
+                    }, completion: { result, error in
+                        extended.withLock { $0 = result as? Bool ?? false }
+                        completion(error)
+                    })
+                }
+            )
+        } catch {
+            throw await voteFailure(of: error, userID: user.id, isStillPresent: isStillPresent)
+        }
+        let votedAt = now()
+        lastVote.withLock { $0[user.id] = votedAt }
+        return extended.withLock { $0 }
+    }
+
+    /// Logs why a vote failed, then names it like `failure(of:userID:)`: a refusal inside the
+    /// vote stamp's window is `.rateLimited`, and no answer in time `.unavailable`, since a
+    /// transaction isn't queued.
+    private func voteFailure(of error: any Error, userID: String, isStillPresent: Bool) async -> any Error {
+        logger.error("Report vote failed: \(error.localizedDescription, privacy: .public)")
+        if let error = error as? ReportServiceError {
+            return error == .queuedOffline ? ReportServiceError.unavailable : error
+        }
+        if Self.isUnavailable(error) { return ReportServiceError.unavailable }
+        guard Self.isPermissionDenied(error) else { return error }
+        let stamp = await rateLimitStamp("lastVoteAt", userID: userID) ?? lastVote.withLock { $0[userID] }
+        guard !Self.isRateLimited(lastReportAt: stamp, now: now()) else { return ReportServiceError.rateLimited }
+        if isStillPresent {
+            // the yes's expiry is from this phone's clock, refused more than the rules' tolerance off the server's
+            logger.notice("A refused yes may mean this phone's clock is off the server's")
+        }
+        return ReportServiceError.permissionDenied
+    }
+
     /// Reports that haven't expired, soonest to expire first, as many as the rules allow.
     private func unexpiredReports(asOf date: Date) -> Query {
         database.collection("reports")
@@ -163,17 +258,17 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
     private func failure(of error: any Error, userID: String) async -> any Error {
         logger.error("Report submit failed: \(error.localizedDescription, privacy: .public)")
         guard Self.isPermissionDenied(error) else { return error }
-        let stamp = await lastReportStamp(userID: userID) ?? lastSubmit.withLock { $0[userID] }
+        let stamp = await rateLimitStamp("lastReportAt", userID: userID) ?? lastSubmit.withLock { $0[userID] }
         return Self.isRateLimited(lastReportAt: stamp, now: now())
             ? ReportServiceError.rateLimited
             : ReportServiceError.permissionDenied
     }
 
-    /// When the rules last counted a report from this user, from their own `rateLimits` stamp.
-    private func lastReportStamp(userID: String) async -> Date? {
+    /// When the rules last counted a report or a vote from this user, from `field` of their own `rateLimits` stamp.
+    private func rateLimitStamp(_ field: String, userID: String) async -> Date? {
         do {
             let snapshot = try await database.collection("rateLimits").document(userID).getDocument()
-            return (snapshot.data(with: .estimate)?["lastReportAt"] as? Timestamp)?.dateValue()
+            return (snapshot.data(with: .estimate)?[field] as? Timestamp)?.dateValue()
         } catch {
             logger.error("Report rate limit read failed: \(error.localizedDescription, privacy: .public)")
             return nil
@@ -292,6 +387,45 @@ extension FirestoreReportService {
         return now.timeIntervalSince(lastReportAt) < rateLimitWindow
     }
 
+    static func isUnavailable(_ error: any Error) -> Bool {
+        let error = error as NSError
+        return error.domain == FirestoreErrorDomain
+            && [FirestoreErrorCode.unavailable.rawValue, FirestoreErrorCode.deadlineExceeded.rawValue]
+                .contains(error.code)
+    }
+
+    /// How long a report is safe from "no" votes: too new for anyone to have walked past it since.
+    static let denialGrace: TimeInterval = 10 * 60
+    /// "No" votes since the last "yes" that end a report.
+    static let removalDenials = 2
+
+    /// What the rules check of a vote that the app can check first.
+    static func canVote(on report: Report, as userID: String, isStillPresent: Bool, now: Date) -> Bool {
+        report.reporterID != userID
+            && report.expiresAt > now
+            && (isStillPresent || now.timeIntervalSince(report.createdAt) >= denialGrace)
+    }
+
+    /// The fields a vote changes, and whether it moves the expiry later. A yes sets the expiry to
+    /// one lifetime from `now` unless it is already later; the last "no" ends the report at the
+    /// server's time, so every expiry filter drops it.
+    static func vote(on report: Report, isStillPresent: Bool, now: Date) -> (fields: [String: Any], extends: Bool) {
+        guard isStillPresent else {
+            let denials = report.negativesSinceConfirm + 1
+            var fields: [String: Any] = [
+                "negativeConfirmations": report.negativeConfirmations + 1,
+                "negativesSinceConfirm": denials
+            ]
+            if denials >= removalDenials { fields["expiresAt"] = FieldValue.serverTimestamp() }
+            return (fields, false)
+        }
+        var fields: [String: Any] = ["confirmations": report.confirmations + 1, "negativesSinceConfirm": 0]
+        let renewed = now.addingTimeInterval(report.kind.lifetime)
+        guard renewed > report.expiresAt else { return (fields, false) }
+        fields["expiresAt"] = Timestamp(date: renewed)
+        return (fields, true)
+    }
+
     static func isPermissionDenied(_ error: any Error) -> Bool {
         let error = error as NSError
         return error.domain == FirestoreErrorDomain
@@ -341,7 +475,10 @@ extension FirestoreReportService {
             createdAt: createdAt.dateValue(),
             expiresAt: expiresAt.dateValue(),
             confirmations: data["confirmations"] as? Int ?? 0,
-            reporterID: reporterID
+            reporterID: reporterID,
+            // missing on reports from before REPORT-6
+            negativeConfirmations: data["negativeConfirmations"] as? Int ?? 0,
+            negativesSinceConfirm: data["negativesSinceConfirm"] as? Int ?? 0
         )
     }
 
