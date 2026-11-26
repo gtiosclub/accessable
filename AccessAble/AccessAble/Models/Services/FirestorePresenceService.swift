@@ -1,5 +1,6 @@
 import FirebaseFirestore
 import Foundation
+import Synchronization
 import UIKit
 
 
@@ -148,6 +149,9 @@ final class FirestorePresenceService: PresenceService {
         Firestore.firestore().collection("volunteers").document(userID)
     }
 
+    /// Whether this launch already cleared a stale inCall (see writeOnline).
+    private nonisolated static let clearedStaleCallThisLaunch = Mutex(false)
+
     private nonisolated func writeOnline(userID: String, profile: UserProfile) async throws {
         // No invites for the demo: any volunteer account may go Online.
         guard profile.role == .volunteer else { throw CallSafetyError.invitationRequired }
@@ -161,7 +165,12 @@ final class FirestorePresenceService: PresenceService {
         // so check existence on the server first.
         let existing = try await document(userID).getDocument(source: .server)
         if existing.exists {
+            // A freshly launched app can't be in a call, so the first time it goes Online, clear
+            // an inCall left by a call that was cut off (app killed, crashed or rebuilt mid-call).
+            // Later in the same launch, coming back from the background mid-call must keep it.
+            if !Self.clearedStaleCallThisLaunch.withLock({ $0 }) { fields["inCall"] = false }
             try await document(userID).updateData(fields)
+            Self.clearedStaleCallThisLaunch.withLock { $0 = true }
         } else {
             fields["bio"] = ""
             fields["inCall"] = false
