@@ -327,7 +327,7 @@ final class TripSessionViewModel {
         guard isReportingAvailable, reportQuestion == nil,
               directions?.tripState.phase == .active,
               now().timeIntervalSince(question.askedAt) <= Self.questionFreshness,
-              let user = await services.auth.currentUser(), user.id != report.reporterID,
+              !report.isOwn, await services.auth.currentUser() != nil,
               // checked again after the await
               reportQuestion == nil else {
             await services.trip.reportQuestionEnded(report.id, outcome: .notAsked)
@@ -687,7 +687,7 @@ final class TripSessionViewModel {
             return
         }
 
-        guard let user = await services.auth.currentUser() else {
+        guard await services.auth.currentUser() != nil else {
             await say("Sign in to report a problem.", category: .system)
             return
         }
@@ -703,8 +703,7 @@ final class TripSessionViewModel {
             kind: kind,
             coordinate: useRouteAhead ? pointAhead(of: location) : location,
             createdAt: createdAt,
-            expiresAt: createdAt.addingTimeInterval(kind.lifetime),
-            reporterID: user.id
+            expiresAt: createdAt.addingTimeInterval(kind.lifetime)
         )
 
         do {

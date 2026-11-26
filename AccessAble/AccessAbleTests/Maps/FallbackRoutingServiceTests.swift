@@ -129,7 +129,7 @@ struct FallbackRoutingServiceTests {
 
     private static let report = Report(
         id: "construction-1", kind: .construction, coordinate: corner,
-        createdAt: .now, expiresAt: .now.addingTimeInterval(3600), reporterID: "user-1"
+        createdAt: .now, expiresAt: .now.addingTimeInterval(3600)
     )
 
     private func request(

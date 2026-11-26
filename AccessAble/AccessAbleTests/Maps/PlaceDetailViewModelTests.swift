@@ -228,8 +228,7 @@ struct PlaceDetailViewModelTests {
     func aPassedReportIsSaidOnce(withVoiceOver voiceOver: Bool) async {
         var route = plannedRoute
         route.unavoidedReports = [Report(id: "blocked-1", kind: .blockedPath, coordinate: crossing(at: 0.5).coordinate,
-                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600),
-                                         reporterID: "user-1")]
+                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600))]
         let announcements = SubmittedAnnouncements()
         var services = AppServices.preview
         services.location = OneFixLocationProvider()

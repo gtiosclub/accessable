@@ -35,6 +35,9 @@ service cloud.firestore {
 
     // A new report, sent in one batch with its reporter's stamp, which names it so one stamp can't cover a batch
     // of many reports. The vote counts are optional, so an app from before REPORT-6 can still report.
+    // Reports are readable by everyone signed in, so they don't say who reported them: the same batch lists the
+    // report in its reporter's private ownReportPath. reporterID stays, always empty, only because apps from
+    // before the private list need it to read reports; remove it once every app reads without it.
     function isValidNewReport(data, reportId) {
       let keys = data.keys();
       let stamp = getAfter(rateLimitPath()).data;
@@ -44,7 +47,9 @@ service cloud.firestore {
           'negativeConfirmations', 'negativesSinceConfirm'
         ])
         && data.id == reportId
-        && data.reporterID == request.auth.uid
+        && data.reporterID == ''
+        && existsAfter(ownReportPath(request.auth.uid, reportId))
+        && getAfter(ownReportPath(request.auth.uid, reportId)).data.createdAt == request.time
         && data.kind in ['construction', 'blockedPath', 'closedEntrance', 'elevatorOut', 'other']
         && isValidCoordinate(data.coordinate)
         && (!('area' in keys) || data.area == null || (data.area is list && isValidArea(data.area)))
@@ -64,6 +69,11 @@ service cloud.firestore {
       return duration.value(2, 'm');
     }
 
+    // The user's private record that they reported reportId.
+    function ownReportPath(userId, reportId) {
+      return /databases/$(database)/documents/users/$(userId)/reports/$(reportId);
+    }
+
     function votePath(reportId) {
       return /databases/$(database)/documents/reports/$(reportId)/votes/$(request.auth.uid);
     }
@@ -80,7 +90,9 @@ service cloud.firestore {
       let denials = before.get('negativesSinceConfirm', 0) + 1;
       let stamp = getAfter(rateLimitPath()).data;
 
-      return request.auth.uid != before.reporterID
+      return !exists(ownReportPath(request.auth.uid, reportId))
+        // reports from before the private list name their reporter until they expire
+        && request.auth.uid != before.reporterID
         && before.expiresAt > request.time
         && !exists(votePath(reportId))
         && existsAfter(votePath(reportId))
@@ -386,7 +398,8 @@ service cloud.firestore {
       // Votes are the only edits: the reporter could otherwise extend, move or revive a report others voted on.
       allow update: if signedIn() && isValidVote(reportId);
 
-      allow delete: if signedIn() && resource.data.reporterID == request.auth.uid;
+      allow delete: if signedIn()
+        && (exists(ownReportPath(request.auth.uid, reportId)) || resource.data.reporterID == request.auth.uid);
 
       // One vote per user per report, readable only by its voter. Written only with the report's
       // matching count, which the report's update rule checks the other way round.
@@ -406,6 +419,20 @@ service cloud.firestore {
             : getAfter(reportPath()).data.get('negativeConfirmations', 0)
               == get(reportPath()).data.get('negativeConfirmations', 0) + 1);
       }
+    }
+
+    // Each user's private list of their own reports, so the reports themselves needn't say who made them. An entry
+    // is made only in the batch that creates its report, is never changed, and goes only once its report has gone:
+    // while the report exists, the entry is what stops its reporter voting on it.
+    match /users/{userId}/reports/{reportId} {
+      allow get, list: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['createdAt'])
+        && request.resource.data.createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/reports/$(reportId))
+        && getAfter(/databases/$(database)/documents/reports/$(reportId)).data.createdAt == request.time;
+      allow delete: if signedIn() && request.auth.uid == userId
+        && !existsAfter(/databases/$(database)/documents/reports/$(reportId));
     }
 
     match /rateLimits/{userId} {

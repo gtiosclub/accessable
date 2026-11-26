@@ -8,7 +8,7 @@ struct ReportExclusionsTests {
 
     private func report(_ id: String, at coordinate: GeoCoordinate, area: [GeoCoordinate]? = nil) -> Report {
         Report(id: id, kind: .construction, coordinate: coordinate, area: area, createdAt: .now,
-               expiresAt: .now.addingTimeInterval(3600), reporterID: "user-1")
+               expiresAt: .now.addingTimeInterval(3600))
     }
 
     /// A square about `side` metres across, with its south-west corner at `corner`.

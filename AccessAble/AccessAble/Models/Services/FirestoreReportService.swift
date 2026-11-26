@@ -17,7 +17,8 @@ enum ReportServiceError: Error, Equatable, Sendable {
     case unavailable
 }
 
-/// Reports in Firestore's shared `reports` collection, readable by every signed-in user.
+/// Reports in Firestore's shared `reports` collection, readable by every signed-in user. A report doesn't say who
+/// reported it: each user's own are listed in their private `users/{id}/reports`, written in the same batch.
 final class FirestoreReportService: ReportService, @unchecked Sendable {
     /// The most reports one read or listener gets back. The rules refuse a list above 200.
     static let queryLimit = 200
@@ -39,6 +40,13 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
     private let lastSubmit = Mutex<[String: Date]>([:])
     /// When this phone last sent a vote for each user, likewise.
     private let lastVote = Mutex<[String: Date]>([:])
+    /// The IDs of each user's own reports, and whether their private list has been read yet.
+    private let ownReports = Mutex<[String: OwnReports]>([:])
+
+    private struct OwnReports {
+        var ids: Set<String> = []
+        var isLoaded = false
+    }
 
     init(
         auth: any AuthService,
@@ -56,7 +64,7 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         guard let user = await auth.currentUser() else {
             throw ReportServiceError.notSignedIn
         }
-        guard Self.isValid(report, reporterID: user.id) else {
+        guard Self.isValid(report) else {
             throw ReportServiceError.invalidReport
         }
         guard !Self.isRateLimited(lastReportAt: lastSubmit.withLock { $0[user.id] }, now: now()) else {
@@ -65,6 +73,7 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
 
         let reportReference = database.collection("reports").document(report.id)
         let rateLimitReference = database.collection("rateLimits").document(user.id)
+        let ownReference = ownReportsCollection(of: user.id).document(report.id)
 
         var values: [String: Any] = [
             "id": report.id,
@@ -73,7 +82,8 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
             "createdAt": FieldValue.serverTimestamp(),
             "expiresAt": Timestamp(date: report.expiresAt),
             "confirmations": 0,
-            "reporterID": user.id,
+            // always empty: apps from before the private list need the field to read reports
+            "reporterID": "",
             "negativeConfirmations": 0,
             "negativesSinceConfirm": 0
         ]
@@ -88,6 +98,9 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
             "lastReportAt": FieldValue.serverTimestamp(),
             "lastReportId": report.id
         ], forDocument: rateLimitReference, merge: true)
+        batch.setData(["createdAt": FieldValue.serverTimestamp()], forDocument: ownReference)
+        // before the commit, since the listener hears the new report before the commit returns
+        ownReports.withLock { $0[user.id, default: OwnReports()].ids.insert(report.id) }
 
         do {
             try await Self.commit(
@@ -121,9 +134,10 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         guard radius.isFinite, radius >= 0 else {
             throw ReportServiceError.invalidReport
         }
-        guard await auth.currentUser() != nil else {
+        guard let user = await auth.currentUser() else {
             throw ReportServiceError.notSignedIn
         }
+        let own = await ownReportIDs(of: user.id)
 
         let asOf = now()
         let snapshot: QuerySnapshot
@@ -134,7 +148,7 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
             throw Self.isPermissionDenied(error) ? ReportServiceError.permissionDenied : error
         }
 
-        return Self.decode(snapshot).filter {
+        return Self.decode(snapshot, ownReportIDs: own).filter {
             $0.expiresAt > asOf && $0.isNear(coordinate, within: radius)
         }
     }
@@ -143,12 +157,15 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         near coordinate: GeoCoordinate,
         radius: Double
     ) -> AsyncStream<[Report]> {
-        Self.changes(near: coordinate, radius: radius, auth: auth, clock: clock, now: now) { [self] send in
-            let registration = unexpiredReports(asOf: now()).addSnapshotListener { snapshot, error in
+        Self.changes(near: coordinate, radius: radius, auth: auth, clock: clock, now: now) { [self] userID, send in
+            _ = await ownReportIDs(of: userID)
+            let registration = unexpiredReports(asOf: now()).addSnapshotListener { [self] snapshot, error in
                 if let error {
                     send(.failure(error))
                 } else if let snapshot {
-                    send(.success(Self.decode(snapshot)))
+                    // read at each snapshot, so a report just submitted is already the user's own
+                    let own = ownReports.withLock { $0[userID]?.ids ?? [] }
+                    send(.success(Self.decode(snapshot, ownReportIDs: own)))
                 }
             }
             let listener = ListenerHandle(registration)
@@ -168,6 +185,7 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         let reportReference = database.collection("reports").document(reportID)
         let voteReference = reportReference.collection("votes").document(user.id)
         let rateLimitReference = database.collection("rateLimits").document(user.id)
+        let own = await ownReportIDs(of: user.id)
         let extended = Mutex(false)
         // The phone's clock: a yes sets the expiry from it, and the rules allow it only within
         // their clock tolerance of the server's.
@@ -189,10 +207,11 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
                         do {
                             let snapshot = try transaction.getDocument(reportReference)
                             let vote = try transaction.getDocument(voteReference)
-                            guard let data = snapshot.data(), let report = Self.decode(id: reportID, data: data) else {
+                            guard let data = snapshot.data(),
+                                  let report = Self.decode(id: reportID, data: data, ownReportIDs: own) else {
                                 throw ReportServiceError.invalidReport
                             }
-                            guard Self.canVote(on: report, as: user.id, isStillPresent: isStillPresent, now: time),
+                            guard Self.canVote(on: report, isStillPresent: isStillPresent, now: time),
                                   !vote.exists else {
                                 throw ReportServiceError.permissionDenied
                             }
@@ -245,6 +264,39 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         return ReportServiceError.permissionDenied
     }
 
+    /// The user's private list of their own reports, readable only by them.
+    private func ownReportsCollection(of userID: String) -> CollectionReference {
+        database.collection("users").document(userID).collection("reports")
+    }
+
+    /// The IDs of the user's own reports, read from their private list the first time they're needed. A failed read
+    /// is logged and tried again next time; until then the user's reports count as others', and the rules still
+    /// refuse their votes on them.
+    private func ownReportIDs(of userID: String) async -> Set<String> {
+        if let own = ownReports.withLock({ $0[userID] }), own.isLoaded {
+            return own.ids
+        }
+        // not filtered by age: others' yes votes can keep an old report live
+        let snapshot: QuerySnapshot
+        do {
+            snapshot = try await ownReportsCollection(of: userID)
+                .order(by: "createdAt", descending: true)
+                .limit(to: Self.queryLimit)
+                .getDocuments()
+        } catch {
+            logger.error("Own reports read failed: \(error.localizedDescription, privacy: .public)")
+            return ownReports.withLock { $0[userID]?.ids ?? [] }
+        }
+        let ids = Set(snapshot.documents.map(\.documentID))
+        return ownReports.withLock {
+            var own = $0[userID, default: OwnReports()]
+            own.ids.formUnion(ids)
+            own.isLoaded = true
+            $0[userID] = own
+            return own.ids
+        }
+    }
+
     /// Reports that haven't expired, soonest to expire first, as many as the rules allow.
     private func unexpiredReports(asOf date: Date) -> Query {
         database.collection("reports")
@@ -277,9 +329,9 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
 
     /// The reports in a snapshot, read with estimated server times so this user's own pending
     /// report isn't dropped. Logs how many documents couldn't be read.
-    private static func decode(_ snapshot: QuerySnapshot) -> [Report] {
+    private static func decode(_ snapshot: QuerySnapshot, ownReportIDs: Set<String>) -> [Report] {
         let reports = snapshot.documents.compactMap {
-            decode(id: $0.documentID, data: $0.data(with: .estimate))
+            decode(id: $0.documentID, data: $0.data(with: .estimate), ownReportIDs: ownReportIDs)
         }
         let skipped = snapshot.documents.count - reports.count
         if skipped > 0 {
@@ -299,8 +351,8 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
 // MARK: - Pure pieces, tested without Firestore
 
 extension FirestoreReportService {
-    /// The live stream behind `reportChanges`. Once signed in, `listen` starts the listener with
-    /// a callback for each snapshot and returns how to stop it. The stream sends only changes,
+    /// The live stream behind `reportChanges`. Once signed in, `listen` starts the listener for
+    /// the signed-in user with a callback for each snapshot and returns how to stop it. The stream sends only changes,
     /// rechecks expiry between snapshots, and ends on a listener error so the caller can
     /// subscribe again.
     static func changes(
@@ -310,8 +362,9 @@ extension FirestoreReportService {
         clock: any Clock<Duration>,
         now: @escaping @Sendable () -> Date,
         listen: @escaping @Sendable (
+            _ userID: String,
             _ send: @escaping @Sendable (Result<[Report], any Error>) -> Void
-        ) -> @Sendable () -> Void
+        ) async -> @Sendable () -> Void
     ) -> AsyncStream<[Report]> {
         AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             let task = Task {
@@ -320,14 +373,14 @@ extension FirestoreReportService {
                     continuation.finish()
                     return
                 }
-                guard await auth.currentUser() != nil else {
+                guard let user = await auth.currentUser() else {
                     logger.error("Report stream needs a signed-in user")
                     continuation.finish()
                     return
                 }
 
                 let feed = OSAllocatedUnfairLock(initialState: ReportFeed(coordinate: coordinate, radius: radius))
-                let stop = listen { result in
+                let stop = await listen(user.id) { result in
                     switch result {
                     case .success(let reports):
                         let time = now()
@@ -400,8 +453,8 @@ extension FirestoreReportService {
     static let removalDenials = 2
 
     /// What the rules check of a vote that the app can check first.
-    static func canVote(on report: Report, as userID: String, isStillPresent: Bool, now: Date) -> Bool {
-        report.reporterID != userID
+    static func canVote(on report: Report, isStillPresent: Bool, now: Date) -> Bool {
+        !report.isOwn
             && report.expiresAt > now
             && (isStillPresent || now.timeIntervalSince(report.createdAt) >= denialGrace)
     }
@@ -433,9 +486,8 @@ extension FirestoreReportService {
     }
 
     /// What the rules check of a new report that the app can check first.
-    static func isValid(_ report: Report, reporterID: String) -> Bool {
-        report.reporterID == reporterID
-            && report.expiresAt > report.createdAt
+    static func isValid(_ report: Report) -> Bool {
+        report.expiresAt > report.createdAt
             && isValid(report.coordinate)
             && (report.area.map { areaPointLimits.contains($0.count) && $0.allSatisfy(isValid) } ?? true)
     }
@@ -447,15 +499,14 @@ extension FirestoreReportService {
     }
 
     /// A report from a document's data, or nil when any field is missing or isn't what the
-    /// rules allow.
-    static func decode(id documentID: String, data: [String: Any]) -> Report? {
+    /// rules allow. It is the user's own when `ownReportIDs` has it.
+    static func decode(id documentID: String, data: [String: Any], ownReportIDs: Set<String>) -> Report? {
         guard let id = data["id"] as? String,
               id == documentID,
               let kind = (data["kind"] as? String).flatMap(ReportKind.init(rawValue:)),
               let coordinate = coordinate(data["coordinate"]),
               let createdAt = data["createdAt"] as? Timestamp,
-              let expiresAt = data["expiresAt"] as? Timestamp,
-              let reporterID = data["reporterID"] as? String else {
+              let expiresAt = data["expiresAt"] as? Timestamp else {
             return nil
         }
 
@@ -475,10 +526,10 @@ extension FirestoreReportService {
             createdAt: createdAt.dateValue(),
             expiresAt: expiresAt.dateValue(),
             confirmations: data["confirmations"] as? Int ?? 0,
-            reporterID: reporterID,
             // missing on reports from before REPORT-6
             negativeConfirmations: data["negativeConfirmations"] as? Int ?? 0,
-            negativesSinceConfirm: data["negativesSinceConfirm"] as? Int ?? 0
+            negativesSinceConfirm: data["negativesSinceConfirm"] as? Int ?? 0,
+            isOwn: ownReportIDs.contains(id)
         )
     }
 

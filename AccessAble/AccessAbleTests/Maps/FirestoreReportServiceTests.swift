@@ -18,7 +18,7 @@ private func report(
 ) -> Report {
     Report(
         id: id, kind: .construction, coordinate: coordinate, area: area,
-        createdAt: created, expiresAt: created.addingTimeInterval(lifetime), reporterID: "user"
+        createdAt: created, expiresAt: created.addingTimeInterval(lifetime)
     )
 }
 
@@ -35,7 +35,8 @@ private func document(area: Any? = nil) -> [String: Any] {
         "createdAt": Timestamp(date: created),
         "expiresAt": Timestamp(date: created.addingTimeInterval(3600)),
         "confirmations": 2,
-        "reporterID": "user"
+        // always empty, for apps from before the private list of the user's own reports
+        "reporterID": ""
     ]
     if let area { data["area"] = area }
     return data
@@ -53,16 +54,20 @@ private final class FakeListener: Sendable {
     private let sender = Mutex<(@Sendable (Result<[Report], any Error>) -> Void)?>(nil)
     let removals: AsyncStream<Void>
     private let removed: AsyncStream<Void>.Continuation
-    private let started = Mutex(false)
+    private let listenedFor = Mutex<String?>(nil)
 
     init() {
         (removals, removed) = AsyncStream.makeStream()
     }
 
-    var wasStarted: Bool { started.withLock { $0 } }
+    var wasStarted: Bool { userID != nil }
+    /// The user it was started for.
+    var userID: String? { listenedFor.withLock { $0 } }
 
-    func listen(_ send: @escaping @Sendable (Result<[Report], any Error>) -> Void) -> @Sendable () -> Void {
-        started.withLock { $0 = true }
+    func listen(
+        _ userID: String, _ send: @escaping @Sendable (Result<[Report], any Error>) -> Void
+    ) -> @Sendable () -> Void {
+        listenedFor.withLock { $0 = userID }
         sender.withLock { $0 = send }
         return { [removed] in removed.yield() }
     }
@@ -120,19 +125,38 @@ struct FirestoreReportServiceTests {
     func decodesAStoredReport() {
         var expected = report()
         expected.confirmations = 2
-        #expect(FirestoreReportService.decode(id: "r1", data: document()) == expected)
+        #expect(FirestoreReportService.decode(id: "r1", data: document(), ownReportIDs: []) == expected)
+    }
+
+    @Test
+    func aReportIsOwnWhenTheUsersListHasIt() throws {
+        let own = try #require(FirestoreReportService.decode(id: "r1", data: document(), ownReportIDs: ["r1"]))
+        let others = try #require(FirestoreReportService.decode(id: "r1", data: document(), ownReportIDs: ["r2"]))
+        #expect(own.isOwn)
+        #expect(!others.isOwn)
+    }
+
+    /// Reports from before the private list name their reporter, which isn't read.
+    @Test
+    func theReporterFieldIsNotNeeded() throws {
+        var data = document()
+        data["reporterID"] = nil
+        #expect(FirestoreReportService.decode(id: "r1", data: data, ownReportIDs: []) != nil)
+        data["reporterID"] = "someone"
+        let legacy = try #require(FirestoreReportService.decode(id: "r1", data: data, ownReportIDs: []))
+        #expect(!legacy.isOwn)
     }
 
     @Test
     func decodesAnArea() {
         let corners = [here, north, far]
-        let decoded = FirestoreReportService.decode(id: "r1", data: document(area: corners.map(point)))
+        let decoded = FirestoreReportService.decode(id: "r1", data: document(area: corners.map(point)), ownReportIDs: [])
         #expect(decoded?.area == corners)
     }
 
     @Test
     func aNullAreaIsNoArea() throws {
-        let decoded = try #require(FirestoreReportService.decode(id: "r1", data: document(area: NSNull())))
+        let decoded = try #require(FirestoreReportService.decode(id: "r1", data: document(area: NSNull()), ownReportIDs: []))
         #expect(decoded.area == nil)
     }
 
@@ -140,7 +164,7 @@ struct FirestoreReportServiceTests {
     func missingConfirmationsAreNone() {
         var data = document()
         data["confirmations"] = nil
-        #expect(FirestoreReportService.decode(id: "r1", data: data)?.confirmations == 0)
+        #expect(FirestoreReportService.decode(id: "r1", data: data, ownReportIDs: [])?.confirmations == 0)
     }
 
     /// Reports from before REPORT-6 have no denial counts.
@@ -149,7 +173,7 @@ struct FirestoreReportServiceTests {
         var data = document()
         data["negativeConfirmations"] = nil
         data["negativesSinceConfirm"] = nil
-        let decoded = try #require(FirestoreReportService.decode(id: "r1", data: data))
+        let decoded = try #require(FirestoreReportService.decode(id: "r1", data: data, ownReportIDs: []))
         #expect(decoded.negativeConfirmations == 0)
         #expect(decoded.negativesSinceConfirm == 0)
     }
@@ -159,7 +183,7 @@ struct FirestoreReportServiceTests {
         var data = document()
         data["negativeConfirmations"] = 3
         data["negativesSinceConfirm"] = 1
-        let decoded = try #require(FirestoreReportService.decode(id: "r1", data: data))
+        let decoded = try #require(FirestoreReportService.decode(id: "r1", data: data, ownReportIDs: []))
         #expect(decoded.negativeConfirmations == 3)
         #expect(decoded.negativesSinceConfirm == 1)
     }
@@ -210,37 +234,39 @@ struct FirestoreReportServiceTests {
     @Test
     func votesTheRulesRefuseAreRefusedFirst() {
         let live = report()
-        #expect(FirestoreReportService.canVote(on: live, as: "other", isStillPresent: true, now: created))
-        #expect(!FirestoreReportService.canVote(on: live, as: "user", isStillPresent: true, now: created))
+        var own = live
+        own.isOwn = true
+        #expect(FirestoreReportService.canVote(on: live, isStillPresent: true, now: created))
+        #expect(!FirestoreReportService.canVote(on: own, isStillPresent: true, now: created))
         #expect(!FirestoreReportService.canVote(
-            on: live, as: "other", isStillPresent: true, now: live.expiresAt
+            on: live, isStillPresent: true, now: live.expiresAt
         ))
         // a no waits ten minutes after the report is made
         #expect(!FirestoreReportService.canVote(
-            on: live, as: "other", isStillPresent: false, now: created.addingTimeInterval(599)
+            on: live, isStillPresent: false, now: created.addingTimeInterval(599)
         ))
         #expect(FirestoreReportService.canVote(
-            on: live, as: "other", isStillPresent: false, now: created.addingTimeInterval(600)
+            on: live, isStillPresent: false, now: created.addingTimeInterval(600)
         ))
     }
 
-    @Test(arguments: ["id", "kind", "coordinate", "createdAt", "expiresAt", "reporterID"])
+    @Test(arguments: ["id", "kind", "coordinate", "createdAt", "expiresAt"])
     func skipsADocumentMissing(_ field: String) {
         var data = document()
         data[field] = nil
-        #expect(FirestoreReportService.decode(id: "r1", data: data) == nil)
+        #expect(FirestoreReportService.decode(id: "r1", data: data, ownReportIDs: []) == nil)
     }
 
     @Test
     func skipsADocumentWhoseIDDiffers() {
-        #expect(FirestoreReportService.decode(id: "other", data: document()) == nil)
+        #expect(FirestoreReportService.decode(id: "other", data: document(), ownReportIDs: []) == nil)
     }
 
     @Test
     func skipsAnUnknownKind() {
         var data = document()
         data["kind"] = "pothole"
-        #expect(FirestoreReportService.decode(id: "r1", data: data) == nil)
+        #expect(FirestoreReportService.decode(id: "r1", data: data, ownReportIDs: []) == nil)
     }
 
     @Test
@@ -254,7 +280,7 @@ struct FirestoreReportServiceTests {
         for coordinate in coordinates {
             var data = document()
             data["coordinate"] = coordinate
-            #expect(FirestoreReportService.decode(id: "r1", data: data) == nil, "\(coordinate)")
+            #expect(FirestoreReportService.decode(id: "r1", data: data, ownReportIDs: []) == nil, "\(coordinate)")
         }
     }
 
@@ -267,7 +293,7 @@ struct FirestoreReportServiceTests {
             "not a list",
         ]
         for area in areas {
-            #expect(FirestoreReportService.decode(id: "r1", data: document(area: area)) == nil, "\(area)")
+            #expect(FirestoreReportService.decode(id: "r1", data: document(area: area), ownReportIDs: []) == nil, "\(area)")
         }
     }
 
@@ -291,8 +317,8 @@ struct FirestoreReportServiceTests {
 
     @Test
     func acceptsAReportTheRulesAllow() {
-        #expect(FirestoreReportService.isValid(report(), reporterID: "user"))
-        #expect(FirestoreReportService.isValid(report(area: [here, north, far]), reporterID: "user"))
+        #expect(FirestoreReportService.isValid(report()))
+        #expect(FirestoreReportService.isValid(report(area: [here, north, far])))
     }
 
     @Test(arguments: [
@@ -303,12 +329,7 @@ struct FirestoreReportServiceTests {
         report(expiresIn: 0),
     ])
     func refusesAReportTheRulesWould(_ report: Report) {
-        #expect(!FirestoreReportService.isValid(report, reporterID: "user"))
-    }
-
-    @Test
-    func refusesSomeoneElsesReport() {
-        #expect(!FirestoreReportService.isValid(report(), reporterID: "someone else"))
+        #expect(!FirestoreReportService.isValid(report))
     }
 
     // MARK: Rate limit
@@ -414,6 +435,7 @@ struct FirestoreReportServiceTests {
         let clock = ManualClock()
         var reports = changes(listener: listener, clock: clock).makeAsyncIterator()
         try await clock.waitForSleepers(1)
+        #expect(listener.userID == PlaceholderAuthService.sampleUser.id)
 
         listener.send(.success([report()]))
         #expect(await reports.next() == [report()])
