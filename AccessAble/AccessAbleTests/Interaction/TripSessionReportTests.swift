@@ -683,4 +683,44 @@ struct TripSessionReportTests {
 
         #expect(trip.ended.all == ["passed": false])
     }
+
+    // MARK: The map's label
+
+    /// One 40 m ahead of a user 20 m along, and one 50 m east of where they are, off the route.
+    private func mapReports() -> [Report] {
+        [("ahead", ReportKind.blockedPath, TripWalk.point(on: route, along: 60)),
+         ("east", .construction, TripWalk.destination(from: start, bearing: 90, distance: 50))].map { id, kind, at in
+            Report(id: id, kind: kind, coordinate: at, createdAt: now, expiresAt: now.addingTimeInterval(3600),
+                   reporterID: "user-1")
+        }
+    }
+
+    /// Walking east, so the report east of the user is straight ahead of them.
+    @Test
+    func theMapSaysItsReportsFromTheWalkAndTheWayTheUserIsGoing() async {
+        let walking = LocationSample(coordinate: start, horizontalAccuracy: 5, timestamp: now, speed: 1.4, course: 90)
+        let session = await makeSession(fixes: [walking], walked: 20, reports: CapturingReports())
+
+        session.showOnMap(mapReports())
+
+        #expect(session.mapAccessibilityLabel == "Map showing walking directions to Library. 2 reports on or near "
+            + "your route: blocked path, 40 metres ahead on your route; construction, 50 metres at 12 o'clock.")
+    }
+
+    @Test(arguments: [
+        // standing, the course is wherever the phone drifted
+        LocationSample(coordinate: start, horizontalAccuracy: 5, timestamp: now, speed: 0.2, course: 90),
+        LocationSample(coordinate: start, horizontalAccuracy: 5, timestamp: now, speed: 1.4, course: 90,
+                       courseAccuracy: 60),
+        // the user may have turned since
+        LocationSample(coordinate: start, horizontalAccuracy: 5, timestamp: now.addingTimeInterval(-5), speed: 1.4,
+                       course: 90),
+    ])
+    func withoutAWalkingCourseTheMapSaysOnlyHowFar(_ fix: LocationSample) async {
+        let session = await makeSession(fixes: [fix], walked: 20, reports: CapturingReports())
+
+        session.showOnMap(mapReports())
+
+        #expect(session.mapAccessibilityLabel.hasSuffix("construction, 50 metres away."))
+    }
 }

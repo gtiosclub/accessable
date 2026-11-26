@@ -150,7 +150,12 @@ final class TripSessionViewModel {
                 directions?.tripState.distanceRemaining.map { route.totalDistance - $0 }
             },
             location: fix?.coordinate,
-            heading: fix?.course,
+            // only a course the user is walking on, and only while it is fresh: standing, or from a fix seconds old,
+            // the way they face may be any way
+            heading: fix.flatMap { fix in
+                now().timeIntervalSince(fix.timestamp) <= HeadingEstimator.maximumSampleAge
+                    ? HeadingEstimator.walkingDirection(of: fix) : nil
+            },
             distances: services?.distanceSettings.formatter ?? .metric
         ) else { return map }
         return "\(map) \(reports)"
@@ -220,7 +225,7 @@ final class TripSessionViewModel {
             }
             group.addTask {
                 for await reports in services.trip.mapReports() {
-                    await self.show(reports)
+                    await self.showOnMap(reports)
                 }
             }
         }
@@ -228,7 +233,8 @@ final class TripSessionViewModel {
         await closeCamera(camera)
     }
 
-    private func show(_ reports: [Report]) {
+    /// Shows the reports TripManager sends for the map.
+    func showOnMap(_ reports: [Report]) {
         mapReports = reports
     }
 
