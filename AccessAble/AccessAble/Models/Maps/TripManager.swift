@@ -683,6 +683,7 @@ actor TripManager: TripStateProviding {
                 return
             }
             unavoidedReportOnResume = false
+            let sourceChange = Self.sourceChange(from: route, to: newRoute)
             routeVersion += 1
             hasRerouted = true
             route = newRoute
@@ -699,8 +700,8 @@ actor TripManager: TripStateProviding {
             publish(at: now())
             subscribeToReports(along: newRoute, generation: generation)
             guard phase == .active else { return }
-            await submit(maneuver("New route. " + Self.reportWarning(on: newRoute) + departure(on: newRoute), .high,
-                                  expiresIn: 15, key: "reroute"))
+            await submit(maneuver("New route. " + Self.reportWarning(on: newRoute) + sourceChange
+                                      + departure(on: newRoute), .high, expiresIn: 15, key: "reroute"))
         case .failure(let error):
             guard !(error is CancellationError) else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
@@ -736,7 +737,8 @@ actor TripManager: TripStateProviding {
         do { try await sleep(Self.startDelay) } catch { return }
         guard self.generation == generation, phase == .active, let route, let destination else { return }
         let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
-            + Self.reportWarning(on: route) + departure(on: route)
+            + Self.reportWarning(on: route) + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "")
+            + departure(on: route)
         await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
     }
 
@@ -890,6 +892,16 @@ actor TripManager: TripStateProviding {
     /// Said before setting off on a route that passes reports it couldn't avoid.
     private static func reportWarning(on route: NavigationRoute) -> String {
         route.unavoidedReports.isEmpty ? "" : ReportExclusions.warning + " "
+    }
+
+    /// Said on a new route from a different service than the one before: a backup that may include stairs, or the
+    /// accessible directions again.
+    private static func sourceChange(from previous: NavigationRoute?, to route: NavigationRoute) -> String {
+        guard let previous, previous.source != route.source else { return "" }
+        return switch route.source {
+        case .appleMaps: RouteSource.backupNotice + " "
+        case .valhalla: "Back to accessible directions. "
+        }
     }
 
     /// How to set off, at the start and on a new route: which way the path is, then the first turn when it is near.
