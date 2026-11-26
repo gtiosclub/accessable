@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import { after, beforeEach, test } from 'node:test';
 import { assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import {
@@ -84,7 +85,7 @@ test('the reporter cannot vote on their own report, but someone else can', async
   await assertSucceeds(vote(bob(), 'bob', 'r1', true));
 });
 
-test('the reporter can delete their report and its record; someone else cannot', async () => {
+test('the reporter can delete their report and its record together; someone else cannot', async () => {
   await seedReport(env, 'alice', 'r1');
   await assertFails(deleteDoc(doc(bob(), 'reports', 'r1')));
   await assertFails(deleteDoc(doc(bob(), 'users', 'alice', 'reports', 'r1')));
@@ -93,6 +94,25 @@ test('the reporter can delete their report and its record; someone else cannot',
   batch.delete(doc(db, 'reports', 'r1'));
   batch.delete(doc(db, 'users', 'alice', 'reports', 'r1'));
   await assertSucceeds(batch.commit());
+  await env.withSecurityRulesDisabled(async (context) => {
+    const admin = context.firestore();
+    assert.equal((await getDoc(doc(admin, 'reports', 'r1'))).exists(), false);
+    assert.equal((await getDoc(doc(admin, 'users', 'alice', 'reports', 'r1'))).exists(), false);
+  });
+});
+
+test('a record cannot be deleted while its report exists, so the reporter still cannot vote', async () => {
+  await seedReport(env, 'alice', 'r1', 20 * MINUTE);
+  await assertFails(deleteDoc(doc(alice(), 'users', 'alice', 'reports', 'r1')));
+  await assertFails(vote(alice(), 'alice', 'r1', true));
+});
+
+test("a record can be deleted once its report has gone", async () => {
+  await seedReport(env, 'alice', 'r1');
+  await env.withSecurityRulesDisabled(async (context) => {
+    await deleteDoc(doc(context.firestore(), 'reports', 'r1'));
+  });
+  await assertSucceeds(deleteDoc(doc(alice(), 'users', 'alice', 'reports', 'r1')));
 });
 
 test('a report from before the private records still holds back its reporter, who can delete it', async () => {

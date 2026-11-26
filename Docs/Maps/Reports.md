@@ -29,9 +29,9 @@ Swift: `Report` in `Models/Maps/Report.swift`. Firestore: one document per repor
 
 ### The reporter's private list
 
-`users/{userID}/reports/{id}` holds one field, `createdAt` (server timestamp), for each report that user made. Only that user can read it. The rules use it to refuse a reporter's vote on their own report and to let them delete it. Reports from before the list name their reporter in `reporterID`, and the rules honour that until they expire.
+`users/{userID}/reports/{id}` holds one field, `createdAt` (server timestamp), for each report that user made. Only that user can read it, and an entry can be deleted only once its report is gone (or in the same batch that deletes the report). The rules use it to refuse a reporter's vote on their own report and to let them delete it. Reports from before the list name their reporter in `reporterID`, and the rules honour that until they expire.
 
-The app reads the list once per user (newest 200 made within the longest report lifetime) and adds each report it submits.
+The app reads the list once per user (the newest 200) and adds each report it submits.
 
 ### Rate limits
 

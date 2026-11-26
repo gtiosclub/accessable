@@ -422,7 +422,8 @@ service cloud.firestore {
     }
 
     // Each user's private list of their own reports, so the reports themselves needn't say who made them. An entry
-    // is made only in the batch that creates its report, and is never changed.
+    // is made only in the batch that creates its report, is never changed, and goes only once its report has gone:
+    // while the report exists, the entry is what stops its reporter voting on it.
     match /users/{userId}/reports/{reportId} {
       allow get, list: if signedIn() && request.auth.uid == userId;
       allow create: if signedIn() && request.auth.uid == userId
@@ -430,7 +431,8 @@ service cloud.firestore {
         && request.resource.data.createdAt == request.time
         && existsAfter(/databases/$(database)/documents/reports/$(reportId))
         && getAfter(/databases/$(database)/documents/reports/$(reportId)).data.createdAt == request.time;
-      allow delete: if signedIn() && request.auth.uid == userId;
+      allow delete: if signedIn() && request.auth.uid == userId
+        && !existsAfter(/databases/$(database)/documents/reports/$(reportId));
     }
 
     match /rateLimits/{userId} {
