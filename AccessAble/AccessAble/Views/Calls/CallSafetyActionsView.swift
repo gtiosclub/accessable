@@ -53,9 +53,9 @@ private struct CallReportView: View {
                     }.disabled(model.isBusy)
                     TextField("Additional details (optional)", text: $model.details, axis: .vertical)
                         .lineLimit(4...10).disabled(model.isBusy)
-                    Text("\(model.details.count)/2000 characters").font(.caption)
+                    Text("\(CallSafetyReportLimit.length(of: model.details))/\(CallSafetyReportLimit.maxLength) characters").font(.caption)
                     Button(model.isBusy ? "Sending…" : "Send report") { Task { await model.report() } }
-                        .disabled(model.isBusy || model.details.count > 2000).frame(minHeight: 44)
+                        .disabled(model.isBusy || CallSafetyReportLimit.length(of: model.details) > CallSafetyReportLimit.maxLength).frame(minHeight: 44)
                 }
                 if let message = model.message { Text(message) }
             }

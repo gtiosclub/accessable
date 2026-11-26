@@ -37,3 +37,10 @@ enum CallSafetyError: LocalizedError, Equatable, Sendable {
         }
     }
 }
+
+/// How long report details may be. Counted the way the Firestore rules' `size()` counts, in UTF-16
+/// code units (an emoji can be 2 or more), so a report the screen allows is never refused.
+enum CallSafetyReportLimit {
+    static let maxLength = 2000
+    static func length(of details: String) -> Int { details.utf16.count }
+}

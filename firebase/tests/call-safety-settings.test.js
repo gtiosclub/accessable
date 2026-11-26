@@ -87,6 +87,14 @@ for (const bad of [{ reporterId: 'another' }, { subjectId: 'stranger' }, { callI
     await seed(); await assertFails(setDoc(doc(as('caller'), 'callSafetyReports', 'invalid'), report(bad)));
   });
 }
+// The rules' size() counts UTF-16 code units, and the app counts details the same way:
+// an emoji outside the BMP is 2, a Korean syllable is 1.
+test('report details are limited to 2000 UTF-16 code units', async () => {
+  await seed();
+  await assertSucceeds(setDoc(doc(as('caller'), 'callSafetyReports', 'emoji'), report({ details: '\u{1F600}'.repeat(1000) })));
+  await assertFails(setDoc(doc(as('caller'), 'callSafetyReports', 'emoji-over'), report({ details: '\u{1F600}'.repeat(1001) })));
+  await assertSucceeds(setDoc(doc(as('caller'), 'callSafetyReports', 'korean'), report({ details: '\uD55C'.repeat(2000) })));
+});
 test('an outsider and a signed-out client cannot fabricate reports', async () => {
   await seed();
   await assertFails(setDoc(doc(as('another'), 'callSafetyReports', 'bad'), report({ reporterId: 'another' })));

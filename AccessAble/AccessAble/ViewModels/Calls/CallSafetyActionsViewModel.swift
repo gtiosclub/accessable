@@ -21,7 +21,7 @@ final class CallSafetyActionsViewModel {
 
     func report() async {
         guard !isBusy, !reported else { return }
-        guard details.count <= 2000 else {
+        guard CallSafetyReportLimit.length(of: details) <= CallSafetyReportLimit.maxLength else {
             message = CallSafetyError.invalidReport.errorDescription
             return
         }

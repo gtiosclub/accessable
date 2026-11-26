@@ -7,6 +7,9 @@ import UIKit
 final class FirestorePresenceService: PresenceService {
 
     static let heartbeatInterval: Duration = .seconds(45)
+    /// Heartbeats in a row that may fail before giving up: two missed beats pass the rules'
+    /// 90-second online window, so callers can't reach this volunteer anyway.
+    private static let maxFailedBeats = 2
 
     private nonisolated let states = Broadcaster<Bool>(replaysLatest: true)
     private let auth: any AuthService
@@ -14,6 +17,7 @@ final class FirestorePresenceService: PresenceService {
     private let writes = PresenceWriteQueue()
     private var isOnline = false
     private var heartbeat: Task<Void, Never>?
+    private var failedBeats = 0
     private var authWatcher: Task<Void, Never>?
     private var backgroundObserver: (any NSObjectProtocol)?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -75,7 +79,7 @@ final class FirestorePresenceService: PresenceService {
         if newValue {
             guard let profile = try await profiles.load(userID: user.id) else { throw PresenceError.noProfile }
             try await writeOnline(userID: user.id, profile: profile)
-            guard UIApplication.shared.applicationState == .active, !Task.isCancelled else {
+            guard UIApplication.shared.applicationState == .active else {
                 try? await writeOffline(userID: user.id)
                 stopLocally()
                 return
@@ -91,12 +95,25 @@ final class FirestorePresenceService: PresenceService {
 
     private func startHeartbeat(userID: String) {
         heartbeat?.cancel()
+        failedBeats = 0
         heartbeat = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.heartbeatInterval)
                 guard !Task.isCancelled, let self else { return }
-                do { try await writeHeartbeat(userID: userID) }
-                catch { stopLocally(); return }
+                do {
+                    try await writeHeartbeat(userID: userID)
+                    failedBeats = 0
+                } catch {
+                    // One refusal is normal: the rules reject a heartbeat within 20 seconds of
+                    // another write that set lastSeen (declining a call, saving the profile), so
+                    // skip this beat. Only keep failing past the 90-second online window means
+                    // really gone; then say so on the server too, so callers stop ringing.
+                    failedBeats += 1
+                    guard failedBeats >= Self.maxFailedBeats else { continue }
+                    stopLocally()
+                    try? await writeOffline(userID: userID)
+                    return
+                }
             }
         }
     }

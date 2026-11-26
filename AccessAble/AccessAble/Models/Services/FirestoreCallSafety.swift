@@ -31,7 +31,7 @@ struct FirestoreCallSafety: CallSafetyService {
     }
 
     func report(callID: String, subjectID: String, reason: CallReportReason, details: String) async throws {
-        guard !callID.isEmpty, !subjectID.isEmpty, details.count <= 2000 else { throw CallSafetyError.invalidReport }
+        guard !callID.isEmpty, !subjectID.isEmpty, CallSafetyReportLimit.length(of: details) <= CallSafetyReportLimit.maxLength else { throw CallSafetyError.invalidReport }
         let id = try await uid()
         // No client read of somebody else's report or private profile is needed.
         try await Firestore.firestore().collection("callSafetyReports").addDocument(data: [

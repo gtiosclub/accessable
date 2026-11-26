@@ -19,6 +19,7 @@ private struct ScriptedTrip: TripStateProviding {
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 }
 
 /// States and routes the test sends one at a time; the states stream finishes when the test says.
@@ -40,6 +41,7 @@ private final class ControlledTrip: TripStateProviding {
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 }
 
 private actor RecordingActivity: TripActivityClient {
