@@ -778,6 +778,43 @@ struct FallbackRoutingServiceTests {
     }
 
     @Test
+    func cancellingTheCallerDuringTheSecondRaceNeverAsksApple() async throws {
+        let stadia = FakeRouting(.fails(RoutingError.serverUnavailable))
+        let fossgis = FakeRouting(.hangs)
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let clock = ManualClock()
+
+        let routing = request(chain(stadia, fossgis, apple, clock: clock))
+        await fossgis.waitForRequests(1)
+        try await clock.waitForSleepers(1)
+        routing.cancel()
+
+        await #expect(throws: CancellationError.self) { try await routing.value }
+        await fossgis.waitForCancellations(1)
+        #expect(await apple.calls == 0)
+    }
+
+    @Test
+    func noValhallaServersGoesStraightToApple() async throws {
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let service = FallbackRoutingService(primaries: [], fallback: apple, clock: ManualClock())
+
+        #expect(try await request(service).value == Self.backupRoute)
+        #expect(await apple.calls == 1)
+    }
+
+    @Test
+    func noValhallaServersRejectsExclusionsWithoutAskingApple() async {
+        let apple = FakeRouting(.returns(Self.backupRoute))
+        let service = FallbackRoutingService(primaries: [], fallback: apple, clock: ManualClock())
+
+        await #expect(throws: RoutingError.exclusionsRejected) {
+            try await request(service, options: Self.exclusions).value
+        }
+        #expect(await apple.calls == 0)
+    }
+
+    @Test
     func reportAwareRoutingOverTheChainWarnsOfReportsOnAnAppleRoute() async throws {
         let stadia = FakeRouting(.fails(RoutingError.serverUnavailable))
         let fossgis = FakeRouting(.fails(RoutingError.serverUnavailable))
