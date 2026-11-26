@@ -25,6 +25,7 @@ struct AppServices: Sendable {
     var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
     var callSafety: any CallSafetyService = UnavailableCallSettings()
     var volunteerSettings: any VolunteerSettingsStore = UnavailableCallSettings()
+    var callerSettings = CallerSettings()
     /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
     var accountsAvailable = false
     /// True once a real report service is wired (REPORT-3); until then the trip screen offers no reporting.
@@ -53,7 +54,8 @@ struct AppServices: Sendable {
     static func live(performance: PerformanceModeMonitor) -> AppServices {
         // One renderer, so the engine's haptics and anyone else's replace each other rather than overlap.
         let haptics = CoreHapticsRenderer()
-        let announcements = AnnouncementEngine(speech: SpeechOutput(), haptics: haptics)
+        let callerSettings = CallerSettings()
+        let announcements = AnnouncementEngine(speech: SpeechOutput(), haptics: haptics, callSettings: callerSettings)
         let askAISettings = AskAISettings()
         let alertSettings = AlertSettings()
         let distanceSettings = DistanceSettings()
@@ -84,6 +86,7 @@ struct AppServices: Sendable {
             locationContext: LocationDescriber(location: gps, distances: distanceSettings),
             commands: FoundationModelCommandInterpreter(),
             auth: FirebaseApp.app() != nil ? FirebaseAuthService() : PlaceholderAuthService(signedIn: false),
+            callerSettings: callerSettings,
             askAISettings: askAISettings,
             alertSettings: alertSettings,
             distanceSettings: distanceSettings
@@ -174,9 +177,10 @@ struct AppServices: Sendable {
     @MainActor
     static var preview: AppServices {
         let scene = PlaceholderSceneProvider()
+        let callerSettings = CallerSettings()
         // Construct previews directly: never initialize Firebase listeners, LiveKit, GPS or speech.
         var services = AppServices(
-            announcements: PlaceholderAnnouncementEngine(), haptics: PlaceholderHaptics(),
+            announcements: PlaceholderAnnouncementEngine(callSettings: callerSettings), haptics: PlaceholderHaptics(),
             performance: PerformanceModeMonitor(), scene: scene, sceneDescriber: scene,
             location: PlaceholderLocationProvider(), routing: PlaceholderRoutingService(),
             destinationSearch: PlaceholderDestinationSearch(), trip: PlaceholderTripProvider(),
@@ -184,6 +188,7 @@ struct AppServices: Sendable {
             commands: FoundationModelCommandInterpreter(), auth: PlaceholderAuthService()
         )
         services.distanceSettings = DistanceSettings(units: .metres)
+        services.callerSettings = callerSettings
         services.callSafety = PlaceholderCallSafety()
         services.volunteerSettings = PlaceholderVolunteerSettings()
         services.userProfiles = PlaceholderUserProfileStore(profiles: [

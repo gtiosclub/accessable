@@ -77,10 +77,11 @@ struct FirestoreVolunteerSettings: VolunteerSettingsStore {
             "updatedAt": FieldValue.serverTimestamp(),
         ])
     }
+    /// No invites for the demo: any account that signed up as a volunteer may volunteer.
     func isInvited() async throws -> Bool {
         let id = try await uid()
-        let data = try await Firestore.firestore().collection("volunteerInvites").document(id).getDocument(source: .server).data()
-        return data?["enabled"] as? Bool == true
+        let data = try await Firestore.firestore().collection("users").document(id).getDocument(source: .server).data()
+        return data?["role"] as? String == "volunteer"
     }
 }
 

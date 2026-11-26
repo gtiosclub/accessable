@@ -262,12 +262,11 @@ struct FirestoreCallSignaling: CallSignaling {
         do {
             let outcome = try await db.runTransaction { transaction, errorPointer -> Any? in
                 do {
-                    // Re-read both gates in the transaction: a concurrent block or revoked
-                    // invitation must win over an earlier directory snapshot/preferred pick.
+                    // Re-read the block in the transaction: a concurrent block must win over an
+                    // earlier directory snapshot/preferred pick.
                     let block = try transaction.getDocument(db.collection("users").document(me)
                         .collection("blockedVolunteers").document(volunteerID))
-                    let invite = try transaction.getDocument(db.collection("volunteerInvites").document(volunteerID))
-                    guard !block.exists, invite.data()?["enabled"] as? Bool == true else { return "busy" }
+                    guard !block.exists else { return "busy" }
                     let data = try transaction.getDocument(volunteerRef).data() ?? [:]
                     guard let volunteer = Volunteer(id: volunteerID, firestoreData: data),
                           volunteer.isFreeToRing() else { return "busy" }

@@ -31,28 +31,13 @@ struct VolunteerCallHostView: View {
 
     var body: some View {
         ZStack {
-            VolunteerHomeView(settings: settings, signOut: signOut)
-                .safeAreaInset(edge: .bottom) {
-                    if let summary = model.lastCallForSafety, model.call == nil {
-                        VStack {
-                            Text("Previous call").font(.headline)
-                            CallSafetyActionsView(summary: summary, service: services.callSafety).id(summary.id)
-                            Button("Dismiss previous call") { model.dismissSafetySummary() }.frame(minHeight: 44)
-                        }.padding().background(.black)
-                    }
-                    if let error = model.listenerError {
-                        VStack {
-                            Text(error)
-                            Button("Retry incoming calls") { model.retryListening() }.frame(minHeight: 44)
-                        }.padding().background(.black)
-                    }
-                    if let message = model.message {
-                        VStack {
-                            Text(message)
-                            Button("Dismiss") { model.dismissMessage() }.frame(minHeight: 44)
-                        }.padding().background(.black)
-                    }
-                }
+            VolunteerHomeView(settings: settings, signOut: signOut,
+                              // Kept while ringing, so a half-written report survives the ring.
+                              pastCalls: model.callsForSafety,
+                              callSafety: services.callSafety, dismissPastCall: { model.dismissSafetySummary($0) },
+                              isRinging: model.call != nil,
+                              listenerError: model.listenerError, retryListening: { model.retryListening() },
+                              callMessage: model.message, dismissCallMessage: { model.dismissMessage() })
                 .allowsHitTesting(model.call == nil)
                 .accessibilityHidden(model.call != nil)
             if model.call != nil {

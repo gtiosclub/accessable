@@ -84,6 +84,36 @@ struct CallSafetyActionsTests {
         #expect(await service.reports.first?.subjectID == "caller")
     }
 
+    @Test func stalledSaveReleasesNavigationWithoutFalselyReportingSuccess() async {
+        let service = SafetyRecorder()
+        await service.pauseReports()
+        let model = CallSafetyActionsViewModel(summary: callerSummary, service: service, confirmationTimeout: .seconds(1))
+        let saving = Task { await model.report() }
+        await service.waitForPendingReport()
+        #expect(model.isBusy)
+        await saving.value
+        #expect(!model.isBusy && !model.reported)
+        #expect(model.message?.contains("hasn't confirmed") == true)
+        await service.finishReport()
+    }
+
+    @Test func lateTimedOutReportCannotOverwriteTheFollowingBlockResult() async {
+        let service = SafetyRecorder()
+        await service.pauseReports()
+        let model = CallSafetyActionsViewModel(summary: callerSummary, service: service, confirmationTimeout: .seconds(1))
+        let saving = Task { await model.report() }
+        await service.waitForPendingReport()
+        await saving.value
+        await model.block()
+        #expect(model.blocked && !model.reported)
+        await service.finishReport()
+        // The fake service ignores cancellation, like an offline Firestore write can.
+        // Give its late callback time to arrive after the following Block is confirmed.
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(model.message?.contains("Volunteer blocked") == true)
+        #expect(!model.reported)
+    }
+
     @Test func submittingTwiceWhileTheServerIsPendingMakesOneRequest() async {
         let service = SafetyRecorder()
         await service.pauseReports()

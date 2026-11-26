@@ -100,23 +100,20 @@ test('missing server secrets fail closed; invalid call IDs are rejected', async 
   assert.equal((await request(await idToken(), '../other')).response.status, 400);
 });
 
-test('both caller and volunteer tokens are refused after a block or invitation revocation', async () => {
+test('both caller and volunteer tokens are refused after a block', async () => {
   for (const uid of ['caller', 'helper']) {
     blocked = true;
     assert.equal((await request(await idToken(uid))).response.status, 403);
-    blocked = false; invited = false;
-    assert.equal((await request(await idToken(uid))).response.status, 403);
-    invited = true;
+    blocked = false;
   }
 });
 
-test('missing, forbidden or unavailable invitation never produces a media token', async () => {
-  for (const status of [403, 404, 503]) {
-    inviteStatus = status;
-    const result = await request(await idToken());
-    assert.equal(result.response.status, 403);
-    assert.equal(result.body.token, undefined);
-  }
+// Demo: no invites, so a volunteer without one still gets a token for an accepted call.
+test('a volunteer without an invitation still gets a media token', async () => {
+  invited = false; inviteStatus = 404;
+  const result = await request(await idToken('helper'));
+  assert.equal(result.response.status, 200);
+  assert.equal(typeof result.body.token, 'string');
 });
 test('block lookup errors fail closed for both participants', async () => {
   for (const uid of ['caller', 'helper']) {

@@ -149,10 +149,8 @@ final class FirestorePresenceService: PresenceService {
     }
 
     private nonisolated func writeOnline(userID: String, profile: UserProfile) async throws {
-        let invite = try await Firestore.firestore().collection("volunteerInvites").document(userID).getDocument(source: .server)
-        guard profile.role == .volunteer, invite.data()?["enabled"] as? Bool == true else {
-            throw CallSafetyError.invitationRequired
-        }
+        // No invites for the demo: any volunteer account may go Online.
+        guard profile.role == .volunteer else { throw CallSafetyError.invitationRequired }
         var fields: [String: Any] = [
             "displayName": profile.displayName,
             "languages": profile.languages,

@@ -52,7 +52,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
     nonisolated func disconnect() async { await leave(.hungUp) }
     nonisolated func setMicrophoneMuted(_ muted: Bool) async throws { try await setMuted(muted) }
     nonisolated func flipCamera() async throws { try await switchCamera() }
-    nonisolated func setFlashlight(_ on: Bool) async throws { try await setTorch(on) }
+    nonisolated func setFlashlight(_ on: Bool) async throws { try await setConfirmedTorch(on) }
 
     // MARK: - Joining and leaving
 
@@ -216,6 +216,21 @@ final class LiveKitVideoCallSession: VideoCallSession {
         try? setTorch(false)
         _ = try await capturer.switchCameraPosition()
         cameraPosition = cameraPosition == .back ? .front : .back
+    }
+
+    /// Sets the light and waits until the camera reports it, for up to 2 seconds. Right after
+    /// joining, LiveKit's capture session may still be starting, and starting it can turn the
+    /// light back off, so the screen would say "Flashlight on" while the volunteer sees dark.
+    private func setConfirmedTorch(_ on: Bool) async throws {
+        for _ in 0..<10 {
+            try setTorch(on)
+            guard on else { return }
+            try await Task.sleep(for: .milliseconds(200))
+            if AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)?.isTorchActive == true {
+                return
+            }
+        }
+        throw CallSessionError.noFlashlight
     }
 
     private func setTorch(_ on: Bool) throws {

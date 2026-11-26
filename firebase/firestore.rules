@@ -143,10 +143,10 @@ service cloud.firestore {
       allow delete: if signedIn() && request.auth.uid == userId;
     }
     
-    // Safety gates are authoritative. Only the Firebase console/admin can issue invites.
-    function invited(uid) {
-      return exists(/databases/$(database)/documents/volunteerInvites/$(uid))
-        && get(/databases/$(database)/documents/volunteerInvites/$(uid)).data.enabled == true;
+    // Safety gates are authoritative. For the demo there are no invites: any account that
+    // signed up with the volunteer role may go Online and be rung. A caller account still can't.
+    function isVolunteerAccount(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data.role == 'volunteer';
     }
     function consented(uid) {
       return exists(/databases/$(database)/documents/callConsents/$(uid))
@@ -155,11 +155,6 @@ service cloud.firestore {
     function blocked(caller, volunteer) {
       // Include pending writes: a single batch cannot both create a block and ring its target.
       return existsAfter(/databases/$(database)/documents/users/$(caller)/blockedVolunteers/$(volunteer));
-    }
-    match /volunteerInvites/{uid} {
-      // Eligibility only: store just enabled, never emails or private invitation notes here.
-      allow get: if signedIn();
-      allow write, list: if false;
     }
     match /callConsents/{uid} {
       allow get: if signedIn() && request.auth.uid == uid;
@@ -237,7 +232,7 @@ service cloud.firestore {
       allow list: if signedIn() && request.query.limit <= 100;
       allow create: if signedIn() && request.auth.uid == uid
         && isValidVolunteer(request.resource.data)
-        && invited(uid)
+        && isVolunteerAccount(uid)
         && request.resource.data.inCall == false
         && request.resource.data.get('ringingCallId', null) == null
         && request.resource.data.get('ringingSince', null) == null
@@ -248,7 +243,7 @@ service cloud.firestore {
 
       function isOwnUpdate() {
         return request.auth.uid == uid
-          && (!request.resource.data.isOnline || invited(uid))
+          && (!request.resource.data.isOnline || isVolunteerAccount(uid))
           && request.resource.data.lastSeen == request.time
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['inCall'])
               || request.resource.data.inCall == false || isOwnAnswerClear())
@@ -270,7 +265,7 @@ service cloud.firestore {
 
       function isRing() {
         return request.auth.uid != uid
-          && invited(uid) && consented(request.auth.uid) && !blocked(request.auth.uid, uid)
+          && isVolunteerAccount(uid) && consented(request.auth.uid) && !blocked(request.auth.uid, uid)
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ringingCallId', 'ringingSince'])
           && request.resource.data.ringingCallId is string
           && request.resource.data.ringingSince == request.time
@@ -322,7 +317,7 @@ service cloud.firestore {
         let path = /databases/$(database)/documents/volunteers/$(resource.data.volunteerId);
         let before = get(path).data;
         let after = getAfter(path).data;
-        return invited(resource.data.volunteerId) && !blocked(resource.data.callerId, resource.data.volunteerId)
+        return isVolunteerAccount(resource.data.volunteerId) && !blocked(resource.data.callerId, resource.data.volunteerId)
           && before.get('ringingCallId', null) == callId
           && after.inCall == true
           && after.get('ringingCallId', null) == null;
@@ -355,7 +350,7 @@ service cloud.firestore {
         && request.resource.data.keys().hasOnly(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt', 'callerFirstName'])
         && validCallerFirstName()
         && request.resource.data.callerId == request.auth.uid
-        && invited(request.resource.data.volunteerId) && consented(request.auth.uid)
+        && isVolunteerAccount(request.resource.data.volunteerId) && consented(request.auth.uid)
         && !blocked(request.auth.uid, request.resource.data.volunteerId)
         && request.resource.data.volunteerId is string
         && request.resource.data.volunteerId != request.auth.uid

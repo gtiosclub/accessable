@@ -131,11 +131,22 @@ final class VolunteerSettingsViewModel {
     }
 
     func shutdown() {
+        stopLocally()
+        let presence = presence
+        Task { try? await presence.setOnline(false) }
+    }
+
+    /// Before signing out: the Offline write needs the signed-in user, so it must finish first,
+    /// or the server keeps showing this volunteer Online for up to 90 seconds.
+    func shutdownBeforeSignOut() async {
+        stopLocally()
+        try? await presence.setOnline(false)
+    }
+
+    private func stopLocally() {
         foreground = false
         foregroundRefreshPending = false
         screen.setAwake(false)
-        let presence = presence
-        Task { try? await presence.setOnline(false) }
     }
 
     private func finishOperation() {

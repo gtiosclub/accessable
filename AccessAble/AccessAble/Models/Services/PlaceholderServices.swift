@@ -34,10 +34,17 @@ actor PlaceholderAnnouncementEngine: AnnouncementEngineProtocol {
     private var isPaused = false
     private var isInCall = false
     private var last: AnnouncementEvent?
+    private let callSettings: CallerSettings
+
+    init(callSettings: CallerSettings = CallerSettings()) {
+        self.callSettings = callSettings
+    }
 
     func submit(_ event: AnnouncementEvent) async {
+        // The same in-call rule as the real engine, so previews and tests behave like the app.
         guard !isPaused, profile.allows(event), !event.isExpired(),
-              !isInCall || event.category == .maneuver || event.priority == .critical else { return }
+              CallAnnouncementPolicy.allows(event, duringCall: isInCall, preferences: callSettings.preferences)
+        else { return }
         log.info("[\(event.category.rawValue)/\(event.priority.rawValue)] \(event.text)")
         last = event
         delivered.send(event)

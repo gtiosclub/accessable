@@ -23,8 +23,13 @@ enum InfoTopicList: CaseIterable, Sendable {
 final class SettingsViewModel {
     @ObservationIgnored private let app: AppViewModel
 
+    var callerPreferences: CallerPreferences {
+        didSet { app.callerPreferences = callerPreferences }
+    }
+
     init(app: AppViewModel) {
         self.app = app
+        self.callerPreferences = app.callerPreferences
     }
 
     var profile: GuidanceProfile {
@@ -97,5 +102,6 @@ final class SettingsViewModel {
         profile = .preset(for: profile.visionLevel)
         preferences = .default
         performanceSetting = .automatic
+        callerPreferences = CallerPreferences()
     }
 }

@@ -56,3 +56,7 @@ pause with it and resume when the call ends.
 ## Volunteer settings and safety
 
 See [Volunteer settings and call safety](VolunteerSettingsSafety.md) for persistent settings, invitation approval, consent, Report/Block, rules and rollout checks.
+
+## Caller settings and accessible call results
+
+See [Caller settings and accessibility](CallerSettingsAccessibility.md) for VOLUNTEER-11 preferences, audio/camera boundaries, end-of-call controls, validation and the required independent VoiceOver/Dynamic Type device pass.

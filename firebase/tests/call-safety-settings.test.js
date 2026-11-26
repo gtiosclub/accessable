@@ -8,7 +8,7 @@ const env = await startEnvironment();
 beforeEach(() => env.clearFirestore());
 after(() => env.cleanup());
 const as = uid => env.authenticatedContext(uid).firestore();
-async function seed({ invited = true, consent = true } = {}) {
+async function seed({ consent = true } = {}) {
   await env.withSecurityRulesDisabled(async context => {
     const db = context.firestore(), batch = writeBatch(db);
     for (const [id, role] of [['caller', 'caller'], ['helper', 'volunteer'], ['another', 'caller']]) {
@@ -17,7 +17,6 @@ async function seed({ invited = true, consent = true } = {}) {
     batch.set(doc(db, 'volunteers', 'helper'), { displayName: 'Sam', languages: ['English'], bio: '',
       isOnline: true, inCall: false, ringingCallId: null, ringingSince: null,
       lastSeen: Timestamp.fromMillis(Date.now() - 30_000) });
-    if (invited) batch.set(doc(db, 'volunteerInvites', 'helper'), { enabled: true });
     if (consent) batch.set(doc(db, 'callConsents', 'caller'), { version: 1, acceptedAt: Timestamp.now() });
     batch.set(doc(db, 'callConsents', 'another'), { version: 1, acceptedAt: Timestamp.now() });
     batch.set(doc(db, 'calls', 'past'), { callerId: 'caller', volunteerId: 'helper', status: 'ended',
@@ -162,21 +161,22 @@ test('consent cannot be forged for another user, backdated or silently changed',
   await assertFails(updateDoc(doc(as('caller'), 'callConsents', 'caller'), { version: 2 }));
   await assertFails(getDoc(doc(as('helper'), 'callConsents', 'caller')));
 });
-test('uninvited or revoked volunteers cannot go online, heartbeat or receive a call', async () => {
-  await seed({ invited: false });
-  await assertFails(updateDoc(doc(as('helper'), 'volunteers', 'helper'), { lastSeen: serverTimestamp() }));
-  await assertFails(ring());
-  await assertFails(setDoc(doc(as('helper'), 'volunteerInvites', 'helper'), { enabled: true }));
-  await env.withSecurityRulesDisabled(async context => { await setDoc(doc(context.firestore(), 'volunteerInvites', 'helper'), { enabled: true }); });
-  await assertSucceeds(ring());
-  await env.withSecurityRulesDisabled(async context => { await updateDoc(doc(context.firestore(), 'volunteerInvites', 'helper'), { enabled: false }); });
-  await assertFails(accept('next'));
-});
-test('being a self-selected volunteer does not grant an invitation or allow directory creation', async () => {
-  await seed({ invited: false });
+// Demo: no invites. Signing up as a volunteer is enough to go Online and be rung.
+test('any volunteer account can go online and take a call without an invitation', async () => {
+  await seed();
   await env.withSecurityRulesDisabled(async context => { await deleteDoc(doc(context.firestore(), 'volunteers', 'helper')); });
+  await assertSucceeds(setDoc(doc(as('helper'), 'volunteers', 'helper'), { displayName: 'Sam', languages: ['English'], bio: '', isOnline: true, inCall: false, lastSeen: serverTimestamp() }));
+  await assertSucceeds(ring());
+  await assertSucceeds(accept('next'));
+});
+test('a caller account cannot list itself as a volunteer or be rung', async () => {
+  await seed();
+  await env.withSecurityRulesDisabled(async context => {
+    const db = context.firestore();
+    await deleteDoc(doc(db, 'volunteers', 'helper'));
+    await updateDoc(doc(db, 'users', 'helper'), { role: 'caller' });
+  });
   await assertFails(setDoc(doc(as('helper'), 'volunteers', 'helper'), { displayName: 'Sam', languages: ['English'], bio: '', isOnline: true, inCall: false, lastSeen: serverTimestamp() }));
-  await assertFails(updateDoc(doc(as('helper'), 'volunteerInvites', 'helper'), { enabled: true }));
 });
 
 test('saving profile and preferences while ringing preserves the incoming call', async () => {
@@ -202,8 +202,8 @@ test('a missed ringing call cannot be used to fabricate a completed-call report 
   await assertFails(setDoc(doc(as('caller'), 'callSafetyReports', 'missed'), report({ callId: 'not-accepted' })));
   await assertFails(setDoc(doc(as('caller'), 'users', 'caller', 'blockedVolunteers', 'helper'), { callId: 'not-accepted', createdAt: serverTimestamp() }));
 });
-test('revoked volunteer can still turn Offline without an invitation', async () => {
-  await seed({ invited: false });
+test('a volunteer can always turn Offline', async () => {
+  await seed();
   await assertSucceeds(updateDoc(doc(as('helper'), 'volunteers', 'helper'), { isOnline: false, lastSeen: serverTimestamp() }));
   assert.equal((await getDoc(doc(as('helper'), 'volunteers', 'helper'))).data().isOnline, false);
 });

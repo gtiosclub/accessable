@@ -5,34 +5,51 @@ struct CallSafetyActionsView: View {
     @State private var model: CallSafetyActionsViewModel
     @State private var reporting = false
     @State private var confirmingBlock = false
+    @AccessibilityFocusState private var reportFocused: Bool
+    @AccessibilityFocusState private var resultFocused: Bool
+    /// Something more urgent is on screen: close the report sheet. What was typed stays in the model.
+    var suspended = false
 
-    init(summary: CallSafetySummary, service: any CallSafetyService) {
+    init(summary: CallSafetySummary, service: any CallSafetyService, suspended: Bool = false) {
         _model = State(initialValue: CallSafetyActionsViewModel(summary: summary, service: service))
+        self.suspended = suspended
+    }
+
+    init(model: CallSafetyActionsViewModel) {
+        _model = State(initialValue: model)
     }
 
     var body: some View {
         VStack(spacing: 12) {
-            Button(model.reported ? "Report sent" : "Report this call", systemImage: "flag") { reporting = true }
+            AccessibleActionButton(title: model.reported ? "Report sent" : "Report this call", systemImage: "flag",
+                                   hint: "Opens a private report for the club moderators") { reporting = true }
+                .accessibilityFocused($reportFocused)
                 .disabled(model.reported || model.isBusy)
                 .frame(minHeight: 44)
                 .accessibilityHint("Opens a private report for the club moderators")
             if model.summary.canBlockVolunteer {
-                Button(model.blocked ? "Volunteer blocked" : "Block this volunteer", systemImage: "hand.raised", role: .destructive) {
+                AccessibleActionButton(title: model.blocked ? "Volunteer blocked" : "Block this volunteer", systemImage: "hand.raised",
+                                       hint: "Prevents this volunteer from being matched to you again", role: .destructive) {
                     confirmingBlock = true
                 }
                 .disabled(model.blocked || model.isBusy).frame(minHeight: 44)
                 .accessibilityHint("Prevents this volunteer from being matched to you again")
             }
             if model.isBusy { ProgressView("Saving") }
-            if let message = model.message { Text(message).font(.callout).multilineTextAlignment(.center) }
+            if let message = model.message { Text(message).font(.callout).multilineTextAlignment(.center).accessibilityFocused($resultFocused) }
         }
-        .sheet(isPresented: $reporting) { CallReportView(model: model) }
+        .onChange(of: suspended) { _, now in
+            if now { reporting = false; confirmingBlock = false }
+        }
+        .sheet(isPresented: $reporting, onDismiss: {
+            if model.reported { resultFocused = true } else { reportFocused = true }
+        }) { CallReportView(model: model) }
         .confirmationDialog("Block this volunteer?", isPresented: $confirmingBlock, titleVisibility: .visible) {
             Button("Block volunteer", role: .destructive) { Task { await model.block() } }
             Button("Cancel", role: .cancel) {}
         }
         .onChange(of: model.message) { _, text in
-            if !reporting, let text { AccessibilityNotification.Announcement(text).post() }
+            if !reporting, text != nil { resultFocused = true }
         }
     }
 }
@@ -40,29 +57,32 @@ struct CallSafetyActionsView: View {
 private struct CallReportView: View {
     @Bindable var model: CallSafetyActionsViewModel
     @Environment(\.dismiss) private var dismiss
+    @AccessibilityFocusState private var reasonFocused: Bool
+    @AccessibilityFocusState private var resultFocused: Bool
 
     var body: some View {
         NavigationStack {
             Form {
                 if model.reported {
-                    Text("Report sent to the club moderators.")
+                    Text("Report sent to the club moderators.").accessibilityFocused($resultFocused)
                     Button("Done") { dismiss() }.frame(minHeight: 44)
                 } else {
                     Picker("Reason", selection: $model.reason) {
                         ForEach(CallReportReason.allCases) { Text($0.title).tag($0) }
-                    }.disabled(model.isBusy)
+                    }.disabled(model.isBusy).accessibilityFocused($reasonFocused)
                     TextField("Additional details (optional)", text: $model.details, axis: .vertical)
                         .lineLimit(4...10).disabled(model.isBusy)
                     Text("\(CallSafetyReportLimit.length(of: model.details))/\(CallSafetyReportLimit.maxLength) characters").font(.caption)
                     Button(model.isBusy ? "Sending…" : "Send report") { Task { await model.report() } }
                         .disabled(model.isBusy || CallSafetyReportLimit.length(of: model.details) > CallSafetyReportLimit.maxLength).frame(minHeight: 44)
                 }
-                if let message = model.message { Text(message) }
+                if let message = model.message, !model.reported { Text(message).accessibilityFocused($resultFocused) }
             }
             .navigationTitle("Report call")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() }.disabled(model.isBusy) } }
             .interactiveDismissDisabled(model.isBusy)
-            .onChange(of: model.message) { _, text in if let text { AccessibilityNotification.Announcement(text).post() } }
+            .task { reasonFocused = true }
+            .onChange(of: model.message) { _, text in if text != nil { resultFocused = true } }
         }
     }
 }

@@ -31,7 +31,7 @@ enum CallSafetyError: LocalizedError, Equatable, Sendable {
         case .unavailable: "Account and call settings aren't available on this phone."
         case .signedOut: "Sign in to continue."
         case .invalidReport: "Choose a reason and keep the report under 2,000 characters."
-        case .invitationRequired: "A club invitation is required to volunteer. Contact the club for approval."
+        case .invitationRequired: "Only volunteer accounts can go online. Sign up as a volunteer to take calls."
         case .consentRequired: "Read and accept the call consent screen before calling."
         case .blocked: "This volunteer is blocked for this caller."
         }

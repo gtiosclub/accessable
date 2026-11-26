@@ -4,6 +4,15 @@ import SwiftUI
 struct VolunteerHomeView: View {
     let settings: VolunteerSettingsViewModel
     let signOut: () async throws -> Void
+    var pastCalls: [CallSafetySummary] = []
+    var callSafety: any CallSafetyService = UnavailableCallSettings()
+    var dismissPastCall: (String) -> Void = { _ in }
+    /// A call is ringing over this screen: close any open report so the ring isn't hidden behind it.
+    var isRinging = false
+    var listenerError: String? = nil
+    var retryListening: () -> Void = {}
+    var callMessage: String? = nil
+    var dismissCallMessage: () -> Void = {}
     @State private var signingOut = false
     @State private var signOutError: String?
     @Environment(\.scenePhase) private var scenePhase
@@ -12,6 +21,26 @@ struct VolunteerHomeView: View {
         @Bindable var settings = settings
         NavigationStack {
             Form {
+                if let listenerError {
+                    Section("Incoming call connection") {
+                        Text(listenerError)
+                        Button("Retry incoming calls", action: retryListening).minimumTapTarget()
+                    }
+                }
+                if let callMessage {
+                    Section("Call status") {
+                        Text(callMessage)
+                        Button("Dismiss call status", action: dismissCallMessage).minimumTapTarget()
+                    }
+                }
+                ForEach(Array(pastCalls.enumerated()), id: \.element.id) { index, call in
+                    Section(index == 0 ? "Previous call" : "Earlier call") {
+                        CallSafetyActionsView(summary: call, service: callSafety, suspended: isRinging).id(call.id)
+                        Button(index == 0 ? "Dismiss previous call" : "Dismiss earlier call") {
+                            dismissPastCall(call.id)
+                        }.minimumTapTarget()
+                    }
+                }
                 if !settings.isLoaded {
                     Section {
                         Text("Volunteer settings need to load before going online.")
@@ -19,8 +48,8 @@ struct VolunteerHomeView: View {
                     }
                 } else if !settings.isInvited {
                     Section {
-                        Text("A club invitation is required to volunteer. Contact the club for approval.")
-                        Button("Check invitation again") { Task { await settings.load() } }.disabled(settings.isBusy)
+                        Text("Only volunteer accounts can go online. Sign up as a volunteer to take calls.")
+                        Button("Check again") { Task { await settings.load() } }.disabled(settings.isBusy)
                     }
                 }
                 Section {
@@ -51,7 +80,7 @@ struct VolunteerHomeView: View {
                         signingOut = true
                         Task {
                             defer { signingOut = false }
-                            do { settings.shutdown(); try await signOut() }
+                            do { await settings.shutdownBeforeSignOut(); try await signOut() }
                             catch { signOutError = "Couldn't sign out. Try again."; await settings.setForeground(scenePhase == .active) }
                         }
                     }.disabled(signingOut || settings.isBusy).frame(minHeight: 44)
@@ -59,6 +88,7 @@ struct VolunteerHomeView: View {
                 if let signOutError { Text(signOutError) }
             }
             .navigationTitle("Volunteer settings")
+            .onChange(of: signOutError) { _, text in if let text { AccessibilityNotification.Announcement(text).post() } }
             .onChange(of: settings.message) { _, text in if let text { AccessibilityNotification.Announcement(text).post() } }
         }
     }
