@@ -130,12 +130,40 @@ struct ResumeTripViewModelTests {
     }
 
     @Test
+    func closingThePromptKeepsTheSavedTrip() async {
+        let harness = ResumeHarness()
+        let trip = harness.saveTrip()
+        let model = ResumeTripViewModel(store: harness.store, trip: PlaceholderTripProvider())
+        await model.check()
+        model.dismiss()
+
+        #expect(model.offer == nil)
+        #expect(model.title == "Resume your trip to Sample entrance?")
+        #expect(harness.store.load() == trip)
+    }
+
+    @Test
+    func resumeWorksAfterThePromptClosedFirst() async throws {
+        let harness = ResumeHarness()
+        let saved = harness.saveTrip()
+        let model = ResumeTripViewModel(store: harness.store, trip: PlaceholderTripProvider())
+        await model.check()
+        let offer = try #require(model.offer)
+        model.dismiss()
+        let plan = model.resume(offer)
+
+        #expect(plan.plannedRoute?.route == saved.route)
+        #expect(plan.plannedRoute?.resumingAtStep == saved.passedStepCount)
+        #expect(harness.store.load() == saved)
+    }
+
+    @Test
     func aResumedBackupRouteIsStillOne() async throws {
         let harness = ResumeHarness()
         harness.saveTrip(source: .appleMaps)
         let model = ResumeTripViewModel(store: harness.store, trip: PlaceholderTripProvider())
         await model.check()
-        let plan = try #require(model.resume())
+        let plan = model.resume(try #require(model.offer))
 
         #expect(plan.plannedRoute?.route.source == .appleMaps)
     }
@@ -149,7 +177,7 @@ struct ResumeTripViewModelTests {
         let model = ResumeTripViewModel(store: harness.store, trip: PlaceholderTripProvider(),
                                         now: { [time = harness.time] in time.now })
         await model.check()
-        let plan = try #require(model.resume())
+        let plan = model.resume(try #require(model.offer))
         #expect(model.offer == nil)
         #expect(plan.place.name == "Sample entrance")
 

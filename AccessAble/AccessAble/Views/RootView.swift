@@ -106,13 +106,13 @@ struct MainFlowView: View {
             resumeTrip?.title ?? "",
             isPresented: Binding(
                 get: { resumeTrip?.offer != nil },
-                // Only decline when an offer is still up. Resume clears offer first, so a
-                // system dismiss after Resume must not delete the file startTrip will use.
-                set: { if !$0, resumeTrip?.offer != nil { resumeTrip?.decline() } }
-            )
-        ) {
+                // SwiftUI can close the alert before running a button's action, so closing isn't an answer
+                set: { if !$0 { resumeTrip?.dismiss() } }
+            ),
+            presenting: resumeTrip?.offer
+        ) { offer in
             Button("Resume trip") {
-                guard let plan = resumeTrip?.resume() else { return }
+                guard let plan = resumeTrip?.resume(offer) else { return }
                 router.path = [.trip(plan)]
             }
             Button("No thanks", role: .cancel) { resumeTrip?.decline() }
