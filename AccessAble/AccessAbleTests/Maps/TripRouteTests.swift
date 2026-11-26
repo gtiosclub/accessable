@@ -339,6 +339,7 @@ struct TripRouteTests {
         (RoutingError.noRouteFound, "No walking route to Library was found."),
         (.serverUnavailable, "Couldn't reach the routing service. Check your connection and try again."),
         (.usageLimitReached, "The routing service has reached its usage limit. Try again later."),
+        (.exclusionsRejected, "The routing service couldn't take that many reported obstacles."),
         (.notAuthorized, "The routing service isn't available right now. Try again later."),
         (.invalidResponse, "The routing service sent a route AccessAble couldn't read. Try again."),
     ])

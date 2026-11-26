@@ -20,8 +20,10 @@ struct ValhallaEndpoint: Sendable {
 
     /// Stadia Maps' hosted Valhalla. Every route request spends the team's credits; check Stadia's
     /// pricing page for the cost (#317 assumed 20 credits per route). With REPORT-4's staged fallback one
-    /// route request can send up to 3 requests, and rerouting is capped at 5 per trip, so a trip can cost
-    /// about 18 requests. Overage is off, so running out of credits returns HTTP 429.
+    /// route request can send up to 3 requests. A trip sends the plan and the Start refresh, up to 5
+    /// off-route reroutes and 2 report reroutes: about 27 requests, plus any "find another way" the user
+    /// asks for, which is not capped. Overage is off, so running out of credits is expected to return
+    /// HTTP 429 (402 is handled too).
     /// The key ships inside the app binary: if it leaks, rotate it in the Stadia dashboard. Never add
     /// Secrets.xcconfig to GitHub, including through the web upload.
     static func stadia(apiKey: String) -> ValhallaEndpoint {
@@ -36,7 +38,7 @@ struct ValhallaEndpoint: Sendable {
 
     static func live(apiKey: String?) -> ValhallaEndpoint {
         if let apiKey { return .stadia(apiKey: apiKey) }
-        log.fault("STADIA_API_KEY missing from Secrets.xcconfig; routing through the public demo server")
+        log.error("STADIA_API_KEY missing from Secrets.xcconfig; routing through the public demo server")
         return .publicDemo
     }
 }
