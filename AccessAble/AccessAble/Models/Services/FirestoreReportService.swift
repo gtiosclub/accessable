@@ -276,12 +276,10 @@ final class FirestoreReportService: ReportService, @unchecked Sendable {
         if let own = ownReports.withLock({ $0[userID] }), own.isLoaded {
             return own.ids
         }
-        // none older than the longest lifetime is still live, unless votes renewed it
-        let oldest = now().addingTimeInterval(-Self.longestLifetime)
+        // not filtered by age: others' yes votes can keep an old report live
         let snapshot: QuerySnapshot
         do {
             snapshot = try await ownReportsCollection(of: userID)
-                .whereField("createdAt", isGreaterThan: Timestamp(date: oldest))
                 .order(by: "createdAt", descending: true)
                 .limit(to: Self.queryLimit)
                 .getDocuments()
@@ -449,8 +447,6 @@ extension FirestoreReportService {
                 .contains(error.code)
     }
 
-    /// The longest any kind of report lasts without a vote renewing it.
-    static let longestLifetime = ReportKind.allCases.map(\.lifetime).max() ?? 0
     /// How long a report is safe from "no" votes: too new for anyone to have walked past it since.
     static let denialGrace: TimeInterval = 10 * 60
     /// "No" votes since the last "yes" that end a report.
