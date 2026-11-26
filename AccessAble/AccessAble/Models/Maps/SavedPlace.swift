@@ -181,6 +181,11 @@ final class SavedPlacesStore {
         }
     }
 
+    func clear() {
+        places.removeAll()
+        defaults?.removeObject(forKey: storageKey)
+    }
+
     func savedPlace(id: SavedPlace.ID) -> SavedPlace? {
         places.first { $0.id == id }
     }

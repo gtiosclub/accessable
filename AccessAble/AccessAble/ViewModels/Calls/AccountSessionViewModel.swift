@@ -20,17 +20,23 @@ final class AccountSessionViewModel {
     /// phone mustn't be offered either.
     private let savedTrips: SavedTripStore?
     private let trip: any TripStateProviding
+    /// Kept on the phone, not in the account, so they go with it.
+    private let savedPlaces: SavedPlacesStore?
+    private let recentPlaces: RecentPlacesStore?
     private var activeUser: AuthUser?
     private var loadTask: Task<Void, Never>?
     private var generation = UUID()
 
     init(auth: any AuthService, profiles: any UserProfileStore, presence: any PresenceService = PlaceholderPresenceService(),
-         savedTrips: SavedTripStore? = nil, trip: any TripStateProviding = PlaceholderTripProvider()) {
+         savedTrips: SavedTripStore? = nil, trip: any TripStateProviding = PlaceholderTripProvider(),
+         savedPlaces: SavedPlacesStore? = nil, recentPlaces: RecentPlacesStore? = nil) {
         self.auth = auth
         self.profiles = profiles
         self.presence = presence
         self.savedTrips = savedTrips
         self.trip = trip
+        self.savedPlaces = savedPlaces
+        self.recentPlaces = recentPlaces
     }
 
     func listen() async {
@@ -87,6 +93,8 @@ final class AccountSessionViewModel {
         try await auth.signOut()
         await trip.endTrip()
         savedTrips?.clear()
+        savedPlaces?.clear()
+        recentPlaces?.clear()
         loadTask?.cancel()
         generation = UUID()
         activeUser = nil

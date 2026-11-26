@@ -91,7 +91,7 @@ struct SavedPlacesTests {
     }
 
     @Test
-    func searchFindsSavedPlacesByLabelAndClearsNoResults() {
+    func searchFindsSavedPlacesByLabelAndClearsNoResults() async throws {
         let (defaults, suite) = makeDefaults()
         defer { defaults.removePersistentDomain(forName: suite) }
 
@@ -100,8 +100,12 @@ struct SavedPlacesTests {
         store.save(destination: dorm, label: "Home")
 
         let search = PlaceSearchViewModel(places: SampleContent.places, savedPlaces: store)
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+
         search.query = "Class"
         search.search()
+        try await waitUntil { !search.isSearching }
 
         #expect(search.matchingSavedPlaces.map(\.displayName) == ["Class"])
         #expect(!search.showsNoResults)
@@ -109,8 +113,56 @@ struct SavedPlacesTests {
 
         search.query = "zzzz"
         search.search()
+        try await waitUntil { !search.isSearching }
         #expect(search.matchingSavedPlaces.isEmpty)
         #expect(search.showsNoResults)
+    }
+
+    @Test
+    func savedPlacesComeBeforeLiveResults() async throws {
+        let store = SavedPlacesStore(places: [])
+        store.save(
+            destination: Destination(
+                name: "Campus Recreation Center",
+                coordinate: GeoCoordinate(latitude: 33.775662, longitude: -84.404041),
+                address: "750 Ferst Dr NW, Atlanta, GA"
+            ),
+            label: "Gym"
+        )
+
+        let search = PlaceSearchViewModel(savedPlaces: store)
+        let listening = Task { await search.start() }
+        defer { listening.cancel() }
+
+        search.query = "Campus Rec"
+        search.search()
+        try await waitUntil { !search.isSearching }
+
+        #expect(search.matchingSavedPlaces.map(\.displayName) == ["Gym"])
+        #expect(search.suggestions.map(\.title) == ["Campus Recreation Center"])
+        #expect(search.resultsSummary == "1 saved place, 1 result")
+    }
+
+    @Test
+    func signingOutClearsSavedPlaces() async throws {
+        let (defaults, suite) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = SavedPlacesStore(defaults: defaults)
+        store.save(destination: clough, label: "Class")
+        let session = AccountSessionViewModel(
+            auth: PlaceholderAuthService(), profiles: PlaceholderUserProfileStore(), savedPlaces: store
+        )
+        try await session.signOut()
+
+        #expect(store.places.isEmpty)
+        #expect(SavedPlacesStore(defaults: defaults).places.isEmpty)
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        for _ in 0..<400 where !condition() {
+            try await Task.sleep(for: .milliseconds(5))
+        }
     }
 
     @Test

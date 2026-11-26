@@ -33,6 +33,7 @@ struct RecentPlacesTests {
         let plan = TripPlan(place: place, route: nil, isRecording: false)
 
         let session = TripSessionViewModel(plan: plan, recentPlaces: firstApp.recentPlacesStore)
+        #expect(firstApp.recentPlaces.isEmpty)
         await session.run()
 
         #expect(firstApp.recentPlaces.count == 1)
@@ -98,6 +99,20 @@ struct RecentPlacesTests {
 
         let reloaded = RecentPlacesStore(defaults: defaults)
         #expect(reloaded.places.isEmpty)
+    }
+
+    @Test
+    func signingOutClearsRecents() async throws {
+        let defaults = freshDefaults()
+        let store = RecentPlacesStore(defaults: defaults)
+        store.record(destination: destination("Clough Commons"))
+        let session = AccountSessionViewModel(
+            auth: PlaceholderAuthService(), profiles: PlaceholderUserProfileStore(), recentPlaces: store
+        )
+        try await session.signOut()
+
+        #expect(store.places.isEmpty)
+        #expect(RecentPlacesStore(defaults: defaults).places.isEmpty)
     }
 
     @Test

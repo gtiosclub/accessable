@@ -21,7 +21,7 @@ struct RootView: View {
     }
 
     @ViewBuilder private var appContent: some View {
-        if app.services.accountsAvailable { AccountGateView(services: app.services) }
+        if app.services.accountsAvailable { AccountGateView(app: app) }
         else if app.hasCompletedOnboarding { MainFlowView() }
         else { OnboardingView(includesAccount: false) }
     }
@@ -32,10 +32,12 @@ private struct AccountGateView: View {
     @State private var session: AccountSessionViewModel
     @State private var signOutError: String?
 
-    init(services: AppServices) {
+    init(app: AppViewModel) {
+        let services = app.services
         _session = State(initialValue: AccountSessionViewModel(
             auth: services.auth, profiles: services.userProfiles, presence: services.presence,
-            savedTrips: services.savedTrips, trip: services.trip))
+            savedTrips: services.savedTrips, trip: services.trip,
+            savedPlaces: app.savedPlacesStore, recentPlaces: app.recentPlacesStore))
     }
 
     var body: some View {
