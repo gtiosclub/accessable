@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, increment, serverTimestamp, Timestamp, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, increment, serverTimestamp, setDoc, Timestamp, writeBatch } from 'firebase/firestore';
 
 export const MINUTE = 60 * 1000;
 export const HOUR = 60 * MINUTE;
@@ -13,7 +13,9 @@ export function startEnvironment() {
   });
 }
 
-export function reportData(uid, id, overrides = {}) {
+/// A report as the app writes one. It doesn't name its reporter: `reporterID` is always empty, and the report is
+/// listed in the reporter's private `users/{uid}/reports` instead.
+export function reportData(id, overrides = {}) {
   return {
     id,
     kind: 'construction',
@@ -21,7 +23,7 @@ export function reportData(uid, id, overrides = {}) {
     createdAt: serverTimestamp(),
     expiresAt: Timestamp.fromMillis(Date.now() + DAY),
     confirmations: 0,
-    reporterID: uid,
+    reporterID: '',
     ...overrides,
   };
 }
@@ -31,23 +33,34 @@ export function stampData(id) {
 }
 
 /// Writes a report the way the app must: in one batch with the reporter's rate-limit stamp, merged
-/// so a vote stamp stays.
-export function createReport(db, uid, id, overrides = {}) {
+/// so a vote stamp stays, and their private record of it. `own` false leaves that record out.
+export function createReport(db, uid, id, overrides = {}, { own = true } = {}) {
   const batch = writeBatch(db);
-  batch.set(doc(db, 'reports', id), reportData(uid, id, overrides));
+  batch.set(doc(db, 'reports', id), reportData(id, overrides));
   batch.set(doc(db, 'rateLimits', uid), stampData(id), { merge: true });
+  if (own) batch.set(doc(db, 'users', uid, 'reports', id), { createdAt: serverTimestamp() });
   return batch.commit();
 }
 
-/// Puts a report and its stamp in place without the rules, dated `ageMs` ago.
+/// Puts a report, its stamp and its reporter's record of it in place without the rules, dated `ageMs` ago.
 export async function seedReport(env, uid, id, ageMs = 2 * 60 * 1000, overrides = {}) {
   const at = Timestamp.fromMillis(Date.now() - ageMs);
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
     const batch = writeBatch(db);
-    batch.set(doc(db, 'reports', id), reportData(uid, id, { createdAt: at, ...overrides }));
+    batch.set(doc(db, 'reports', id), reportData(id, { createdAt: at, ...overrides }));
     batch.set(doc(db, 'rateLimits', uid), { lastReportAt: at, lastReportId: id });
+    batch.set(doc(db, 'users', uid, 'reports', id), { createdAt: at });
     await batch.commit();
+  });
+}
+
+/// Puts a report from before the private records in place without the rules: it names its reporter, who has no
+/// record of it.
+export async function seedLegacyReport(env, uid, id, ageMs = 20 * 60 * 1000) {
+  const at = Timestamp.fromMillis(Date.now() - ageMs);
+  await env.withSecurityRulesDisabled(async (context) => {
+    await setDoc(doc(context.firestore(), 'reports', id), reportData(id, { createdAt: at, reporterID: uid }));
   });
 }
 

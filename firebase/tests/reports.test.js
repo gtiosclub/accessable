@@ -31,7 +31,7 @@ test('a report with an area outline can be created', async () => {
 
 test('a report cannot be created without the rate-limit stamp', async () => {
   const db = alice();
-  await assertFails(setDoc(doc(db, 'reports', 'r1'), reportData('alice', 'r1')));
+  await assertFails(setDoc(doc(db, 'reports', 'r1'), reportData('r1')));
 });
 
 test('a report cannot name another user as its reporter', async () => {
@@ -79,8 +79,8 @@ test('a report cannot carry extra fields such as personal data', async () => {
 test('one batch cannot create more than one report', async () => {
   const db = alice();
   const batch = writeBatch(db);
-  batch.set(doc(db, 'reports', 'r1'), reportData('alice', 'r1'));
-  batch.set(doc(db, 'reports', 'r2'), reportData('alice', 'r2'));
+  batch.set(doc(db, 'reports', 'r1'), reportData('r1'));
+  batch.set(doc(db, 'reports', 'r2'), reportData('r2'));
   batch.set(doc(db, 'rateLimits', 'alice'), stampData('r1'));
   await assertFails(batch.commit());
 });
