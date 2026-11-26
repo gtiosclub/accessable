@@ -82,6 +82,7 @@ struct CallView: View {
             if let error { AccessibilityNotification.Announcement(error).post() }
         }
         .task { statusFocused = true; await viewModel.start() }
+        // Leaving the screen mid-call hangs up, which also gives the camera back to AR.
         .onDisappear { Task { await viewModel.hangUp() } }
         .accessibilityAction(.magicTap) {
             if viewModel.state.isActive { Task { await viewModel.hangUp() } }

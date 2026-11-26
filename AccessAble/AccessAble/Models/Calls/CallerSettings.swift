@@ -7,9 +7,13 @@ struct CallerPreferences: Codable, Equatable, Sendable {
     var criticalObstacleAlerts = true
     var announcementVolume: Float = 1
 
+    /// Never silent: a blind caller relies on hearing "Call ended" and failure prompts.
+    static let minimumVolume: Float = 0.1
+
     var normalized: CallerPreferences {
         var value = self
-        value.announcementVolume = announcementVolume.isFinite ? min(max(announcementVolume, 0), 1) : 1
+        value.announcementVolume = announcementVolume.isFinite
+            ? min(max(announcementVolume, Self.minimumVolume), 1) : 1
         return value
     }
 }
@@ -32,7 +36,10 @@ enum CallAnnouncementPolicy {
         return event.priority == .critical
     }
 
+    /// Call prompts and in-call guidance are quieter so they don't drown out the volunteer;
+    /// critical alerts are always full volume.
     static func volume(for event: AnnouncementEvent, duringCall: Bool, preferences: CallerPreferences) -> Float {
-        event.isCallAnnouncement || duringCall ? preferences.normalized.announcementVolume : 1
+        guard event.priority != .critical else { return 1 }
+        return event.isCallAnnouncement || duringCall ? preferences.normalized.announcementVolume : 1
     }
 }

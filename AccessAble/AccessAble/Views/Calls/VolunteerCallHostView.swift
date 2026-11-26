@@ -32,8 +32,10 @@ struct VolunteerCallHostView: View {
     var body: some View {
         ZStack {
             VolunteerHomeView(settings: settings, signOut: signOut,
-                              lastCall: model.call == nil ? model.lastCallForSafety : nil,
-                              callSafety: services.callSafety, dismissLastCall: { model.dismissSafetySummary() },
+                              // Kept while ringing, so a half-written report survives the ring.
+                              pastCalls: model.callsForSafety,
+                              callSafety: services.callSafety, dismissPastCall: { model.dismissSafetySummary($0) },
+                              isRinging: model.call != nil,
                               listenerError: model.listenerError, retryListening: { model.retryListening() },
                               callMessage: model.message, dismissCallMessage: { model.dismissMessage() })
                 .allowsHitTesting(model.call == nil)

@@ -48,6 +48,25 @@ struct TripActivityPlannerTests {
     }
 
     @Test
+    func aGenericArrivalShowsWhereTheUserIsGoing() {
+        let generic = Maneuver(kind: .arrive, instruction: "You have arrived at your destination.",
+                               coordinate: arrive.coordinate)
+        var planner = TripActivityPlanner()
+        guard case let .start(_, content, _) = planner.action(for: trip(maneuver: generic), route: nil, formatter: .imperial)
+        else { Issue.record("no activity started"); return }
+        #expect(content.instruction == "Arrive at Clough Commons")
+    }
+
+    @Test
+    func aSideOfTheStreetArrivalIsShownAsIs() {
+        let side = Maneuver(kind: .arrive, instruction: "Your destination is on the left.", coordinate: arrive.coordinate)
+        var planner = TripActivityPlanner()
+        guard case let .start(_, content, _) = planner.action(for: trip(maneuver: side), route: nil, formatter: .imperial)
+        else { Issue.record("no activity started"); return }
+        #expect(content.instruction == "Your destination is on the left.")
+    }
+
+    @Test
     func noTripStartsNothing() {
         var planner = TripActivityPlanner()
         #expect(planner.action(for: .idle, route: nil, formatter: .imperial) == nil)

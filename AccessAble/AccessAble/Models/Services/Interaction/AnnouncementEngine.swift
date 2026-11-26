@@ -2,6 +2,7 @@ import Foundation
  
 actor AnnouncementEngine: AnnouncementEngineProtocol {
     private nonisolated let delivered = Broadcaster<AnnouncementEvent>()
+    private nonisolated let finished = Broadcaster<FinishedAnnouncement>()
     private let speech: SpeechOutput
     private let haptics: any HapticRendering
     private let callSettings: CallerSettings
@@ -12,6 +13,8 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
     private var queue: [AnnouncementEvent] = []
     private var isDraining = false
     private var current: AnnouncementEvent?
+    /// The current event's speech was stopped for another or a pause.
+    private var isCurrentInterrupted = false
     private var last: AnnouncementEvent?
     private var recentKeys: [String: Date] = [:]
  
@@ -35,6 +38,10 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
         delivered.stream(bufferingPolicy: .bufferingNewest(8))
     }
 
+    nonisolated func finishedEvents() -> AsyncStream<FinishedAnnouncement> {
+        finished.stream(bufferingPolicy: .bufferingNewest(8))
+    }
+
     // Explicit repeat skips dedup but still respects pause, profile and call safety settings.
     func repeatLast() async {
         guard let last, !isPaused, profile.allows(last), allowedNow(last) else { return }
@@ -48,6 +55,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
     func pause() async {
         isPaused = true
         queue.removeAll()
+        if current != nil { isCurrentInterrupted = true }
         await speech.stop()
         await haptics.stop()
     }
@@ -78,6 +86,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
         queue.insert(event, at: index)
  
         if event.priority == .critical, let current, current.priority < .critical {
+            isCurrentInterrupted = true
             await speech.stop() // drain() moves on to the critical event right away
         }
         if !isDraining {
@@ -89,6 +98,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
     private func drain() async {
         while let event = nextFreshEvent() {
             current = event
+            isCurrentInterrupted = false
             last = event
             delivered.send(event)
             let buzzes = event.haptic != nil && profile.channels.contains(.haptics)
@@ -104,6 +114,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
                                                                        preferences: callSettings.preferences))
             }
             current = nil
+            finished.send(FinishedAnnouncement(id: event.id, wasInterrupted: isCurrentInterrupted, isIdle: queue.isEmpty))
         }
         isDraining = false
     }

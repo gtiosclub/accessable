@@ -86,15 +86,15 @@ struct CallerCallControlsTests {
 @MainActor
 private final class ControlsTestSignaling: CallSignaling {
     private var count = 0
-    func requestCall(preferring volunteerID: String?, progress: @Sendable (CallRequestProgress) -> Void) async throws -> CallTicket {
+    @MainActor func requestCall(preferring volunteerID: String?, progress: @Sendable (CallRequestProgress) -> Void) async throws -> CallTicket {
         count += 1
         return CallTicket(callID: "control-\(count)", roomName: "room", token: "fixture", callerID: "caller",
                           volunteerID: "helper", expiresAt: .now.addingTimeInterval(60))
     }
-    func accept(callID: String) async throws -> CallTicket { throw CallSessionError.notConfigured }
-    func decline(callID: String) async throws {}
-    func skip(callID: String) async throws {}
-    func endCall(callID: String) async {}
+    @MainActor func accept(callID: String) async throws -> CallTicket { throw CallSessionError.notConfigured }
+    @MainActor func decline(callID: String) async throws {}
+    @MainActor func skip(callID: String) async throws {}
+    @MainActor func endCall(callID: String) async {}
 }
 
 @MainActor
@@ -116,13 +116,13 @@ private final class ControlsTestVideo: VideoCallSession {
     func resumeMute() { pauseMute = false; pendingMute?.resume(); pendingMute = nil }
     init() { events.send(.idle) }
     nonisolated func states() -> AsyncStream<CallState> { events.stream() }
-    func connect(with ticket: CallTicket) async throws { connected = true; connections += 1; events.send(.connected) }
-    func disconnect() async { connected = false; torchOn = false; events.send(.ended(.hungUp)) }
-    func setMicrophoneMuted(_ muted: Bool) async throws {
+    @MainActor func connect(with ticket: CallTicket) async throws { connected = true; connections += 1; events.send(.connected) }
+    @MainActor func disconnect() async { connected = false; torchOn = false; events.send(.ended(.hungUp)) }
+    @MainActor func setMicrophoneMuted(_ muted: Bool) async throws {
         if pauseMute { await withCheckedContinuation { pendingMute = $0; muteWaiter?.resume(); muteWaiter = nil } }
     }
-    func flipCamera() async throws {}
-    func setFlashlight(_ on: Bool) async throws {
+    @MainActor func flipCamera() async throws {}
+    @MainActor func setFlashlight(_ on: Bool) async throws {
         torchRequestedBeforeConnection = torchRequestedBeforeConnection || !connected
         torchRequests.append(on)
         if failTorch { throw CallSessionError.notConfigured }

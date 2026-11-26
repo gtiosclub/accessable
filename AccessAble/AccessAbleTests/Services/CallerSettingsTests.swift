@@ -51,7 +51,9 @@ struct CallerSettingsTests {
         shared.preferences = CallerPreferences(announcementVolume: 2)
         #expect(shared.preferences.announcementVolume == 1)
         shared.preferences = CallerPreferences(announcementVolume: -1)
-        #expect(shared.preferences.announcementVolume == 0)
+        #expect(shared.preferences.announcementVolume == CallerPreferences.minimumVolume)
+        shared.preferences = CallerPreferences(announcementVolume: 0)
+        #expect(shared.preferences.announcementVolume == CallerPreferences.minimumVolume)
         shared.preferences = CallerPreferences(announcementVolume: .nan)
         #expect(shared.preferences.announcementVolume == 1)
     }
@@ -82,5 +84,7 @@ struct CallAnnouncementPolicyTests {
         #expect(CallAnnouncementPolicy.volume(for: event(.system, .high, call: true), duringCall: false, preferences: prefs) == 0.2)
         #expect(CallAnnouncementPolicy.volume(for: event(.maneuver, .high), duringCall: true, preferences: prefs) == 0.2)
         #expect(CallAnnouncementPolicy.volume(for: event(.maneuver, .high), duringCall: false, preferences: prefs) == 1)
+        // A critical alert must always be heard, whatever the slider says.
+        #expect(CallAnnouncementPolicy.volume(for: event(.hazard, .critical), duringCall: true, preferences: prefs) == 1)
     }
 }

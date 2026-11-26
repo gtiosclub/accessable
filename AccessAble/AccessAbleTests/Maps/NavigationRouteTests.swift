@@ -109,6 +109,8 @@ struct NavigationRouteTests {
         ("Take the stairs onto Down Street.", "stairs"),
         ("Take the stairs. Then turn up the ramp.", "stairs"),
         ("Go up the stairs.", "stairs going up"),
+        ("Take the steps down.", "stairs going down"),
+        ("Go up the steps.", "stairs going up"),
     ])
     func stairsPhraseSaysWhichWayWhenTheTextDoes(_ text: String, _ phrase: String) {
         let step = RouteStep(kind: .stairs, coordinateIndex: 1, instruction: text, spokenInstruction: text)
@@ -142,6 +144,16 @@ struct NavigationRouteTests {
     ])
     func withoutCompassDirectionDropsTheStartsDirection(_ text: String, _ expected: String) {
         #expect(RouteStep.withoutCompassDirection(text) == expected)
+    }
+
+    @Test(arguments: [
+        ("Turn left. Then Turn left.", "Turn left. Then turn left."),
+        ("Keep right to take the walkway. Then Keep left to take the walkway.",
+         "Keep right to take the walkway. Then keep left to take the walkway."),
+        ("Turn right onto Ferst Drive.", "Turn right onto Ferst Drive."),
+    ])
+    func theJoinedStepStartsLowercase(_ text: String, _ expected: String) {
+        #expect(RouteStep.withLowercaseThen(text) == expected)
     }
 
     @Test

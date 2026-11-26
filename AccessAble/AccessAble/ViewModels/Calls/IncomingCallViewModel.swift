@@ -13,9 +13,12 @@ final class IncomingCallViewModel {
     private(set) var isMuted = false
     private(set) var isUpdatingControls = false
     private(set) var listenerAttempt = 0
-    private(set) var lastCallForSafety: CallSafetySummary?
+    /// Calls the volunteer can still report, newest first. A new call doesn't replace one they
+    /// haven't dealt with yet, so a report started before the next ring isn't lost.
+    private(set) var callsForSafety: [CallSafetySummary] = []
+    private static let maxCallsForSafety = 3
 
-    func dismissSafetySummary() { lastCallForSafety = nil }
+    func dismissSafetySummary(_ id: String) { callsForSafety.removeAll { $0.id == id } }
 
     @ObservationIgnored private let volunteerID: String
     @ObservationIgnored private let source: any IncomingCallProviding
@@ -140,7 +143,10 @@ final class IncomingCallViewModel {
             guard ticket.callID == offer.id, ticket.volunteerID == volunteerID,
                   !ticket.isExpired(at: now()) else { throw CallSignalingError.callTaken }
             phase = .connecting
-            lastCallForSafety = CallSafetySummary(id: ticket.callID, otherUserID: ticket.callerID, canBlockVolunteer: false)
+            callsForSafety.removeAll { $0.id == ticket.callID }
+            callsForSafety.insert(
+                CallSafetySummary(id: ticket.callID, otherUserID: ticket.callerID, canBlockVolunteer: false), at: 0)
+            if callsForSafety.count > Self.maxCallsForSafety { callsForSafety.removeLast() }
             joining = true
             await announcements.setInCall(true)
             try Task.checkCancellation()

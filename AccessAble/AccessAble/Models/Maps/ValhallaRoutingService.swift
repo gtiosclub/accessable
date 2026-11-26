@@ -56,8 +56,22 @@ struct ValhallaRoutingService: RoutingService {
             return try decodeRoute(data)
         case 400:
             throw requestError(data)
-        // 403 is the shared demo server blocking or throttling us, not a bug in our request.
-        case 403, 429, 500...599:
+        // 429 is Stadia out of credits or a server throttling us; 402 is Stadia asking for payment.
+        case 402, 429:
+            log.error("Valhalla usage limit reached: HTTP \(http.statusCode, privacy: .public)")
+            throw RoutingError.usageLimitReached
+        // 401/403 from Stadia means a missing or rejected key; from the demo server, blocking us.
+        case 401, 403:
+            if endpoint.stadiaAPIKey != nil {
+                log.fault("Stadia rejected the API key: HTTP \(http.statusCode, privacy: .public). Check STADIA_API_KEY.")
+                throw RoutingError.notAuthorized
+            }
+            log.error("Valhalla refused us: HTTP \(http.statusCode, privacy: .public)")
+            throw RoutingError.serverUnavailable
+        case 408:
+            log.error("Valhalla request timed out: HTTP 408")
+            throw RoutingError.serverUnavailable
+        case 500...599:
             log.error("Valhalla unavailable: HTTP \(http.statusCode, privacy: .public)")
             throw RoutingError.serverUnavailable
         default:
@@ -87,6 +101,12 @@ struct ValhallaRoutingService: RoutingService {
         442, // no path could be found for input
     ]
 
+    /// Valhalla error codes meaning it refused the request's exclusions.
+    private static let exclusionErrorCodes: Set<Int> = [
+        157, // exceeded max avoid locations
+        167, // exceeded max perimeter of exclude_polygons
+    ]
+
     /// Any other rejection means our request was wrong, which is a bug rather than a missing route.
     private func requestError(_ data: Data) -> RoutingError {
         let body: ErrorResponse
@@ -98,7 +118,9 @@ struct ValhallaRoutingService: RoutingService {
         }
         // Valhalla's message can echo request details, so only the code is logged.
         log.error("Valhalla rejected the request: error_code \(body.errorCode, privacy: .public)")
-        return Self.noRouteErrorCodes.contains(body.errorCode) ? .noRouteFound : .invalidResponse
+        if Self.noRouteErrorCodes.contains(body.errorCode) { return .noRouteFound }
+        if Self.exclusionErrorCodes.contains(body.errorCode) { return .exclusionsRejected }
+        return .invalidResponse
     }
 
     private func makeRequest(
@@ -108,15 +130,30 @@ struct ValhallaRoutingService: RoutingService {
         let walkingSpeed = min(max(options.walkingSpeed * 3.6, 0.5), 25)
         let body = RouteRequest(
             locations: [Location(origin), Location(destination)],
-            costingOptions: CostingOptions(pedestrian: Pedestrian(walkingSpeed: walkingSpeed))
+            costingOptions: CostingOptions(pedestrian: Pedestrian(walkingSpeed: walkingSpeed)),
+            excludeLocations: options.excludeLocations.isEmpty
+                ? nil
+                : options.excludeLocations.map(Location.init),
+            excludePolygons: options.excludePolygons.isEmpty
+                ? nil
+                : options.excludePolygons.map { polygon in
+                    var ring = polygon.map { [$0.longitude, $0.latitude] }
+                    if let first = ring.first, ring.last != first {
+                        ring.append(first)
+                    }
+                    return ring
+                }
         )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
 
-        var request = URLRequest(url: endpoint.baseURL.appending(path: "route"), timeoutInterval: 15)
+        var request = URLRequest(url: endpoint.routeURL, timeoutInterval: 15)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(endpoint.userAgent, forHTTPHeaderField: "User-Agent")
+        if let key = endpoint.stadiaAPIKey {
+            request.setValue("Stadia-Auth \(key)", forHTTPHeaderField: "Authorization")
+        }
         request.httpBody = try encoder.encode(body)
         return request
     }
@@ -133,6 +170,8 @@ struct ValhallaRoutingService: RoutingService {
         let locations: [Location]
         let costing = "pedestrian"
         let costingOptions: CostingOptions
+        let excludeLocations: [Location]?
+        let excludePolygons: [[[Double]]]?
         // The decoder converts either unit; kilometres keeps the response metric.
         let units = "kilometers"
         let language = "en-US"

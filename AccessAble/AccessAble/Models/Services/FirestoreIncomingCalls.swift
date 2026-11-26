@@ -102,14 +102,17 @@ private final class IncomingCallSubscription {
         let data = snapshot?.data() ?? [:]
         guard data["isOnline"] as? Bool == true, data["inCall"] as? Bool != true,
               let id = data["ringingCallId"] as? String, !id.isEmpty, !id.contains("/"),
-              let since = data["ringingSince"] as? Timestamp else {
+              data["ringingSince"] is Timestamp else {
             clearCall()
             return
         }
         guard id != callID else { return } // Heartbeats must not restart the timer or ring sound.
         clearCall()
         callID = id
-        ringingSince = since.dateValue()
+        // Timed from when the ring reached this phone, not the server's `ringingSince`: a phone
+        // clock that runs fast would otherwise make every ring look expired and drop it unheard.
+        // The call listener still dismisses it as soon as the caller skips or hangs up.
+        ringingSince = Date()
         let expected = generation
         callListener = Firestore.firestore().collection("calls").document(id)
             .addSnapshotListener { [weak self] snapshot, error in

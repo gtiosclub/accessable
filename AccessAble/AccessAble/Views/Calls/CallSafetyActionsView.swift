@@ -7,9 +7,12 @@ struct CallSafetyActionsView: View {
     @State private var confirmingBlock = false
     @AccessibilityFocusState private var reportFocused: Bool
     @AccessibilityFocusState private var resultFocused: Bool
+    /// Something more urgent is on screen: close the report sheet. What was typed stays in the model.
+    var suspended = false
 
-    init(summary: CallSafetySummary, service: any CallSafetyService) {
+    init(summary: CallSafetySummary, service: any CallSafetyService, suspended: Bool = false) {
         _model = State(initialValue: CallSafetyActionsViewModel(summary: summary, service: service))
+        self.suspended = suspended
     }
 
     init(model: CallSafetyActionsViewModel) {
@@ -34,6 +37,9 @@ struct CallSafetyActionsView: View {
             }
             if model.isBusy { ProgressView("Saving") }
             if let message = model.message { Text(message).font(.callout).multilineTextAlignment(.center).accessibilityFocused($resultFocused) }
+        }
+        .onChange(of: suspended) { _, now in
+            if now { reporting = false; confirmingBlock = false }
         }
         .sheet(isPresented: $reporting, onDismiss: {
             if model.reported { resultFocused = true } else { reportFocused = true }
@@ -66,9 +72,9 @@ private struct CallReportView: View {
                     }.disabled(model.isBusy).accessibilityFocused($reasonFocused)
                     TextField("Additional details (optional)", text: $model.details, axis: .vertical)
                         .lineLimit(4...10).disabled(model.isBusy)
-                    Text("\(model.details.count)/2000 characters").font(.caption)
+                    Text("\(CallSafetyReportLimit.length(of: model.details))/\(CallSafetyReportLimit.maxLength) characters").font(.caption)
                     Button(model.isBusy ? "Sending…" : "Send report") { Task { await model.report() } }
-                        .disabled(model.isBusy || model.details.count > 2000).frame(minHeight: 44)
+                        .disabled(model.isBusy || CallSafetyReportLimit.length(of: model.details) > CallSafetyReportLimit.maxLength).frame(minHeight: 44)
                 }
                 if let message = model.message, !model.reported { Text(message).accessibilityFocused($resultFocused) }
             }

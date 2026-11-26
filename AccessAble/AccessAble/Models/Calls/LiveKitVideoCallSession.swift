@@ -23,6 +23,10 @@ final class LiveKitVideoCallSession: VideoCallSession {
     private var isJoining = false
     private var connectionGeneration = UUID()
     private var partnerDeadline: Date?
+    /// When the other person was last missing from the room, so a short gap isn't taken for leaving.
+    private var partnerMissingSince: Date?
+    /// How long they may be gone, for example while their phone switches from Wi-Fi to cellular.
+    private static let partnerGoneGrace: TimeInterval = 10
 
     /// Main-actor read access for the volunteer's renderer; never exposes tokens or the Room.
     var remoteVideoTrack: VideoTrack? {
@@ -48,7 +52,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
     nonisolated func disconnect() async { await leave(.hungUp) }
     nonisolated func setMicrophoneMuted(_ muted: Bool) async throws { try await setMuted(muted) }
     nonisolated func flipCamera() async throws { try await switchCamera() }
-    nonisolated func setFlashlight(_ on: Bool) async throws { try await setTorch(on) }
+    nonisolated func setFlashlight(_ on: Bool) async throws { try await setConfirmedTorch(on) }
 
     // MARK: - Joining and leaving
 
@@ -86,10 +90,17 @@ final class LiveKitVideoCallSession: VideoCallSession {
             if isCaller { try await publishCamera(position: .back) }
             try checkJoin(generation)
 
+            // Connected means the other person is here too; until then the call stays connecting.
+            sawPartner = !room.remoteParticipants.isEmpty
+            // Connected means the other person is here too; until then the call stays connecting.
             sawPartner = !room.remoteParticipants.isEmpty
             partnerDeadline = Date().addingTimeInterval(30)
-            broadcaster.send(.connected)
+            if sawPartner { broadcaster.send(.connected) }
             startMonitoring()
+        } catch is CancellationError {
+            await cleanUp()
+            broadcaster.send(.ended(.hungUp))
+            throw CancellationError()
         } catch {
             // An in-flight room.connect may complete after disconnect invalidated this join.
             // Stop that local Room even if it was already removed from self.room.
@@ -120,6 +131,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
         cameraPosition = .back
         sawPartner = false
         partnerDeadline = nil
+        partnerMissingSince = nil
         // Camera rule: AR (and CV with it) resumes only after LiveKit has let go.
         if let token = cameraToken {
             cameraToken = nil
@@ -142,10 +154,20 @@ final class LiveKitVideoCallSession: VideoCallSession {
         guard let room else { return }
         if room.connectionState == .disconnected {
             await leave(.remoteLeft)
+        } else if room.connectionState == .reconnecting {
+            // This phone is reconnecting: the room looks empty until it's back, so wait.
+            return
         } else if !room.remoteParticipants.isEmpty {
-            sawPartner = true
+            partnerMissingSince = nil
+            if !sawPartner {
+                sawPartner = true
+                broadcaster.send(.connected)
+            }
         } else if sawPartner {
-            await leave(.remoteLeft)
+            // They may be reconnecting; only a longer absence ends the call.
+            let since = partnerMissingSince ?? Date()
+            partnerMissingSince = since
+            if Date().timeIntervalSince(since) >= Self.partnerGoneGrace { await leave(.remoteLeft) }
         } else if let partnerDeadline, Date() >= partnerDeadline {
             // The other side failed before joining: don't strand a volunteer inCall forever.
             await leave(.unanswered)
@@ -164,7 +186,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
     private func configureAudio() {
         AudioManager.shared.sessionConfiguration = AudioSessionConfiguration(
             category: .playAndRecord,
-            categoryOptions: [.defaultToSpeaker, .allowBluetooth, .allowBluetoothA2DP],
+            categoryOptions: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP],
             mode: .voiceChat
         )
         AudioManager.shared.isSpeakerOutputPreferred = true
@@ -194,6 +216,21 @@ final class LiveKitVideoCallSession: VideoCallSession {
         try? setTorch(false)
         _ = try await capturer.switchCameraPosition()
         cameraPosition = cameraPosition == .back ? .front : .back
+    }
+
+    /// Sets the light and waits until the camera reports it, for up to 2 seconds. Right after
+    /// joining, LiveKit's capture session may still be starting, and starting it can turn the
+    /// light back off, so the screen would say "Flashlight on" while the volunteer sees dark.
+    private func setConfirmedTorch(_ on: Bool) async throws {
+        for _ in 0..<10 {
+            try setTorch(on)
+            guard on else { return }
+            try await Task.sleep(for: .milliseconds(200))
+            if AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)?.isTorchActive == true {
+                return
+            }
+        }
+        throw CallSessionError.noFlashlight
     }
 
     private func setTorch(_ on: Bool) throws {

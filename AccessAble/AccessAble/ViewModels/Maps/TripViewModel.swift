@@ -20,6 +20,7 @@ final class TripViewModel {
 
     @ObservationIgnored private let services: AppServices
     @ObservationIgnored private let now: () -> Date
+    @ObservationIgnored private let warnsOfPassedReports: @MainActor () -> Bool
     @ObservationIgnored private var routeRequestedAt: Date?
     @ObservationIgnored private var latestPreciseFix: LocationSample?
     // internal so tests can wait for the first fix
@@ -38,10 +39,19 @@ final class TripViewModel {
     private static let maximumRouteAge: TimeInterval = 120
     private static let maximumStartFixAccuracy: Double = 20
     private static let maximumStartOffset: Double = 20
+    // older than this, the user has likely walked on from where the fix puts them
+    private static let maximumReportFixAge: TimeInterval = 10
 
-    init(services: AppServices, now: @escaping () -> Date = { .now }) {
+    /// - Parameter warnsOfPassedReports: Whether a route that passes a report says so when it lands, asked then. The
+    ///   route picker's summary says which reports it passes, to VoiceOver only, so it asks for this without it.
+    init(
+        services: AppServices,
+        now: @escaping () -> Date = { .now },
+        warnsOfPassedReports: @escaping @MainActor () -> Bool = { true }
+    ) {
         self.services = services
         self.now = now
+        self.warnsOfPassedReports = warnsOfPassedReports
     }
 
     func setDestination(_ destination: Destination) {
@@ -62,6 +72,16 @@ final class TripViewModel {
         routeError = nil
     }
 
+    /// Where a report goes: the latest precise fix, while it is recent enough to be where the user is.
+    var reportableLocation: GeoCoordinate? { currentFix?.coordinate }
+
+    /// The latest precise fix, while it is recent enough to be where the user is.
+    var currentFix: LocationSample? {
+        guard let latestPreciseFix,
+              now().timeIntervalSince(latestPreciseFix.timestamp) <= Self.maximumReportFixAge else { return nil }
+        return latestPreciseFix
+    }
+
     /// The route found so far, to hand on to the next screen.
     var plannedRoute: PlannedRoute? {
         guard let destination, let route, let routeRequestedAt else { return nil }
@@ -79,7 +99,10 @@ final class TripViewModel {
         switch routeError {
         case .noRouteFound: return "No walking route to \(destination.name) was found."
         case .serverUnavailable: return "Couldn't reach the routing service. Check your connection and try again."
+        case .usageLimitReached: return "The routing service has reached its usage limit. Try again later."
+        case .notAuthorized: return "The routing service isn't available right now. Try again later."
         case .invalidResponse: return "The routing service sent a route AccessAble couldn't read. Try again."
+        case .exclusionsRejected: return "The routing service couldn't take that many reported obstacles."
         }
     }
 
@@ -274,6 +297,26 @@ final class TripViewModel {
                 guard !Task.isCancelled else { return }
                 self.route = route
                 routeRequestedAt = requestedAt
+                // a refresh for Start leaves the warnings to the trip's start announcement
+                if !route.unavoidedReports.isEmpty, !isStartingTrip, warnsOfPassedReports() {
+                    await services.announcements.submit(AnnouncementEvent(
+                        category: .hazard,
+                        priority: .high,
+                        text: ReportExclusions.warning,
+                        source: .navigation,
+                        dedupKey: "route-report-fallback"
+                    ))
+                }
+                if route.source == .appleMaps, !isStartingTrip {
+                    await services.announcements.submit(AnnouncementEvent(
+                        category: .system,
+                        priority: .high,
+                        text: RouteSource.backupNotice,
+                        haptic: .attention,
+                        source: .navigation,
+                        dedupKey: "route-backup"
+                    ))
+                }
             } catch {
                 guard !Task.isCancelled else { return }
                 log.error("Routing failed: \(error.localizedDescription, privacy: .public)")

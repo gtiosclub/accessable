@@ -36,7 +36,7 @@ struct SettingsView: View {
                     SettingsRow {
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Call announcement volume").foregroundStyle(.white).accessibilityHidden(true)
-                            Slider(value: $viewModel.callerPreferences.announcementVolume, in: 0...1, step: 0.1) {
+                            Slider(value: $viewModel.callerPreferences.announcementVolume, in: CallerPreferences.minimumVolume...1, step: 0.1) {
                                 Text("Call announcement volume")
                             }
                             .accessibilityValue("\(Int((viewModel.callerPreferences.announcementVolume * 100).rounded())) percent")

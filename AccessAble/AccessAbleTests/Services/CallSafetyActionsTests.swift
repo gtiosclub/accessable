@@ -45,6 +45,18 @@ struct CallSafetyActionsTests {
         #expect(model.message == CallSafetyError.invalidReport.errorDescription)
     }
 
+    /// Counted like the rules count (UTF-16), so 1001 emoji are over the limit though they look like 1001 letters.
+    @Test func detailsAreCountedTheWayTheRulesCount() async {
+        #expect(CallSafetyReportLimit.length(of: String(repeating: "\u{1F600}", count: 1000)) == 2000)
+        #expect(CallSafetyReportLimit.length(of: String(repeating: "\u{D55C}", count: 2000)) == 2000)
+        let service = SafetyRecorder()
+        let model = CallSafetyActionsViewModel(summary: callerSummary, service: service)
+        model.details = String(repeating: "\u{1F600}", count: 1001)
+        await model.report()
+        #expect(!model.reported)
+        #expect(await service.reports.isEmpty)
+    }
+
     @Test func blockIsAcknowledgedOnlyAfterSuccessAndCanRetry() async {
         let service = SafetyRecorder()
         let model = CallSafetyActionsViewModel(summary: callerSummary, service: service)
