@@ -178,6 +178,7 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 
     func currentLocationDescription() async -> String? { nil }
 }
@@ -212,6 +213,7 @@ struct PreviewTripProvider: TripStateProviding {
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 }
 
 actor PlaceholderAuthService: AuthService {
@@ -339,12 +341,19 @@ actor PlaceholderUserProfileStore: UserProfileStore {
     }
 }
 
-/// The in-memory stand-in for reports, used in previews and tests.
+/// The in-memory stand-in for reports, used in previews and tests. It refuses the votes the rules refuse, so they
+/// behave as they would with Firestore.
 actor PlaceholderReportService: ReportService {
     private var storedReports: [Report] = []
     private nonisolated let changes = Broadcaster<[Report]>(replaysLatest: true)
+    private let auth: any AuthService
+    private let now: @Sendable () -> Date
+    private var votes: [String: Set<String>] = [:]
+    private var lastVote: [String: Date] = [:]
 
-    init() {
+    init(auth: any AuthService = PlaceholderAuthService(), now: @escaping @Sendable () -> Date = { .now }) {
+        self.auth = auth
+        self.now = now
         changes.send([])
     }
 
@@ -358,7 +367,8 @@ actor PlaceholderReportService: ReportService {
         near coordinate: GeoCoordinate,
         radius: Double
     ) async throws -> [Report] {
-        storedReports.filter { $0.expiresAt > .now && $0.isNear(coordinate, within: radius) }
+        let time = now()
+        return storedReports.filter { $0.expiresAt > time && $0.isNear(coordinate, within: radius) }
     }
 
     nonisolated func reportChanges(
@@ -370,13 +380,49 @@ actor PlaceholderReportService: ReportService {
         return AsyncStream { continuation in
             let task = Task {
                 for await reports in source {
+                    let time = self.now()
                     continuation.yield(reports.filter {
-                        $0.expiresAt > .now && $0.isNear(coordinate, within: radius)
+                        $0.expiresAt > time && $0.isNear(coordinate, within: radius)
                     })
                 }
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    @discardableResult
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool {
+        guard let user = await auth.currentUser() else { throw ReportServiceError.notSignedIn }
+        let time = now()
+        guard !FirestoreReportService.isRateLimited(lastReportAt: lastVote[user.id], now: time) else {
+            throw ReportServiceError.rateLimited
+        }
+        guard let index = storedReports.firstIndex(where: { $0.id == reportID }) else {
+            throw ReportServiceError.invalidReport
+        }
+        let report = storedReports[index]
+        guard FirestoreReportService.canVote(on: report, as: user.id, isStillPresent: isStillPresent, now: time),
+              votes[reportID, default: []].insert(user.id).inserted else {
+            throw ReportServiceError.permissionDenied
+        }
+        lastVote[user.id] = time
+
+        var voted = report
+        var extends = false
+        if isStillPresent {
+            voted.confirmations += 1
+            voted.negativesSinceConfirm = 0
+            let renewed = time.addingTimeInterval(report.kind.lifetime)
+            extends = renewed > report.expiresAt
+            if extends { voted.expiresAt = renewed }
+        } else {
+            voted.negativeConfirmations += 1
+            voted.negativesSinceConfirm += 1
+            if voted.negativesSinceConfirm >= FirestoreReportService.removalDenials { voted.expiresAt = time }
+        }
+        storedReports[index] = voted
+        changes.send(storedReports)
+        return extends
     }
 }

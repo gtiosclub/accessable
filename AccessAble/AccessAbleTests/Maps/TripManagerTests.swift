@@ -245,6 +245,8 @@ private final class ManualReportService: ReportService, Sendable {
         []
     }
 
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool { false }
+
     func reportChanges(near coordinate: GeoCoordinate, radius: Double) -> AsyncStream<[Report]> {
         changes.stream()
     }
@@ -2106,6 +2108,25 @@ struct TripManagerReportTests {
         #expect(abs((rerouted.distanceRemaining ?? 0) - 80) < 0.5)
     }
 
+    /// A vote that ends a report sets its expiry to now; one that comes like that isn't rerouted for, and the next
+    /// live one is rerouted for alone.
+    @Test
+    func aReportEndedByVotesIsNotRoutedAround() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: origin))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        var ended = report("ended", at: harness.point(60))
+        ended.expiresAt = harness.clock.now()
+
+        await harness.reports.publish([ended])
+        let live = report("live", at: harness.point(60))
+        await harness.reports.publish([ended, live])
+
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.options == [RouteOptions(reports: [live])])
+    }
+
     @Test
     func reportsArrivingTogetherRerouteOnceAroundAll() async throws {
         // held until answered, so only the report's own line is spoken
@@ -2539,5 +2560,233 @@ struct TripManagerReportTests {
 
         await waitUntil { !harness.reports.isListening }
         #expect(harness.reports.subscriptionCount == 1)
+    }
+}
+
+/// The questions a trip asks, in order. Like the trip screen, it ends each at once with `outcome`, unless given none.
+private actor QuestionRecorder {
+    private(set) var asked: [ReportQuestion] = []
+
+    nonisolated func listen(to manager: TripManager, ending outcome: ReportQuestionOutcome? = .voted) {
+        let stream = manager.reportQuestions()
+        Task {
+            for await question in stream {
+                await self.record(question)
+                if let outcome { await manager.reportQuestionEnded(question.report.id, outcome: outcome) }
+            }
+        }
+    }
+
+    private func record(_ question: ReportQuestion) { asked.append(question) }
+
+    func waitForCount(_ count: Int) async -> [ReportQuestion] {
+        await waitUntil { asked.count >= count }
+        return asked
+    }
+}
+
+/// A question is checked after the one that should come first, so a question asked too early would show up ahead
+/// of it.
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerReportQuestionTests {
+    /// `route`, planned around `reports` it couldn't avoid, so they are warned of at the start and not rerouted for.
+    private func harness(passing reports: [Report], route: NavigationRoute? = nil, crossings: [CampusCrossing] = [],
+                         ending: ReportQuestionOutcome? = .voted) async throws -> (Harness, QuestionRecorder) {
+        var planned = try route ?? cornerRoute()
+        planned.unavoidedReports = reports
+        let harness = try Harness(route: planned, crossings: crossings)
+        let questions = QuestionRecorder()
+        questions.listen(to: harness.manager, ending: ending)
+        await harness.start()
+        await harness.reports.publish(reports)
+        return (harness, questions)
+    }
+
+    /// Stands at `along` for `seconds`, a fix a second.
+    private func stand(_ harness: Harness, at along: Double, for seconds: Int) async {
+        for _ in 0..<seconds { await harness.fix(harness.point(along)) }
+    }
+
+    @Test
+    func asksAboutAReportOnceTheUserHasPassedIt() async throws {
+        let route = try cornerRoute()
+        let passed = report("passed", at: TripWalk.point(on: route, along: 30))
+        let (harness, questions) = try await harness(passing: [passed])
+
+        // up to it and a step beyond: passed, but not yet by more than GPS jitter
+        await harness.walk(from: 0, to: 32)
+        let atReport = harness.clock.now()
+        await harness.walk(from: 32, to: 45)
+
+        let asked = await questions.waitForCount(1)
+        #expect(asked.map(\.report.id) == ["passed"])
+        #expect(asked[0].askedAt > atReport)
+    }
+
+    /// A minute after the last ended, since the rules take one vote a minute, and once each.
+    @Test
+    func theNextQuestionWaitsAMinuteAndNoneIsAskedTwice() async throws {
+        let route = try cornerRoute()
+        let first = report("first", at: TripWalk.point(on: route, along: 30))
+        let second = report("second", at: TripWalk.point(on: route, along: 40))
+        let (harness, questions) = try await harness(passing: [first, second])
+
+        await harness.walk(from: 0, to: 47)
+        let firstAsked = try #require(await questions.waitForCount(1).first)
+        await stand(harness, at: 47, for: 70)
+
+        let asked = await questions.waitForCount(2)
+        #expect(asked.map(\.report.id) == ["first", "second"])
+        #expect(asked[1].askedAt.timeIntervalSince(firstAsked.askedAt) >= 60)
+    }
+
+    /// The next waits for the screen to end the question, and one it didn't put to the user is asked again after a
+    /// short wait.
+    @Test
+    func aQuestionTheScreenDidntAskIsAskedAgain() async throws {
+        let route = try cornerRoute()
+        let passed = report("passed", at: TripWalk.point(on: route, along: 30))
+        let (harness, questions) = try await harness(passing: [passed], ending: nil)
+
+        await harness.walk(from: 0, to: 47)
+        let first = try #require(await questions.waitForCount(1).first)
+        await harness.manager.reportQuestionEnded("passed", outcome: .notAsked)
+        // not on every fix, but after a short wait
+        await stand(harness, at: 47, for: 12)
+
+        let asked = await questions.waitForCount(2)
+        #expect(asked.map(\.report.id) == ["passed", "passed"])
+        #expect(asked[1].askedAt.timeIntervalSince(first.askedAt) >= 10)
+    }
+
+    /// Only a vote holds the next question back a minute: one unanswered doesn't.
+    @Test
+    func aQuestionLeftUnansweredDoesntHoldTheNextBack() async throws {
+        let route = try cornerRoute()
+        let first = report("first", at: TripWalk.point(on: route, along: 30))
+        let second = report("second", at: TripWalk.point(on: route, along: 40))
+        let (harness, questions) = try await harness(passing: [first, second], ending: .unanswered)
+
+        await harness.walk(from: 0, to: 50)
+
+        let asked = await questions.waitForCount(2)
+        #expect(asked.map(\.report.id) == ["first", "second"])
+        #expect(asked[1].askedAt.timeIntervalSince(asked[0].askedAt) < 60)
+    }
+
+    @Test
+    func waitsUntilClearOfACrossing() async throws {
+        let route = try cornerRoute()
+        let byTheCrossing = report("by the crossing", at: TripWalk.point(on: route, along: 30))
+        let crossing = CampusCrossing(coordinate: TripWalk.point(on: route, along: 55), control: .marked,
+                                      audibleSignal: false)
+        let (harness, questions) = try await harness(passing: [byTheCrossing], crossings: [crossing])
+
+        await harness.walk(from: 0, to: 54)
+        let atCrossing = harness.clock.now()
+        await harness.walk(from: 54, to: 62)
+
+        let asked = await questions.waitForCount(1)
+        #expect(asked.map(\.report.id) == ["by the crossing"])
+        #expect(asked[0].askedAt > atCrossing)
+    }
+
+    /// Held off by crossings and the turn until far past it, it is no longer "here", so the next report is asked
+    /// about instead.
+    @Test
+    func givesUpOnAReportOnceFarPastIt() async throws {
+        let route = try longCornerRoute()
+        let held = report("held off", at: TripWalk.point(on: route, along: 30))
+        let next = report("next", at: TripWalk.point(on: route, along: 125))
+        let crossings = [55.0, 80, 110].map {
+            CampusCrossing(coordinate: TripWalk.point(on: route, along: $0), control: .marked, audibleSignal: false)
+        }
+        let (harness, questions) = try await harness(passing: [held, next], route: route, crossings: crossings)
+
+        await harness.walk(from: 0, to: 140)
+
+        #expect(await questions.waitForCount(1).map(\.report.id) == ["next"])
+    }
+
+    @Test
+    func aReportPassedWhilePausedIsAskedAboutAfterResuming() async throws {
+        let route = try cornerRoute()
+        let passed = report("passed", at: TripWalk.point(on: route, along: 30))
+        let (harness, questions) = try await harness(passing: [passed])
+
+        await harness.walk(from: 0, to: 29)
+        await harness.manager.pauseTrip()
+        await harness.walk(from: 29, to: 40)
+        let resumedAt = harness.clock.now()
+        await harness.manager.resumeTrip()
+        await harness.walk(from: 40, to: 42)
+
+        let asked = await questions.waitForCount(1)
+        #expect(asked.map(\.report.id) == ["passed"])
+        #expect(asked[0].askedAt >= resumedAt)
+    }
+
+    @Test
+    func waitsUntilClearOfATurn() async throws {
+        let route = try longCornerRoute()
+        let byTheTurn = report("by the turn", at: TripWalk.point(on: route, along: 80))
+        let (harness, questions) = try await harness(passing: [byTheTurn], route: route)
+
+        await harness.walk(from: 0, to: 99)
+        let atTurn = harness.clock.now()
+        await harness.walk(from: 99, to: 115)
+
+        let asked = await questions.waitForCount(1)
+        #expect(asked.map(\.report.id) == ["by the turn"])
+        #expect(asked[0].askedAt > atTurn)
+    }
+
+    @Test
+    func neverAsksAboutTheUsersOwnReport() async throws {
+        let route = try cornerRoute()
+        let own = report("own", at: TripWalk.point(on: route, along: 30), by: reporterSelf)
+        let theirs = report("theirs", at: TripWalk.point(on: route, along: 55))
+        let (harness, questions) = try await harness(passing: [own, theirs])
+
+        await harness.walk(from: 0, to: 69)
+
+        #expect(await questions.waitForCount(1).map(\.report.id) == ["theirs"])
+    }
+
+    @Test
+    func passingOnRoughFixesIsNotAsked() async throws {
+        let route = try cornerRoute()
+        let roughly = report("roughly", at: TripWalk.point(on: route, along: 30))
+        let precisely = report("precisely", at: TripWalk.point(on: route, along: 55))
+        let (harness, questions) = try await harness(passing: [roughly, precisely])
+
+        for along in TripWalk.distances(from: 0, to: 42) {
+            await harness.fix(harness.point(along), accuracy: 25)
+        }
+        await harness.walk(from: 42, to: 69)
+
+        #expect(await questions.waitForCount(1).map(\.report.id) == ["precisely"])
+    }
+
+    @Test
+    func aQuestionIsNotHeardAgainOnTheNextTrip() async throws {
+        let route = try cornerRoute()
+        let passed = report("passed", at: TripWalk.point(on: route, along: 30))
+        let (harness, firstTrip) = try await harness(passing: [passed])
+        await harness.walk(from: 0, to: 45)
+        _ = await firstTrip.waitForCount(1)
+        await harness.manager.endTrip()
+
+        let nextTrip = QuestionRecorder()
+        nextTrip.listen(to: harness.manager)
+        let restartedAt = harness.clock.now()
+        await harness.start()
+        await harness.reports.publish([passed])
+        await harness.walk(from: 0, to: 45)
+
+        let asked = await nextTrip.waitForCount(1)
+        // asked again, since it is a new trip, but not the first trip's question replayed
+        #expect(asked.map(\.report.id) == ["passed"])
+        #expect(asked[0].askedAt > restartedAt)
     }
 }

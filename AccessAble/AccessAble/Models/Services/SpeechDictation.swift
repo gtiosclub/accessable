@@ -22,6 +22,11 @@ final class SpeechDictation {
     /// Called with a message that's safe to read aloud whenever dictation fails.
     @ObservationIgnored var onError: ((String) -> Void)?
 
+    /// Whether speech recognition and the microphone are already allowed, so `start()` won't ask.
+    static var isAllowed: Bool {
+        SFSpeechRecognizer.authorizationStatus() == .authorized && AVAudioApplication.shared.recordPermission == .granted
+    }
+
     func start() async {
         guard !isRecording else { return }
         errorMessage = nil

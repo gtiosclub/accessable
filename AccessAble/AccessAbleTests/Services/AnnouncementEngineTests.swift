@@ -37,6 +37,21 @@ struct AnnouncementEngineTests {
         )
     }
 
+    /// A report question waits for this before listening for the answer.
+    @Test
+    func aDeliveredEventIsReportedFinished() async {
+        let engine = await makeEngine(RecordingHaptics())
+        let finished = engine.finishedEvents()
+        let event = warning(nil, key: "said")
+
+        await engine.submit(event)
+
+        for await end in finished {
+            #expect(end == FinishedAnnouncement(id: event.id, wasInterrupted: false, isIdle: true))
+            break
+        }
+    }
+
     @Test
     func aWarningPlaysItsHapticScaledByDistance() async throws {
         let haptics = RecordingHaptics()
