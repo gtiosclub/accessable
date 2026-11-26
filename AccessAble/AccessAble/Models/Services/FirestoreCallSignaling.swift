@@ -79,6 +79,11 @@ struct FirestoreCallSignaling: CallSignaling {
                 } catch CallSignalingError.callAccepted {
                     // They picked up just as the 30 seconds ran out: join instead of skipping.
                     return try await acceptedTicket(for: callID)
+                } catch {
+                    // The skip itself failed. Stop ringing them, then move on, or stop if
+                    // the caller left or went offline.
+                    await endCall(callID: callID)
+                    if error is CancellationError || Self.isOffline(error) { throw error }
                 }
                 lastMiss = .noAnswer
             }
@@ -253,14 +258,22 @@ struct FirestoreCallSignaling: CallSignaling {
                     let data = try transaction.getDocument(volunteerRef).data() ?? [:]
                     guard let volunteer = Volunteer(id: volunteerID, firestoreData: data),
                           volunteer.isFreeToRing() else { return "busy" }
-                    transaction.setData([
+                    // A volunteer cannot read the caller's private users doc. Project only
+                    // the first name into the participant-only call; rules verify it.
+                    let profile = try transaction.getDocument(db.collection("users").document(me)).data()
+                    var callData: [String: Any] = [
                         "callerId": me,
                         "volunteerId": volunteerID,
                         "status": "ringing",
                         "roomName": "call-\(callID)",
                         "createdAt": FieldValue.serverTimestamp(),
                         "updatedAt": FieldValue.serverTimestamp(),
-                    ], forDocument: callRef)
+                    ]
+                    if let name = profile?["displayName"] as? String,
+                       !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        callData["callerFirstName"] = IncomingCall.firstName(from: name)
+                    }
+                    transaction.setData(callData, forDocument: callRef)
                     // ringingSince is the server's clock, never the phone's; the rules require it.
                     transaction.updateData(
                         ["ringingCallId": callID, "ringingSince": FieldValue.serverTimestamp()],

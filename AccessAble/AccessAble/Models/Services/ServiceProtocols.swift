@@ -228,6 +228,13 @@ protocol PresenceService: Sendable {
     func setOnline(_ isOnline: Bool) async throws
 }
 
+/// Volunteer-side read model. Cancel the stream when the app is no longer on screen.
+/// Nil dismisses a withdrawn/ended ring. Errors must not silently become a missing call.
+protocol IncomingCallProviding: Sendable {
+    @MainActor
+    func incomingCalls(volunteerID: String) -> AsyncThrowingStream<IncomingCall?, Error>
+}
+
 /// What a caller hears while `requestCall` works (VOLUNTEER-7).
 enum CallRequestProgress: Equatable, Sendable {
     enum Miss: Equatable, Sendable { case noAnswer, declined }

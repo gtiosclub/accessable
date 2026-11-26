@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Volunteer landing screen. Availability and incoming calls are added by MATCH tasks.
+/// Volunteer landing screen. Incoming calls are presented above navigation by VolunteerCallHostView.
 struct VolunteerHomeView: View {
     let profile: UserProfile
     let signOut: () async throws -> Void

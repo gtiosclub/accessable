@@ -32,6 +32,7 @@ struct AppServices: Sendable {
     var volunteers: any VolunteerDirectory = PlaceholderVolunteerDirectory()
     var presence: any PresenceService = PlaceholderPresenceService()
     var callSignaling: any CallSignaling = PlaceholderCallSignaling()
+    var incomingCalls: any IncomingCallProviding = PlaceholderIncomingCalls()
     var videoCall: any VideoCallSession = PlaceholderVideoCallSession()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
@@ -105,6 +106,8 @@ struct AppServices: Sendable {
             services.accountsAvailable = true
             if let tokenURL = LiveKitConfig.callTokenURL {
                 services.callSignaling = FirestoreCallSignaling(auth: services.auth, tokenURL: tokenURL)
+                // Only with real signaling: the placeholder's Accept can't accept a real call.
+                services.incomingCalls = FirestoreIncomingCalls(presence: services.presence)
             }
         }
         services.trip = TripManager(
@@ -183,6 +186,7 @@ struct AppServices: Sendable {
         services.presence = PlaceholderPresenceService()
         services.videoCall = PlaceholderVideoCallSession()
         services.callSignaling = PlaceholderCallSignaling()
+        services.incomingCalls = PlaceholderIncomingCalls()
         // Reports stay in memory, so previews and tests can report a problem.
         services.reports = PlaceholderReportService()
         services.reportsAvailable = true

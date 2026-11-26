@@ -236,11 +236,21 @@ service cloud.firestore {
           && after.get('ringingCallId', null) == null;
       }
 
+      // Only project this caller's own first name. Do not open users/{uid} to volunteers.
+      // Optional for compatibility with older clients/call documents; immutable after create.
+      function validCallerFirstName() {
+        let name = request.resource.data.get('callerFirstName', null);
+        return !('callerFirstName' in request.resource.data) || (name is string && name.size() > 0 && name.size() <= 80
+          && name == get(/databases/$(database)/documents/users/$(request.auth.uid))
+            .data.displayName.replace('^\\s+', '').split('\\s+')[0]);
+      }
+
       allow get: if signedIn() && isParty();
 
       allow create: if signedIn()
         && request.resource.data.keys().hasAll(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt'])
-        && request.resource.data.keys().hasOnly(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt', 'callerFirstName'])
+        && validCallerFirstName()
         && request.resource.data.callerId == request.auth.uid
         && request.resource.data.volunteerId is string
         && request.resource.data.volunteerId != request.auth.uid

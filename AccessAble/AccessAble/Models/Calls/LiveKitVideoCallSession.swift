@@ -25,6 +25,12 @@ final class LiveKitVideoCallSession: VideoCallSession {
     /// How long to wait in the room for the other person before ending the call.
     private static let partnerJoinTimeout: TimeInterval = 30
 
+    /// Main-actor read access for the volunteer's renderer; never exposes tokens or the Room.
+    var remoteVideoTrack: VideoTrack? {
+        room?.remoteParticipants.values.flatMap { $0.videoTracks }
+            .compactMap { $0.track as? VideoTrack }.first
+    }
+
     init(
         auth: any AuthService,
         pauseCamera: @escaping @MainActor () throws -> UUID?,
