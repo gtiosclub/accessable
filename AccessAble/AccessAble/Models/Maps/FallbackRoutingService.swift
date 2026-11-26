@@ -12,18 +12,19 @@ private let log = Logger(subsystem: "AccessAble", category: "Routing")
 /// `.exclusionsRejected` instead, for `ReportAwareRoutingService` to try again with fewer exclusions. Its last try has
 /// none, so a route it gets from Apple Maps still lists the reports it passes.
 ///
-/// After a timeout Valhalla is skipped for `timeoutMemory`, so a dead server doesn't cost the wait again at each of
-/// those tries and each reroute: requests with exclusions are rejected at once, and the rest go to Apple Maps.
+/// After a timeout, a rejected key or an exhausted usage limit, Valhalla is skipped for `timeoutMemory`, so a dead or
+/// refusing server doesn't cost the wait or the request again at each of those tries and each reroute: requests with
+/// exclusions are rejected at once, and the rest go to Apple Maps.
 struct FallbackRoutingService: RoutingService {
     static let defaultTimeout: Duration = .seconds(6)
-    /// After a timeout, how long requests skip Valhalla, so each try and each reroute doesn't wait it out again.
+    /// After a timeout or a refusal, how long requests skip Valhalla, so each try and each reroute doesn't repeat it.
     static let timeoutMemory: Duration = .seconds(120)
 
     private let primary: any RoutingService
     private let fallback: any RoutingService
     private let timeout: Duration
     private let clock: any Clock<Duration>
-    /// The primary's last timeout, cleared when it answers. Shared by copies.
+    /// The primary's last timeout or refusal, cleared when it answers. Shared by copies.
     private let lastTimeout = TimeoutMemory()
 
     init(
@@ -63,6 +64,9 @@ struct FallbackRoutingService: RoutingService {
         } catch {
             log.error("Valhalla failed: \(String(describing: error), privacy: .public)")
             let routingError = error as? RoutingError ?? .invalidResponse
+            if routingError == .notAuthorized || routingError == .usageLimitReached {
+                lastTimeout.record(clock.stopwatch())
+            }
             if excludes {
                 // no route at all is the answer; anything else may be the exclusions' fault, so fewer can be tried
                 throw routingError == .noRouteFound ? routingError : RoutingError.exclusionsRejected
@@ -115,12 +119,14 @@ struct FallbackRoutingService: RoutingService {
     }
 
     /// One error for both failures: no route from either beats rejected exclusions, which beat "unavailable", which
-    /// beats a bad response.
+    /// beat a usage limit, which beats a rejected key, which beats a bad response.
     private static func combined(_ primary: RoutingError?, _ fallback: RoutingError) -> RoutingError {
         let errors = [primary, fallback].compactMap { $0 }
         if errors.contains(.noRouteFound) { return .noRouteFound }
         if errors.contains(.exclusionsRejected) { return .exclusionsRejected }
         if errors.contains(.serverUnavailable) { return .serverUnavailable }
+        if errors.contains(.usageLimitReached) { return .usageLimitReached }
+        if errors.contains(.notAuthorized) { return .notAuthorized }
         return .invalidResponse
     }
 }
