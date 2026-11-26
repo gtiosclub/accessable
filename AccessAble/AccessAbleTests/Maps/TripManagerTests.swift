@@ -2518,6 +2518,30 @@ struct TripManagerReportTests {
         #expect(await shownOnTheMap(harness) == ["own", "beside"])
     }
 
+    /// Before the reroute, the report beside the new route is too far from the old one to show, and after it the
+    /// one at the old route's corner is.
+    @Test
+    func aRerouteShowsTheReportsNearTheNewRoute() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let newRoute = try eastRoute(from: origin)
+        let harness = try Harness(reroutes: [.success(newRoute)])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+        let ahead = report("ahead", at: harness.point(60))
+        let corner = report("corner", at: harness.point(100))
+        // about 82 m from the old route and 40 m from the new one's end
+        let beside = report("beside", at: TripWalk.destination(from: newRoute.coordinates[1], bearing: 180,
+                                                                 distance: 40))
+
+        await harness.reports.publish([ahead, corner, beside])
+        #expect(await shownOnTheMap(harness) == ["ahead", "corner"])
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+        await waitUntil { await harness.engine.texts.contains(newRouteSpeech) }
+
+        #expect(await shownOnTheMap(harness) == ["ahead", "beside"])
+    }
+
     @Test
     func theMapStartsEachTripWithoutTheLastTripsReports() async throws {
         let harness = try Harness()
