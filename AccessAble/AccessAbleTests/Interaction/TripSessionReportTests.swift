@@ -13,6 +13,7 @@ private actor RecordingAnnouncements: AnnouncementEngineProtocol {
     func pause() async {}
     func resume() async {}
     func updateProfile(_ profile: GuidanceProfile) async {}
+    func setInCall(_ inCall: Bool) async {}
 }
 
 /// Records what was said, and says each event only when the test lets it finish.
@@ -29,6 +30,7 @@ private actor HeldAnnouncements: AnnouncementEngineProtocol {
     func pause() async {}
     func resume() async {}
     func updateProfile(_ profile: GuidanceProfile) async {}
+    func setInCall(_ inCall: Bool) async {}
 
     /// Ends what was submitted; `idle` says whether anything else is still waiting to be said.
     func finishAll(interrupted: Bool = false, idle: Bool = true) {

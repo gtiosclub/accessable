@@ -97,4 +97,46 @@ struct AnnouncementEngineTests {
         await engine.pause()
         #expect(await haptics.stops == 1)
     }
+
+    /// Submits the events in order and returns the first one the engine delivers.
+    private func firstDelivered(of events: [AnnouncementEvent], by engine: AnnouncementEngine) async -> AnnouncementEvent? {
+        let delivered = engine.deliveredEvents()
+        for event in events { await engine.submit(event) }
+        for await event in delivered { return event }
+        return nil
+    }
+
+    private func ordinary(_ key: String) -> AnnouncementEvent {
+        AnnouncementEvent(category: .landmark, priority: .high, text: key, source: .navigation, dedupKey: key)
+    }
+
+    private func maneuver(_ key: String) -> AnnouncementEvent {
+        AnnouncementEvent(category: .maneuver, priority: .high, text: key, source: .navigation, dedupKey: key)
+    }
+
+    @Test
+    func duringACallOnlyManeuversAndCriticalEventsAreDelivered() async {
+        let engine = await makeEngine(RecordingHaptics())
+        await engine.setInCall(true)
+
+        // Queued first at the same priority, the ordinary event would be delivered first if it were kept.
+        let turn = maneuver("Turn left")
+        let first = await firstDelivered(of: [ordinary("Bench ahead"), turn], by: engine)
+        #expect(first?.id == turn.id)
+
+        let hazard = warning(nil, key: "Step down")
+        let second = await firstDelivered(of: [ordinary("Cafe on your right"), hazard], by: engine)
+        #expect(second?.id == hazard.id)
+    }
+
+    @Test
+    func afterACallOrdinaryEventsAreDeliveredAgain() async {
+        let engine = await makeEngine(RecordingHaptics())
+        await engine.setInCall(true)
+        await engine.setInCall(false)
+
+        let landmark = ordinary("Bench ahead")
+        let first = await firstDelivered(of: [landmark, maneuver("Turn left")], by: engine)
+        #expect(first?.id == landmark.id)
+    }
 }

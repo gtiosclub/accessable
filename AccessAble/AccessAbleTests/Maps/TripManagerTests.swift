@@ -307,6 +307,7 @@ private actor RecordingEngine: AnnouncementEngineProtocol {
     func pause() async {}
     func resume() async {}
     func updateProfile(_ profile: GuidanceProfile) async {}
+    func setInCall(_ inCall: Bool) async {}
 
     func setAutoDelivers(_ value: Bool) {
         autoDelivers = value

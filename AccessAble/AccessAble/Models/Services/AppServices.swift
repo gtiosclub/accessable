@@ -28,7 +28,7 @@ struct AppServices: Sendable {
     /// True once a real report service is wired (REPORT-3); until then the trip screen offers no reporting.
     var reportsAvailable = false
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
-    // TODO(MATCH-x): replace these four placeholders with the real call services.
+    // TODO(VOLUNTEER-6): replace these four placeholders with the real call services.
     var volunteers: any VolunteerDirectory = PlaceholderVolunteerDirectory()
     var presence: any PresenceService = PlaceholderPresenceService()
     var callSignaling: any CallSignaling = PlaceholderCallSignaling()
@@ -113,6 +113,23 @@ struct AppServices: Sendable {
             distances: distanceSettings,
             recorder: services.tripRecorder
         )
+
+        if LiveKitConfig.serverURL != nil {
+            let analyzer = scene as? ARSceneAnalyzer
+            services.videoCall = LiveKitVideoCallSession(
+                auth: services.auth,
+                pauseCamera: { try analyzer?.pauseForCall() },
+                resumeCamera: { try analyzer?.resumeAfterCall($0) }
+            )
+        }
+
+        #if DEBUG
+        // Until VOLUNTEER-6's Worker exists, test calls use LiveKit's development token server.
+        if let id = ProcessInfo.processInfo.environment["LIVEKIT_DEV_TOKEN_SERVER_ID"],
+           !id.isEmpty, !id.contains("$(") {
+            services.callSignaling = DevelopmentCallSignaling(serverID: id, auth: services.auth)
+        }
+        #endif
         return services
     }
 
@@ -166,6 +183,7 @@ struct AppServices: Sendable {
         ])
         services.volunteers = PlaceholderVolunteerDirectory()
         services.presence = PlaceholderPresenceService()
+        services.videoCall = PlaceholderVideoCallSession()
         // Reports stay in memory, so previews and tests can report a problem.
         services.reports = PlaceholderReportService()
         services.reportsAvailable = true

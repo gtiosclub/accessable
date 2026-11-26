@@ -14,10 +14,12 @@ actor PlaceholderAnnouncementEngine: AnnouncementEngineProtocol {
     private nonisolated let delivered = Broadcaster<AnnouncementEvent>()
     private var profile: GuidanceProfile = .default
     private var isPaused = false
+    private var isInCall = false
     private var last: AnnouncementEvent?
 
     func submit(_ event: AnnouncementEvent) async {
-        guard !isPaused, profile.allows(event), !event.isExpired() else { return }
+        guard !isPaused, profile.allows(event), !event.isExpired(),
+              !isInCall || event.category == .maneuver || event.priority == .critical else { return }
         log.info("[\(event.category.rawValue)/\(event.priority.rawValue)] \(event.text)")
         last = event
         delivered.send(event)
@@ -34,6 +36,7 @@ actor PlaceholderAnnouncementEngine: AnnouncementEngineProtocol {
     func pause() async { isPaused = true }
     func resume() async { isPaused = false }
     func updateProfile(_ profile: GuidanceProfile) async { self.profile = profile }
+    func setInCall(_ inCall: Bool) async { isInCall = inCall }
 }
 
 struct PlaceholderHaptics: HapticRendering {
@@ -250,7 +253,7 @@ actor PlaceholderAuthService: AuthService {
 
 // MARK: - Calls
 
-/// Fixed sample volunteers so the Calls screen works with no backend. Replaced by MATCH-x.
+/// Fixed sample volunteers so the Calls screen works with no backend. Replaced by VOLUNTEER-6.
 struct PlaceholderVolunteerDirectory: VolunteerDirectory {
     var volunteers: [Volunteer] = SampleContent.activeVolunteers
 
@@ -268,7 +271,7 @@ struct PlaceholderVolunteerDirectory: VolunteerDirectory {
     }
 }
 
-/// Remembers the toggle in memory only. Replaced by MATCH-x.
+/// Remembers the toggle in memory only. Replaced by VOLUNTEER-6.
 actor PlaceholderPresenceService: PresenceService {
     private nonisolated let states = Broadcaster<Bool>(replaysLatest: true)
 
@@ -282,7 +285,7 @@ actor PlaceholderPresenceService: PresenceService {
     }
 }
 
-/// Hands back a fake ticket and never rings anyone. Replaced by MATCH-x.
+/// Hands back a fake ticket and never rings anyone. Replaced by VOLUNTEER-6.
 struct PlaceholderCallSignaling: CallSignaling {
     func incomingCalls() -> AsyncStream<CallTicket> {
         AsyncStream { $0.finish() }
@@ -301,7 +304,7 @@ struct PlaceholderCallSignaling: CallSignaling {
     func end(_ ticket: CallTicket) async {}
 }
 
-/// Walks through the states without touching LiveKit or the camera. Replaced by MATCH-x.
+/// Walks through the states without touching LiveKit or the camera. Replaced by VOLUNTEER-6.
 actor PlaceholderVideoCallSession: VideoCallSession {
     private nonisolated let broadcaster = Broadcaster<CallState>(replaysLatest: true)
 
@@ -316,6 +319,18 @@ actor PlaceholderVideoCallSession: VideoCallSession {
 
     func disconnect() async {
         broadcaster.send(.ended(.hungUp))
+    }
+
+    func setMicrophoneMuted(_ muted: Bool) async throws {
+        log.info("call muted=\(muted)")
+    }
+
+    func flipCamera() async throws {
+        log.info("call flip camera")
+    }
+
+    func setFlashlight(_ on: Bool) async throws {
+        log.info("call flashlight=\(on)")
     }
 }
 

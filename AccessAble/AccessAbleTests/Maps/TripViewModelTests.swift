@@ -183,6 +183,7 @@ private actor SubmittedAnnouncements: AnnouncementEngineProtocol {
     func pause() async {}
     func resume() async {}
     func updateProfile(_ profile: GuidanceProfile) async {}
+    func setInCall(_ inCall: Bool) async {}
 }
 
 private let origin = GeoCoordinate(latitude: 33.775, longitude: -84.399)
