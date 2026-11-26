@@ -16,10 +16,11 @@ private let log = Logger(subsystem: "AccessAble", category: "Routing")
 /// `ReportAwareRoutingService` to try again with fewer exclusions. Its last try has none, so a route it gets from
 /// Apple Maps still lists the reports it passes.
 ///
-/// After a timeout (including one cut short by `chainBudget`), a rejected key or an exhausted usage limit, that
-/// server is skipped for `timeoutMemory`, so a dead or refusing server doesn't cost the wait or the request again at
-/// each of those tries and each reroute: requests go to the next server, or once none is left, are rejected at once
-/// with exclusions and go to Apple Maps without.
+/// After a timeout of the full `timeout`, a rejected key or an exhausted usage limit, that server is skipped for
+/// `timeoutMemory`, so a dead or refusing server doesn't cost the wait or the request again at each of those tries
+/// and each reroute: requests go to the next server, or once none is left, are rejected at once with exclusions and go
+/// to Apple Maps without. A server cut short by `chainBudget` only fails that request, since it never had its full
+/// wait.
 struct FallbackRoutingService: RoutingService {
     static let defaultTimeout: Duration = .seconds(6)
     /// How long all the Valhalla servers of one request may take together before Apple Maps is asked.
@@ -93,7 +94,7 @@ struct FallbackRoutingService: RoutingService {
                 throw CancellationError()
             } catch is PrimaryTimedOut {
                 log.error("Valhalla server \(server, privacy: .public) took longer than \(String(describing: wait), privacy: .public)")
-                lastTimeout.record(clock.stopwatch(), refusal: nil)
+                if wait == timeout { lastTimeout.record(clock.stopwatch(), refusal: nil) }
             } catch {
                 log.error("Valhalla server \(server, privacy: .public) failed: \(String(describing: error), privacy: .public)")
                 let routingError = error as? RoutingError ?? .invalidResponse

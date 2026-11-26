@@ -645,11 +645,13 @@ struct FallbackRoutingServiceTests {
         #expect(await third.calls == 0)
     }
 
-    /// FOSSGIS, cut short by the chain's budget, is skipped like any server that timed out.
+    /// FOSSGIS, cut short by the chain's budget, never had its full wait, so unlike Stadia it isn't skipped: the next
+    /// request gives it its full timeout.
     @Test
-    func aServerCutShortByTheChainBudgetIsRememberedAsTimedOut() async throws {
+    func aServerCutShortByTheChainBudgetIsNotRemembered() async throws {
+        let gate = ManualClock()
         let stadia = FakeRouting(.hangs)
-        let fossgis = FakeRouting(byCall: { $0 == 0 ? .hangs : .returns(Self.valhallaRoute) })
+        let fossgis = FakeRouting(byCall: { $0 == 0 ? .hangs : .returnsLater(Self.valhallaRoute, gate) })
         let apple = FakeRouting(.returns(Self.backupRoute))
         let clock = ManualClock()
         let service = chain(stadia, fossgis, apple, clock: clock)
@@ -661,10 +663,16 @@ struct FallbackRoutingServiceTests {
         clock.advance(by: FallbackRoutingService.chainBudget - FallbackRoutingService.defaultTimeout)
         _ = try await first.value
 
-        #expect(try await request(service).value == Self.backupRoute)
+        let second = request(service)
+        await fossgis.waitForRequests(2)
+        try await clock.waitForSleepers(1)
+        clock.advance(by: FallbackRoutingService.defaultTimeout - .seconds(1))
+        try await gate.waitForSleepers(1)
+        gate.advance(by: .seconds(1))
+
+        #expect(try await second.value == Self.valhallaRoute)
         #expect(await stadia.calls == 1)
-        #expect(await fossgis.calls == 1)
-        #expect(await apple.calls == 2)
+        #expect(await apple.calls == 1)
     }
 
     @Test
