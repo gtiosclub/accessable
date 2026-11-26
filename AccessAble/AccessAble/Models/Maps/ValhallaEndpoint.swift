@@ -45,8 +45,9 @@ enum RoutingConfig {
         servers(from: Bundle.main.object(forInfoDictionaryKey: "RoutingServers"), apiKey: StadiaConfig.apiKey)
     }
 
-    /// `stadia` is dropped without a usable key, so a build made without one still routes through the rest.
-    /// Unknown names are ignored, and a value naming no known server gives `defaultServers`.
+    /// `stadia` is dropped without a usable key, so a build made without one still routes through the rest, and if
+    /// that leaves none, FOSSGIS is asked rather than none. Unknown names are ignored, a name given twice is asked
+    /// once, at its first place, and a value naming no known server gives `defaultServers`.
     static func servers(from value: Any?, apiKey: String?) -> [ValhallaEndpoint] {
         let names = ((value as? String) ?? "").split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
@@ -58,12 +59,17 @@ enum RoutingConfig {
             }
             return true
         }
-        return (known.isEmpty ? defaultServers : known).compactMap { name in
-            guard name == "stadia" else { return .publicDemo }
-            if let apiKey { return .stadia(apiKey: apiKey) }
-            log.error("STADIA_API_KEY missing from Secrets.xcconfig; skipping Stadia")
-            return nil
-        }
+        var seen: Set<String> = []
+        let servers: [ValhallaEndpoint] = (known.isEmpty ? defaultServers : known).filter { seen.insert($0).inserted }
+            .compactMap { name in
+                guard name == "stadia" else { return .publicDemo }
+                if let apiKey { return .stadia(apiKey: apiKey) }
+                log.error("STADIA_API_KEY missing from Secrets.xcconfig; skipping Stadia")
+                return nil
+            }
+        guard servers.isEmpty else { return servers }
+        log.error("ROUTING_SERVERS leaves no Valhalla server without STADIA_API_KEY; asking FOSSGIS so routes still avoid stairs")
+        return [.publicDemo]
     }
 }
 

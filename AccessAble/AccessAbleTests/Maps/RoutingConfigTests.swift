@@ -35,7 +35,13 @@ struct RoutingConfigTests {
         let apiKey = StadiaConfig.apiKey(from: key)
         #expect(servers("stadia,fossgis", apiKey: apiKey) == [Self.fossgis])
         #expect(servers(nil, apiKey: apiKey) == [Self.fossgis])
-        #expect(servers("stadia", apiKey: apiKey).isEmpty)
+        #expect(servers("stadia", apiKey: apiKey) == [Self.fossgis])
+    }
+
+    @Test
+    func aServerNamedTwiceIsAskedOnceAtItsFirstPlace() {
+        #expect(servers("stadia,stadia") == [Self.stadia])
+        #expect(servers("fossgis, stadia ,FOSSGIS,stadia") == [Self.fossgis, Self.stadia])
     }
 
     @Test
