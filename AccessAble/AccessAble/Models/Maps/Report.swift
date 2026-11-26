@@ -70,6 +70,16 @@ struct ReportQuestion: Equatable, Sendable {
     let askedAt: Date
 }
 
+/// How the screen ended a report question.
+enum ReportQuestionOutcome: Equatable, Sendable {
+    /// Not put to the user, so it may be asked again.
+    case notAsked
+    /// Asked, with no vote sent: no answer, or one that couldn't be sent.
+    case unanswered
+    /// Asked and answered with a vote, so the next waits out the rules' one vote a minute.
+    case voted
+}
+
 extension Report {
     private enum CodingKeys: String, CodingKey {
         case id, kind, coordinate, area, createdAt, expiresAt, confirmations, reporterID

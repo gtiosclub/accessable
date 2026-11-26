@@ -194,6 +194,16 @@ struct PlaceDetailViewModelTests {
         #expect(details.plannedRoute == planned)
     }
 
+    @Test(arguments: [(RouteSource.appleMaps, "Backup directions: may include stairs." as String?), (.valhalla, nil)])
+    func onlyABackupRouteIsNotedOnScreen(_ source: RouteSource, _ note: String?) {
+        var route = plannedRoute
+        route.source = source
+        let planned = PlannedRoute(destination: clough, route: route, requestedAt: .now)
+        let details = PlaceDetailViewModel(destination: clough, services: .preview, planned: planned,
+                                           campusCrossings: { campusCrossings })
+        #expect(details.backupNote == note)
+    }
+
     @Test
     func switchingUnitsChangesTheSummary() async {
         let distances = DistanceSettings(units: .metres)

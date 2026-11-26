@@ -59,8 +59,8 @@ final class TripSessionViewModel {
     /// How far ahead on the route a report from Route Blocked Ahead goes: the blockage it
     /// answers is at most this far ahead.
     static let reportAheadDistance = Double(RouteBlockDetector().blockedWithin)
-    /// A report question is listened for this long once said; its buttons show from the start. One not said within
-    /// the limit, dropped or queued behind other speech, is listened for anyway.
+    /// A report question is listened for this long once said and nothing else is waiting; its buttons show from the
+    /// start. One not said within the limit, dropped or queued behind other speech, has only its buttons.
     static let answerWindow: Duration = .seconds(8)
     static let questionSpeechLimit: Duration = .seconds(15)
     /// Seconds; a question older than this is from before the screen was listening, such as an earlier trip's.
@@ -321,7 +321,7 @@ final class TripSessionViewModel {
         guard let services else { return }
         let report = question.report
         if answeredReportIDs.contains(report.id) {
-            await services.trip.reportQuestionEnded(report.id, wasAsked: true)
+            await services.trip.reportQuestionEnded(report.id, outcome: .unanswered)
             return
         }
         guard isReportingAvailable, reportQuestion == nil,
@@ -330,37 +330,51 @@ final class TripSessionViewModel {
               let user = await services.auth.currentUser(), user.id != report.reporterID,
               // checked again after the await
               reportQuestion == nil else {
-            await services.trip.reportQuestionEnded(report.id, wasAsked: false)
+            await services.trip.reportQuestionEnded(report.id, outcome: .notAsked)
             return
         }
         let open = OpenReportQuestion(reportID: report.id, text: report.kind.stillThereQuestion)
         reportQuestion = open
-        let listens = mayListenForAnswers()
         let event = AnnouncementEvent(category: .system, priority: .high, text: open.text, source: .userInteraction)
         // before the submit, so its end can't be missed
         let finished = services.announcements.finishedEvents()
         questionTask = Task { [weak self, clock] in
-            await Self.waitUntilSaid(event.id, finished: finished, clock: clock)
+            let quiet = await Self.waitForQuiet(after: event.id, finished: finished, clock: clock)
             guard !Task.isCancelled else { return }
-            if listens { await self?.listenForAnswer(to: open) }
+            // the buttons still show; listening while something else is said would fight it for the audio
+            if quiet, self?.mayListenForAnswers() == true { await self?.listenForAnswer(to: open) }
             do { try await clock.sleep(for: Self.answerWindow) } catch { return }
-            self?.end(open)
+            self?.end(open, outcome: .unanswered)
         }
         await services.announcements.submit(event)
     }
 
-    /// Returns once the question has been said, or after `questionSpeechLimit` if it was dropped or is still queued:
-    /// listening sooner would switch the audio session over and cut the question off.
-    private static func waitUntilSaid(
-        _ id: UUID, finished: AsyncStream<UUID>, clock: any Clock<Duration>
-    ) async {
-        await withTaskGroup(of: Void.self) { group in
+    /// Waits for the question to be said and nothing else to be waiting, since listening switches the audio session
+    /// over and would cut speech off. Returns whether it may listen: false when the question was cut off, as for a
+    /// warning, or when `questionSpeechLimit` passed first, with the question dropped or still waiting.
+    private static func waitForQuiet(
+        after id: UUID, finished: AsyncStream<FinishedAnnouncement>, clock: any Clock<Duration>
+    ) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
             group.addTask {
-                for await said in finished where said == id { return }
+                var said = false
+                for await end in finished {
+                    if end.id == id {
+                        guard !end.wasInterrupted else { return false }
+                        said = true
+                    }
+                    if said, end.isIdle { return true }
+                }
+                // an engine that doesn't speak
+                return true
             }
-            group.addTask { try? await clock.sleep(for: questionSpeechLimit) }
-            await group.next()
+            group.addTask {
+                try? await clock.sleep(for: questionSpeechLimit)
+                return false
+            }
+            let quiet = await group.next() ?? false
             group.cancelAll()
+            return quiet
         }
     }
 
@@ -372,15 +386,19 @@ final class TripSessionViewModel {
         if !dictation.isRecording { listeningQuestion = nil }
     }
 
-    /// Ends the question, answered or not, and tells the trip, which waits for this before the next.
-    private func end(_ question: OpenReportQuestion) {
+    /// Ends the question and, given an `outcome`, tells the trip, which waits for this before the next.
+    private func end(_ question: OpenReportQuestion, outcome: ReportQuestionOutcome?) {
         guard reportQuestion == question else { return }
         reportQuestion = nil
         questionTask?.cancel()
         questionTask = nil
         stopListening(for: question)
+        if let outcome { tellTrip(question, outcome) }
+    }
+
+    private func tellTrip(_ question: OpenReportQuestion, _ outcome: ReportQuestionOutcome) {
         guard let trip = services?.trip else { return }
-        Task { await trip.reportQuestionEnded(question.reportID, wasAsked: true) }
+        Task { await trip.reportQuestionEnded(question.reportID, outcome: outcome) }
     }
 
     /// Stops the listening the question started. Words already coming are let finish, so an answer begun just before
@@ -401,16 +419,20 @@ final class TripSessionViewModel {
     /// back, so the vote is for the report that was asked about even if the question closes meanwhile.
     func answer(_ question: OpenReportQuestion, isStillPresent: Bool) async {
         guard let services, answeredReportIDs.insert(question.reportID).inserted else { return }
-        end(question)
+        // the trip hears once the vote is sent or has failed, since only a sent one holds the next question back
+        end(question, outcome: nil)
         do {
             let extended = try await services.reports.confirm(question.reportID, isStillPresent: isStillPresent)
+            tellTrip(question, .voted)
             await say(
                 !isStillPresent ? "Thanks." : extended ? "Thanks, the report is extended." : "Thanks, the report is confirmed.",
                 category: .system
             )
         } catch ReportServiceError.rateLimited {
+            tellTrip(question, .unanswered)
             await say("Wait a minute before answering again.", category: .system)
         } catch {
+            tellTrip(question, .unanswered)
             log.error("Report vote failed: \(String(describing: error), privacy: .public)")
             await say("Couldn't send your answer.", category: .system)
         }
@@ -425,8 +447,8 @@ final class TripSessionViewModel {
             return
         }
         log.notice("Heard something other than an answer to a report question")
-        guard !answeredReportIDs.contains(question.reportID),
-              missedAnswerIDs.insert(question.reportID).inserted else { return }
+        // not once the question has gone from the screen
+        guard reportQuestion == question, missedAnswerIDs.insert(question.reportID).inserted else { return }
         await say("Didn't catch that.", category: .system)
     }
 
@@ -434,29 +456,73 @@ final class TripSessionViewModel {
     /// - Parameter anywhere: Whether an answer may be part of a longer sentence, as it may in the question's own
     ///   listening; otherwise only the whole of what was said counts, so a command or question isn't taken for one.
     static func reportAnswer(for text: String, anywhere: Bool = true) -> Bool? {
-        var words = text.lowercased()
+        // a question back, such as the question said over, isn't an answer
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?") else { return nil }
+        let said = " " + text.lowercased()
             .replacingOccurrences(of: "\u{2019}", with: "'")
             .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'")).inverted)
             .filter { !$0.isEmpty }
+            .joined(separator: " ") + " "
         guard anywhere else {
-            let said = words.joined(separator: " ")
+            let whole = said.trimmingCharacters(in: .whitespaces)
             if ["yes", "yeah", "yep", "yup", "still there", "still blocked", "it's still there", "it's still blocked"]
-                .contains(said) {
+                .contains(whole) {
                 return true
             }
-            if ["no", "nope", "nah", "clear", "it's clear", "gone", "it's gone"].contains(said) { return false }
+            if ["no", "nope", "nah", "clear", "it's clear", "gone", "it's gone"].contains(whole) { return false }
             return nil
         }
+        return answerInSentence(said)
+    }
+
+    private static let yesWords: Set = ["yes", "yeah", "yep", "yup"]
+    private static let noWords: Set = ["no", "nope", "nah"]
+    /// Words saying the problem is there, and that it has gone; either, negated, says the other.
+    private static let presentWords: Set = ["blocked", "there", "closed", "out", "broken", "ongoing"]
+    private static let goneWords: Set = ["gone", "clear", "cleared", "open", "fixed", "working", "works", "work"]
+
+    /// Every cue in the sentence must agree: a leading yes or no, a later yes or no, and each word that says the
+    /// problem is there or gone, turned round by a "not", "nothing" or "-n't" up to two words before it. Doubt or a
+    /// contradiction is no answer, since a wrong vote is worse than none.
+    private static func answerInSentence(_ said: String) -> Bool? {
+        let doubts = [" no idea ", " no clue ", " not sure ", " don't know ", " dont know ", " do not know ", " maybe "]
+        guard !doubts.contains(where: said.contains) else { return nil }
+        // work still going on is the problem still there, not something working again
+        let isOngoing = said.contains(" working on ") || said.contains(" going on ")
+        var words = said.replacingOccurrences(of: " no longer ", with: " not anymore ")
+            .replacingOccurrences(of: " out of the way ", with: " gone ")
+            .replacingOccurrences(of: " working on ", with: " ongoing ")
+            .replacingOccurrences(of: " going on ", with: " ongoing ")
+            .split(separator: " ").map(String.init)
         while let first = words.first, ["uh", "um", "er", "oh", "well"].contains(first) { words.removeFirst() }
-        guard let first = words.first else { return nil }
-        if ["yes", "yeah", "yep", "yup"].contains(first) { return true }
-        if ["no", "nope", "nah"].contains(first) { return false }
-        // padded, so each phrase matches whole words only
-        let said = " \(words.joined(separator: " ")) "
-        func says(_ phrases: String...) -> Bool { phrases.contains { said.contains(" \($0) ") } }
-        if says("still blocked", "still there", "still closed", "still out") { return true }
-        if says("gone", "clear", "open now", "fixed", "working") { return false }
-        return nil
+        var answers: [Bool] = []
+        var start = 0
+        if let first = words.first, yesWords.contains(first) || noWords.contains(first) {
+            answers.append(yesWords.contains(first))
+            start = 1
+        }
+        func isNegator(_ word: String) -> Bool {
+            ["not", "never", "no", "cannot", "nothing", "nothing's", "none"].contains(word) || word.hasSuffix("n't")
+        }
+        for index in words.indices.dropFirst(start) {
+            let word = words[index]
+            let negated = words[max(start, index - 2)..<index].contains(where: isNegator)
+            if yesWords.contains(word) {
+                answers.append(true)
+            } else if noWords.contains(word) {
+                answers.append(false)
+            } else if isOngoing, ["work", "works", "working"].contains(word) {
+                continue
+            } else if word == "anymore", negated {
+                answers.append(false)
+            } else if presentWords.contains(word) {
+                answers.append(!negated)
+            } else if goneWords.contains(word) {
+                answers.append(negated)
+            }
+        }
+        guard let answer = answers.first, answers.allSatisfy({ $0 == answer }) else { return nil }
+        return answer
     }
 
     // MARK: - Commands
@@ -534,6 +600,8 @@ final class TripSessionViewModel {
             dictation.stop()
             return
         }
+        // the question's late words are done with: what the user starts now is their own
+        listeningQuestion = nil
         await startListening(armingSilence: true)
     }
 
@@ -684,7 +752,7 @@ final class TripSessionViewModel {
     }
 
     private func stopListening() {
-        if let question = reportQuestion { end(question) }
+        if let question = reportQuestion { end(question, outcome: .unanswered) }
         listeningQuestion = nil
         silenceTask?.cancel()
         voiceTask?.cancel()

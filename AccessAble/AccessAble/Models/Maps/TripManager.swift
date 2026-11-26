@@ -96,7 +96,9 @@ actor TripManager: TripStateProviding {
     private var openQuestion: (reportID: String, askedAt: Date)?
     /// The nearest each report not yet asked about has been to a precise fix this trip, in metres.
     private var closestApproaches: [String: Double] = [:]
-    private var lastQuestionEndedAt: Date?
+    /// When the last question was answered with a vote, and when the screen last didn't ask about each report.
+    private var lastVoteAt: Date?
+    private var notAskedAt: [String: Date] = [:]
 
     // the public routing server is shared and slow to recover; this spaces requests and bounds a bad walk
     private static let rerouteInterval: TimeInterval = 30
@@ -120,8 +122,10 @@ actor TripManager: TripStateProviding {
     // this far past the report by then and it is no longer "here"
     private static let questionManeuverClearance: Double = 30
     private static let questionGiveUpDistance: Double = 60
-    // seconds from the end of one question to the next: the rules allow one vote a minute
+    // seconds from a vote to the next question: the rules allow one vote a minute
     private static let questionSpacing: TimeInterval = 60
+    // seconds before a question the screen didn't ask is sent again, so it isn't sent on every fix
+    private static let questionRetryDelay: TimeInterval = 10
     // seconds; a question the screen hasn't ended by then, such as one sent with the screen closed, counts as asked
     private static let questionReplyLimit: TimeInterval = 60
     private static let unavoidedReportSpeech =
@@ -240,7 +244,8 @@ actor TripManager: TripStateProviding {
         promptedReportIDs = []
         closestApproaches = [:]
         openQuestion = nil
-        lastQuestionEndedAt = nil
+        lastVoteAt = nil
+        notAskedAt = [:]
         routes.send(route)
         publish(at: now())
         recorder?.tripStarted(at: now())
@@ -325,7 +330,8 @@ actor TripManager: TripStateProviding {
         promptedReportIDs = []
         closestApproaches = [:]
         openQuestion = nil
-        lastQuestionEndedAt = nil
+        lastVoteAt = nil
+        notAskedAt = [:]
         routes.send(nil)
         states.send(TripState(phase: .planning, updatedAt: now()))
         await setTripTracking(false)
@@ -648,24 +654,34 @@ actor TripManager: TripStateProviding {
         await submit(maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(first.id)"))
     }
 
-    /// The screen has ended the question about `reportID`. One it didn't put to the user may be asked again. Async
-    /// like the requirement, so an awaited call picks this rather than the protocol's default.
-    func reportQuestionEnded(_ reportID: String, wasAsked: Bool) async {
-        endQuestion(reportID, wasAsked: wasAsked)
+    /// The screen has ended the question about `reportID`. One it didn't put to the user may be asked again after
+    /// `questionRetryDelay`; after a vote, the next question waits `questionSpacing`.
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {
+        endQuestion(reportID, outcome: outcome)
     }
 
-    private func endQuestion(_ reportID: String, wasAsked: Bool) {
+    private func endQuestion(_ reportID: String, outcome: ReportQuestionOutcome) {
+        // a vote still counts once the question has ended, as a button pressed as it closed does
+        if outcome == .voted {
+            promptedReportIDs.insert(reportID)
+            lastVoteAt = now()
+        }
         guard openQuestion?.reportID == reportID else { return }
         openQuestion = nil
-        guard wasAsked else { return }
-        promptedReportIDs.insert(reportID)
-        lastQuestionEndedAt = now()
+        switch outcome {
+        case .notAsked:
+            notAskedAt[reportID] = now()
+        case .unanswered:
+            promptedReportIDs.insert(reportID)
+        case .voted:
+            break
+        }
     }
 
     /// Asks about a report the user has just walked past: their nearest approach to it was within
     /// `questionPassRadius`, and they are now `questionPassMargin` further away. Only from a recent precise fix, while
     /// following the route, and not near a turn or crossing; one question at a time, `questionSpacing` after the
-    /// last ended, and once a report a trip.
+    /// last vote, and once a report a trip.
     private func askAboutPassedReports(generation: Int) {
         guard self.generation == generation, phase == .active, !needsReroute, rerouteTask == nil,
               let route, let progress, let fix = recentPreciseFix else { return }
@@ -675,12 +691,13 @@ actor TripManager: TripStateProviding {
             || routeCrossings.contains { (0..<Self.questionManeuverClearance).contains($0.distanceAlongRoute - walked) }
         if let open = openQuestion, time.timeIntervalSince(open.askedAt) >= Self.questionReplyLimit {
             log.notice("A report question wasn't ended by the screen; counting it as asked")
-            endQuestion(open.reportID, wasAsked: true)
+            endQuestion(open.reportID, outcome: .unanswered)
         }
-        let spaced = lastQuestionEndedAt.map { time.timeIntervalSince($0) >= Self.questionSpacing } ?? true
+        let spaced = lastVoteAt.map { time.timeIntervalSince($0) >= Self.questionSpacing } ?? true
         var canAsk = openQuestion == nil && spaced && !nearManeuver
         for report in nearbyReports
-        where report.expiresAt > time && !promptedReportIDs.contains(report.id) && openQuestion?.reportID != report.id {
+        where report.expiresAt > time && !promptedReportIDs.contains(report.id) && openQuestion?.reportID != report.id
+            && notAskedAt[report.id].map({ time.timeIntervalSince($0) >= Self.questionRetryDelay }) ?? true {
             let distance = report.distance(from: fix)
             let closest = min(closestApproaches[report.id] ?? .infinity, distance)
             closestApproaches[report.id] = closest
@@ -793,6 +810,7 @@ actor TripManager: TripStateProviding {
                 return
             }
             unavoidedReportOnResume = false
+            let sourceChange = Self.sourceChange(from: route, to: newRoute)
             routeVersion += 1
             hasRerouted = true
             route = newRoute
@@ -810,8 +828,8 @@ actor TripManager: TripStateProviding {
             publishMapReports()
             subscribeToReports(along: newRoute, generation: generation)
             guard phase == .active else { return }
-            await submit(maneuver("New route. " + Self.reportWarning(on: newRoute) + departure(on: newRoute), .high,
-                                  expiresIn: 15, key: "reroute"))
+            await submit(maneuver("New route. " + Self.reportWarning(on: newRoute) + sourceChange
+                                      + departure(on: newRoute), .high, expiresIn: 15, key: "reroute"))
         case .failure(let error):
             guard !(error is CancellationError) else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
@@ -847,7 +865,8 @@ actor TripManager: TripStateProviding {
         do { try await sleep(Self.startDelay) } catch { return }
         guard self.generation == generation, phase == .active, let route, let destination else { return }
         let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
-            + Self.reportWarning(on: route) + departure(on: route)
+            + Self.reportWarning(on: route) + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "")
+            + departure(on: route)
         await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
     }
 
@@ -1001,6 +1020,16 @@ actor TripManager: TripStateProviding {
     /// Said before setting off on a route that passes reports it couldn't avoid.
     private static func reportWarning(on route: NavigationRoute) -> String {
         route.unavoidedReports.isEmpty ? "" : ReportExclusions.warning + " "
+    }
+
+    /// Said on a new route from a different service than the one before: a backup that may include stairs, or the
+    /// accessible directions again.
+    private static func sourceChange(from previous: NavigationRoute?, to route: NavigationRoute) -> String {
+        guard let previous, previous.source != route.source else { return "" }
+        return switch route.source {
+        case .appleMaps: RouteSource.backupNotice + " "
+        case .valhalla: "Back to accessible directions. "
+        }
     }
 
     /// How to set off, at the start and on a new route: which way the path is, then the first turn when it is near.

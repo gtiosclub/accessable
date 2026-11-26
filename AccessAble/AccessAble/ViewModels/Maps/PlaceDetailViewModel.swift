@@ -62,6 +62,11 @@ final class PlaceDetailViewModel {
         return counted?.summary.text(distances: distanceSettings.formatter)
     }
 
+    /// Shown with an Apple Maps route, which knows nothing of stairs.
+    var backupNote: String? {
+        route?.source == .appleMaps ? "Backup directions: may include stairs." : nil
+    }
+
     /// Posted once when the route arrives, so the user knows Start is there and what the walk
     /// involves.
     var routeReadyAnnouncement: String? {

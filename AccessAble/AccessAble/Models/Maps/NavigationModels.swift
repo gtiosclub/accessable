@@ -183,8 +183,10 @@ extension RouteStep {
             .split(whereSeparator: { !$0.isLetter }).joined(separator: " ")
         let padded = " \(text) "
         func says(_ phrases: [String]) -> Bool { phrases.contains { padded.contains(" \($0) ") } }
-        if says(["stairs up", "up the stairs", "upstairs"]) { return "stairs going up" }
-        if says(["stairs down", "down the stairs", "downstairs"]) { return "stairs going down" }
+        if says(["stairs up", "up the stairs", "upstairs", "steps up", "up the steps"]) { return "stairs going up" }
+        if says(["stairs down", "down the stairs", "downstairs", "steps down", "down the steps"]) {
+            return "stairs going down"
+        }
         return "stairs"
     }
 
@@ -210,6 +212,16 @@ extension RouteStep {
     }
 }
 
+enum RouteSource: Sendable {
+    /// Valhalla, which knows about stairs, kerbs and step-free paths.
+    case valhalla
+    /// Apple Maps, the backup when Valhalla fails or is slow. It knows nothing of stairs or crossings.
+    case appleMaps
+
+    /// Said when the user is given an Apple Maps route.
+    static let backupNotice = "Using backup directions. They may include stairs, and crossings may not be announced."
+}
+
 /// Always valid: created and decoded only through the validating init, which derives the distances.
 struct NavigationRoute: Codable, Hashable, Sendable {
     let coordinates: [GeoCoordinate]
@@ -222,6 +234,9 @@ struct NavigationRoute: Codable, Hashable, Sendable {
     var unavoidedReports: [Report] = []
     /// Active reports near this route that it goes around. Not encoded: reports name their reporter.
     var avoidedReports: [Report] = []
+    /// Which service found the route, for telling the user about a backup route. Not encoded: only the trip it was
+    /// found for announces it.
+    var source: RouteSource = .valhalla
 
     enum ValidationError: Error, Equatable, Sendable {
         case tooFewCoordinates

@@ -19,7 +19,7 @@ struct ReportAwareRoutingService: RoutingService {
     /// Metres from the route within which an excluded report counts as avoided: farther, the walk never went near it.
     static let avoidanceCorridor: Double = 75
 
-    private let base: any RoutingService
+    let base: any RoutingService
     private let reports: any ReportService
     private let clock: any Clock<Duration>
 

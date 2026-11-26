@@ -2,7 +2,7 @@ import Foundation
  
 actor AnnouncementEngine: AnnouncementEngineProtocol {
     private nonisolated let delivered = Broadcaster<AnnouncementEvent>()
-    private nonisolated let finished = Broadcaster<UUID>()
+    private nonisolated let finished = Broadcaster<FinishedAnnouncement>()
     private let speech: SpeechOutput
     private let haptics: any HapticRendering
  
@@ -11,6 +11,8 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
     private var queue: [AnnouncementEvent] = []
     private var isDraining = false
     private var current: AnnouncementEvent?
+    /// The current event's speech was stopped for another or a pause.
+    private var isCurrentInterrupted = false
     private var last: AnnouncementEvent?
     private var recentKeys: [String: Date] = [:]
  
@@ -33,7 +35,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
         delivered.stream(bufferingPolicy: .bufferingNewest(8))
     }
 
-    nonisolated func finishedEvents() -> AsyncStream<UUID> {
+    nonisolated func finishedEvents() -> AsyncStream<FinishedAnnouncement> {
         finished.stream(bufferingPolicy: .bufferingNewest(8))
     }
 
@@ -49,6 +51,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
     func pause() async {
         isPaused = true
         queue.removeAll()
+        if current != nil { isCurrentInterrupted = true }
         await speech.stop()
         await haptics.stop()
     }
@@ -67,6 +70,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
         queue.insert(event, at: index)
  
         if event.priority == .critical, let current, current.priority < .critical {
+            isCurrentInterrupted = true
             await speech.stop() // drain() moves on to the critical event right away
         }
         if !isDraining {
@@ -78,6 +82,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
     private func drain() async {
         while let event = nextFreshEvent() {
             current = event
+            isCurrentInterrupted = false
             last = event
             delivered.send(event)
             let buzzes = event.haptic != nil && profile.channels.contains(.haptics)
@@ -91,7 +96,7 @@ actor AnnouncementEngine: AnnouncementEngineProtocol {
                 await speech.speak(event.text, rate: profile.speechRate, interrupting: event.priority == .critical)
             }
             current = nil
-            finished.send(event.id)
+            finished.send(FinishedAnnouncement(id: event.id, wasInterrupted: isCurrentInterrupted, isIdle: queue.isEmpty))
         }
         isDraining = false
     }
