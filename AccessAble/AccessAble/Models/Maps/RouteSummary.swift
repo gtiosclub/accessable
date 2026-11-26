@@ -68,7 +68,9 @@ struct RouteSummary: Equatable, Sendable {
             .sorted { counts[$0, default: 0] > counts[$1, default: 0] }
         let parts = kinds.enumerated().map { index, kind in
             let count = counts[kind, default: 0]
-            return "\(count) \(index == 0 ? "reported " : "")\(name(of: kind, plural: count != 1))"
+            // the other kind's name says "reported" itself
+            let reported = index == 0 && kind != .other ? "reported " : ""
+            return "\(count) \(reported)\(name(of: kind, plural: count != 1))"
         }
         guard let last = parts.last, parts.count > 1 else { return parts.joined() }
         return parts.dropLast().joined(separator: ", ") + " and " + last
@@ -80,7 +82,8 @@ struct RouteSummary: Equatable, Sendable {
         case .blockedPath: plural ? "blocked paths" : "blocked path"
         case .closedEntrance: plural ? "closed entrances" : "closed entrance"
         case .elevatorOut: plural ? "elevators out of service" : "elevator out of service"
-        case .other: plural ? "problems" : "problem"
+        // as the map says it
+        case .other: plural ? "reported problems" : "reported problem"
         }
     }
 

@@ -119,9 +119,15 @@ struct RouteSummaryTests {
         let avoided = [report(.other), report(.blockedPath), report(.construction), report(.construction)]
         #expect(try reportSummary(avoided: avoided)
             == "About 1 minute, 100 metres. No turns. "
-                + "Avoiding 2 reported construction sites, 1 blocked path and 1 problem.")
+                + "Avoiding 2 reported construction sites, 1 blocked path and 1 reported problem.")
         #expect(try reportSummary(avoided: [report(.elevatorOut), report(.blockedPath)])
             == "About 1 minute, 100 metres. No turns. Avoiding 1 reported blocked path and 1 elevator out of service.")
+    }
+
+    @Test
+    func theOtherKindSaysReportedOnce() throws {
+        #expect(try reportSummary(avoided: [report(.other)])
+            == "About 1 minute, 100 metres. No turns. Avoiding 1 reported problem.")
     }
 
     @Test
