@@ -122,37 +122,11 @@ private struct VolunteerRow: View {
     }
 }
 
-/// Placeholder call screen until video calling is built.
-struct CallingView: View {
-    let volunteer: Volunteer
-    let onEnd: () -> Void
-
-    var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            HelperAvatar(isOnline: volunteer.isOnline, size: 140)
-            Text(volunteer.name)
-                .font(.largeTitle.bold())
-            Text("Calling…")
-                .font(.title3)
-                .accessibilityLabel("Calling \(volunteer.name)")
-            Spacer()
-            Button("End Call", action: onEnd)
-                .buttonStyle(.pill(.destructive))
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
-        }
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity)
-        .background(Color.black.ignoresSafeArea())
-        .accessibilityAction(.escape, onEnd)
-    }
-}
-
 #Preview {
     NavigationStack {
         CallHelpView()
     }
     .environment(AppRouter())
+    .environment(AppViewModel.preview)
     .preferredColorScheme(.dark)
 }

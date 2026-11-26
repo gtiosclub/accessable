@@ -72,6 +72,7 @@ struct LocationDebugViewModelTests {
 
         #expect(LocationDebugViewModel.fields(of: fullSample) == [
             .init(label: "Time", value: time, spokenValue: time),
+            .init(label: "Source", value: "GPS", spokenValue: "GPS"),
             .init(label: "Coordinate", value: "33.777123, -84.396457",
                   spokenValue: "latitude 33.777123, longitude -84.396457"),
             .init(label: "Horizontal accuracy", value: "4.5 m", spokenValue: "4.5 metres"),
@@ -160,6 +161,18 @@ struct LocationDebugViewModelTests {
 
         #expect(viewModel.headingField == .init(label: "Heading", value: "87° · compass",
                                                 spokenValue: "87 degrees, compass"))
+    }
+
+    @Test func headingSaysWhenItIsFromARGeoTracking() async {
+        // standing still, with a speed lent by fresh GPS
+        let fix = LocationSample(coordinate: fullSample.coordinate, horizontalAccuracy: 5, timestamp: fixTime,
+                                 speed: 0.2, source: .ar)
+        let camera = HeadingSample(trueHeading: 180, magneticHeading: 180, accuracy: 5, timestamp: fixTime,
+                                   source: .ar)
+        let viewModel = await startedViewModel(FixedLocationProvider(samples: [fix], headings: [camera]))
+
+        #expect(viewModel.headingField == .init(label: "Heading", value: "180° · AR geo-tracking",
+                                                spokenValue: "180 degrees, AR geo-tracking"))
     }
 
     @Test func headingNeverReads360() async {
