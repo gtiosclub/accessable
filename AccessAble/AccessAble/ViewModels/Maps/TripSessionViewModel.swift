@@ -421,6 +421,8 @@ final class TripSessionViewModel {
     /// - Parameter anywhere: Whether an answer may be part of a longer sentence, as it may in the question's own
     ///   listening; otherwise only the whole of what was said counts, so a command or question isn't taken for one.
     static func reportAnswer(for text: String, anywhere: Bool = true) -> Bool? {
+        // a question back, such as the question said over, isn't an answer
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("?") else { return nil }
         let said = " " + text.lowercased()
             .replacingOccurrences(of: "\u{2019}", with: "'")
             .components(separatedBy: CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "'")).inverted)
@@ -441,16 +443,21 @@ final class TripSessionViewModel {
     private static let yesWords: Set = ["yes", "yeah", "yep", "yup"]
     private static let noWords: Set = ["no", "nope", "nah"]
     /// Words saying the problem is there, and that it has gone; either, negated, says the other.
-    private static let presentWords: Set = ["blocked", "there", "closed", "out", "broken"]
+    private static let presentWords: Set = ["blocked", "there", "closed", "out", "broken", "ongoing"]
     private static let goneWords: Set = ["gone", "clear", "cleared", "open", "fixed", "working", "works", "work"]
 
-    /// Every cue in the sentence must agree: a leading yes or no, a later yes, and each word that says the problem is
-    /// there or gone, turned round by a "not" or "-n't" up to three words before it. Doubt or a contradiction is no
-    /// answer, since a wrong vote is worse than none.
+    /// Every cue in the sentence must agree: a leading yes or no, a later yes or no, and each word that says the
+    /// problem is there or gone, turned round by a "not", "nothing" or "-n't" up to two words before it. Doubt or a
+    /// contradiction is no answer, since a wrong vote is worse than none.
     private static func answerInSentence(_ said: String) -> Bool? {
         let doubts = [" no idea ", " no clue ", " not sure ", " don't know ", " dont know ", " do not know ", " maybe "]
         guard !doubts.contains(where: said.contains) else { return nil }
+        // work still going on is the problem still there, not something working again
+        let isOngoing = said.contains(" working on ") || said.contains(" going on ")
         var words = said.replacingOccurrences(of: " no longer ", with: " not anymore ")
+            .replacingOccurrences(of: " out of the way ", with: " gone ")
+            .replacingOccurrences(of: " working on ", with: " ongoing ")
+            .replacingOccurrences(of: " going on ", with: " ongoing ")
             .split(separator: " ").map(String.init)
         while let first = words.first, ["uh", "um", "er", "oh", "well"].contains(first) { words.removeFirst() }
         var answers: [Bool] = []
@@ -460,13 +467,17 @@ final class TripSessionViewModel {
             start = 1
         }
         func isNegator(_ word: String) -> Bool {
-            ["not", "never", "no", "cannot"].contains(word) || word.hasSuffix("n't")
+            ["not", "never", "no", "cannot", "nothing", "nothing's", "none"].contains(word) || word.hasSuffix("n't")
         }
         for index in words.indices.dropFirst(start) {
             let word = words[index]
-            let negated = words[max(start, index - 3)..<index].contains(where: isNegator)
+            let negated = words[max(start, index - 2)..<index].contains(where: isNegator)
             if yesWords.contains(word) {
                 answers.append(true)
+            } else if noWords.contains(word) {
+                answers.append(false)
+            } else if isOngoing, ["work", "works", "working"].contains(word) {
+                continue
             } else if word == "anymore", negated {
                 answers.append(false)
             } else if presentWords.contains(word) {

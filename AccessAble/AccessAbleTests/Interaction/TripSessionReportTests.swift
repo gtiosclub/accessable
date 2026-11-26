@@ -637,6 +637,10 @@ struct TripSessionReportTests {
         ("It's not gone", true), ("It's not clear", true), ("It doesn't work.", true), ("It isn't open.", true),
         ("Not anymore.", false), ("No longer.", false), ("It's no longer blocked.", false),
         ("It isn't there anymore.", false), ("The entrance is open now.", false),
+        ("They're still working on it.", true), ("Construction work is still going on.", true),
+        ("It works.", false), ("It's working now.", false), ("Working again.", false),
+        ("There's nothing there.", false), ("Nothing there.", false), ("Nothing's there anymore.", false),
+        ("It's out of the way now.", false), ("Not bad, it's blocked.", true),
     ])
     func theQuestionsListeningTakesAnswersInWholeSentences(_ words: String, _ isStillPresent: Bool) async throws {
         let reports = CapturingReports()
@@ -650,7 +654,7 @@ struct TripSessionReportTests {
 
     /// Doubt, or words that say both, are no vote.
     @Test(arguments: ["No idea", "No clue.", "Not sure", "I don't know", "Maybe", "No it's still there",
-                      "No wait, yes", "Yes, it's gone", "Hmm", ""])
+                      "No wait, yes", "Yes, it's gone", "Hmm", "", "Yeah no", "Is it still there?", "Blocked?"])
     func doubtOrAContradictionIsNoAnswer(_ words: String) {
         #expect(TripSessionViewModel.reportAnswer(for: words) == nil)
     }
