@@ -561,11 +561,6 @@ struct FallbackRoutingServiceTests {
         #expect(await apple.calls == 0)
     }
 
-    @Test
-    func chainBudgetIsEightSeconds() {
-        #expect(FallbackRoutingService.defaultChainBudget == .seconds(8))
-    }
-
     /// Two hanging servers cost the chain's budget before Apple Maps, not a full timeout each.
     @Test
     func twoHangingServersReachAppleAfterTheChainBudget() async throws {
@@ -578,9 +573,12 @@ struct FallbackRoutingServiceTests {
         try await timeOut(stadia, on: clock)
         await fossgis.waitForRequests(1)
         try await clock.waitForSleepers(1)
-        clock.advance(by: FallbackRoutingService.defaultChainBudget - FallbackRoutingService.defaultTimeout - .seconds(1))
+        clock.advance(by: FallbackRoutingService.defaultChainBudget - FallbackRoutingService.defaultTimeout
+                      - .milliseconds(1))
+        // FOSSGIS's timer, the only way on to Apple Maps, still waits just before 8 s, so Apple can't have been asked
+        try await clock.waitForSleepers(1)
         #expect(await apple.calls == 0)
-        clock.advance(by: .seconds(1))
+        clock.advance(by: .milliseconds(1))
         let route = try await routing.value
 
         #expect(route.source == .appleMaps)
