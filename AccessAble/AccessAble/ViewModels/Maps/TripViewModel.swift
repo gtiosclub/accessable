@@ -20,7 +20,7 @@ final class TripViewModel {
 
     @ObservationIgnored private let services: AppServices
     @ObservationIgnored private let now: () -> Date
-    @ObservationIgnored private let warnsOfPassedReports: Bool
+    @ObservationIgnored private let warnsOfPassedReports: @MainActor () -> Bool
     @ObservationIgnored private var routeRequestedAt: Date?
     @ObservationIgnored private var latestPreciseFix: LocationSample?
     // internal so tests can wait for the first fix
@@ -42,9 +42,13 @@ final class TripViewModel {
     // older than this, the user has likely walked on from where the fix puts them
     private static let maximumReportFixAge: TimeInterval = 10
 
-    /// - Parameter warnsOfPassedReports: Whether a route that passes a report says so when it lands. Off for the route
-    ///   picker, whose route summary says which reports it passes.
-    init(services: AppServices, now: @escaping () -> Date = { .now }, warnsOfPassedReports: Bool = true) {
+    /// - Parameter warnsOfPassedReports: Whether a route that passes a report says so when it lands, asked then. The
+    ///   route picker's summary says which reports it passes, to VoiceOver only, so it asks for this without it.
+    init(
+        services: AppServices,
+        now: @escaping () -> Date = { .now },
+        warnsOfPassedReports: @escaping @MainActor () -> Bool = { true }
+    ) {
         self.services = services
         self.now = now
         self.warnsOfPassedReports = warnsOfPassedReports
@@ -292,7 +296,7 @@ final class TripViewModel {
                 self.route = route
                 routeRequestedAt = requestedAt
                 // a refresh for Start leaves the warning to the trip's start announcement
-                if warnsOfPassedReports, !route.unavoidedReports.isEmpty, !isStartingTrip {
+                if !route.unavoidedReports.isEmpty, !isStartingTrip, warnsOfPassedReports() {
                     await services.announcements.submit(AnnouncementEvent(
                         category: .hazard,
                         priority: .high,

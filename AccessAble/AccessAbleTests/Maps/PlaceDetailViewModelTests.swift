@@ -211,9 +211,10 @@ struct PlaceDetailViewModelTests {
         #expect(details.summary == "About 4 minutes, 0.2 miles. No turns.")
     }
 
-    /// The summary says which reports the route passes, so the planner's own warning would say it twice.
-    @Test
-    func aPassedReportIsSaidOnceInTheSummary() async {
+    /// The route-ready summary goes to VoiceOver only, and the planner's warning to the app's speech, which speaks
+    /// through VoiceOver when it runs: so with VoiceOver the summary says it, and without it the warning does.
+    @Test(arguments: [true, false])
+    func aPassedReportIsSaidOnce(withVoiceOver voiceOver: Bool) async {
         var route = plannedRoute
         route.unavoidedReports = [Report(id: "blocked-1", kind: .blockedPath, coordinate: crossing(at: 0.5).coordinate,
                                          createdAt: .now, expiresAt: .now.addingTimeInterval(3600),
@@ -224,14 +225,15 @@ struct PlaceDetailViewModelTests {
         services.routing = FixedRouting(route: route)
         services.trip = PlaceholderTripProvider()
         services.announcements = announcements
-        let details = PlaceDetailViewModel(destination: clough, services: services, campusCrossings: { [] })
+        let details = PlaceDetailViewModel(destination: clough, services: services, campusCrossings: { [] },
+                                           isVoiceOverRunning: { voiceOver })
 
         await details.start()
         await details.planner.routeTask?.value
 
         #expect(details.routeReadyAnnouncement
             == "Route ready. About 4 minutes, 240 metres. No turns. 1 reported blocked path is on this route.")
-        #expect(await announcements.texts.isEmpty)
+        #expect(await announcements.texts == (voiceOver ? [] : ["A reported obstacle is on this route."]))
     }
 
     @Test
