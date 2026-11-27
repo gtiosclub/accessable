@@ -20,11 +20,19 @@ final class CommandViewModel {
     let dictation = SpeechDictation()
     /// Starts a call with a volunteer; set by the screen, which owns navigation.
     @ObservationIgnored var onCallVolunteer: (() -> Void)?
+    /// Opens the place / route-summary screen for a looked-up destination (SEARCH-13).
+    @ObservationIgnored var onOpenDestination: ((Destination) -> Void)?
 
     @ObservationIgnored private let services: AppServices
+    @ObservationIgnored private let destinations: DestinationLookup
 
-    init(services: AppServices) {
+    init(services: AppServices, destinations: DestinationLookup? = nil) {
         self.services = services
+        self.destinations = destinations ?? DestinationLookup(
+            nicknames: CampusNicknameDictionary.bundled,
+            saved: SavedPlacesDestinationSource { _ in [] },
+            mapKit: MapKitDestinationSource(region: .georgiaTech)
+        )
         dictation.onTranscript = { [weak self] transcript, isFinal in
             guard let self else { return }
             text = transcript
@@ -94,6 +102,8 @@ final class CommandViewModel {
             } else {
                 await reply("To call a volunteer, choose Call a volunteer on the Home screen.")
             }
+        case .navigate(to: let name):
+            await navigate(to: name)
         case .ask(let question) where VisualQuestion.needsCamera(question):
             await askAboutCamera(question)
         case .ask(let question):
@@ -105,6 +115,44 @@ final class CommandViewModel {
             }
         case .unknown:
             await reply("Sorry, I didn't understand. Try \"describe my surroundings\" or \"where am I\".")
+        }
+    }
+
+    /// SEARCH-13: look up the spoken place and open its route summary, or speak choices / failure.
+    private func navigate(to name: String) async {
+        if await isOnATrip() {
+            await reply("You're already on a trip. End it first to go somewhere else.")
+            return
+        }
+        switch await destinations.lookUp(name) {
+        case .one(let destination):
+            if let onOpenDestination {
+                onOpenDestination(destination)
+            } else {
+                await reply("Open Commands from Home to go to \(destination.name).")
+            }
+        case .several(let destinations):
+            let list = Self.spokenList(destinations.map(\.name))
+            await reply("I found \(list). Say take me to one of those.")
+        case .none:
+            await reply("I couldn't find \(name).")
+        }
+    }
+
+    private func isOnATrip() async -> Bool {
+        for await state in services.trip.tripStates() {
+            return state.phase == .active || state.phase == .paused
+        }
+        return false
+    }
+
+    private static func spokenList(_ names: [String]) -> String {
+        switch names.count {
+        case 0: ""
+        case 1: names[0]
+        case 2: "\(names[0]) and \(names[1])"
+        default:
+            names.dropLast().joined(separator: ", ") + ", and \(names.last!)"
         }
     }
  

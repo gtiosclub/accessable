@@ -14,8 +14,14 @@ struct CommandView: View {
     /// Optional so previews without a router still work; "call a volunteer" then gets the spoken hint.
     @Environment(AppRouter.self) private var router: AppRouter?
  
-    init(services: AppServices) {
-        _viewModel = State(initialValue: CommandViewModel(services: services))
+    init(services: AppServices, savedPlaces: SavedPlacesStore? = nil) {
+        let destinations = DestinationLookup(
+            nicknames: CampusNicknameDictionary.bundled,
+            saved: savedPlaces.map { SavedPlacesDestinationSource(store: $0) }
+                ?? SavedPlacesDestinationSource { _ in [] },
+            mapKit: MapKitDestinationSource(region: .georgiaTech)
+        )
+        _viewModel = State(initialValue: CommandViewModel(services: services, destinations: destinations))
     }
  
     var body: some View {
@@ -67,7 +73,10 @@ struct CommandView: View {
         .navigationTitle("Commands")
         .onAppear {
             // "Call a volunteer" opens the same call flow as the Home button, consent screen first.
-            if let router { viewModel.onCallVolunteer = { router.push(.call(nil)) } }
+            if let router {
+                viewModel.onCallVolunteer = { router.push(.call(nil)) }
+                viewModel.onOpenDestination = { router.push(.destination($0, origin: nil)) }
+            }
         }
         .onDisappear { viewModel.cancelDictation() }
     }
@@ -76,7 +85,7 @@ struct CommandView: View {
 #Preview {
     let app = AppViewModel.preview
     NavigationStack {
-        CommandView(services: app.services)
+        CommandView(services: app.services, savedPlaces: app.savedPlacesStore)
     }
     .environment(app)
 }
