@@ -95,7 +95,7 @@ struct ReportExclusions: Equatable, Sendable {
         let coordinates = route.coordinates
         let distances = route.cumulativeDistances
         let start = GeoMath.coordinate(atDistance: distance, along: coordinates, cumulativeDistances: distances)
-        if contains(start, in: ring) { return distance }
+        if contains(start, in: ring) { return min(distance, route.totalDistance) }
         for index in coordinates.indices.dropLast() where distances[index + 1] > distance {
             let from = distances[index] < distance ? start : coordinates[index]
             let fromDistance = max(distances[index], distance)
