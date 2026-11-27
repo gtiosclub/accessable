@@ -17,6 +17,8 @@ struct ActiveTripView: View {
     /// Report was tried from Voice Commands: its choices open once the sheet has closed, since a
     /// dialog can't open while the sheet is still going.
     @State private var reportsAfterCommands = false
+    /// The map stops above the control panel so MapKit's legal label isn't hidden under it.
+    @State private var controlPanelHeight: CGFloat = 0
     private let services: AppServices?
 
     init(plan: TripPlan, services: AppServices? = nil, recentPlaces: RecentPlacesStore? = nil) {
@@ -79,6 +81,7 @@ struct ActiveTripView: View {
                         router.popToRoot()
                     }
                 )
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { controlPanelHeight = $0 }
             }
             .accessibilityHidden(session.isRouteBlocked || session.isPaused)
 
@@ -301,6 +304,7 @@ struct ActiveTripView: View {
                 accessibilityLabel: session.mapAccessibilityLabel,
                 reports: session.mapReports
             )
+            .padding(.bottom, controlPanelHeight)
         } else if let services, session.isCameraReady {
             LiveSceneView(services: services, mode: .walk, chrome: .cameraOnly)
         } else {
