@@ -66,7 +66,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     private let geoAvailability = Mutex<GeoAvailability?>(nil)
     /// The background check in flight, so overlapping requests share it.
     private let geoAvailabilityCheck = Mutex(GeoAvailabilityChecks())
-    /// Times out the availability check.
+    /// Times out the availability check and relocalization.
     private let clock: any Clock<Duration>
     /// Dates availability answers, so they go stale.
     private let now: @Sendable () -> Date
@@ -85,7 +85,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// How long ARKit is given to relocalize after an interruption before guidance is
     /// declared stopped (T27). Relocalization normally lands in a second or two; past this
     /// the user is standing still waiting for guidance that is not coming back.
-    private static let relocalizationTimeout: Duration = .seconds(5)
+    static let relocalizationTimeout: Duration = .seconds(5)
 
     init(clock: any Clock<Duration> = ContinuousClock(), now: @escaping @Sendable () -> Date = { .now }) {
         self.clock = clock
@@ -503,8 +503,8 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// returning to normal tracking. Nothing reports failure, so waiting is the only way
     /// to notice that guidance is not coming back.
     private func scheduleRecoveryTimeout() {
-        let task = Task { [weak self] in
-            try? await Task.sleep(for: Self.relocalizationTimeout)
+        let task = Task { [weak self, clock] in
+            try? await clock.sleep(for: Self.relocalizationTimeout)
             guard !Task.isCancelled, let self, case .recovering = self.guidanceStatus else { return }
             self.setStatus(.stopped(reason: "Tracking could not be recovered."))
         }
@@ -560,15 +560,17 @@ extension ARSessionManager: ARSessionDelegate {
         }
         trackingState.withLock { $0 = description }
 
-        // Normal tracking is the only signal ARKit gives that relocalization worked.
-        if case .normal = camera.trackingState {
-            switch guidanceStatus {
-            case .interrupted, .recovering:
-                cancelRecoveryTimeout()
-                setStatus(.running)
-            case .idle, .running, .stopped, .unavailable:
-                break
-            }
+        if case .normal = camera.trackingState { trackingBecameNormal() }
+    }
+
+    /// Normal tracking is the only signal ARKit gives that relocalization worked.
+    func trackingBecameNormal() {
+        switch guidanceStatus {
+        case .interrupted, .recovering:
+            cancelRecoveryTimeout()
+            setStatus(.running)
+        case .idle, .running, .stopped, .unavailable:
+            break
         }
     }
 
