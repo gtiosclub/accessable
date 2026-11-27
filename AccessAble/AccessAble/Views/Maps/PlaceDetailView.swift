@@ -281,7 +281,6 @@ struct RoutePreview: View {
             .accessibilityElement(children: .combine)
         }
     }
-
 }
 
 #if DEBUG
