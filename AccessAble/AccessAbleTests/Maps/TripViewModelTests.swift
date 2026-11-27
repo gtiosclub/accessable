@@ -213,7 +213,8 @@ private final class TripScreen {
     let trip: ControlledTripProvider
     let routing: CountingRouting
     let announcements = SubmittedAnnouncements()
-    let preferences = RoutePreferencesStore(defaults: UserDefaults(suiteName: "TripScreen-\(UUID())") ?? .standard)
+    private let preferencesSuite = "TripScreen-\(UUID())"
+    let preferences: RoutePreferencesStore
     let viewModel: TripViewModel
     private let clock = ManualDate()
     private var running: Task<Void, Never>?
@@ -228,6 +229,7 @@ private final class TripScreen {
         services.trip = trip
         services.routing = routing
         services.announcements = announcements
+        preferences = RoutePreferencesStore(defaults: UserDefaults(suiteName: preferencesSuite)!)
         services.routePreferences = preferences
         let time = clock.now
         services.location = ScriptedLocationProvider(
@@ -236,6 +238,8 @@ private final class TripScreen {
         )
         viewModel = TripViewModel(services: services, now: { [clock] in clock.now })
     }
+
+    deinit { UserDefaults.standard.removePersistentDomain(forName: preferencesSuite) }
 
     func advance(by seconds: TimeInterval) {
         clock.advance(by: seconds)
@@ -531,7 +535,7 @@ struct TripStartTests {
     }
 
     @Test
-    func aBackupRouteWithPreferencesOnSaysTheNoticeOnce() async {
+    func aBackupRouteWithPreferencesOnSaysTheNotice() async {
         var route = plannedRoute
         route.source = .appleMaps
         let screen = TripScreen(route: route)
