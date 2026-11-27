@@ -21,7 +21,7 @@ struct RootView: View {
     }
 
     @ViewBuilder private var appContent: some View {
-        if app.services.accountsAvailable { AccountGateView(services: app.services) }
+        if app.services.accountsAvailable { AccountGateView(app: app) }
         else if app.hasCompletedOnboarding { MainFlowView() }
         else { OnboardingView(includesAccount: false) }
     }
@@ -32,10 +32,12 @@ private struct AccountGateView: View {
     @State private var session: AccountSessionViewModel
     @State private var signOutError: String?
 
-    init(services: AppServices) {
+    init(app: AppViewModel) {
+        let services = app.services
         _session = State(initialValue: AccountSessionViewModel(
             auth: services.auth, profiles: services.userProfiles, presence: services.presence,
-            savedTrips: services.savedTrips, trip: services.trip))
+            savedTrips: services.savedTrips, trip: services.trip,
+            savedPlaces: app.savedPlacesStore, recentPlaces: app.recentPlacesStore))
     }
 
     var body: some View {
@@ -129,15 +131,17 @@ struct MainFlowView: View {
     private func destination(for route: AppRoute) -> some View {
         switch route {
         case .search:
-            PlaceSearchView(services: app.services)
+            PlaceSearchView(services: app.services, savedPlaces: app.savedPlacesStore, recentPlaces: app.recentPlacesStore)
         case .place(let place, let origin):
             PlaceDetailView(place: place, origin: origin, services: app.services)
         case .destination(let destination, let origin):
             PlaceDetailView(destination: destination, origin: origin, services: app.services)
+        case .savedPlace(let savedPlace, let origin):
+            PlaceDetailView(savedPlace: savedPlace, origin: origin, services: app.services)
         case .routes(let place, let mode, let origin, let planned):
             RoutePickerView(place: place, mode: mode, origin: origin, planned: planned, services: app.services)
         case .trip(let plan):
-            ActiveTripView(plan: plan, services: app.services)
+            ActiveTripView(plan: plan, services: app.services, recentPlaces: app.recentPlacesStore)
         case .settings:
             SettingsView(app: app)
         case .callHelp:
@@ -153,7 +157,7 @@ struct MainFlowView: View {
         case .feature(.scene):
             LiveSceneView(services: app.services, mode: .walk)
         case .feature(.trip):
-            TripView(services: app.services)
+            TripView(services: app.services, recentPlaces: app.recentPlacesStore)
         }
     }
 }

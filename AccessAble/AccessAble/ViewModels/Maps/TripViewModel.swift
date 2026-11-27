@@ -21,6 +21,7 @@ final class TripViewModel {
     @ObservationIgnored private let services: AppServices
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let warnsOfPassedReports: @MainActor () -> Bool
+    @ObservationIgnored private let recentPlaces: RecentPlacesStore?
     @ObservationIgnored private var routeRequestedAt: Date?
     /// The resumed trip's next step, while `route` is its saved route.
     @ObservationIgnored private var resumingAtStep: Int?
@@ -44,14 +45,18 @@ final class TripViewModel {
     // older than this, the user has likely walked on from where the fix puts them
     private static let maximumReportFixAge: TimeInterval = 10
 
-    /// - Parameter warnsOfPassedReports: Whether a route that passes a report says so when it lands, asked then. The
-    ///   route picker's summary says which reports it passes, to VoiceOver only, so it asks for this without it.
+    /// - Parameters:
+    ///   - recentPlaces: Where the destination is recorded when the trip starts.
+    ///   - warnsOfPassedReports: Whether a route that passes a report says so when it lands, asked then. The route
+    ///     picker's summary says which reports it passes, to VoiceOver only, so it asks for this without it.
     init(
         services: AppServices,
+        recentPlaces: RecentPlacesStore? = nil,
         now: @escaping () -> Date = { .now },
         warnsOfPassedReports: @escaping @MainActor () -> Bool = { true }
     ) {
         self.services = services
+        self.recentPlaces = recentPlaces
         self.now = now
         self.warnsOfPassedReports = warnsOfPassedReports
     }
@@ -224,6 +229,7 @@ final class TripViewModel {
         // the destination or route may have changed during the refresh
         guard let route = self.route, let destination, tripState.phase == .planning else { return false }
         await services.trip.startTrip(route: route, destination: destination, resumingAtStep: resumingAtStep)
+        recentPlaces?.record(destination: destination)
         return true
     }
 

@@ -3,14 +3,20 @@ import SwiftUI
 /// Owner: Maps (2.x). A chosen place: name, address, the real walking route to it (summary
 /// and steps), and how to start.
 struct PlaceDetailView: View {
+    @Environment(AppViewModel.self) private var app
     @Environment(AppRouter.self) private var router
     /// What the route and trip screens take. For a place from search, made from the destination.
     let place: SamplePlace
     /// Picked in search; nil for My Location.
     var origin: SamplePlace?
+    private let savedPlaceID: UUID?
     @State private var details: PlaceDetailViewModel
+    @State private var showsSaveAlert = false
+    @State private var saveLabel = ""
+    @State private var showsRenameAlert = false
+    @State private var renameLabel = ""
 
-    /// A sample saved or recent place. Its coordinate is real, so its route is too.
+    /// A sample or recent place. Its coordinate is real, so its route is too.
     init(place: SamplePlace, origin: SamplePlace? = nil, services: AppServices) {
         let destination = Destination(
             name: place.name,
@@ -19,6 +25,7 @@ struct PlaceDetailView: View {
         )
         self.place = place
         self.origin = origin
+        self.savedPlaceID = nil
         _details = State(initialValue: PlaceDetailViewModel(destination: destination, services: services))
     }
 
@@ -26,7 +33,23 @@ struct PlaceDetailView: View {
     init(destination: Destination, origin: SamplePlace? = nil, services: AppServices) {
         place = SamplePlace(destination: destination)
         self.origin = origin
+        self.savedPlaceID = nil
         _details = State(initialValue: PlaceDetailViewModel(destination: destination, services: services))
+    }
+
+    /// A place previously saved by the user.
+    init(savedPlace: SavedPlace, origin: SamplePlace? = nil, services: AppServices) {
+        place = savedPlace.asSamplePlace()
+        self.origin = origin
+        self.savedPlaceID = savedPlace.id
+        _details = State(initialValue: PlaceDetailViewModel(destination: savedPlace.destination, services: services))
+    }
+
+    private var savedPlace: SavedPlace? {
+        if let savedPlaceID, let match = app.savedPlacesStore.savedPlace(id: savedPlaceID) {
+            return match
+        }
+        return app.savedPlacesStore.savedPlace(matching: details.destination)
     }
 
     var body: some View {
@@ -34,16 +57,25 @@ struct PlaceDetailView: View {
             CameraBackdrop()
             ScrollView {
                 BottomCard {
-                    Text(details.destination.name)
-                        .font(.title2.bold())
-                        .accessibilityAddTraits(.isHeader)
+                    if let saved = savedPlace, let label = saved.label {
+                        Label(label, systemImage: "bookmark.fill")
+                            .font(.title2.bold())
+                            .foregroundStyle(Theme.cyan)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(details.destination.name)
+                            .font(.headline)
+                    } else {
+                        Text(details.destination.name)
+                            .font(.title2.bold())
+                            .accessibilityAddTraits(.isHeader)
+                    }
                     if let address = details.destination.address {
                         Text(address)
                             .font(.subheadline.weight(.semibold))
                     }
-                    Label("From: \(origin?.name ?? "My Location")", systemImage: origin == nil ? "location.fill" : "circle.inset.filled")
+                    Label("From: \(origin?.displayName ?? "My Location")", systemImage: origin == nil ? "location.fill" : "circle.inset.filled")
                         .font(.subheadline)
-                        .accessibilityLabel("From \(origin?.name ?? "my location")")
+                        .accessibilityLabel("From \(origin?.displayName ?? "my location")")
                     RoutePreview(details: details, origin: origin)
                         .padding(.top, 4)
                     VStack(spacing: 14) {
@@ -64,6 +96,18 @@ struct PlaceDetailView: View {
                             router.push(.routes(place, .new, origin: origin, planned: details.plannedRoute))
                         }
                         .buttonStyle(.pill(.primary))
+
+                        if let saved = savedPlace {
+                            savedStatusButton(for: saved)
+                        } else {
+                            Button("Save place") {
+                                saveLabel = ""
+                                showsSaveAlert = true
+                            }
+                            .buttonStyle(.pill(.outline))
+                            .accessibilityHint("Saves this place with an optional label like Home or Class")
+                        }
+
                         Button("Back") { router.pop() }
                             .buttonStyle(.pill(.outline))
                     }
@@ -80,6 +124,85 @@ struct PlaceDetailView: View {
         // route failed is spoken as on the Trip screen; route ready adds the summary
         .announcesRoute(details.planner) { details.routeReadyAnnouncement }
         .task { await details.start() }
+        .alert("Save place", isPresented: $showsSaveAlert) {
+            TextField("Label, e.g. Home or Class", text: $saveLabel)
+            Button("Save") {
+                let saved = app.savedPlacesStore.save(
+                    destination: details.destination,
+                    label: saveLabel,
+                    category: place.category
+                )
+                AccessibilityNotification.Announcement("Saved \(saved.displayName)").post()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Add an optional label like Home or Class, or leave blank to save as \(details.destination.name).")
+        }
+        .alert("Rename saved place", isPresented: $showsRenameAlert) {
+            TextField("Label, e.g. Home or Class", text: $renameLabel)
+            Button("Save") {
+                guard let saved = savedPlace else { return }
+                app.savedPlacesStore.rename(id: saved.id, to: renameLabel)
+                let updatedName = app.savedPlacesStore.savedPlace(id: saved.id)?.displayName ?? saved.displayName
+                AccessibilityNotification.Announcement("Renamed to \(updatedName)").post()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Leave blank to use \(details.destination.name).")
+        }
+    }
+
+    private func savedStatusButton(for saved: SavedPlace) -> some View {
+        Button {
+            renameLabel = saved.label ?? saved.name
+            showsRenameAlert = true
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: "bookmark.fill")
+                    .foregroundStyle(Theme.cyan)
+                Text(saved.label.map { "Saved as \($0)" } ?? "Saved place")
+                    .font(.headline)
+                Spacer(minLength: 0)
+                Text("Edit")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.cyan)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
+            .background(.white.opacity(0.08), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Theme.cyan.opacity(0.5), lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(saved.label.map { "Saved as \($0)" } ?? "Saved place")
+        .accessibilityHint("Opens rename dialog. Use actions to rename or delete.")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction(named: "Rename") {
+            renameLabel = saved.label ?? saved.name
+            showsRenameAlert = true
+        }
+        .accessibilityAction(named: "Delete") {
+            deleteSavedPlace(saved)
+        }
+        .contextMenu {
+            Button("Rename", systemImage: "pencil") {
+                renameLabel = saved.label ?? saved.name
+                showsRenameAlert = true
+            }
+            Button("Delete", systemImage: "trash", role: .destructive) {
+                deleteSavedPlace(saved)
+            }
+        }
+    }
+
+    private func deleteSavedPlace(_ saved: SavedPlace) {
+        let deletedName = saved.displayName
+        app.savedPlacesStore.delete(id: saved.id)
+        AccessibilityNotification.Announcement("Deleted \(deletedName)").post()
     }
 }
 
@@ -183,6 +306,7 @@ struct RouteStepsList: View {
     NavigationStack {
         PlaceDetailView(place: SampleContent.places[0], services: .preview)
     }
+    .environment(AppViewModel.preview)
     .environment(AppRouter())
     .preferredColorScheme(.dark)
 }
@@ -195,6 +319,7 @@ struct RouteStepsList: View {
             address: "266 4th St NW, Atlanta, GA"
         ), services: .preview)
     }
+    .environment(AppViewModel.preview)
     .environment(AppRouter())
     .preferredColorScheme(.dark)
 }
