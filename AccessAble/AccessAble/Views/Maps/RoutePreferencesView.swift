@@ -40,6 +40,7 @@ struct RoutePreferencesView: View {
         .navigationTitle("Route preferences")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
+        .task { await viewModel.listen() }
     }
 
     private struct PreferenceToggle {
