@@ -18,6 +18,7 @@ struct RootView: View {
         }
         // The redesign is dark throughout; this also keeps the status bar light.
         .preferredColorScheme(.dark)
+        .environment(\.avatars, app.services.avatars)
     }
 
     @ViewBuilder private var appContent: some View {
@@ -101,6 +102,11 @@ struct MainFlowView: View {
                 }
         }
         .environment(router)
+        .overlay(alignment: .top) {
+            VolunteerRingBanner(services: app.services) { volunteer, ring in
+                router.push(.answerCall(volunteer, ring))
+            }
+        }
         .task {
             let resume = ResumeTripViewModel(store: app.services.savedTrips, trip: app.services.trip)
             resumeTrip = resume
@@ -151,6 +157,8 @@ struct MainFlowView: View {
             VolunteerListView(services: app.services)
         case .call(let volunteer):
             CallFlowView(volunteer: volunteer)
+        case .answerCall(let volunteer, let ring):
+            CallFlowView(volunteer: volunteer, answering: ring)
         case .chat(let volunteer):
             VolunteerChatView(volunteer: volunteer, services: app.services)
         case .developerTools:

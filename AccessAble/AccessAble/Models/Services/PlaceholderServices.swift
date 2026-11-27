@@ -357,6 +357,43 @@ final class PlaceholderChatService: ChatService {
     }
 }
 
+/// Stars kept in memory, for previews and builds without Firebase.
+final class PlaceholderSavesService: SavesService {
+    private let people = Broadcaster<[SavedPerson]>(replaysLatest: true)
+    private let names: [String: String]
+
+    /// `names` gives a name to each person who can be starred.
+    init(saved: [SavedPerson] = [], names: [String: String] = [:]) {
+        var all = Dictionary(uniqueKeysWithValues: SampleContent.activeVolunteers.map { ($0.id, $0.name) })
+        all.merge(names) { _, new in new }
+        self.names = all
+        people.send(saved)
+    }
+
+    func savedPeople() -> AsyncThrowingStream<[SavedPerson], Error> {
+        let stream = people.stream()
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                for await list in stream { continuation.yield(list) }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    func setSaved(_ saved: Bool, personID: String) async throws {
+        var list = people.latest ?? []
+        list.removeAll { $0.id == personID }
+        if saved { list.append(SavedPerson(id: personID, name: names[personID] ?? personID, isMutual: false)) }
+        people.send(list.sortedByName())
+    }
+}
+
+struct PlaceholderCallHistory: CallHistoryProviding {
+    var calls: [PastCall] = []
+    func pastCalls(as role: UserRole) async throws -> [PastCall] { calls }
+}
+
 /// Remembers the toggle in memory only. Replaced by VOLUNTEER-6.
 actor PlaceholderPresenceService: PresenceService {
     private nonisolated let states = Broadcaster<Bool>(replaysLatest: true)
@@ -452,9 +489,16 @@ actor PlaceholderUserProfileStore: UserProfileStore {
             throw UserProfileError.invalidProfile
         }
         let profile = UserProfile(userID: userID, role: role, displayName: displayName,
-                                  languages: languages, createdAt: profiles[userID]?.createdAt ?? .now)
+                                  languages: languages, createdAt: profiles[userID]?.createdAt ?? .now,
+                                  details: profiles[userID]?.details ?? ProfileDetails())
         profiles[userID] = profile
         return profile
+    }
+
+    func saveDetails(userID: String, details: ProfileDetails) async throws {
+        guard details.isValid else { throw UserProfileError.invalidProfile }
+        guard profiles[userID] != nil else { throw UserProfileError.invalidProfile }
+        profiles[userID]?.details = details
     }
 }
 
