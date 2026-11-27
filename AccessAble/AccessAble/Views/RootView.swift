@@ -18,6 +18,7 @@ struct RootView: View {
         }
         // The redesign is dark throughout; this also keeps the status bar light.
         .preferredColorScheme(.dark)
+        .environment(\.avatars, app.services.avatars)
     }
 
     @ViewBuilder private var appContent: some View {

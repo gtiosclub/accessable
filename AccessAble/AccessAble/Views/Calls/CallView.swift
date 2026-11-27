@@ -9,6 +9,7 @@ struct CallView: View {
     @AccessibilityFocusState private var statusFocused: Bool
     @State private var connectedAt: Date?
     @State private var videoIsBright = false
+    @State private var controlsFolded = false
     private let onClose: () -> Void
     private let safety: any CallSafetyService
     private let video: any VideoCallSession
@@ -20,9 +21,16 @@ struct CallView: View {
         video = services.videoCall
     }
 
+    /// Only a call that couldn't happen keeps a results screen (with Try again); one that simply
+    /// ended goes straight back to where the caller was.
     private var hasFinished: Bool {
-        if case .ended = viewModel.state { return true }
+        if case .ended = viewModel.state { return viewModel.failure != nil }
         if case .failed = viewModel.state { return true }
+        return false
+    }
+
+    private var endedNormally: Bool {
+        if case .ended = viewModel.state { return viewModel.failure == nil }
         return false
     }
 
@@ -34,6 +42,8 @@ struct CallView: View {
                     onRetry: { viewModel.retry() }, onOpenSettings: {
                         if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                     }, onClose: onClose)
+            } else if endedNormally {
+                Color.black.ignoresSafeArea()
             } else {
                 activeCall
                     .accessibilityAction(.escape) { Task { await viewModel.hangUp() } }
@@ -42,6 +52,11 @@ struct CallView: View {
         .foregroundStyle(.white).background(Color.black.ignoresSafeArea())
         .onChange(of: viewModel.state) { _, state in
             if state == .connected, connectedAt == nil { connectedAt = .now }
+            if case .ended = state, viewModel.failure == nil {
+                AccessibilityNotification.Announcement(viewModel.statusText).post()
+                onClose()
+                return
+            }
             if state == .ringing { statusFocused = true }
             if state == .connecting || state == .connected {
                 if voiceOverEnabled {
@@ -76,47 +91,51 @@ struct CallView: View {
         }
     }
 
-    /// The design's call screen: their name over your camera, controls down the right.
+    /// The design's call screen: the volunteer's name over your camera, their face or picture in
+    /// the corner, controls down the right.
     private var activeCall: some View {
         let connected = viewModel.state == .connected
+        let session = video as? LiveKitVideoCallSession
         return ZStack {
             TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                 CallVideoBackground(
-                    track: connected ? (video as? LiveKitVideoCallSession)?.localVideoTrack : nil,
+                    track: connected ? session?.localVideoTrack : nil,
                     mirrored: !viewModel.isUsingBackCamera,
-                    label: "Your camera, which the volunteer sees",
+                    label: "Your camera",
                     isBright: $videoIsBright)
             }
             VStack(alignment: .leading, spacing: 8) {
-                CallTitleBlock(name: viewModel.title,
-                               status: connected ? nil : "Calling…",
-                               connectedSince: connected ? connectedAt : nil)
-                Text(viewModel.statusText).font(.callout)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .callTextGlow()
-                    .accessibilityFocused($statusFocused)
+                HStack(alignment: .top) {
+                    CallTitleBlock(name: viewModel.title,
+                                   status: connected ? nil : "Calling…",
+                                   connectedSince: connected ? connectedAt : nil)
+                        // VoiceOver reads the full status here; the screen shows only the design's words.
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(viewModel.title). \(viewModel.statusText)")
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityFocused($statusFocused)
+                    Spacer(minLength: 8)
+                    if connected {
+                        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                            CallPictureInPicture(track: session?.remoteVideoTrack,
+                                                 userID: viewModel.lastCallForSafety?.otherUserID,
+                                                 name: viewModel.volunteerName ?? "Volunteer")
+                        }
+                    }
+                }
                 if let error = viewModel.controlError {
                     Text(error).font(.callout).fixedSize(horizontal: false, vertical: true)
                         .padding(10).background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
                 }
                 Spacer(minLength: 16)
-                HStack(alignment: .bottom) {
-                    if connected {
-                        CallControlButton(systemImage: "arrow.triangle.2.circlepath.camera", label: "Flip camera",
-                            hint: viewModel.isUsingBackCamera ? "Switches to the front camera" : "Switches to the back camera",
-                            value: viewModel.isUsingBackCamera ? "Back camera" : "Front camera") {
-                            Task { await viewModel.flipCamera() }
-                        }
-                    }
+                HStack {
                     Spacer()
-                    VStack(spacing: 16) {
-                        if connected { controls }
-                        if viewModel.state.isActive {
-                            CallControlButton(systemImage: "phone.down.fill",
-                                label: viewModel.state == .ringing ? "Cancel call" : "End call",
-                                hint: "Ends this call and opens call results", style: .end) {
-                                Task { await viewModel.hangUp() }
-                            }
+                    if viewModel.state.isActive {
+                        CallControlsColumn(isFolded: $controlsFolded,
+                                           endLabel: viewModel.state == .ringing ? "Cancel call" : "End call",
+                                           endHint: "Ends this call",
+                                           onEnd: { Task { await viewModel.hangUp() } }) {
+                            if connected { controls }
                         }
                     }
                 }
@@ -130,6 +149,12 @@ struct CallView: View {
     }
 
     @ViewBuilder private var controls: some View {
+        CallControlButton(systemImage: "arrow.triangle.2.circlepath.camera", label: "Flip camera",
+            hint: viewModel.isUsingBackCamera ? "Switches to the front camera" : "Switches to the back camera",
+            value: viewModel.isUsingBackCamera ? "Back camera" : "Front camera") {
+            Task { await viewModel.flipCamera() }
+        }
+        .disabled(!viewModel.isCameraOn)
         CallControlButton(systemImage: viewModel.isMuted ? "mic.slash.fill" : "mic.fill",
             label: viewModel.isMuted ? "Unmute microphone" : "Mute microphone",
             hint: viewModel.isMuted ? "Lets the volunteer hear you" : "Stops sending your voice",
@@ -137,14 +162,13 @@ struct CallView: View {
             style: viewModel.isMuted ? .toggledOn : .standard) {
             Task { await viewModel.toggleMute() }
         }
-        CallControlButton(systemImage: viewModel.isFlashlightOn ? "flashlight.on.fill" : "flashlight.off.fill",
-            label: "Flashlight",
-            hint: viewModel.isUsingBackCamera ? "Lights what the back camera sees" : "Switch to the back camera to use the flashlight",
-            value: viewModel.isFlashlightOn ? "On" : "Off",
-            style: viewModel.isFlashlightOn ? .toggledOn : .standard) {
-            Task { await viewModel.toggleFlashlight() }
+        CallControlButton(systemImage: viewModel.isCameraOn ? "video.fill" : "video.slash.fill",
+            label: viewModel.isCameraOn ? "Turn camera off" : "Turn camera on",
+            hint: viewModel.isCameraOn ? "The volunteer stops seeing your camera" : "Lets the volunteer see your camera",
+            value: viewModel.isCameraOn ? "On" : "Off",
+            style: viewModel.isCameraOn ? .standard : .toggledOn) {
+            Task { await viewModel.toggleCamera() }
         }
-        .disabled(!viewModel.isUsingBackCamera)
     }
 }
 

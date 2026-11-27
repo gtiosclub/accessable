@@ -154,3 +154,23 @@ test('profile details are optional, checked, and editable by the owner', async (
   await assertFails(updateDoc(ref, { location: 42 }));
   await assertFails(updateDoc(ref, { phone: '555' }));
 });
+
+// ---------- Profile pictures ----------
+
+test('anyone signed in sees a picture; only its owner sets it, small and at server time', async () => {
+  await seedAccounts();
+  const { Bytes } = await import('firebase/firestore');
+  const jpeg = Bytes.fromUint8Array(new Uint8Array([0xff, 0xd8, 0xff, 0xd9]));
+  const ref = uid => doc(dbFor(uid), 'avatars', 'alice');
+  await assertSucceeds(setDoc(ref('alice'), { jpeg, updatedAt: serverTimestamp() }));
+  await assertSucceeds(getDoc(ref('vic')));
+  await assertFails(getDoc(doc(env.unauthenticatedContext().firestore(), 'avatars', 'alice')));
+  await assertFails(setDoc(ref('vic'), { jpeg, updatedAt: serverTimestamp() }));
+  await assertFails(setDoc(ref('alice'), { jpeg, updatedAt: Timestamp.fromMillis(0) }));
+  await assertFails(setDoc(ref('alice'), { jpeg: 'not bytes', updatedAt: serverTimestamp() }));
+  const big = Bytes.fromUint8Array(new Uint8Array(200001));
+  await assertFails(setDoc(ref('alice'), { jpeg: big, updatedAt: serverTimestamp() }));
+  await assertFails(getDocs(collection(dbFor('vic'), 'avatars')));
+  await assertFails(deleteDoc(ref('vic')));
+  await assertSucceeds(deleteDoc(ref('alice')));
+});

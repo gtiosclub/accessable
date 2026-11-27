@@ -42,6 +42,8 @@ struct AppServices: Sendable {
     /// Starred people (SAVE-1) and past calls (HISTORY-1) for the Call Help tabs.
     var saves: any SavesService = PlaceholderSavesService()
     var callHistory: any CallHistoryProviding = PlaceholderCallHistory()
+    /// Profile pictures (PROFILE-2).
+    var avatars: any AvatarStore = PlaceholderAvatarStore()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
     var askAISettings = AskAISettings()
@@ -127,6 +129,7 @@ struct AppServices: Sendable {
             services.chat = FirestoreChatService(auth: services.auth)
             services.saves = FirestoreSavesService(auth: services.auth)
             services.callHistory = FirestoreCallHistory(auth: services.auth)
+            services.avatars = FirestoreAvatarStore(auth: services.auth)
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
             if let tokenURL = LiveKitConfig.callTokenURL {

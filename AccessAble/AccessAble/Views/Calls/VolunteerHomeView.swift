@@ -6,11 +6,6 @@ import SwiftUI
 struct VolunteerHomeView: View {
     let settings: VolunteerSettingsViewModel
     let signOut: () async throws -> Void
-    var pastCalls: [CallSafetySummary] = []
-    var callSafety: any CallSafetyService = UnavailableCallSettings()
-    var dismissPastCall: (String) -> Void = { _ in }
-    /// A call is ringing over this screen: close any open report so the ring isn't hidden behind it.
-    var isRinging = false
     var listenerError: String? = nil
     var retryListening: () -> Void = {}
     var callMessage: String? = nil
@@ -77,90 +72,44 @@ struct VolunteerHomeView: View {
         if let callMessage {
             notice(callMessage, action: "Dismiss", perform: dismissCallMessage)
         }
-        availabilityCard
         if let callHelp {
             @Bindable var callHelp = callHelp
             CallHelpSearchField(text: $callHelp.search)
             CallHelpSectionHeader(title: "Mutually Saved", subtitle: "People who also saved you", starred: true)
-            if callHelp.mutuallySaved.isEmpty {
-                emptyLine(callHelp.search.isEmpty
-                          ? "Save a caller with the star in your chat. When they save you too, they show up here."
-                          : "No matches.")
-            } else {
+            if !callHelp.mutuallySaved.isEmpty {
                 CardGroup(items: callHelp.mutuallySaved) { caller in
-                    PersonRow(name: caller.name, subtitle: "Saved you too", isOnline: nil, onMessage: {
+                    PersonRow(userID: caller.id, name: caller.name, subtitle: "", isOnline: nil, onMessage: {
                         openChat = VolunteerChatRoute(callerID: caller.id, name: caller.name)
                     })
                 }
             }
-            CallHelpSectionHeader(title: "Messages")
             if let error = callHelp.inbox.errorMessage {
-                emptyLine(error)
-            } else if callHelp.inbox.threads.isEmpty {
-                emptyLine("No messages yet. Callers can message you from Call Help.")
-            } else {
+                Text(error).font(.subheadline)
+            } else if !callHelp.inbox.threads.isEmpty {
+                CallHelpSectionHeader(title: "Messages")
                 CardGroup(items: callHelp.inbox.threads) { thread in
-                    PersonRow(name: thread.callerFirstName,
+                    let caller = ChatID.parties(of: thread.id)?.caller
+                    PersonRow(userID: caller, name: thread.callerFirstName,
                               subtitle: thread.updatedAt.formatted(.relative(presentation: .named)),
                               isOnline: nil, onMessage: {
-                        if let caller = ChatID.parties(of: thread.id)?.caller {
-                            openChat = VolunteerChatRoute(callerID: caller, name: thread.callerFirstName)
-                        }
+                        if let caller { openChat = VolunteerChatRoute(callerID: caller, name: thread.callerFirstName) }
                     })
                 }
             }
         }
-    }
-
-    @ViewBuilder private var availabilityCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Toggle(isOn: Binding(get: { settings.isOnline }, set: { value in Task { await settings.setOnline(value) } })) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(settings.isOnline ? "You're available" : "You're unavailable").font(.title3.bold())
-                    Text(settings.isOnline ? "Callers can ring you while this app is open." : "Turn on to take calls.")
-                        .font(.footnote).foregroundStyle(.white.opacity(0.85))
-                }
-            }
-            .tint(Theme.cyan)
-            .disabled(!settings.isLoaded || !settings.isInvited || settings.isBusy)
-            .accessibilityHint("Your choice is remembered for the next launch. Online works only while the app is on screen.")
-            if !settings.isLoaded {
-                Text("Volunteer settings need to load before going online.").font(.footnote)
-                Button("Load settings") { Task { await settings.load() } }
-                    .buttonStyle(.pill(.outline, size: .compact)).disabled(settings.isBusy)
-            } else if !settings.isInvited {
-                Text("Only volunteer accounts can go online. Sign up as a volunteer to take calls.").font(.footnote)
-                Button("Check again") { Task { await settings.load() } }
-                    .buttonStyle(.pill(.outline, size: .compact)).disabled(settings.isBusy)
-            }
-        }
-        .padding(14)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     // MARK: History
 
     @ViewBuilder private var history: some View {
-        ForEach(Array(pastCalls.enumerated()), id: \.element.id) { index, call in
-            VStack(alignment: .leading, spacing: 10) {
-                Text(index == 0 ? "Previous call" : "Earlier call").font(.headline).accessibilityAddTraits(.isHeader)
-                CallSafetyActionsView(summary: call, service: callSafety, suspended: isRinging).id(call.id)
-                Button(index == 0 ? "Dismiss previous call" : "Dismiss earlier call") { dismissPastCall(call.id) }
-                    .foregroundStyle(Theme.cyan).minimumTapTarget()
-            }
-            .padding(14)
-            .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        }
         if let callHelp {
             @Bindable var callHelp = callHelp
             CallHelpSearchField(text: $callHelp.search)
             CallHelpSectionHeader(title: "Call History")
-            if callHelp.pastCalls.isEmpty {
-                emptyLine(callHelp.search.isEmpty ? "Calls you answer show up here." : "No matches.")
-            } else {
+            if !callHelp.pastCalls.isEmpty {
                 CardGroup(items: callHelp.pastCalls) { call in
                     let name = call.otherName ?? "Caller"
-                    PersonRow(name: name, subtitle: call.summary, isOnline: nil,
+                    PersonRow(userID: call.otherID, name: name, subtitle: call.summary, isOnline: nil,
                               onMessage: callHelp.canMessage(callerID: call.otherID) ? {
                                   openChat = VolunteerChatRoute(callerID: call.otherID, name: name)
                               } : nil)
@@ -174,18 +123,20 @@ struct VolunteerHomeView: View {
 
     @ViewBuilder private var profile: some View {
         @Bindable var settings = settings
-        ProfileHeader(name: settings.displayName.isEmpty ? "Your profile" : settings.displayName)
+        ProfileHeader(name: settings.displayName.isEmpty ? "Your profile" : settings.displayName,
+                      userID: settings.userID)
             .padding(.vertical, 8)
         Group {
-            ProfileFieldRow(label: "Display name", text: $settings.displayName)
-            ProfileFieldRow(label: "Location", text: $settings.location)
-            ProfileFieldRow(label: "Languages", text: $settings.languageText)
-            HStack {
-                Text("Availability:").font(.subheadline.bold())
-                Text(settings.isOnline ? "Available" : "Unavailable")
-                    .font(.subheadline).foregroundStyle(Theme.cyan)
+            ProfileFields {
+                ProfileFieldRow(label: "Display name", text: $settings.displayName)
+                ProfileFieldRow(label: "Location", text: $settings.location)
+                ProfileFieldRow(label: "Languages", text: $settings.languageText)
+                ProfileMenuRow(label: "Availability", value: settings.isOnline ? "Available" : "Unavailable",
+                               choices: ["Available", "Unavailable"]) { choice in
+                    Task { await settings.setOnline(choice == "Available") }
+                }
+                .disabled(!settings.isInvited)
             }
-            .accessibilityElement(children: .combine)
             Button(settings.isBusy ? "Saving…" : "Save profile") { Task { await settings.saveProfile() } }
                 .buttonStyle(.pill(.primary))
                 .disabled(!settings.canSaveProfile || !settings.canSaveDetails)
@@ -196,8 +147,6 @@ struct VolunteerHomeView: View {
         ChoiceList(choices: VolunteerAvailability.allCases, selection: settings.availability,
                    title: \.title) { choice in Task { await settings.setAvailability(choice) } }
             .disabled(!settings.isLoaded || settings.isBusy)
-        Text("Online works only while the app is on screen. Leaving the app or locking the phone stops incoming calls.")
-            .font(.footnote).foregroundStyle(.white.opacity(0.85))
 
         Toggle("Keep screen awake while available", isOn: Binding(
             get: { settings.preferences.keepScreenAwake },
@@ -232,10 +181,6 @@ struct VolunteerHomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    private func emptyLine(_ text: String) -> some View {
-        Text(text).font(.subheadline).foregroundStyle(.white.opacity(0.85))
     }
 }
 

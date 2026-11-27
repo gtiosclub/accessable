@@ -441,6 +441,20 @@ service cloud.firestore {
         && data.updatedAt == request.time;
     }
 
+    // PROFILE-2: a small profile picture, shown next to the person's name to anyone signed in.
+    // Kept in Firestore as JPEG bytes, resized on the phone, so no separate storage is needed.
+    match /avatars/{uid} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasAll(['jpeg', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['jpeg', 'updatedAt'])
+        && request.resource.data.jpeg is bytes
+        && request.resource.data.jpeg.size() > 0 && request.resource.data.jpeg.size() <= 200000
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
     // SAVE-1: a caller starring a volunteer, or a volunteer starring a caller. The id is
     // `<saverId>_<savedId>`, and either person may read it, so saves in both directions show each
     // of them a mutual save. Both first names are projected, checked against the profiles.

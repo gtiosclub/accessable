@@ -325,6 +325,13 @@ protocol VideoCallSession: Sendable {
     func flipCamera() async throws
     /// Turns the back camera's light on or off. Throws when the current camera has no light.
     func setFlashlight(_ on: Bool) async throws
+    /// Starts or stops sending this phone's camera. The caller starts with it on (back camera);
+    /// the volunteer starts with it off and turns on the front camera.
+    func setCameraEnabled(_ on: Bool) async throws
+}
+
+extension VideoCallSession {
+    func setCameraEnabled(_ on: Bool) async throws {}
 }
 
 // MARK: - Signed-in account profiles (VOLUNTEER-2)

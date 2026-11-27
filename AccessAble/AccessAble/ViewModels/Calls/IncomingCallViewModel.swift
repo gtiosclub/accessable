@@ -11,6 +11,8 @@ final class IncomingCallViewModel {
     private(set) var message: String?
     private(set) var listenerError: String?
     private(set) var isMuted = false
+    /// The volunteer's own camera; off until they turn it on.
+    private(set) var isCameraOn = false
     private(set) var isUpdatingControls = false
     private(set) var listenerAttempt = 0
     /// Calls the volunteer can still report, newest first. A new call doesn't replace one they
@@ -97,6 +99,7 @@ final class IncomingCallViewModel {
         call = offer
         phase = .ringing
         isMuted = false
+        isCameraOn = false
         alerts.start()
         deadlineTask = Task { [weak self, sleep] in
             do { try await sleep(.seconds(remaining)) }
@@ -231,6 +234,35 @@ final class IncomingCallViewModel {
         } catch {
             guard generation == actionGeneration, phase == .connected else { return }
             report("Couldn't change the microphone.")
+        }
+    }
+
+    func toggleCamera() async {
+        guard phase == .connected, !isUpdatingControls else { return }
+        isUpdatingControls = true
+        defer { isUpdatingControls = false }
+        let generation = actionGeneration
+        do {
+            try await video.setCameraEnabled(!isCameraOn)
+            guard generation == actionGeneration, phase == .connected else { return }
+            isCameraOn.toggle()
+        } catch {
+            guard generation == actionGeneration, phase == .connected else { return }
+            report(isCameraOn ? "Couldn't turn your camera off." : "Couldn't turn your camera on.")
+        }
+    }
+
+    /// Only while the volunteer's camera is on.
+    func flipCamera() async {
+        guard phase == .connected, isCameraOn, !isUpdatingControls else { return }
+        isUpdatingControls = true
+        defer { isUpdatingControls = false }
+        let generation = actionGeneration
+        do {
+            try await video.flipCamera()
+        } catch {
+            guard generation == actionGeneration, phase == .connected else { return }
+            report("Couldn't switch cameras.")
         }
     }
 

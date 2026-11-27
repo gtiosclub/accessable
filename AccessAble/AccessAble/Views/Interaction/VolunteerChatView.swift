@@ -43,13 +43,15 @@ struct VolunteerChatView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Back")
 
-            PersonAvatar(isOnline: isOnline, size: 48)
+            PersonAvatar(userID: volunteer.id, isOnline: isOnline, size: 48)
             VStack(alignment: .leading, spacing: 2) {
                 Text(volunteer.name)
                     .font(.headline)
                     .accessibilityAddTraits(.isHeader)
-                Text(subtitle)
-                    .font(.footnote)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.footnote)
+                }
             }
             .foregroundStyle(.white)
             .accessibilityElement(children: .combine)
@@ -72,7 +74,7 @@ struct VolunteerChatView: View {
 
     private var subtitle: String {
         if !volunteer.availableUntil.isEmpty { return volunteer.availableUntil }
-        return isOnline ? "Online now" : "Offline"
+        return ""
     }
 }
 
@@ -84,13 +86,6 @@ struct ChatConversationView: View {
         VStack(spacing: 0) {
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    if model.hasLoaded && model.messages.isEmpty {
-                        Text("No messages yet. Say hello to \(model.partnerName).")
-                            .font(.callout)
-                            .foregroundStyle(.white.opacity(0.85))
-                            .multilineTextAlignment(.center)
-                            .padding(.top, 24)
-                    }
                     ForEach(model.messages) { message in
                         bubble(message)
                     }

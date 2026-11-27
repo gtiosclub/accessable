@@ -34,17 +34,14 @@ struct VolunteerCallHostView: View {
     var body: some View {
         ZStack {
             VolunteerHomeView(settings: settings, signOut: signOut,
-                              // Kept while ringing, so a half-written report survives the ring.
-                              pastCalls: model.callsForSafety,
-                              callSafety: services.callSafety, dismissPastCall: { model.dismissSafetySummary($0) },
-                              isRinging: model.call != nil,
                               listenerError: model.listenerError, retryListening: { model.retryListening() },
                               callMessage: model.message, dismissCallMessage: { model.dismissMessage() },
                               callHelp: callHelp, services: services)
                 .allowsHitTesting(model.call == nil)
                 .accessibilityHidden(model.call != nil)
             if model.call != nil {
-                IncomingVolunteerCallView(model: model, video: services.videoCall)
+                IncomingVolunteerCallView(model: model, video: services.videoCall,
+                                          myID: profile.userID, myName: profile.displayName)
                     .zIndex(1)
             }
         }

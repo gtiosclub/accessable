@@ -4,11 +4,15 @@ import SwiftUI
 struct IncomingVolunteerCallView: View {
     let model: IncomingCallViewModel
     let video: any VideoCallSession
+    /// The volunteer, for their picture in the corner while their camera is off.
+    var myID: String?
+    var myName = "You"
     @AccessibilityFocusState private var acceptFocused: Bool
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
     @State private var connectedAt: Date?
     @State private var videoIsBright = false
+    @State private var controlsFolded = false
 
     var body: some View {
         Group {
@@ -75,23 +79,31 @@ struct IncomingVolunteerCallView: View {
         }
     }
 
-    /// The caller's camera full screen, their name at the top, controls down the right.
+    /// The caller's camera full screen, their name at the top, the volunteer's own face or picture
+    /// in the corner, controls down the right.
     private var activeCall: some View {
         let name = model.call?.callerFirstName ?? "Caller"
         let connected = model.phase == .connected
+        let session = video as? LiveKitVideoCallSession
         return ZStack {
             TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                 CallVideoBackground(
-                    track: connected ? (video as? LiveKitVideoCallSession)?.remoteVideoTrack : nil,
+                    track: connected ? session?.remoteVideoTrack : nil,
                     label: "Live video from the caller's camera",
                     isBright: $videoIsBright)
             }
             VStack(alignment: .leading, spacing: 8) {
-                CallTitleBlock(name: name,
-                               status: connected ? nil : title,
-                               connectedSince: connected ? connectedAt : nil)
-                if connected, (video as? LiveKitVideoCallSession)?.remoteVideoTrack == nil {
-                    Text("Waiting for caller video").font(.callout).callTextGlow()
+                HStack(alignment: .top) {
+                    CallTitleBlock(name: name,
+                                   status: connected ? nil : "Connecting…",
+                                   connectedSince: connected ? connectedAt : nil)
+                    Spacer(minLength: 8)
+                    if connected {
+                        TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                            CallPictureInPicture(track: model.isCameraOn ? session?.localVideoTrack : nil,
+                                                 userID: myID, name: myName)
+                        }
+                    }
                 }
                 if let message = model.message {
                     Text(message).font(.callout)
@@ -100,21 +112,11 @@ struct IncomingVolunteerCallView: View {
                 Spacer(minLength: 16)
                 HStack {
                     Spacer()
-                    VStack(spacing: 16) {
-                        if connected {
-                            CallControlButton(systemImage: model.isMuted ? "mic.slash.fill" : "mic.fill",
-                                              label: model.isMuted ? "Unmute microphone" : "Mute microphone",
-                                              hint: "Changes your microphone",
-                                              value: model.isMuted ? "Muted" : "On",
-                                              style: model.isMuted ? .toggledOn : .standard) {
-                                Task { await model.toggleMute() }
-                            }
-                            .disabled(model.isUpdatingControls)
-                        }
-                        CallControlButton(systemImage: "phone.down.fill", label: "End call",
-                                          hint: "Ends this call", style: .end) { model.endCall() }
-                            .disabled(model.phase == .ending)
+                    CallControlsColumn(isFolded: $controlsFolded, endLabel: "End call",
+                                       onEnd: { model.endCall() }) {
+                        if connected { controls }
                     }
+                    .disabled(model.phase == .ending)
                 }
             }
             .padding(.horizontal, 20)
@@ -122,6 +124,30 @@ struct IncomingVolunteerCallView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .environment(\.callBackgroundIsBright, connected && videoIsBright)
+    }
+
+    @ViewBuilder private var controls: some View {
+        CallControlButton(systemImage: "arrow.triangle.2.circlepath.camera", label: "Flip camera",
+                          hint: "Switches between your front and back camera") {
+            Task { await model.flipCamera() }
+        }
+        .disabled(!model.isCameraOn || model.isUpdatingControls)
+        CallControlButton(systemImage: model.isMuted ? "mic.slash.fill" : "mic.fill",
+                          label: model.isMuted ? "Unmute microphone" : "Mute microphone",
+                          hint: "Changes your microphone",
+                          value: model.isMuted ? "Muted" : "On",
+                          style: model.isMuted ? .toggledOn : .standard) {
+            Task { await model.toggleMute() }
+        }
+        .disabled(model.isUpdatingControls)
+        CallControlButton(systemImage: model.isCameraOn ? "video.fill" : "video.slash.fill",
+                          label: model.isCameraOn ? "Turn camera off" : "Turn camera on",
+                          hint: model.isCameraOn ? "The caller sees your picture instead" : "Lets the caller see your face",
+                          value: model.isCameraOn ? "On" : "Off",
+                          style: model.isCameraOn ? .standard : .toggledOn) {
+            Task { await model.toggleCamera() }
+        }
+        .disabled(model.isUpdatingControls)
     }
 
     private var title: String {

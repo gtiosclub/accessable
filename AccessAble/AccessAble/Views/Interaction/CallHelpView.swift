@@ -69,20 +69,17 @@ private struct LiveTab: View {
 
     var body: some View {
         if !model.hasLoadedVolunteers {
-            ProgressView("Loading volunteers")
-                .tint(.white).foregroundStyle(.white)
+            ProgressView()
+                .tint(.white)
+                .accessibilityLabel("Loading volunteers")
                 .frame(maxWidth: .infinity).padding(.top, 40)
-        } else if model.liveSaved.isEmpty && model.liveOthers.isEmpty {
-            Text("No volunteers are online right now.")
-                .font(.title3).foregroundStyle(.white)
-                .padding(.top, 24)
         } else {
             if !model.liveSaved.isEmpty {
                 CallHelpSectionHeader(title: "Saved")
                 volunteerCard(model.liveSaved)
             }
             if !model.liveOthers.isEmpty {
-                CallHelpSectionHeader(title: model.liveSaved.isEmpty ? "Available now" : "Others")
+                CallHelpSectionHeader(title: "Others")
                 volunteerCard(model.liveOthers)
             }
         }
@@ -90,18 +87,10 @@ private struct LiveTab: View {
 
     private func volunteerCard(_ volunteers: [Volunteer]) -> some View {
         CardGroup(items: volunteers) { volunteer in
-            PersonRow(name: volunteer.name, subtitle: subtitle(volunteer), isOnline: true,
+            PersonRow(userID: volunteer.id, name: volunteer.name, subtitle: volunteer.availableUntil, isOnline: true,
                       onCall: { router.push(.call(volunteer)) },
                       onMessage: { router.push(.chat(volunteer)) })
         }
-    }
-
-    private func subtitle(_ volunteer: Volunteer) -> String {
-        if !volunteer.availableUntil.isEmpty { return volunteer.availableUntil }
-        if !volunteer.languages.isEmpty {
-            return "Speaks " + ListFormatter.localizedString(byJoining: volunteer.languages)
-        }
-        return "Online now"
     }
 }
 
@@ -114,25 +103,15 @@ private struct HistoryTab: View {
             .padding(.top, 4)
 
         CallHelpSectionHeader(title: "Mutually Saved", subtitle: "People who also saved you", starred: true)
-        if model.mutuallySaved.isEmpty {
-            emptyLine(model.search.isEmpty
-                      ? "Save a volunteer with the star in your chat. When they save you too, they show up here."
-                      : "No matches.")
-        } else {
+        if !model.mutuallySaved.isEmpty {
             CardGroup(items: model.mutuallySaved) { volunteerRow($0) }
         }
 
-        if !model.savedOnly.isEmpty {
-            CallHelpSectionHeader(title: "Saved")
-            CardGroup(items: model.savedOnly) { volunteerRow($0) }
-        }
-
         CallHelpSectionHeader(title: "Call History")
-        if model.pastCalls.isEmpty {
-            emptyLine(model.search.isEmpty ? "Your answered calls show up here." : "No matches.")
-        } else {
+        if !model.pastCalls.isEmpty {
             CardGroup(items: model.pastCalls) { row in
                 PersonRow(
+                    userID: row.call.otherID,
                     name: row.name, subtitle: row.call.summary,
                     isOnline: row.volunteer.map(model.isOnline),
                     onCall: row.volunteer.flatMap { volunteer in
@@ -148,14 +127,10 @@ private struct HistoryTab: View {
     private func volunteerRow(_ volunteer: Volunteer) -> some View {
         let online = model.isOnline(volunteer)
         return PersonRow(
-            name: volunteer.name, subtitle: online ? "Online now" : "Offline", isOnline: online,
+            userID: volunteer.id, name: volunteer.name, subtitle: volunteer.availableUntil, isOnline: online,
             onCall: online ? { router.push(.call(volunteer)) } : nil,
             onMessage: { router.push(.chat(volunteer)) }
         )
-    }
-
-    private func emptyLine(_ text: String) -> some View {
-        Text(text).font(.subheadline).foregroundStyle(.white.opacity(0.85))
     }
 }
 
@@ -164,14 +139,14 @@ private struct CallerProfileTab: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            ProfileHeader(name: model.displayName.isEmpty ? "Your profile" : model.displayName)
+            ProfileHeader(name: model.displayName.isEmpty ? "Your profile" : model.displayName, userID: model.userID)
                 .padding(.vertical, 8)
             if model.isLoaded {
-                ProfileFieldRow(label: "Display name", text: $model.displayName)
-                ProfileFieldRow(label: "Location", text: $model.location)
-                ProfileFieldRow(label: "Condition", text: $model.condition, axis: .vertical)
-                Text("Volunteers see your first name. Your location and condition stay private for now.")
-                    .font(.footnote).foregroundStyle(.white.opacity(0.85))
+                ProfileFields {
+                    ProfileFieldRow(label: "Display name", text: $model.displayName)
+                    ProfileFieldRow(label: "Location", text: $model.location)
+                    ProfileFieldRow(label: "Condition", text: $model.condition, axis: .vertical)
+                }
                 Button(model.isSaving ? "Saving…" : "Save profile") { Task { await model.save() } }
                     .buttonStyle(.pill(.primary))
                     .disabled(!model.canSave)

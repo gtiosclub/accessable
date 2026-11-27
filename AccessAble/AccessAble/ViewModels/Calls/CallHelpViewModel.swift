@@ -157,6 +157,8 @@ final class CallerProfileViewModel {
         self.profiles = profiles
     }
 
+    var userID: String? { isLoaded ? profile?.userID : nil }
+
     var canSave: Bool {
         guard let profile, !isSaving else { return false }
         let details = ProfileDetails(location: location, condition: condition)

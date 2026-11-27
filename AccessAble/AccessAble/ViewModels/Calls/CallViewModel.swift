@@ -15,6 +15,8 @@ final class CallViewModel {
     private(set) var isMuted = false
     private(set) var isUsingBackCamera = true
     private(set) var isFlashlightOn = false
+    /// Whether the volunteer can see this phone's camera.
+    private(set) var isCameraOn = true
     private(set) var controlError: String?
     private(set) var isUpdatingControls = false
     /// The volunteer who answered, once known. Nil while ringing, or if it isn't the one picked.
@@ -138,6 +140,20 @@ final class CallViewModel {
         }
     }
 
+    func toggleCamera() async {
+        guard state == .connected, !isUpdatingControls else { return }
+        isUpdatingControls = true
+        defer { isUpdatingControls = false }
+        controlError = nil
+        do {
+            try await services.videoCall.setCameraEnabled(!isCameraOn)
+            isCameraOn.toggle()
+            if !isCameraOn { isFlashlightOn = false }
+        } catch {
+            controlError = "Couldn't turn the camera \(isCameraOn ? "off" : "on")."
+        }
+    }
+
     func toggleFlashlight() async {
         guard state == .connected, !isUpdatingControls else { return }
         isUpdatingControls = true
@@ -171,6 +187,7 @@ final class CallViewModel {
         isMuted = false
         isUsingBackCamera = true
         isFlashlightOn = false
+        isCameraOn = true
         progressText = "Calling a volunteer"
         state = .ringing
 

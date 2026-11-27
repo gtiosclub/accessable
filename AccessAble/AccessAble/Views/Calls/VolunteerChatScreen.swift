@@ -32,7 +32,7 @@ struct VolunteerChatScreen: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Back")
-                PersonAvatar(isOnline: nil, size: 48)
+                PersonAvatar(userID: route.callerID, size: 48)
                 Text(route.name)
                     .font(.headline)
                     .foregroundStyle(.white)

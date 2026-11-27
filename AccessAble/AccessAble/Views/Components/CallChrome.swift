@@ -196,3 +196,59 @@ final class VideoBrightnessMeter: NSObject, VideoRenderer, @unchecked Sendable {
         }
     }
 }
+
+/// The small box in the top corner: the volunteer's face while their camera is on, otherwise
+/// their picture and name.
+struct CallPictureInPicture: View {
+    let track: VideoTrack?
+    var mirrored = true
+    let userID: String?
+    let name: String
+
+    var body: some View {
+        ZStack {
+            Color.black
+            if let track {
+                SwiftUIVideoView(track, layoutMode: .fill, mirrorMode: mirrored ? .mirror : .off)
+            } else {
+                VStack(spacing: 8) {
+                    PersonAvatar(userID: userID, size: 44,
+                                 fill: LinearGradient(colors: [Theme.red, Color(red: 0.45, green: 0.3, blue: 0.6)],
+                                                      startPoint: .top, endPoint: .bottom))
+                    Text(name).font(.footnote).foregroundStyle(.white).lineLimit(1).minimumScaleFactor(0.7)
+                }
+                .padding(8)
+            }
+        }
+        .frame(width: 110, height: 150)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(.white.opacity(0.8), lineWidth: 1))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(track == nil ? "\(name), camera off" : "\(name)'s camera")
+    }
+}
+
+/// The right-hand controls. The chevron folds them away, leaving only End call.
+struct CallControlsColumn<Controls: View>: View {
+    @Binding var isFolded: Bool
+    let endLabel: String
+    var endHint = "Ends this call"
+    let onEnd: () -> Void
+    @ViewBuilder let controls: Controls
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Button { withAnimation(.easeInOut(duration: 0.2)) { isFolded.toggle() } } label: {
+                Image(systemName: isFolded ? "chevron.up" : "chevron.down")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(Theme.cyan)
+                    .frame(width: 60, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isFolded ? "Show call controls" : "Hide call controls")
+            if !isFolded { controls }
+            CallControlButton(systemImage: "phone.down.fill", label: endLabel, hint: endHint, style: .end, action: onEnd)
+        }
+    }
+}

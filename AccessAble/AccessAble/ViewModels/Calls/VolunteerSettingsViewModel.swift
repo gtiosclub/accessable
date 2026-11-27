@@ -15,7 +15,7 @@ final class VolunteerSettingsViewModel {
     private(set) var isLoaded = false
     private(set) var isBusy = false
     private(set) var message: String?
-    @ObservationIgnored private let userID: String
+    @ObservationIgnored let userID: String
     @ObservationIgnored private let store: any VolunteerSettingsStore
     @ObservationIgnored private let profiles: any UserProfileStore
     @ObservationIgnored private let presence: any PresenceService

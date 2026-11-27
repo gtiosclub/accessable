@@ -1,4 +1,10 @@
+import PhotosUI
 import SwiftUI
+
+extension EnvironmentValues {
+    /// Where profile pictures come from (PROFILE-2).
+    @Entry var avatars: any AvatarStore = PlaceholderAvatarStore()
+}
 
 // Pieces shared by the caller's Call Help screen and the volunteer's home screen.
 
@@ -91,6 +97,7 @@ struct CardGroup<Item: Identifiable, Row: View>: View {
 
 /// A person on a card: avatar, name, a line under it, and call / message buttons.
 struct PersonRow: View {
+    var userID: String?
     let name: String
     let subtitle: String
     /// Cyan dot when true, red when false, none when nil.
@@ -106,10 +113,16 @@ struct PersonRow: View {
             : AnyLayout(HStackLayout(spacing: 12))
         layout {
             HStack(spacing: 12) {
-                PersonAvatar(isOnline: isOnline, size: 40)
+                PersonAvatar(userID: userID, isOnline: isOnline, size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(name).font(.headline)
-                    Text(subtitle).font(.footnote).foregroundStyle(.white.opacity(0.85))
+                    if !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .foregroundStyle(.white.opacity(0.85))
+                    }
                 }
                 .foregroundStyle(.white)
             }
@@ -140,16 +153,39 @@ struct PersonRow: View {
     }
 }
 
-/// A plain circle with an online (cyan) or offline (red) dot.
+/// The person's profile picture, or a plain circle without one, with an online (cyan) or
+/// offline (red) dot.
 struct PersonAvatar: View {
+    init(userID: String? = nil, isOnline: Bool? = nil, size: CGFloat = 40,
+         fill: some ShapeStyle = Theme.placeholder, image: Data? = nil) {
+        self.userID = userID; self.isOnline = isOnline; self.size = size
+        self.fill = AnyShapeStyle(fill); self.image = image
+    }
+
+    var userID: String?
     var isOnline: Bool?
     var size: CGFloat = 40
-    var fill: Color = Theme.placeholder
+    var fill: AnyShapeStyle = AnyShapeStyle(Theme.placeholder)
+    /// Shown instead of loading, for example right after an upload.
+    var image: Data?
+
+    @Environment(\.avatars) private var avatars
+    @State private var loaded: UIImage?
 
     var body: some View {
         Circle()
             .fill(fill)
             .frame(width: size, height: size)
+            .overlay {
+                if let picture = image.flatMap(UIImage.init(data:)) ?? loaded {
+                    Image(uiImage: picture).resizable().scaledToFill()
+                        .frame(width: size, height: size).clipShape(Circle())
+                }
+            }
+            .task(id: userID) {
+                guard let userID else { loaded = nil; return }
+                loaded = await avatars.avatar(userID: userID).flatMap(UIImage.init(data:))
+            }
             .overlay(alignment: .bottomTrailing) {
                 if let isOnline {
                     Circle()
@@ -191,20 +227,42 @@ struct CallHelpSearchField: View {
     }
 }
 
-/// A label and a dark rounded text field, as on the Profile tab.
+/// Profile fields whose boxes all start on the same line. At accessibility text sizes each label
+/// sits above its box instead.
+struct ProfileFields<Content: View>: View {
+    @ViewBuilder let content: Content
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 14) { content }
+                .environment(\.profileFieldsStacked, true)
+        } else {
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 10, verticalSpacing: 12) { content }
+        }
+    }
+}
+
+extension EnvironmentValues {
+    @Entry var profileFieldsStacked = false
+}
+
+/// A label and a dark rounded text field, as on the Profile tab. Put these in `ProfileFields`.
 struct ProfileFieldRow: View {
     let label: String
     @Binding var text: String
     var axis: Axis = .horizontal
+    @Environment(\.profileFieldsStacked) private var stacked
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                labelText.frame(minWidth: 96, alignment: .leading)
-                field
-            }
+        if stacked {
             VStack(alignment: .leading, spacing: 6) {
                 labelText
+                field
+            }
+        } else {
+            GridRow {
+                labelText.gridColumnAlignment(.leading)
                 field
             }
         }
@@ -221,25 +279,127 @@ struct ProfileFieldRow: View {
             .lineLimit(axis == .vertical ? 1...4 : 1...1)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.field, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .accessibilityLabel(label)
     }
 }
 
-/// The big cyan circle and name at the top of a Profile tab.
+/// A label and a plain value on the same lines as `ProfileFieldRow`.
+struct ProfileValueRow: View {
+    let label: String
+    let value: String
+    @Environment(\.profileFieldsStacked) private var stacked
+
+    var body: some View {
+        if stacked {
+            row
+        } else {
+            GridRow { row.gridCellColumns(2) }
+        }
+    }
+
+    private var row: some View {
+        HStack(spacing: 10) {
+            Text("\(label):").font(.subheadline.bold()).foregroundStyle(.white)
+            Text(value).font(.subheadline).foregroundStyle(Theme.cyan)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A label and a pop-up menu, like "Availability: Available ⌃⌄".
+struct ProfileMenuRow: View {
+    let label: String
+    let value: String
+    let choices: [String]
+    let onSelect: (String) -> Void
+    @Environment(\.profileFieldsStacked) private var stacked
+
+    var body: some View {
+        if stacked {
+            row
+        } else {
+            GridRow { row.gridCellColumns(2) }
+        }
+    }
+
+    private var row: some View {
+        HStack(spacing: 10) {
+            Text("\(label):").font(.subheadline.bold()).foregroundStyle(.white)
+            Menu {
+                ForEach(choices, id: \.self) { choice in
+                    Button(choice) { onSelect(choice) }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(value)
+                    Image(systemName: "chevron.up.chevron.down").font(.caption)
+                }
+                .font(.subheadline)
+                .foregroundStyle(Color.accentColor)
+                .frame(minHeight: 44)
+            }
+            .accessibilityLabel(label)
+            .accessibilityValue(value)
+        }
+    }
+}
+
+/// The picture and name at the top of a Profile tab, with "Upload Profile Picture".
 struct ProfileHeader: View {
     let name: String
+    var userID: String?
     var subtitle: String?
+
+    @Environment(\.avatars) private var avatars
+    @State private var pick: PhotosPickerItem?
+    @State private var uploaded: Data?
+    @State private var isUploading = false
+    @State private var message: String?
 
     var body: some View {
         VStack(spacing: 8) {
-            Circle().fill(Theme.cyan).frame(width: 96, height: 96).accessibilityHidden(true)
+            PersonAvatar(userID: userID, size: 96, fill: Theme.cyan, image: uploaded)
+                .id(uploaded)
             Text(name).font(.title2).foregroundStyle(.white).accessibilityAddTraits(.isHeader)
             if let subtitle {
                 Text(subtitle).font(.subheadline).foregroundStyle(.white.opacity(0.85))
             }
+            if userID != nil {
+                PhotosPicker(selection: $pick, matching: .images) {
+                    Text(isUploading ? "Uploading…" : "Upload Profile Picture")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 22)
+                        .frame(minHeight: 44)
+                        .background(Theme.field, in: Capsule())
+                }
+                .disabled(isUploading)
+                .accessibilityHint("Choose a photo for callers and volunteers to see next to your name")
+            }
+            if let message { Text(message).font(.footnote).foregroundStyle(.white) }
         }
         .frame(maxWidth: .infinity)
+        .onChange(of: pick) { _, item in
+            guard let item else { return }
+            Task { await upload(item) }
+        }
+        .onChange(of: message) { _, text in
+            if let text { AccessibilityNotification.Announcement(text).post() }
+        }
+    }
+
+    private func upload(_ item: PhotosPickerItem) async {
+        isUploading = true
+        defer { isUploading = false; pick = nil }
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self) else { throw AvatarError.unreadableImage }
+            uploaded = try await avatars.upload(data)
+            message = "Profile picture saved."
+        } catch {
+            message = (error as? LocalizedError)?.errorDescription ?? AvatarError.unavailable.localizedDescription
+        }
     }
 }
 
