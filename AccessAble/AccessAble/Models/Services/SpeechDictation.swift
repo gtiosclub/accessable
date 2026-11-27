@@ -17,6 +17,9 @@ final class SpeechDictation {
     @ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
     @ObservationIgnored private var task: SFSpeechRecognitionTask?
     @ObservationIgnored private var wasCancelled = false
+    /// From activating the audio session until capture stops. Without it, cancelling a dictation that
+    /// never started still deactivated the session, which cuts off speech that's playing.
+    @ObservationIgnored private var isCapturing = false
     /// Partial and final transcripts. `isFinal` is true once Speech has finished the utterance.
     @ObservationIgnored var onTranscript: ((String, _ isFinal: Bool) -> Void)?
     /// Called with a message that's safe to read aloud whenever dictation fails.
@@ -59,6 +62,7 @@ final class SpeechDictation {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
+            isCapturing = true
 
             let audioEngine = audioEngine ?? AVAudioEngine()
             self.audioEngine = audioEngine
@@ -107,6 +111,8 @@ final class SpeechDictation {
     }
 
     private func stopAudioCapture() {
+        guard isCapturing else { return }
+        isCapturing = false
         if let audioEngine {
             if audioEngine.isRunning { audioEngine.stop() }
             audioEngine.inputNode.removeTap(onBus: 0)
