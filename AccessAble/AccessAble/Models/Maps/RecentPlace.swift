@@ -115,7 +115,8 @@ final class RecentPlacesStore {
     init(defaults: UserDefaults, storageKey: String = "recentPlaces") {
         self.defaults = defaults
         self.storageKey = storageKey
-        self.places = Self.load(from: defaults, key: storageKey)
+        let stored: [RecentPlace] = PlaceListDefaults.load(from: defaults, key: storageKey)
+        self.places = Array(stored.prefix(Self.maxCount))
     }
 
     /// In-memory store for isolated tests and SwiftUI previews.
@@ -169,18 +170,9 @@ final class RecentPlacesStore {
     private func persist() {
         guard let defaults else { return }
         if places.isEmpty {
-            defaults.removeObject(forKey: storageKey)
-            return
+            PlaceListDefaults.remove(from: defaults, key: storageKey)
+        } else {
+            PlaceListDefaults.save(places, to: defaults, key: storageKey)
         }
-        guard let data = try? JSONEncoder().encode(places) else { return }
-        defaults.set(data, forKey: storageKey)
-    }
-
-    private static func load(from defaults: UserDefaults, key: String) -> [RecentPlace] {
-        guard let data = defaults.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([RecentPlace].self, from: data) else {
-            return []
-        }
-        return Array(decoded.prefix(maxCount))
     }
 }

@@ -131,7 +131,7 @@ final class SavedPlacesStore {
     init(defaults: UserDefaults, storageKey: String = "savedPlaces") {
         self.defaults = defaults
         self.storageKey = storageKey
-        self.places = Self.load(from: defaults, key: storageKey)
+        self.places = PlaceListDefaults.load(from: defaults, key: storageKey)
     }
 
     /// In-memory store for isolated tests and SwiftUI previews.
@@ -183,7 +183,7 @@ final class SavedPlacesStore {
 
     func clear() {
         places.removeAll()
-        defaults?.removeObject(forKey: storageKey)
+        if let defaults { PlaceListDefaults.remove(from: defaults, key: storageKey) }
     }
 
     func savedPlace(id: SavedPlace.ID) -> SavedPlace? {
@@ -201,15 +201,7 @@ final class SavedPlacesStore {
     }
 
     private func persist() {
-        guard let defaults, let data = try? JSONEncoder().encode(places) else { return }
-        defaults.set(data, forKey: storageKey)
-    }
-
-    private static func load(from defaults: UserDefaults, key: String) -> [SavedPlace] {
-        guard let data = defaults.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([SavedPlace].self, from: data) else {
-            return []
-        }
-        return decoded
+        guard let defaults else { return }
+        PlaceListDefaults.save(places, to: defaults, key: storageKey)
     }
 }
