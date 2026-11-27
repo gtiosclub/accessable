@@ -214,7 +214,8 @@ private final class TripScreen {
     /// - Parameter trip: Pass another screen's to open this one on a trip already running.
     init(fixes: [GeoCoordinate] = [origin], accuracy: Double = 5,
          authorization: LocationAuthorization = .authorized(preciseAccuracy: true),
-         trip: ControlledTripProvider = ControlledTripProvider(), route: NavigationRoute = plannedRoute) {
+         trip: ControlledTripProvider = ControlledTripProvider(), route: NavigationRoute = plannedRoute,
+         recentPlaces: RecentPlacesStore? = nil) {
         self.trip = trip
         routing = CountingRouting(route: route)
         var services = AppServices.preview
@@ -226,7 +227,7 @@ private final class TripScreen {
             samples: fixes.map { LocationSample(coordinate: $0, horizontalAccuracy: accuracy, timestamp: time) },
             authorization: authorization
         )
-        viewModel = TripViewModel(services: services, now: { [clock] in clock.now })
+        viewModel = TripViewModel(services: services, recentPlaces: recentPlaces, now: { [clock] in clock.now })
     }
 
     func advance(by seconds: TimeInterval) {
@@ -310,6 +311,18 @@ struct TripStartTests {
         await screen.viewModel.startTrip()
         #expect(await screen.routing.requestCount == 1)
         #expect(screen.trip.startedRoutes == [plannedRoute])
+        screen.stop()
+    }
+
+    @Test
+    func startingTheTripRecordsTheDestinationAsRecent() async {
+        let recents = RecentPlacesStore(places: [])
+        let screen = TripScreen(recentPlaces: recents)
+        await screen.plan()
+        #expect(recents.places.isEmpty)
+
+        #expect(await screen.viewModel.startTrip())
+        #expect(recents.places.map(\.name) == [library.name])
         screen.stop()
     }
 
