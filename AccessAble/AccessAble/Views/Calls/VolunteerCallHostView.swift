@@ -36,7 +36,8 @@ struct VolunteerCallHostView: View {
             VolunteerHomeView(settings: settings, signOut: signOut,
                               listenerError: model.listenerError, retryListening: { model.retryListening() },
                               callMessage: model.message, dismissCallMessage: { model.dismissMessage() },
-                              callHelp: callHelp, services: services)
+                              callHelp: callHelp, services: services,
+                              callCaller: { id, name in model.callCaller(id: id, name: name) })
                 .allowsHitTesting(model.call == nil)
                 .accessibilityHidden(model.call != nil)
             if model.call != nil {
@@ -52,6 +53,12 @@ struct VolunteerCallHostView: View {
         .task { await settings.load() }
         .task(id: scenePhase == .active) { if scenePhase == .active { await callHelp.start() } }
         .task { await settings.followSchedule() }
+        .task {
+            // Offline while calling someone, so nobody else rings; back to the saved choice after.
+            model.onOutgoingCall = { [settings, presence = services.presence] active in
+                if active { try? await presence.setOnline(false) } else { await settings.setForeground(true) }
+            }
+        }
         .task { await settings.observePresence() }
         .task(id: scenePhase) { await settings.setForeground(scenePhase == .active) }
         .onDisappear { model.shutdown(); settings.shutdown() }

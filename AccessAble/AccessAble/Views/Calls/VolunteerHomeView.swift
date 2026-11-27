@@ -13,6 +13,8 @@ struct VolunteerHomeView: View {
     /// Saved callers, chats and past calls; nil hides those sections.
     var callHelp: VolunteerCallHelpViewModel? = nil
     var services: AppServices? = nil
+    /// Rings a caller who saved this volunteer back (CALLBACK-1): their id and name.
+    var callCaller: ((String, String) -> Void)? = nil
 
     @State private var tab: Tab = .live
     @State private var openChat: VolunteerChatRoute?
@@ -56,7 +58,11 @@ struct VolunteerHomeView: View {
             .background(Color.black.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .navigationDestination(item: $openChat) { route in
-                if let services { VolunteerChatScreen(route: route, services: services) }
+                if let services {
+                    VolunteerChatScreen(route: route, services: services,
+                                        onCall: callHelp?.isMutual(callerID: route.callerID) == true
+                                            ? callCaller.map { call in { call(route.callerID, route.name) } } : nil)
+                }
             }
             .onChange(of: signOutError) { _, text in if let text { AccessibilityNotification.Announcement(text).post() } }
             .onChange(of: settings.message) { _, text in if let text { AccessibilityNotification.Announcement(text).post() } }
@@ -73,11 +79,16 @@ struct VolunteerHomeView: View {
             @Bindable var callHelp = callHelp
             CallHelpSearchField(text: $callHelp.search)
             CallHelpSectionHeader(title: "Mutually Saved", subtitle: "People who also saved you", starred: true)
-            if !callHelp.mutuallySaved.isEmpty {
+            if callHelp.mutuallySaved.isEmpty {
+                Text("No one is currently navigating.")
+                    .font(.footnote)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 160)
+            } else {
                 CardGroup(items: callHelp.mutuallySaved) { caller in
-                    PersonRow(userID: caller.id, name: caller.name, subtitle: "", isOnline: nil, onMessage: {
-                        openChat = VolunteerChatRoute(callerID: caller.id, name: caller.name)
-                    })
+                    PersonRow(userID: caller.id, name: caller.name, subtitle: "", isOnline: nil,
+                              onCall: callCaller.map { call in { call(caller.id, caller.name) } },
+                              onMessage: { openChat = VolunteerChatRoute(callerID: caller.id, name: caller.name) })
                 }
             }
             if let error = callHelp.inbox.errorMessage {

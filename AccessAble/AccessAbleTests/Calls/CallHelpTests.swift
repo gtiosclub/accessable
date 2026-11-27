@@ -171,3 +171,57 @@ struct VideoBrightnessMeterTests {
         #expect(!VideoBrightnessMeter.isBright(luma: 110, wasBright: true))
     }
 }
+
+@MainActor
+struct VolunteerRingWatcherTests {
+    private final class Alerts: IncomingCallAlerting {
+        var ringing = false
+        var spoken: [String] = []
+        func start() { ringing = true }
+        func stop() { ringing = false }
+        func announce(_ text: String) { spoken.append(text) }
+    }
+
+    private let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    @Test func ringsForAFreshRingAndIgnoresStaleOrDeclinedOnes() {
+        let alerts = Alerts()
+        let watcher = VolunteerRingWatcher(services: .preview, alerts: alerts, now: { self.now })
+        let stale = VolunteerRing(id: "old", volunteerID: "vic", createdAt: now.addingTimeInterval(-60))
+        watcher.receive([stale])
+        #expect(watcher.ring == nil)
+
+        let fresh = VolunteerRing(id: "new", volunteerID: "vic", createdAt: now.addingTimeInterval(-2))
+        watcher.receive([fresh])
+        #expect(watcher.ring?.id == "new")
+        #expect(alerts.ringing)
+        #expect(alerts.spoken.last == "Volunteer is calling you")
+
+        watcher.decline()
+        #expect(watcher.ring == nil)
+        #expect(!alerts.ringing)
+        watcher.receive([fresh])
+        #expect(watcher.ring == nil)
+    }
+
+    @Test func acceptHandsBackTheRingOnce() {
+        let watcher = VolunteerRingWatcher(services: .preview, alerts: Alerts(), now: { self.now })
+        let ring = VolunteerRing(id: "r", volunteerID: "vic", createdAt: now)
+        watcher.receive([ring])
+        let answer = watcher.accept()
+        #expect(answer?.1 == ring)
+        #expect(answer?.0.id == "vic")
+        #expect(watcher.ring == nil)
+        watcher.receive([ring])
+        #expect(watcher.ring == nil)
+    }
+
+    @Test func ringEndingElsewhereStopsTheBanner() {
+        let alerts = Alerts()
+        let watcher = VolunteerRingWatcher(services: .preview, alerts: alerts, now: { self.now })
+        watcher.receive([VolunteerRing(id: "r", volunteerID: "vic", createdAt: now)])
+        watcher.receive([])
+        #expect(watcher.ring == nil)
+        #expect(!alerts.ringing)
+    }
+}

@@ -236,6 +236,10 @@ final class VolunteerCallHelpViewModel {
         history.filter { search.isEmpty || ($0.otherName ?? "").localizedCaseInsensitiveContains(search) }
     }
 
+    func isMutual(callerID: String) -> Bool {
+        saved.contains { $0.id == callerID && $0.isMutual }
+    }
+
     /// A volunteer may write first only to a caller who starred them back; otherwise they reply
     /// to a chat the caller started.
     func canMessage(callerID: String) -> Bool {

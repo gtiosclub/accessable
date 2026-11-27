@@ -95,7 +95,7 @@ struct IncomingVolunteerCallView: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .top) {
                     CallTitleBlock(name: name,
-                                   status: connected ? nil : "Connecting…",
+                                   status: connected ? nil : (model.phase == .calling ? "Calling…" : "Connecting…"),
                                    connectedSince: connected ? connectedAt : nil)
                     Spacer(minLength: 8)
                     if connected {
@@ -154,6 +154,7 @@ struct IncomingVolunteerCallView: View {
         let name = model.call?.callerFirstName ?? "Caller"
         switch model.phase {
         case .idle, .ringing: return "Incoming call from \(name)"
+        case .calling: return "Calling \(name)"
         case .accepting: return "Answering \(name)…"
         case .connecting: return "Connecting to \(name)…"
         case .connected: return "Connected to \(name)"

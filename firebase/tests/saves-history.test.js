@@ -174,3 +174,55 @@ test('anyone signed in sees a picture; only its owner sets it, small and at serv
   await assertFails(deleteDoc(ref('vic')));
   await assertSucceeds(deleteDoc(ref('alice')));
 });
+
+// ---------- Volunteer calling a caller ----------
+
+function volunteerRing(db, id, overrides = {}) {
+  return setDoc(doc(db, 'calls', id), {
+    callerId: 'alice', volunteerId: 'vic', status: 'ringing', roomName: `call-${id}`,
+    createdAt: serverTimestamp(), updatedAt: serverTimestamp(), startedBy: 'volunteer', ...overrides,
+  });
+}
+
+test('a volunteer rings a caller only once both have saved each other', async () => {
+  await seedAccounts();
+  await assertFails(volunteerRing(dbFor('vic'), 'r1'));
+  await save(dbFor('vic'), 'vic', 'alice', 'Vic', 'Alice');
+  await assertFails(volunteerRing(dbFor('vic'), 'r1'));
+  await save(dbFor('alice'), 'alice', 'vic', 'Alice', 'Vic');
+  await assertSucceeds(volunteerRing(dbFor('vic'), 'r1'));
+  // Not as someone else, not to another volunteer, not with a made-up room.
+  await assertFails(volunteerRing(dbFor('val'), 'r2', { volunteerId: 'vic' }));
+  await assertFails(volunteerRing(dbFor('vic'), 'r3', { roomName: 'call-other' }));
+  await assertFails(volunteerRing(dbFor('alice'), 'r4', { volunteerId: 'alice' }));
+});
+
+test('the caller answers or declines a volunteer ring; either side hangs up', async () => {
+  await seedAccounts();
+  await save(dbFor('vic'), 'vic', 'alice', 'Vic', 'Alice');
+  await save(dbFor('alice'), 'alice', 'vic', 'Alice', 'Vic');
+  await volunteerRing(dbFor('vic'), 'a');
+  await volunteerRing(dbFor('vic'), 'd');
+  // The caller sees rings meant for them.
+  const rings = await assertSucceeds(getDocs(query(collection(dbFor('alice'), 'calls'),
+    where('callerId', '==', 'alice'), where('status', '==', 'ringing'), where('startedBy', '==', 'volunteer'), limit(5))));
+  assert.equal(rings.size, 2);
+  // The volunteer can't answer their own ring.
+  await assertFails(updateDoc(doc(dbFor('vic'), 'calls', 'a'), { status: 'accepted', updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(doc(dbFor('alice'), 'calls', 'a'),
+    { status: 'accepted', updatedAt: serverTimestamp(), acceptedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(doc(dbFor('alice'), 'calls', 'd'), { status: 'declined', updatedAt: serverTimestamp() }));
+  await assertSucceeds(updateDoc(doc(dbFor('vic'), 'calls', 'a'), { status: 'ended', updatedAt: serverTimestamp() }));
+});
+
+test('a block stops a volunteer ring and its answer', async () => {
+  await seedAccounts();
+  await save(dbFor('vic'), 'vic', 'alice', 'Vic', 'Alice');
+  await save(dbFor('alice'), 'alice', 'vic', 'Alice', 'Vic');
+  await volunteerRing(dbFor('vic'), 'b');
+  await env.withSecurityRulesDisabled(async context => {
+    await setDoc(doc(context.firestore(), 'users', 'alice', 'blockedVolunteers', 'vic'), { callId: 'b', createdAt: Timestamp.now() });
+  });
+  await assertFails(volunteerRing(dbFor('vic'), 'b2'));
+  await assertFails(updateDoc(doc(dbFor('alice'), 'calls', 'b'), { status: 'accepted', updatedAt: serverTimestamp() }));
+});

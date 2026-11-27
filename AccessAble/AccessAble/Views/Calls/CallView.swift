@@ -14,8 +14,8 @@ struct CallView: View {
     private let safety: any CallSafetyService
     private let video: any VideoCallSession
 
-    init(services: AppServices, volunteer: Volunteer?, onClose: @escaping () -> Void) {
-        _viewModel = State(initialValue: CallViewModel(services: services, volunteer: volunteer))
+    init(services: AppServices, volunteer: Volunteer?, answering: VolunteerRing? = nil, onClose: @escaping () -> Void) {
+        _viewModel = State(initialValue: CallViewModel(services: services, volunteer: volunteer, answering: answering))
         self.onClose = onClose
         safety = services.callSafety
         video = services.videoCall

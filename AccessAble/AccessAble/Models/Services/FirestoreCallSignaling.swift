@@ -181,6 +181,93 @@ struct FirestoreCallSignaling: CallSignaling {
         }
     }
 
+    // MARK: - Volunteer calling a caller (CALLBACK-1)
+
+    func callCaller(_ callerID: String) async throws -> CallTicket {
+        guard tokenURL != nil else { throw CallSignalingError.notConfigured }
+        guard let me = await auth.currentUser()?.id else { throw CallSignalingError.signedOut }
+        let callRef = Firestore.firestore().collection("calls").document()
+        let callID = callRef.documentID
+        do {
+            // The rules check the two have saved each other and nobody is blocked.
+            try await callRef.setData([
+                "callerId": callerID, "volunteerId": me, "status": "ringing", "roomName": "call-\(callID)",
+                "createdAt": FieldValue.serverTimestamp(), "updatedAt": FieldValue.serverTimestamp(),
+                "startedBy": "volunteer",
+            ])
+        } catch let error where Self.isOffline(error) {
+            throw CallSignalingError.offline
+        }
+        let answer: Answer
+        do {
+            answer = try await waitForAnswer(callID: callID)
+        } catch {
+            await endCall(callID: callID)
+            throw error
+        }
+        switch answer {
+        case .accepted:
+            return try await acceptedTicket(for: callID)
+        case .notAnswered:
+            throw CallSignalingError.nobodyAnswered
+        case .timedOut:
+            await endCall(callID: callID)
+            throw CallSignalingError.nobodyAnswered
+        }
+    }
+
+    func volunteerRings(callerID: String) -> AsyncThrowingStream<[VolunteerRing], Error> {
+        AsyncThrowingStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            // Equality filters only, so Firestore needs no composite index.
+            let registration = Firestore.firestore().collection("calls")
+                .whereField("callerId", isEqualTo: callerID)
+                .whereField("status", isEqualTo: "ringing")
+                .whereField("startedBy", isEqualTo: "volunteer")
+                .limit(to: 5)
+                .addSnapshotListener { snapshot, error in
+                    if let error { continuation.finish(throwing: error); return }
+                    guard let snapshot else { return }
+                    let rings = snapshot.documents.compactMap { document -> VolunteerRing? in
+                        let data = document.data(with: .estimate)
+                        guard let volunteer = data["volunteerId"] as? String,
+                              let created = (data["createdAt"] as? Timestamp)?.dateValue() else { return nil }
+                        return VolunteerRing(id: document.documentID, volunteerID: volunteer, createdAt: created)
+                    }
+                    continuation.yield(rings.sorted { $0.createdAt > $1.createdAt })
+                }
+            let listener = CallListenerHandle(registration)
+            continuation.onTermination = { _ in listener.remove() }
+        }
+    }
+
+    func answerVolunteerRing(callID: String) async throws -> CallTicket {
+        guard let me = await auth.currentUser()?.id else { throw CallSignalingError.signedOut }
+        let db = Firestore.firestore()
+        let callRef = db.collection("calls").document(callID)
+        let outcome = try await db.runTransaction { transaction, errorPointer -> Any? in
+            do {
+                let call = try transaction.getDocument(callRef).data() ?? [:]
+                guard call["status"] as? String == "ringing", call["callerId"] as? String == me,
+                      call["startedBy"] as? String == "volunteer" else { return "taken" }
+                transaction.updateData([
+                    "status": "accepted", "updatedAt": FieldValue.serverTimestamp(),
+                    "acceptedAt": FieldValue.serverTimestamp(),
+                ], forDocument: callRef)
+                return "accepted"
+            } catch {
+                errorPointer?.pointee = error as NSError
+                return nil
+            }
+        } as? String
+        guard outcome == "accepted" else { throw CallSignalingError.callTaken }
+        return try await ticket(for: callID)
+    }
+
+    func declineVolunteerRing(callID: String) async throws {
+        try await Firestore.firestore().collection("calls").document(callID)
+            .updateData(["status": "declined", "updatedAt": FieldValue.serverTimestamp()])
+    }
+
     // MARK: - Either side
 
     /// Hangs up, or gives up while still ringing. Never throws: a failed write just leaves the

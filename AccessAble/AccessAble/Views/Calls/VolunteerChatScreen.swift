@@ -10,12 +10,15 @@ struct VolunteerChatRoute: Hashable, Identifiable {
 /// The volunteer's chat with one caller (CHAT-1), with a star to save them (SAVE-1).
 struct VolunteerChatScreen: View {
     let route: VolunteerChatRoute
+    /// Shown once the caller has saved this volunteer back (CALLBACK-1).
+    var onCall: (() -> Void)?
     @State private var model: ChatViewModel
     @State private var star: SaveStarModel
     @Environment(\.dismiss) private var dismiss
 
-    init(route: VolunteerChatRoute, services: AppServices) {
+    init(route: VolunteerChatRoute, services: AppServices, onCall: (() -> Void)? = nil) {
         self.route = route
+        self.onCall = onCall
         _model = State(initialValue: ChatViewModel(
             service: services.chat, target: .caller(id: route.callerID), partnerName: route.name))
         _star = State(initialValue: SaveStarModel(service: services.saves, personID: route.callerID))
@@ -38,6 +41,9 @@ struct VolunteerChatScreen: View {
                     .foregroundStyle(.white)
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
+                if let onCall {
+                    CircleIconButton(systemImage: "phone.fill", label: "Video call \(route.name)", diameter: 44, action: onCall)
+                }
                 SaveStarButton(name: route.name, isSaved: star.isSaved, isBusy: star.isBusy) {
                     Task { await star.toggle() }
                 }

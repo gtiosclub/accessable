@@ -311,6 +311,35 @@ protocol CallSignaling: Sendable {
     func skip(callID: String) async throws
     /// Either side: hangs up, or gives up while it's still ringing.
     func endCall(callID: String) async
+
+    // CALLBACK-1: a volunteer calling a caller who saved them back.
+    /// Volunteer: rings the caller for 30 seconds and returns the ticket once they answer.
+    func callCaller(_ callerID: String) async throws -> CallTicket
+    /// Caller: volunteer rings meant for them, replaced on each change.
+    func volunteerRings(callerID: String) -> AsyncThrowingStream<[VolunteerRing], Error>
+    /// Caller: answers a volunteer's ring.
+    func answerVolunteerRing(callID: String) async throws -> CallTicket
+    /// Caller: turns a volunteer's ring down.
+    func declineVolunteerRing(callID: String) async throws
+}
+
+/// A volunteer ringing a caller (CALLBACK-1).
+struct VolunteerRing: Identifiable, Hashable, Sendable {
+    let id: String
+    let volunteerID: String
+    let createdAt: Date
+
+    /// Rings older than this are left alone; the volunteer gives up after 30 seconds.
+    static let lifetime: TimeInterval = 30
+}
+
+extension CallSignaling {
+    func callCaller(_ callerID: String) async throws -> CallTicket { throw CallSignalingError.notConfigured }
+    func volunteerRings(callerID: String) -> AsyncThrowingStream<[VolunteerRing], Error> {
+        AsyncThrowingStream { $0.yield([]) }
+    }
+    func answerVolunteerRing(callID: String) async throws -> CallTicket { throw CallSignalingError.notConfigured }
+    func declineVolunteerRing(callID: String) async throws {}
 }
 
 /// The live video call. While connected it owns the camera: `ARSessionManager` pauses, CV and AR

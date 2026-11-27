@@ -368,6 +368,30 @@ service cloud.firestore {
       allow list: if signedIn() && request.query.limit <= 100
         && (resource.data.callerId == request.auth.uid || resource.data.volunteerId == request.auth.uid);
 
+      // CALLBACK-1: a volunteer rings a caller who saved them back. The caller answers on their
+      // own phone; no directory reservation is involved, so the call doc alone carries the ring.
+      function isVolunteerRing() {
+        let data = request.resource.data;
+        return data.keys().hasAll(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt', 'startedBy'])
+          && data.keys().hasOnly(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt', 'startedBy'])
+          && data.startedBy == 'volunteer'
+          && data.volunteerId == request.auth.uid
+          && isVolunteerAccount(request.auth.uid)
+          && data.callerId is string && data.callerId != data.volunteerId
+          && get(/databases/$(database)/documents/users/$(data.callerId)).data.role == 'caller'
+          && isMutualSave(data.callerId, data.volunteerId)
+          && !blocked(data.callerId, data.volunteerId)
+          && data.status == 'ringing'
+          && data.roomName == 'call-' + callId
+          && data.createdAt == request.time
+          && data.updatedAt == request.time;
+      }
+
+      function startedByVolunteer() {
+        return resource.data.get('startedBy', 'caller') == 'volunteer';
+      }
+
+      allow create: if signedIn() && isVolunteerRing();
       allow create: if signedIn()
         && request.resource.data.keys().hasAll(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt'])
         && request.resource.data.keys().hasOnly(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt', 'callerFirstName'])
@@ -394,6 +418,10 @@ service cloud.firestore {
           // Caller: skip or give up while ringing; hang up once accepted.
           (request.auth.uid == resource.data.callerId
             && (moves('ringing', 'skipped') || moves('ringing', 'ended') || moves('accepted', 'ended')))
+          // Caller answering or declining a volunteer's ring (CALLBACK-1).
+          || (request.auth.uid == resource.data.callerId && startedByVolunteer()
+            && ((moves('ringing', 'accepted') && !blocked(resource.data.callerId, resource.data.volunteerId))
+                || moves('ringing', 'declined')))
           // Volunteer: accept or decline while ringing; hang up once accepted.
           || (request.auth.uid == resource.data.volunteerId
             && ((moves('ringing', 'accepted') && isAccept())

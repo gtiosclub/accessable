@@ -5,7 +5,8 @@ import Observation
 @MainActor
 @Observable
 final class IncomingCallViewModel {
-    enum Phase: Equatable { case idle, ringing, accepting, connecting, connected, ending }
+    /// `calling`: the volunteer is ringing a caller (CALLBACK-1).
+    enum Phase: Equatable { case idle, ringing, calling, accepting, connecting, connected, ending }
     private(set) var call: IncomingCall?
     private(set) var phase: Phase = .idle
     private(set) var message: String?
@@ -37,6 +38,11 @@ final class IncomingCallViewModel {
     @ObservationIgnored private var listenerGeneration = UUID()
     @ObservationIgnored private var actionGeneration = UUID()
     @ObservationIgnored private var messageClearTask: Task<Void, Never>?
+    /// Told when the volunteer starts (true) and finishes (false) calling someone, so they can
+    /// be Offline meanwhile and nobody else rings them.
+    @ObservationIgnored var onOutgoingCall: ((Bool) async -> Void)?
+    @ObservationIgnored private var isOutgoing = false
+    private static let outgoingPrefix = "outgoing-"
     @ObservationIgnored private var foreground = false
     @ObservationIgnored private var latestOffer: IncomingCall?
     @ObservationIgnored private var dismissedIDs: Set<String> = []
@@ -188,6 +194,69 @@ final class IncomingCallViewModel {
         }
     }
 
+    // MARK: - Calling a caller (CALLBACK-1)
+
+    /// Rings a caller who saved this volunteer back, then joins the call when they answer.
+    func callCaller(id callerID: String, name: String) {
+        guard phase == .idle else { return }
+        call = IncomingCall(id: Self.outgoingPrefix + UUID().uuidString, callerFirstName: name, ringingSince: now())
+        phase = .calling
+        isCameraOn = false
+        isMuted = false
+        message = nil
+        isOutgoing = true
+        let generation = UUID()
+        actionGeneration = generation
+        alerts.announce("Calling \(name)")
+        actionTask = Task { [weak self] in
+            await self?.performCall(callerID: callerID, name: name, generation: generation)
+        }
+    }
+
+    private func performCall(callerID: String, name: String, generation: UUID) async {
+        await onOutgoingCall?(true)
+        var callID: String?
+        do {
+            let ticket = try await signaling.callCaller(callerID)
+            callID = ticket.callID
+            try Task.checkCancellation()
+            guard generation == actionGeneration else { await signaling.endCall(callID: ticket.callID); return }
+            call = IncomingCall(id: ticket.callID, callerFirstName: name, ringingSince: now())
+            phase = .connecting
+            await announcements.setInCall(true)
+            try await video.connect(with: ticket)
+            try Task.checkCancellation()
+            guard generation == actionGeneration else { return }
+            phase = .connected
+            alerts.announce("Connected to \(name)")
+            sessionTask = Task { [weak self, video] in
+                for await state in video.states() {
+                    guard !Task.isCancelled, let self, generation == actionGeneration else { return }
+                    if case .ended = state { endCall(); return }
+                    if case .failed = state { endCall(); return }
+                }
+            }
+        } catch {
+            guard !Task.isCancelled, generation == actionGeneration else { return }
+            call = nil
+            phase = .ending
+            report(error as? CallSignalingError == .nobodyAnswered ? "\(name) didn't answer." : "Couldn't call \(name).")
+            await video.disconnect()
+            if let callID { await signaling.endCall(callID: callID) }
+            await announcements.setInCall(false)
+            await finishOutgoing()
+            guard generation == actionGeneration else { return }
+            phase = .idle
+            presentLatestIfPossible()
+        }
+    }
+
+    private func finishOutgoing() async {
+        guard isOutgoing else { return }
+        isOutgoing = false
+        await onOutgoingCall?(false)
+    }
+
     func decline() {
         guard phase == .ringing, let call else { return }
         dismissedIDs.insert(call.id)
@@ -211,8 +280,10 @@ final class IncomingCallViewModel {
         endingTask = Task { [weak self, video, signaling, announcements] in
             await pending?.value
             await video.disconnect()
-            await signaling.endCall(callID: call.id)
+            // A ring the volunteer cancelled was already ended when its request was cancelled.
+            if !call.id.hasPrefix(Self.outgoingPrefix) { await signaling.endCall(callID: call.id) }
             await announcements.setInCall(false)
+            await self?.finishOutgoing()
             guard let self else { return }
             self.call = nil
             phase = .idle

@@ -36,10 +36,14 @@ final class CallViewModel {
     @ObservationIgnored private var hasStartedConnecting = false
     @ObservationIgnored private var isFinishing = false
     @ObservationIgnored private let permissionCheck: (@MainActor () async -> CallFailure?)?
+    /// A volunteer's ring the caller is answering (CALLBACK-1), instead of ringing volunteers.
+    @ObservationIgnored private let answering: VolunteerRing?
 
-    init(services: AppServices, volunteer: Volunteer?, permissionCheck: (@MainActor () async -> CallFailure?)? = nil) {
+    init(services: AppServices, volunteer: Volunteer?, answering: VolunteerRing? = nil,
+         permissionCheck: (@MainActor () async -> CallFailure?)? = nil) {
         self.services = services
         self.preferred = volunteer
+        self.answering = answering
         self.permissionCheck = permissionCheck
     }
 
@@ -198,15 +202,20 @@ final class CallViewModel {
             await fail(missing)
             return
         }
-        await say("Calling a volunteer. This can take a minute.", haptic: .attention)
+        if answering == nil { await say("Calling a volunteer. This can take a minute.", haptic: .attention) }
 
         do {
             // Rings the picked volunteer first, then others, 30 seconds each, until one accepts.
             try Task.checkCancellation()
-            let ticket = try await services.callSignaling.requestCall(preferring: preferred?.id) { [weak self] progress in
-                Task { @MainActor in
-                    guard let self, self.attemptGeneration == generation else { return }
-                    await self.receive(progress)
+            let ticket: CallTicket
+            if let answering {
+                ticket = try await services.callSignaling.answerVolunteerRing(callID: answering.id)
+            } else {
+                ticket = try await services.callSignaling.requestCall(preferring: preferred?.id) { [weak self] progress in
+                    Task { @MainActor in
+                        guard let self, self.attemptGeneration == generation else { return }
+                        await self.receive(progress)
+                    }
                 }
             }
             self.ticket = ticket
