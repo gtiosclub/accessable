@@ -25,27 +25,31 @@ struct RouteSummary: Equatable, Sendable {
         distance = route.totalDistance
         let kinds = route.steps.map(\.kind)
         turns = kinds.count { [.turnLeft, .turnRight, .slightLeft, .slightRight, .uTurn].contains($0) }
-        stairs = kinds.count { $0 == .stairs }
-        elevators = kinds.count { $0 == .elevator }
+        stairs = Self.stairs(on: route)
+        elevators = Self.elevators(on: route)
         escalators = kinds.count { $0 == .escalator }
         crosswalks = crossings.count
         avoidedReports = Self.liveCounts(route.avoidedReports)
         unavoidedReports = Self.liveCounts(route.unavoidedReports)
     }
 
-    /// The summary in the user's units, for speech and the screen alike.
-    func text(distances: DistanceFormatter) -> String {
+    /// The summary in the user's units, for speech and the screen alike. What the route still has that `preferences`
+    /// asked to avoid comes first, and isn't counted again after.
+    func text(distances: DistanceFormatter, preferences: RoutePreferences) -> String {
         let minutes = max(1, Int((duration / 60).rounded()))
         let time = "About \(minutes) \(minutes == 1 ? "minute" : "minutes"), \(distances.words(distance))."
+        let warnsOfStairs = preferences.avoidStairs && stairs > 0
+        let warnsOfElevators = preferences.avoidElevators && elevators > 0
         // turns always, so a walk with none says so before its other counts
         let counts = [
             turns == 0 ? "No turns" : Self.count(turns, "turn", "turns"),
-            Self.count(stairs, "flight of stairs", "flights of stairs"),
-            Self.count(elevators, "elevator", "elevators"),
+            warnsOfStairs ? nil : Self.stairsCount(stairs),
+            warnsOfElevators ? nil : Self.elevatorsCount(elevators),
             Self.count(escalators, "escalator", "escalators"),
             Self.count(crosswalks, "crosswalk", "crosswalks"),
         ].compactMap { $0 }
-        var sentences = ["\(time) \(counts.joined(separator: ", "))."]
+        var sentences = Self.warnings(stairs: stairs, elevators: elevators, preferences: preferences)
+        sentences.append("\(time) \(counts.joined(separator: ", ")).")
         if !avoidedReports.isEmpty {
             sentences.append("Avoiding \(Self.reported(avoidedReports)).")
         }
@@ -55,6 +59,31 @@ struct RouteSummary: Equatable, Sendable {
         }
         return sentences.joined(separator: " ")
     }
+
+    /// "No step-free route found. This route has 1 flight of stairs.", for each of stairs and elevators that `route`
+    /// still uses though `preferences` asked to avoid them; empty when it keeps to them. The other preferences have no
+    /// count on the route to check.
+    static func preferenceWarnings(on route: NavigationRoute, preferences: RoutePreferences) -> [String] {
+        warnings(stairs: stairs(on: route), elevators: elevators(on: route), preferences: preferences)
+    }
+
+    /// Flights of stairs, counted the same for the summary and the trip's warning.
+    private static func stairs(on route: NavigationRoute) -> Int { route.steps.count { $0.kind == .stairs } }
+    private static func elevators(on route: NavigationRoute) -> Int { route.steps.count { $0.kind == .elevator } }
+
+    private static func warnings(stairs: Int, elevators: Int, preferences: RoutePreferences) -> [String] {
+        var warnings: [String] = []
+        if preferences.avoidStairs, let stairs = stairsCount(stairs) {
+            warnings.append("No step-free route found. This route has \(stairs).")
+        }
+        if preferences.avoidElevators, let elevators = elevatorsCount(elevators) {
+            warnings.append("No route without elevators found. This route uses \(elevators).")
+        }
+        return warnings
+    }
+
+    private static func stairsCount(_ n: Int) -> String? { count(n, "flight of stairs", "flights of stairs") }
+    private static func elevatorsCount(_ n: Int) -> String? { count(n, "elevator", "elevators") }
 
     private static func liveCounts(_ reports: [Report]) -> [ReportKind: Int] {
         let now = Date.now

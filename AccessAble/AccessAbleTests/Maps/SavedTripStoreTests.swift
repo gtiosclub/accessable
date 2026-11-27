@@ -61,6 +61,31 @@ struct SavedTripStoreTests {
     }
 
     @Test
+    func theTripsPreferencesLoadBack() {
+        let harness = StoreHarness()
+        var trip = harness.trip()
+        trip.preferences = RoutePreferences(avoidStairs: true, walkingSpeed: .slow)
+        harness.store.save(trip)
+
+        #expect(harness.store.load()?.preferences == trip.preferences)
+    }
+
+    @Test
+    func aFileSavedBeforeTripsHadPreferencesStillLoads() throws {
+        let harness = StoreHarness()
+        var trip = harness.trip()
+        trip.preferences = RoutePreferences(avoidStairs: true)
+        var json = try #require(try JSONSerialization.jsonObject(with: JSONEncoder().encode(trip)) as? [String: Any])
+        #expect(json.removeValue(forKey: "preferences") != nil)
+        try FileManager.default.createDirectory(at: harness.directory, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: json).write(to: harness.store.url)
+
+        trip.preferences = nil
+        #expect(harness.store.load() == trip)
+        #expect(harness.errors.count == 0)
+    }
+
+    @Test
     func theFileIsLeftOutOfBackups() throws {
         let harness = StoreHarness()
         harness.store.save(harness.trip())

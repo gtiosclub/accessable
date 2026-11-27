@@ -195,6 +195,22 @@ struct PlaceDetailViewModelTests {
         #expect(details.plannedRoute == planned)
     }
 
+    /// With the preferences the route was found with, not today's settings.
+    @Test
+    func theSummaryWarnsOfStairsTheRoutesPreferencesAvoid() throws {
+        let route = try NavigationRoute(coordinates: plannedRoute.coordinates, steps: [
+            plannedRoute.steps[0],
+            RouteStep(kind: .stairs, coordinateIndex: 0, instruction: "Take the stairs.", spokenInstruction: "Take the stairs."),
+            plannedRoute.steps[1],
+        ], estimatedDuration: plannedRoute.estimatedDuration)
+        let planned = PlannedRoute(destination: clough, route: route, requestedAt: .now,
+                                   preferences: RoutePreferences(avoidStairs: true))
+        let details = PlaceDetailViewModel(destination: clough, services: .preview, planned: planned,
+                                           campusCrossings: { [] })
+        #expect(details.summary
+            == "No step-free route found. This route has 1 flight of stairs. About 4 minutes, 240 metres. No turns.")
+    }
+
     @Test(arguments: [(RouteSource.appleMaps, "Backup directions: may include stairs." as String?), (.valhalla, nil)])
     func onlyABackupRouteIsNotedOnScreen(_ source: RouteSource, _ note: String?) {
         var route = plannedRoute

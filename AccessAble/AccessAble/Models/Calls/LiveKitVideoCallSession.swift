@@ -30,11 +30,23 @@ final class LiveKitVideoCallSession: VideoCallSession {
     private var partnerMissingSince: Date?
     /// How long they may be gone, for example while their phone switches from Wi-Fi to cellular.
     private static let partnerGoneGrace: TimeInterval = 10
+    /// Sent just before hanging up, so the other phone ends the call at once instead of waiting
+    /// out `partnerGoneGrace`. Either side hanging up ends it for both.
+    nonisolated static let hangUpTopic = "call.hangup"
+    private var hangUpListener: HangUpListener?
 
-    /// Main-actor read access for the volunteer's renderer; never exposes tokens or the Room.
+    /// Main-actor read access for the other person's video; never exposes tokens or the Room.
+    /// Nil while they have their camera off.
     var remoteVideoTrack: VideoTrack? {
         room?.remoteParticipants.values.flatMap { $0.videoTracks }
+            .filter { !$0.isMuted }
             .compactMap { $0.track as? VideoTrack }.first
+    }
+
+    /// This phone's own camera while it's on: behind the caller's controls, or in the volunteer's corner box.
+    var localVideoTrack: VideoTrack? {
+        guard let cameraTrack, !cameraTrack.isMuted else { return nil }
+        return cameraTrack
     }
 
     init(
@@ -56,6 +68,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
     nonisolated func setMicrophoneMuted(_ muted: Bool) async throws { try await setMuted(muted) }
     nonisolated func flipCamera() async throws { try await switchCamera() }
     nonisolated func setFlashlight(_ on: Bool) async throws { try await setConfirmedTorch(on) }
+    nonisolated func setCameraEnabled(_ on: Bool) async throws { try await setCamera(on) }
 
     // MARK: - Joining and leaving
 
@@ -86,6 +99,11 @@ final class LiveKitVideoCallSession: VideoCallSession {
             let room = Room()
             attemptedRoom = room
             self.room = room
+            let listener = HangUpListener { [weak self] in
+                Task { @MainActor in await self?.leave(.remoteLeft) }
+            }
+            room.add(delegate: listener)
+            hangUpListener = listener
             try await room.connect(url: url.absoluteString, token: ticket.token)
             try checkJoin(generation)
             try await room.localParticipant.setMicrophone(enabled: true)
@@ -122,6 +140,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
     private func leave(_ reason: CallState.EndReason) async {
         guard room != nil || cameraToken != nil || isJoining else { return }
         connectionGeneration = UUID()
+        if reason == .hungUp, let room { await Self.sendHangUp(in: room) }
         await cleanUp()
         broadcaster.send(.ended(reason))
     }
@@ -133,6 +152,7 @@ final class LiveKitVideoCallSession: VideoCallSession {
         // Disconnecting stops LiveKit's camera and microphone.
         if let room { await room.disconnect() }
         room = nil
+        hangUpListener = nil
         cameraTrack = nil
         cameraPosition = .back
         sawPartner = false
@@ -185,6 +205,19 @@ final class LiveKitVideoCallSession: VideoCallSession {
         guard connectionGeneration == generation else { throw CancellationError() }
     }
 
+    /// Tells the other phone this is a hang-up, waiting at most a second so leaving is never stuck.
+    private static func sendHangUp(in room: Room) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask {
+                try? await room.localParticipant.publish(
+                    data: Data("hangup".utf8), options: DataPublishOptions(topic: hangUpTopic, reliable: true))
+            }
+            group.addTask { try? await Task.sleep(for: .seconds(1)) }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
     // MARK: - Audio
 
     /// LiveKit sets up the audio session itself; this only tells it how:
@@ -214,6 +247,24 @@ final class LiveKitVideoCallSession: VideoCallSession {
         )
         cameraTrack = publication?.track as? LocalVideoTrack
         cameraPosition = position
+    }
+
+    /// Off mutes the camera track; on publishes it again. A volunteer's first "on" asks for the
+    /// camera, takes it from AR (the camera rule) and starts the front camera.
+    private func setCamera(_ on: Bool) async throws {
+        guard let room else { throw CallSessionError.notConnected }
+        if !on {
+            try? setTorch(false)
+            _ = try await room.localParticipant.setCamera(enabled: false)
+            return
+        }
+        if cameraTrack == nil {
+            try await requestPermission(.video)
+            if cameraToken == nil { cameraToken = try pauseCamera() }
+            try await publishCamera(position: .front)
+        } else {
+            _ = try await room.localParticipant.setCamera(enabled: true)
+        }
     }
 
     private func switchCamera() async throws {
@@ -264,6 +315,21 @@ final class LiveKitVideoCallSession: VideoCallSession {
         default:
             throw CallSessionError.permissionDenied(name)
         }
+    }
+}
+
+/// Hears the other phone's hang-up message.
+private final class HangUpListener: NSObject, RoomDelegate, @unchecked Sendable {
+    private let onHangUp: @Sendable () -> Void
+
+    init(onHangUp: @escaping @Sendable () -> Void) {
+        self.onHangUp = onHangUp
+    }
+
+    func room(_ room: Room, participant: RemoteParticipant?, didReceiveData data: Data,
+              forTopic topic: String, encryptionType: EncryptionType) {
+        guard participant != nil, topic == LiveKitVideoCallSession.hangUpTopic else { return }
+        onHangUp()
     }
 }
 

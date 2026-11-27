@@ -511,13 +511,14 @@ private struct Harness {
         }
     }
 
-    func start(to destination: Destination = library) async {
-        await manager.startTrip(route: route, destination: destination)
+    func start(to destination: Destination = library, preferences: RoutePreferences = RoutePreferences()) async {
+        await manager.startTrip(route: route, destination: destination, preferences: preferences,
+                                resumingAtStep: nil)
     }
 
     /// Starts the trip as one resumed after the app closed, with `step` next when it was saved.
-    func resume(atStep step: Int) async {
-        await manager.startTrip(route: route, destination: library, resumingAtStep: step)
+    func resume(atStep step: Int, preferences: RoutePreferences = RoutePreferences()) async {
+        await manager.startTrip(route: route, destination: library, preferences: preferences, resumingAtStep: step)
     }
 
     /// Feeds one fix on the current trip's stream and waits until it is handled, then moves the clock on. A
@@ -532,6 +533,10 @@ private struct Harness {
                                       speed: speed ?? course.map { _ in 1.4 }, course: course, source: source),
                        toStream: location.streamCount - 1)
         let state = await states.waitFor { $0.updatedAt == time || $0.phase == .arrived }
+        // The manager reads the clock after publishing, for when a reroute may go out and which way the arrival is,
+        // so the clock waits until it reaches its next await. Resuming does nothing unless paused, and so returns
+        // only then; while paused it would resume, and nothing after the publish reads the clock.
+        if state.phase != .paused { await manager.resumeTrip() }
         clock.advance(by: seconds)
         return state
     }
@@ -724,6 +729,7 @@ struct TripManagerTests {
         await harness.manager.resumeTrip()
         await harness.fix(harness.point(96.6))
         await harness.fix(harness.point(98.0))
+        await waitUntil { await harness.engine.texts.contains("Turn right onto Ferst Drive.") }
         let texts = await harness.engine.texts
         // 4.8 m from the turn on resume says nothing of it; the next fix gives the turn, once
         #expect(Array(texts.dropFirst(2)) == ["Trip resumed.", "Turn right onto Ferst Drive."])
@@ -856,6 +862,8 @@ struct TripManagerTests {
         await harness.goOffRoute(at: 49)
         await harness.router.waitForRequests(1)
         #expect(await harness.router.requests == [harness0Origin])
+        // the request goes out before the fix's cue is submitted
+        await waitUntil { await harness.engine.texts.contains("You're off the route. Finding a new route.") }
         #expect(await harness.engine.texts.last == "You're off the route. Finding a new route.")
     }
 
@@ -1272,7 +1280,7 @@ struct TripManagerTests {
             #expect(await harness.states.current?.nextManeuver?.instruction == "Turn right onto Ferst Drive.")
             #expect(abs((await harness.states.current?.distanceRemaining ?? 0) - 160) < 0.01)
         } else {
-            #expect(await harness.states.current?.phase == .planning)
+            #expect(await harness.states.waitFor { $0.phase == .planning }.phase == .planning)
         }
         #expect(await !harness.engine.texts.contains(newRouteSpeech))
     }
@@ -1538,6 +1546,8 @@ struct TripManagerLandmarkTests {
         await harness.start()
         await harness.walk(from: 0, to: 160)
         #expect(await harness.states.waitFor { $0.phase == .arrived }.phase == .arrived)
+        // the arrived state is published before the arrival is submitted, so wait for the arrival
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("Arriving") } }
         let before = await harness.engine.submitted.count
 
         harness.landmarks.yield(sign("PRICE GILBERT LIBRARY"))
@@ -1711,6 +1721,8 @@ struct TripManagerDirectionTests {
         await harness.start(to: destination)
         // arrives at 151.2 m, walking east
         await harness.walk(from: 0, to: 160, course: cornerCourse)
+        // the arrived state is published before the arrival is submitted, so wait for the arrival
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("Arriving") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("Arriving") } == [expected])
     }
@@ -1720,6 +1732,7 @@ struct TripManagerDirectionTests {
         let harness = try Harness()
         await harness.start(to: Destination(name: "Library", coordinate: harness.point(151.2, lateral: 20)))
         await harness.walk(from: 0, to: 160)
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("Arriving") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("Arriving") } == ["Arriving at Library. Your destination is on the left."])
     }
@@ -1735,6 +1748,7 @@ struct TripManagerDirectionTests {
         for index in 0...11 {
             await harness.fix(harness.point(-1.4 * Double(index)), course: course)
         }
+        await waitUntil { await harness.engine.texts.contains { $0.contains("walking away") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.contains("walking away") } == [expected])
     }
@@ -1763,6 +1777,7 @@ struct TripManagerDirectionTests {
             await harness.fix(TripWalk.destination(from: corner, bearing: 0, distance: metres), accuracy: accuracy,
                               course: course)
         }
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("You may have passed the turn") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("You may have passed the turn") } == [expected])
     }
@@ -1785,6 +1800,7 @@ struct TripManagerDirectionTests {
             await harness.fix(TripWalk.destination(from: corner, bearing: 0, distance: metres), course: 0,
                               source: .ar)
         }
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("You may have passed the turn") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("You may have passed the turn") }
             == ["You may have passed the turn. It is behind you, about 20 metres away."])
@@ -1825,6 +1841,7 @@ struct TripManagerDirectionTests {
         for along in TripWalk.distances(from: 141.4, to: 160) {
             await harness.fix(harness.point(along), accuracy: accuracy, course: 90)
         }
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("Arriving") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("Arriving") } == [expected])
     }
@@ -2408,8 +2425,9 @@ struct TripManagerResumeTests {
             await harness.fix(harness.point(along, lateral: 80))
         }
         await harness.router.waitForRequests(1)
+        // the request goes out before the fix's cue is submitted
+        await waitUntil { await harness.engine.texts.contains("You're off the route. Finding a new route.") }
         let texts = await harness.engine.texts
-        #expect(texts.contains("You're off the route. Finding a new route."))
         #expect(!texts.contains { $0.contains("walking away from the route") })
         #expect(await harness.states.current?.isOffRoute == true)
     }
@@ -2446,6 +2464,180 @@ struct TripManagerResumeTests {
         #expect(abs(try #require(placed.distanceRemaining) - resumed.remaining) < 1)
         #expect(placed.nextManeuver?.kind == resumed.next)
         #expect(placed.isOffRoute == false)
+    }
+}
+
+// MARK: Route preferences
+
+private let stepFree = RoutePreferences(avoidStairs: true, walkingSpeed: .slow)
+
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerPreferencesTests {
+    @Test
+    func anOffRouteRerouteUsesTheTripsPreferences() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start(preferences: stepFree)
+        await harness.walk(from: 0, to: 50)
+
+        await harness.goOffRoute(at: 49)
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.options == [stepFree.routeOptions])
+    }
+
+    /// Both reroutes, the one around a report included, send the preferences the trip started with.
+    @Test
+    func everyRerouteKeepsThePreferencesTheTripStartedWith() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let newRoute = try eastRoute(from: origin)
+        let harness = try Harness(reroutes: [.success(newRoute)])
+        await harness.start(preferences: stepFree)
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        let blocked = [report("on the new route", at: TripWalk.point(on: newRoute, along: 52))]
+        await harness.reports.publish(blocked)
+        await harness.answerReroute()
+        await harness.manager.resumeTrip()
+        await harness.reports.waitForSubscriptions(2)
+        await harness.reports.publish(blocked)
+        await harness.fix(origin, then: 15)
+        await harness.fix(origin)
+
+        await harness.router.waitForRequests(2)
+        var aroundReport = stepFree.routeOptions
+        aroundReport.reports = blocked
+        #expect(await harness.router.options == [stepFree.routeOptions, aroundReport])
+    }
+
+    @Test
+    func aResumedTripReroutesWithItsPreferences() async throws {
+        let harness = try Harness(route: try longStraightRoute())
+        await harness.resume(atStep: 1, preferences: stepFree)
+        await harness.waitForSleepers(2)
+
+        for along in TripWalk.distances(from: 300, to: 330) {
+            await harness.fix(harness.point(along, lateral: 80))
+        }
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.options == [stepFree.routeOptions])
+    }
+
+    @Test
+    func savesTheTripsPreferences() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerPreferencesTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = try Harness(savedTripsDirectory: directory)
+        let store = try #require(harness.savedTrips)
+        await harness.start(preferences: stepFree)
+
+        #expect(store.load()?.preferences == stepFree)
+    }
+}
+
+/// `cornerRoute`, with a step of each kind in `kinds` at the corner after the turn.
+private func cornerRoute(with kinds: [ManeuverKind]) throws -> NavigationRoute {
+    let route = try cornerRoute()
+    let added = kinds.map { RouteStep(kind: $0, coordinateIndex: 1, instruction: "Step", spokenInstruction: "Step") }
+    return try NavigationRoute(coordinates: route.coordinates,
+                               steps: route.steps.dropLast() + added + [route.steps[route.steps.count - 1]],
+                               estimatedDuration: route.estimatedDuration)
+}
+
+/// `eastRoute`, with a step of each kind in `kinds` 60 m along, past where setting off would prepare for it.
+private func eastRoute(from origin: GeoCoordinate, with kinds: [ManeuverKind]) throws -> NavigationRoute {
+    let coordinates = [origin, TripWalk.destination(from: origin, bearing: 90, distance: 60),
+                       TripWalk.destination(from: origin, bearing: 90, distance: 80)]
+    let added = kinds.map { RouteStep(kind: $0, coordinateIndex: 1, instruction: "Step", spokenInstruction: "Step") }
+    return try NavigationRoute(coordinates: coordinates, steps: [
+        RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Head east.", spokenInstruction: "Head east."),
+    ] + added + [
+        RouteStep(kind: .arrive, coordinateIndex: 2, instruction: "Arrive", spokenInstruction: "You have arrived."),
+    ], estimatedDuration: 60)
+}
+
+private let oneFlight = "No step-free route found. This route has 1 flight of stairs."
+private let oneElevator = "No route without elevators found. This route uses 1 elevator."
+private let avoidingBoth = RoutePreferences(avoidStairs: true, avoidElevators: true)
+
+/// A route the preferences couldn't keep from stairs or elevators says so first.
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerUnhonouredPreferenceTests {
+    private func startText(_ kinds: [ManeuverKind], preferences: RoutePreferences) async throws -> String {
+        let harness = try Harness(route: try cornerRoute(with: kinds))
+        await harness.start(preferences: preferences)
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+        return try #require(await harness.engine.waitForCount(1).first).text
+    }
+
+    @Test(arguments: [
+        ([ManeuverKind.stairs], stepFree, "\(oneFlight) "),
+        ([.stairs, .stairs], stepFree, "No step-free route found. This route has 2 flights of stairs. "),
+        ([.elevator], RoutePreferences(avoidElevators: true), "\(oneElevator) "),
+        ([.elevator, .elevator], RoutePreferences(avoidElevators: true),
+         "No route without elevators found. This route uses 2 elevators. "),
+        ([.elevator, .stairs], avoidingBoth, "\(oneFlight) \(oneElevator) "),
+        ([.stairs, .elevator], RoutePreferences(), ""),
+        ([.stairs], RoutePreferences(avoidElevators: true), ""),
+        ([.elevator], stepFree, ""),
+        ([], avoidingBoth, ""),
+    ])
+    func theStartSaysWhatTheRouteStillHas(_ kinds: [ManeuverKind], _ preferences: RoutePreferences,
+                                          _ warning: String) async throws {
+        #expect(try await startText(kinds, preferences: preferences)
+            == "Starting directions to Library, about 160 metres. \(warning)\(setOff)")
+    }
+
+    @Test
+    func aRerouteOntoSuchARouteWarns() async throws {
+        let walked = TripWalk.distances(from: 0, to: 20).last ?? 0
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked)
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: origin, with: [.elevator, .stairs]))])
+        await harness.start(preferences: avoidingBoth)
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        #expect(await harness.engine.texts.filter { $0.hasPrefix("New route.") }
+            == ["New route. \(oneFlight) \(oneElevator) \(setOff)"])
+    }
+
+    @Test
+    func aRerouteOntoSuchARouteWithThePreferenceOffDoesNotWarn() async throws {
+        let walked = TripWalk.distances(from: 0, to: 20).last ?? 0
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked)
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: origin, with: [.stairs]))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        #expect(await harness.engine.texts.filter { $0.hasPrefix("New route.") } == [newRouteSpeech])
+    }
+
+    @Test
+    func aResumedTripOnSuchARouteWarns() async throws {
+        let straight = try longStraightRoute()
+        var steps = straight.steps
+        steps.insert(RouteStep(kind: .stairs, coordinateIndex: 20, instruction: "Take the stairs.",
+                               spokenInstruction: "Take the stairs."), at: 2)
+        let route = try NavigationRoute(coordinates: straight.coordinates, steps: steps,
+                                        estimatedDuration: straight.estimatedDuration)
+        let harness = try Harness(route: route)
+        await harness.resume(atStep: 1, preferences: stepFree)
+        await harness.waitForSleepers(2)
+
+        await harness.fix(harness.point(300))
+
+        #expect(try #require(await harness.engine.waitForCount(1).first).text
+            == "Resuming directions to Library, about 160 metres. \(oneFlight) In about 100 metres, turn right onto Ferst Drive.")
     }
 }
 

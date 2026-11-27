@@ -59,7 +59,8 @@ final class PlaceDetailViewModel {
             let crossings = RouteCrossings.along(route, crossings: campusCrossings())
             counted = (route, RouteSummary(route: route, crossings: crossings))
         }
-        return counted?.summary.text(distances: distanceSettings.formatter)
+        return counted?.summary.text(distances: distanceSettings.formatter,
+                                     preferences: plannedRoute?.preferences ?? RoutePreferences())
     }
 
     /// Shown with an Apple Maps route, which knows nothing of stairs.

@@ -65,7 +65,6 @@ final class PlaceSearchViewModel {
 
     @ObservationIgnored private let services: AppServices?
     @ObservationIgnored private let now: () -> Date
-    @ObservationIgnored private let places: [SamplePlace]
     let savedPlacesStore: SavedPlacesStore
     let recentPlacesStore: RecentPlacesStore
     @ObservationIgnored private var searchTask: Task<Void, Never>?
@@ -73,19 +72,17 @@ final class PlaceSearchViewModel {
     @ObservationIgnored private var headingEstimator = HeadingEstimator()
     @ObservationIgnored private var newestReadingTime: Date?
 
-    /// `search` overrides `services.destinationSearch`; without either it searches a few
-    /// sample places, for previews and tests. `now` is the time, for how old a fix or heading is.
+    /// `search` overrides `services.destinationSearch`; without either it uses the placeholder
+    /// search, for previews and tests. `now` is the time, for how old a fix or heading is.
     init(
         services: AppServices? = nil,
         search: (any DestinationSearching)? = nil,
-        places: [SamplePlace] = SampleContent.places,
         savedPlaces: SavedPlacesStore? = nil,
         recentPlaces: RecentPlacesStore? = nil,
         now: @escaping () -> Date = { .now }
     ) {
         self.services = services
         self.now = now
-        self.places = places
         self.savedPlacesStore = savedPlaces ?? SavedPlacesStore(places: [])
         self.recentPlacesStore = recentPlaces ?? RecentPlacesStore(places: [])
         destinationSearch = DestinationSearchViewModel(
@@ -175,15 +172,9 @@ final class PlaceSearchViewModel {
         return count == 1 ? "1 result" : "\(count) results"
     }
 
-    /// For the From field: saved places first, plus matching campus places when typed.
+    /// For the From field: saved places matching what is typed.
     var originResults: [SamplePlace] {
-        let trimmed = settledOriginQuery.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return savedPlaces.map { $0.asSamplePlace() } }
-        let savedMatches = savedPlacesStore.matching(query: trimmed).map { $0.asSamplePlace() }
-        let otherMatches = nearestFirst(Self.search(trimmed, category: nil, in: places)).filter { candidate in
-            !savedMatches.contains { $0.name.caseInsensitiveCompare(candidate.name) == .orderedSame }
-        }
-        return savedMatches + otherMatches
+        originSavedPlaces.map { $0.asSamplePlace() }
     }
 
     /// Saved places matching the From query (used when the From field is focused).
@@ -194,10 +185,6 @@ final class PlaceSearchViewModel {
     }
 
     /// Straight-line distance and an estimated walk, or nil without a location.
-    func distanceText(to place: SamplePlace) -> String? {
-        distanceText(to: GeoCoordinate(latitude: place.latitude, longitude: place.longitude))
-    }
-
     func distanceText(to savedPlace: SavedPlace) -> String? {
         distanceText(to: savedPlace.coordinate)
     }
@@ -239,31 +226,9 @@ final class PlaceSearchViewModel {
         return "\(distance) · about \(minutes) min walk"
     }
 
-    private func distance(to place: SamplePlace) -> Double? {
-        distance(to: GeoCoordinate(latitude: place.latitude, longitude: place.longitude))
-    }
-
     private func distance(to coordinate: GeoCoordinate) -> Double? {
         guard let location else { return nil }
         return GeoMath.distance(from: location.coordinate, to: coordinate)
-    }
-
-    private func nearestFirst(_ places: [SamplePlace]) -> [SamplePlace] {
-        guard location != nil else { return places }
-        return places.sorted { (distance(to: $0) ?? 0) < (distance(to: $1) ?? 0) }
-    }
-
-    /// Name, address or initials ("CULC") contain the query; the category matches if given.
-    static func search(_ query: String, category: PlaceCategory?, in places: [SamplePlace]) -> [SamplePlace] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || category != nil else { return [] }
-        return places.filter { place in
-            let matchesQuery = trimmed.isEmpty
-                || place.name.localizedStandardContains(trimmed)
-                || place.address.localizedStandardContains(trimmed)
-                || initials(of: place.name).localizedStandardContains(trimmed)
-            return matchesQuery && (category.map { place.category == $0 } ?? true)
-        }
     }
 
     /// The parts of `name` that matched `query`: the substring, or the first letters of the
@@ -285,10 +250,6 @@ final class PlaceSearchViewModel {
         let first = initials.distance(from: initials.startIndex, to: match.lowerBound)
         let count = initials.distance(from: match.lowerBound, to: match.upperBound)
         return wordStarts[first ..< first + count].map { $0 ..< name.index(after: $0) }
-    }
-
-    private static func initials(of name: String) -> String {
-        String(name.split(separator: " ").compactMap(\.first))
     }
 
     // MARK: - Typing

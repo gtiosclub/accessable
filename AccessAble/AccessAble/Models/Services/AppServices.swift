@@ -39,6 +39,11 @@ struct AppServices: Sendable {
     var videoCall: any VideoCallSession = PlaceholderVideoCallSession()
     /// Caller–volunteer text chat (CHAT-1); on this phone only without Firebase.
     var chat: any ChatService = PlaceholderChatService()
+    /// Starred people (SAVE-1) and past calls (HISTORY-1) for the Call Help tabs.
+    var saves: any SavesService = PlaceholderSavesService()
+    var callHistory: any CallHistoryProviding = PlaceholderCallHistory()
+    /// Profile pictures (PROFILE-2).
+    var avatars: any AvatarStore = PlaceholderAvatarStore()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
     var askAISettings = AskAISettings()
@@ -52,6 +57,8 @@ struct AppServices: Sendable {
     var tripRecorder = TripRecorder()
     /// The trip in progress, kept for resuming after the app closes; nil where trips aren't kept.
     var savedTrips: SavedTripStore?
+    /// The user's route choices, synced with their account where accounts are available.
+    var routePreferences = RoutePreferencesStore()
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
@@ -118,10 +125,14 @@ struct AppServices: Sendable {
             services.reportsAvailable = true
             services.routing = ReportAwareRoutingService(base: services.routing, reports: services.reports)
             services.userProfiles = FirestoreUserProfileStore()
+            services.routePreferences = RoutePreferencesStore(sync: FirestoreRoutePreferencesStore())
             services.callSafety = FirestoreCallSafety(auth: services.auth)
             services.volunteerSettings = FirestoreVolunteerSettings(auth: services.auth)
             services.volunteers = FirestoreVolunteerDirectory()
             services.chat = FirestoreChatService(auth: services.auth)
+            services.saves = FirestoreSavesService(auth: services.auth)
+            services.callHistory = FirestoreCallHistory(auth: services.auth)
+            services.avatars = FirestoreAvatarStore(auth: services.auth)
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
             if let tokenURL = LiveKitConfig.callTokenURL {
@@ -205,6 +216,9 @@ struct AppServices: Sendable {
             UserProfile(userID: PlaceholderAuthService.sampleUser.id, role: .caller,
                         displayName: "Preview caller", languages: ["English"], createdAt: .now)
         ])
+        services.routePreferences = RoutePreferencesStore(
+            defaults: UserDefaults(suiteName: "preview-routePreferences") ?? .standard,
+            sync: PlaceholderRoutePreferencesSync())
         services.volunteers = PlaceholderVolunteerDirectory()
         services.presence = PlaceholderPresenceService()
         services.videoCall = PlaceholderVideoCallSession()

@@ -10,11 +10,12 @@ struct CallFlowView: View {
     @State private var saving = false
     @State private var errorMessage: String?
     let volunteer: Volunteer?
+    var answering: VolunteerRing?
 
     var body: some View {
         Group {
             if hasAgreed == true {
-                CallView(services: app.services, volunteer: volunteer) { router.pop() }
+                CallView(services: app.services, volunteer: volunteer, answering: answering) { router.pop() }
             } else if hasAgreed == false {
                 CallConsentView(announcements: app.services.announcements, onAgree: {
                     saving = true

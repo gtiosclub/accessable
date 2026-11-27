@@ -235,35 +235,6 @@ struct PlaceThumbnail: View {
     }
 }
 
-/// "4.5 ★★★★☆ (45)"
-struct RatingView: View {
-    let rating: Double
-    let reviewCount: Int
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(rating, format: .number.precision(.fractionLength(1)))
-            HStack(spacing: 2) {
-                ForEach(0..<5, id: \.self) { index in
-                    Image(systemName: symbol(for: index))
-                }
-            }
-            Text(verbatim: "(\(reviewCount))")
-        }
-        .font(.subheadline)
-        .foregroundStyle(.white)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Rated \(rating.formatted(.number.precision(.fractionLength(1)))) out of 5, \(reviewCount) reviews")
-    }
-
-    private func symbol(for index: Int) -> String {
-        let value = rating - Double(index)
-        if value >= 1 { return "star.fill" }
-        if value >= 0.5 { return "star.leadinghalf.filled" }
-        return "star"
-    }
-}
-
 /// Gray circle avatar with a green dot when the person is available.
 struct HelperAvatar: View {
     var isOnline: Bool

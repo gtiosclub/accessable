@@ -278,38 +278,16 @@ struct RoutePreview: View {
     }
 }
 
-/// "Walk out the house / Walk 50 ft • Walk past 1 crossroad …"
-struct RouteStepsList: View {
-    let steps: [SampleRouteStep]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(steps, id: \.self) { step in
-                Text(step.text)
-                ForEach(step.details, id: \.self) { detail in
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(verbatim: "•").accessibilityHidden(true)
-                        Text(detail)
-                    }
-                    .padding(.leading, 8)
-                }
-            }
-        }
-        .font(.subheadline)
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityElement(children: .combine)
-    }
-}
-
+#if DEBUG
 #Preview {
     NavigationStack {
-        PlaceDetailView(place: SampleContent.places[0], services: .preview)
+        PlaceDetailView(place: MapsPreviewData.place, services: .preview)
     }
     .environment(AppViewModel.preview)
     .environment(AppRouter())
     .preferredColorScheme(.dark)
 }
+#endif
 
 #Preview("From search") {
     NavigationStack {

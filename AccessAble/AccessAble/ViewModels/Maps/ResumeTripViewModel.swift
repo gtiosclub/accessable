@@ -44,6 +44,7 @@ final class ResumeTripViewModel {
         return TripPlan(
             place: SamplePlace(destination: offer.destination), route: nil, isRecording: false,
             plannedRoute: PlannedRoute(destination: offer.destination, route: route, requestedAt: now(),
+                                       preferences: offer.preferences ?? RoutePreferences(),
                                        resumingAtStep: offer.passedStepCount)
         )
     }

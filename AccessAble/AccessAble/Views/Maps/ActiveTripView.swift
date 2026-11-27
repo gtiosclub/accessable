@@ -259,8 +259,7 @@ struct ActiveTripView: View {
     private var background: some View {
         if session.showsMap {
             CampusMap(
-                routeLine: session.directions?.route?.coordinates.map(\.clCoordinate)
-                    ?? (services == nil ? SampleContent.sampleRouteLine : nil),
+                routeLine: session.directions?.route?.coordinates.map(\.clCoordinate),
                 destination: session.directions?.destination ?? Destination(
                     name: session.plan.place.name,
                     coordinate: GeoCoordinate(latitude: session.plan.place.latitude, longitude: session.plan.place.longitude)
@@ -455,13 +454,15 @@ struct RouteBlockedCard: View {
     }
 }
 
+#if DEBUG
 #Preview("Walking") {
     NavigationStack {
-        ActiveTripView(plan: TripPlan(place: SampleContent.places[0], route: nil, isRecording: false))
+        ActiveTripView(plan: TripPlan(place: MapsPreviewData.place, route: nil, isRecording: false))
     }
     .environment(AppRouter())
     .preferredColorScheme(.dark)
 }
+#endif
 
 #Preview("Paused card") {
     ZStack {
