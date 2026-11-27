@@ -39,6 +39,11 @@ struct AppServices: Sendable {
     var videoCall: any VideoCallSession = PlaceholderVideoCallSession()
     /// Caller–volunteer text chat (CHAT-1); on this phone only without Firebase.
     var chat: any ChatService = PlaceholderChatService()
+    /// Starred people (SAVE-1) and past calls (HISTORY-1) for the Call Help tabs.
+    var saves: any SavesService = PlaceholderSavesService()
+    var callHistory: any CallHistoryProviding = PlaceholderCallHistory()
+    /// Profile pictures (PROFILE-2).
+    var avatars: any AvatarStore = PlaceholderAvatarStore()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
     var askAISettings = AskAISettings()
@@ -125,6 +130,9 @@ struct AppServices: Sendable {
             services.volunteerSettings = FirestoreVolunteerSettings(auth: services.auth)
             services.volunteers = FirestoreVolunteerDirectory()
             services.chat = FirestoreChatService(auth: services.auth)
+            services.saves = FirestoreSavesService(auth: services.auth)
+            services.callHistory = FirestoreCallHistory(auth: services.auth)
+            services.avatars = FirestoreAvatarStore(auth: services.auth)
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
             if let tokenURL = LiveKitConfig.callTokenURL {

@@ -21,13 +21,21 @@ struct OnboardingView: View {
         Group {
             switch viewModel.step {
             case .accountRole:
-                VStack(spacing: 24) {
-                    Text("How will you use AccessAble?").font(.title.bold())
-                    Button("Caller — get assistance") { viewModel.chooseAccountRole(.caller) }
+                VStack(spacing: 20) {
+                    VStack(spacing: 6) {
+                        Text("Welcome to").font(.title3.bold())
+                        Text("AccessAble").font(.largeTitle.bold())
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isHeader)
+                    AppLogo(size: 120)
+                    Text("Are you a").font(.headline)
+                    Button("Sighted Volunteer") { viewModel.chooseAccountRole(.volunteer) }
                         .buttonStyle(.pill(.primary))
-                        .accessibilityHint("Choose to request assistance from volunteers")
-                    Button("Volunteer — offer assistance") { viewModel.chooseAccountRole(.volunteer) }
+                        .accessibilityHint("Offer to help blind and low vision callers")
+                    Button("Blind/Low Vision User") { viewModel.chooseAccountRole(.caller) }
                         .buttonStyle(.pill(.primary))
+                        .accessibilityHint("Get help from sighted volunteers")
                     if let onSignOut {
                         Button("Sign out") {
                             Task {

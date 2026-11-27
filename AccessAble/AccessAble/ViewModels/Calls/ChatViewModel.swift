@@ -11,6 +11,8 @@ final class ChatViewModel {
         case volunteer(id: String)
         /// A chat that already exists, opened from the volunteer's inbox.
         case chat(id: String)
+        /// The volunteer's chat with this caller, which they may start once both have starred each other.
+        case caller(id: String)
     }
 
     let partnerName: String
@@ -50,6 +52,7 @@ final class ChatViewModel {
         let id: String = switch target {
         case .volunteer(let volunteerID): ChatID.make(callerID: me, volunteerID: volunteerID)
         case .chat(let id): id
+        case .caller(let callerID): ChatID.make(callerID: callerID, volunteerID: me)
         }
         chatID = id
         do {

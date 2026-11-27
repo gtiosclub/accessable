@@ -8,7 +8,7 @@ struct VolunteerCallHostView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var model: IncomingCallViewModel
     @State private var settings: VolunteerSettingsViewModel
-    @State private var inbox: ChatInboxViewModel
+    @State private var callHelp: VolunteerCallHelpViewModel
 
     init(profile: UserProfile, services: AppServices, signOut: @escaping () async throws -> Void) {
         self.profile = profile
@@ -18,7 +18,7 @@ struct VolunteerCallHostView: View {
             profile: profile, store: services.volunteerSettings, profiles: services.userProfiles,
             presence: services.presence, screen: ScreenAwakeController()
         ))
-        _inbox = State(initialValue: ChatInboxViewModel(service: services.chat))
+        _callHelp = State(initialValue: VolunteerCallHelpViewModel(services: services))
         _model = State(initialValue: IncomingCallViewModel(
             volunteerID: profile.userID, source: services.incomingCalls,
             signaling: services.callSignaling, video: services.videoCall,
@@ -34,17 +34,15 @@ struct VolunteerCallHostView: View {
     var body: some View {
         ZStack {
             VolunteerHomeView(settings: settings, signOut: signOut,
-                              // Kept while ringing, so a half-written report survives the ring.
-                              pastCalls: model.callsForSafety,
-                              callSafety: services.callSafety, dismissPastCall: { model.dismissSafetySummary($0) },
-                              isRinging: model.call != nil,
                               listenerError: model.listenerError, retryListening: { model.retryListening() },
                               callMessage: model.message, dismissCallMessage: { model.dismissMessage() },
-                              inbox: inbox)
+                              callHelp: callHelp, services: services,
+                              callCaller: { id, name in model.callCaller(id: id, name: name) })
                 .allowsHitTesting(model.call == nil)
                 .accessibilityHidden(model.call != nil)
             if model.call != nil {
-                IncomingVolunteerCallView(model: model, video: services.videoCall)
+                IncomingVolunteerCallView(model: model, video: services.videoCall,
+                                          myID: profile.userID, myName: profile.displayName)
                     .zIndex(1)
             }
         }
@@ -53,7 +51,14 @@ struct VolunteerCallHostView: View {
             else { model.suspendListening() }
         }
         .task { await settings.load() }
-        .task(id: scenePhase == .active) { if scenePhase == .active { await inbox.start() } }
+        .task(id: scenePhase == .active) { if scenePhase == .active { await callHelp.start() } }
+        .task { await settings.followSchedule() }
+        .task {
+            // Offline while calling someone, so nobody else rings; back to the saved choice after.
+            model.onOutgoingCall = { [settings, presence = services.presence] active in
+                if active { try? await presence.setOnline(false) } else { await settings.setForeground(true) }
+            }
+        }
         .task { await settings.observePresence() }
         .task(id: scenePhase) { await settings.setForeground(scenePhase == .active) }
         .onDisappear { model.shutdown(); settings.shutdown() }
