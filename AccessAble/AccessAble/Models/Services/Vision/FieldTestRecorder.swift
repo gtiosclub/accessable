@@ -169,18 +169,25 @@ final class FieldTestRecorder: Sendable {
         elevationScenarioStatus.stream()
     }
 
-    static var directory: URL {
+    static var defaultDirectory: URL {
         URL.documentsDirectory.appending(path: "FieldTests", directoryHint: .isDirectory)
+    }
+
+    /// Where recordings go; `Documents/FieldTests/` unless a test passes its own folder.
+    let directory: URL
+
+    init(directory: URL = FieldTestRecorder.defaultDirectory) {
+        self.directory = directory
     }
 
     /// Starts a new recording, ending any current one. Returns the file it writes to.
     @discardableResult
     func start() throws -> URL {
-        try FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let name = Date.now.formatted(.iso8601.year().month().day().time(includingFractionalSeconds: false))
             .replacingOccurrences(of: ":", with: "-")
-        let url = Self.directory.appending(path: "walk-\(name).jsonl")
-        FileManager.default.createFile(atPath: url.path(), contents: nil)
+        let url = directory.appending(path: "walk-\(name).jsonl")
+        FileManager.default.createFile(atPath: url.path(percentEncoded: false), contents: nil)
         let handle = try FileHandle(forWritingTo: url)
 
         let previous = state.withLock { state in
