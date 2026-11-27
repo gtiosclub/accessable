@@ -82,7 +82,10 @@ final class AppViewModel {
         let announcements = self.services.announcements
         Task { await announcements.updateProfile(profile) }
 
-        let tripCamera = TripCameraCoordinator(trip: self.services.trip, camera: self.services.tripCamera)
+        let tripCamera = TripCameraCoordinator(
+            trip: self.services.trip, camera: self.services.tripCamera,
+            recovery: self.services.guidanceRecovery, announcements: announcements
+        )
         tripCameraTask = Task { await tripCamera.run() }
         let tripActivity = TripActivityController(
             trip: self.services.trip, activity: self.services.tripActivity, distances: self.services.distanceSettings,
