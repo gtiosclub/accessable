@@ -55,32 +55,85 @@ struct ReportExclusions: Equatable, Sendable {
         return exclusions
     }
 
-    /// The reports whose point or any area corner is within `passingDistance` of `route`.
+    /// The reports whose point or any area corner is within `passingDistance` of `route`, or whose area it enters.
     static func reports(_ reports: [Report], passedBy route: NavigationRoute) -> [Report] {
         self.reports(reports, within: passingDistance, of: route)
     }
 
-    /// The reports whose point or any area corner is within `distance` metres of `route`.
+    /// The reports whose point or any area corner is within `distance` metres of `route`, or whose area it enters.
     static func reports(_ reports: [Report], within distance: Double, of route: NavigationRoute) -> [Report] {
         reports.filter { report in
             points(of: report).contains { abs(route.projection(of: $0).sideOffset) <= distance }
+                || entry(of: report, along: route, from: 0) != nil
         }
     }
 
-    /// Metres along `route` where it passes `report`, by the same points as `reports(_:passedBy:)`, searching only
-    /// from `distance` along it on: nil if it passes the report only before then, or not at all.
+    /// Metres along `route` where it passes `report`, by the same points and area as `reports(_:passedBy:)`,
+    /// searching only from `distance` along it on: nil if it passes the report only before then, or not at all.
     static func distanceAlong(_ route: NavigationRoute, passing report: Report, from distance: Double) -> Double? {
         let lastSegment = route.coordinates.count - 2
         let first = min(route.cumulativeDistances.lastIndex { $0 <= distance } ?? 0, lastSegment)
-        return points(of: report)
+        let nearest = points(of: report)
             .map { route.projection(of: $0, segments: first..<lastSegment + 1) }
             .filter { abs($0.sideOffset) <= passingDistance && $0.distanceAlongRoute >= distance }
             .map(\.distanceAlongRoute)
             .min()
+        return [nearest, entry(of: report, along: route, from: distance)].compactMap { $0 }.min()
     }
 
     private static func points(of report: Report) -> [GeoCoordinate] {
         [report.coordinate] + (report.area ?? [])
+    }
+
+    /// Metres along `route` where it is first inside the report's area from `distance` on: `distance` itself when
+    /// already inside, otherwise where it first crosses the area's edge. Nil without an area or if it never enters.
+    ///
+    /// Planar on latitude and longitude, which is fine at campus scale: which side of an edge a point lies on, and
+    /// how far along a segment two segments cross, don't change under that stretch.
+    private static func entry(of report: Report, along route: NavigationRoute, from distance: Double) -> Double? {
+        guard let ring = report.area.flatMap(Self.ring) else { return nil }
+        let coordinates = route.coordinates
+        let distances = route.cumulativeDistances
+        let start = GeoMath.coordinate(atDistance: distance, along: coordinates, cumulativeDistances: distances)
+        if contains(start, in: ring) { return min(distance, route.totalDistance) }
+        for index in coordinates.indices.dropLast() where distances[index + 1] > distance {
+            let from = distances[index] < distance ? start : coordinates[index]
+            let fromDistance = max(distances[index], distance)
+            let edges = zip(ring, ring.dropFirst() + [ring[0]])
+            if let fraction = edges.compactMap({ crossing(from, coordinates[index + 1], $0.0, $0.1) }).min() {
+                return fromDistance + fraction * (distances[index + 1] - fromDistance)
+            }
+        }
+        return nil
+    }
+
+    /// Ray casting on latitude and longitude.
+    private static func contains(_ point: GeoCoordinate, in ring: [GeoCoordinate]) -> Bool {
+        var inside = false
+        var previous = ring[ring.count - 1]
+        for vertex in ring {
+            if (vertex.latitude > point.latitude) != (previous.latitude > point.latitude) {
+                let crossing = previous.longitude + (point.latitude - previous.latitude)
+                    / (vertex.latitude - previous.latitude) * (vertex.longitude - previous.longitude)
+                if point.longitude < crossing { inside.toggle() }
+            }
+            previous = vertex
+        }
+        return inside
+    }
+
+    /// How far from `a` to `b`, as a fraction, the segment crosses the one from `c` to `d`; nil if it doesn't or
+    /// they are parallel.
+    private static func crossing(_ a: GeoCoordinate, _ b: GeoCoordinate, _ c: GeoCoordinate,
+                                 _ d: GeoCoordinate) -> Double? {
+        let r = (x: b.longitude - a.longitude, y: b.latitude - a.latitude)
+        let s = (x: d.longitude - c.longitude, y: d.latitude - c.latitude)
+        let q = (x: c.longitude - a.longitude, y: c.latitude - a.latitude)
+        let denominator = r.x * s.y - r.y * s.x
+        guard denominator != 0 else { return nil }
+        let t = (q.x * s.y - q.y * s.x) / denominator
+        let u = (q.x * r.y - q.y * r.x) / denominator
+        return (0...1).contains(t) && (0...1).contains(u) ? t : nil
     }
 
     /// The area without a closing point, or nil if it has fewer than three distinct points.
