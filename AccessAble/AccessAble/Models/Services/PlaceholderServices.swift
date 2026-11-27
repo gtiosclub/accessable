@@ -167,9 +167,21 @@ struct PlaceholderRoutingService: RoutingService {
 /// Hardcoded campus places so previews don't call MapKit.
 struct PlaceholderDestinationSearch: DestinationSearching {
     static let samples = [
-        SearchSuggestion(title: "Georgia Tech Library", subtitle: "260 Fourth St NW, Atlanta, GA"),
-        SearchSuggestion(title: "John Lewis Student Center", subtitle: "351 Ferst Dr NW, Atlanta, GA"),
-        SearchSuggestion(title: "Campus Recreation Center", subtitle: "750 Ferst Dr NW, Atlanta, GA"),
+        SearchSuggestion(
+            title: "Georgia Tech Library",
+            subtitle: "260 Fourth St NW, Atlanta, GA",
+            coordinate: GeoCoordinate(latitude: 33.774217, longitude: -84.395561)
+        ),
+        SearchSuggestion(
+            title: "John Lewis Student Center",
+            subtitle: "351 Ferst Dr NW, Atlanta, GA",
+            coordinate: GeoCoordinate(latitude: 33.773913, longitude: -84.398587)
+        ),
+        SearchSuggestion(
+            title: "Campus Recreation Center",
+            subtitle: "750 Ferst Dr NW, Atlanta, GA",
+            coordinate: GeoCoordinate(latitude: 33.775662, longitude: -84.404041)
+        ),
     ]
 
     /// Replays the latest results, so a listener that subscribes after a query still gets them.
@@ -296,6 +308,53 @@ struct PlaceholderVolunteerDirectory: VolunteerDirectory {
     }
 }
 
+/// Keeps messages on this phone only, for previews and builds without Firebase.
+final class PlaceholderChatService: ChatService {
+    static let userID = "placeholder-caller"
+    private let chats = Broadcaster<[String: [ChatMessage]]>(replaysLatest: true)
+    private let userID: String?
+
+    init(userID: String? = PlaceholderChatService.userID, messages: [String: [ChatMessage]] = [:]) {
+        self.userID = userID
+        chats.send(messages)
+    }
+
+    func currentUserID() async -> String? { userID }
+
+    func messages(chatID: String) -> AsyncThrowingStream<[ChatMessage], Error> {
+        let all = chats.stream()
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                for await chats in all { continuation.yield(chats[chatID] ?? []) }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    func send(_ text: String, chatID: String) async throws {
+        guard let userID else { throw ChatError.signedOut }
+        guard let text = ChatMessage.sendable(text) else { throw ChatError.invalidMessage }
+        var all = chats.latest ?? [:]
+        all[chatID, default: []].append(ChatMessage(text: text, senderID: userID))
+        chats.send(all)
+    }
+
+    func volunteerChats() -> AsyncThrowingStream<[ChatThread], Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield([])
+            continuation.finish()
+        }
+    }
+
+    /// A message from the other person, as if it had just arrived.
+    func injectForTests(_ message: ChatMessage, chatID: String) async throws {
+        var all = chats.latest ?? [:]
+        all[chatID, default: []].append(message)
+        chats.send(all)
+    }
+}
+
 /// Remembers the toggle in memory only. Replaced by VOLUNTEER-6.
 actor PlaceholderPresenceService: PresenceService {
     private nonisolated let states = Broadcaster<Bool>(replaysLatest: true)
@@ -417,6 +476,8 @@ actor PlaceholderReportService: ReportService {
     private let now: @Sendable () -> Date
     private var votes: [String: Set<String>] = [:]
     private var lastVote: [String: Date] = [:]
+    /// Who was signed in when each report was submitted, so it is that user's own, as Firestore's private index says.
+    private var reporters: [String: String] = [:]
 
     init(auth: any AuthService = PlaceholderAuthService(), now: @escaping @Sendable () -> Date = { .now }) {
         self.auth = auth
@@ -425,6 +486,8 @@ actor PlaceholderReportService: ReportService {
     }
 
     func submit(_ report: Report) async throws {
+        let reporter = await auth.currentUser()?.id
+        reporters[report.id] = reporter
         storedReports.removeAll { $0.id == report.id }
         storedReports.append(report)
         changes.send(storedReports)
@@ -435,7 +498,17 @@ actor PlaceholderReportService: ReportService {
         radius: Double
     ) async throws -> [Report] {
         let time = now()
-        return storedReports.filter { $0.expiresAt > time && $0.isNear(coordinate, within: radius) }
+        return await markingOwn(storedReports.filter { $0.expiresAt > time && $0.isNear(coordinate, within: radius) })
+    }
+
+    /// The reports, each marked as the signed-in user's own or not.
+    private func markingOwn(_ reports: [Report]) async -> [Report] {
+        let userID = await auth.currentUser()?.id
+        return reports.map { report in
+            var report = report
+            report.isOwn = userID != nil && reporters[report.id] == userID
+            return report
+        }
     }
 
     nonisolated func reportChanges(
@@ -448,9 +521,9 @@ actor PlaceholderReportService: ReportService {
             let task = Task {
                 for await reports in source {
                     let time = self.now()
-                    continuation.yield(reports.filter {
+                    continuation.yield(await self.markingOwn(reports.filter {
                         $0.expiresAt > time && $0.isNear(coordinate, within: radius)
-                    })
+                    }))
                 }
                 continuation.finish()
             }
@@ -468,8 +541,9 @@ actor PlaceholderReportService: ReportService {
         guard let index = storedReports.firstIndex(where: { $0.id == reportID }) else {
             throw ReportServiceError.invalidReport
         }
-        let report = storedReports[index]
-        guard FirestoreReportService.canVote(on: report, as: user.id, isStillPresent: isStillPresent, now: time),
+        var report = storedReports[index]
+        report.isOwn = reporters[reportID] == user.id
+        guard FirestoreReportService.canVote(on: report, isStillPresent: isStillPresent, now: time),
               votes[reportID, default: []].insert(user.id).inserted else {
             throw ReportServiceError.permissionDenied
         }

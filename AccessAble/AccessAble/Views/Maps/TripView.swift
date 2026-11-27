@@ -7,9 +7,9 @@ struct TripView: View {
     @AccessibilityFocusState private var isInstructionFocused: Bool
     private let services: AppServices
 
-    init(services: AppServices) {
+    init(services: AppServices, recentPlaces: RecentPlacesStore? = nil) {
         self.services = services
-        _viewModel = State(initialValue: TripViewModel(services: services))
+        _viewModel = State(initialValue: TripViewModel(services: services, recentPlaces: recentPlaces))
     }
 
     var body: some View {
@@ -90,7 +90,9 @@ struct TripView: View {
                         ) {
                             Task {
                                 // the button is gone, so put VoiceOver on what to do first
-                                if await viewModel.startTrip() { isInstructionFocused = true }
+                                if await viewModel.startTrip() {
+                                    isInstructionFocused = true
+                                }
                             }
                         }
                     }

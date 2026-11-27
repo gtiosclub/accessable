@@ -22,9 +22,6 @@ actor TripManager: TripStateProviding {
     private let announcements: any AnnouncementEngineProtocol
     /// Nil where reports aren't available, so a trip doesn't listen for them.
     private let reports: (any ReportService)?
-    /// The signed-in user, whose own reports don't reroute their trip: Route Blocked Ahead's Re-Route is their way
-    /// round.
-    private let currentUserID: @Sendable () async -> String?
     private let landmarks: any LandmarkObserving
     /// Read when a trip starts, not at launch: loading them parses a large bundled file.
     private let campusBuildings: @Sendable () -> [CampusBuilding]
@@ -177,7 +174,6 @@ actor TripManager: TripStateProviding {
         routing: any RoutingService,
         announcements: any AnnouncementEngineProtocol,
         reports: (any ReportService)? = nil,
-        currentUserID: @escaping @Sendable () async -> String? = { nil },
         landmarks: any LandmarkObserving = PlaceholderLandmarkProvider(),
         campusBuildings: @escaping @Sendable () -> [CampusBuilding] = { CampusLandmarks.buildings },
         campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all },
@@ -193,7 +189,6 @@ actor TripManager: TripStateProviding {
         self.routing = routing
         self.announcements = announcements
         self.reports = reports
-        self.currentUserID = currentUserID
         self.landmarks = landmarks
         self.campusBuildings = campusBuildings
         self.campusCrossings = campusCrossings
@@ -623,14 +618,13 @@ actor TripManager: TripStateProviding {
         let center = GeoMath.coordinate(atDistance: route.totalDistance / 2, along: route.coordinates,
                                         cumulativeDistances: route.cumulativeDistances)
         let radius = route.totalDistance / 2 + Self.reportSearchMargin
-        reportTask = Task { [currentUserID] in
+        reportTask = Task {
             var retries = 0
             // an injected sleep may return rather than throw once cancelled
             while !Task.isCancelled {
                 for await snapshot in reports.reportChanges(near: center, radius: radius) {
                     retries = 0
-                    let userID = await currentUserID()
-                    await self.receive(snapshot, userID: userID, subscription: subscription, generation: generation)
+                    await self.receive(snapshot, subscription: subscription, generation: generation)
                 }
                 guard !Task.isCancelled else { return }
                 let delay = Self.reportRetryDelays[min(retries, Self.reportRetryDelays.count - 1)]
@@ -641,10 +635,11 @@ actor TripManager: TripStateProviding {
         }
     }
 
-    private func receive(_ snapshot: [Report], userID: String?, subscription: Int, generation: Int) async {
+    private func receive(_ snapshot: [Report], subscription: Int, generation: Int) async {
         guard self.generation == generation, subscription == reportSubscription else { return }
         latestReports = snapshot
-        nearbyReports = snapshot.filter { $0.reporterID != userID }
+        // the user's own don't reroute their trip: Route Blocked Ahead's Re-Route is their way round
+        nearbyReports = snapshot.filter { !$0.isOwn }
         publishMapReports()
         await considerReports(generation: generation)
     }

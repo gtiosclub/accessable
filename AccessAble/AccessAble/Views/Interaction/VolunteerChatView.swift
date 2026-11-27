@@ -1,16 +1,15 @@
 import SwiftUI
 
-/// Owner: User Interaction (3.x). Text chat with a volunteer. Messages stay on this screen
-/// until a messaging backend exists.
+/// Owner: User Interaction (3.x). Text chat with a volunteer, sent through `ChatService` (CHAT-1).
 struct VolunteerChatView: View {
     @Environment(AppRouter.self) private var router
     let volunteer: Volunteer
-    @State private var messages: [ChatMessage]
-    @State private var draft = ""
+    @State private var model: ChatViewModel
 
-    init(volunteer: Volunteer) {
+    init(volunteer: Volunteer, services: AppServices) {
         self.volunteer = volunteer
-        _messages = State(initialValue: SampleContent.conversation(with: volunteer))
+        _model = State(initialValue: ChatViewModel(
+            service: services.chat, target: .volunteer(id: volunteer.id), partnerName: volunteer.name))
     }
 
     var body: some View {
@@ -20,17 +19,7 @@ struct VolunteerChatView: View {
                 .fill(.white.opacity(0.6))
                 .frame(height: 1)
                 .accessibilityHidden(true)
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(messages) { message in
-                        bubble(message)
-                    }
-                }
-                .padding(20)
-            }
-            .defaultScrollAnchor(.bottom)
-            .scrollDismissesKeyboard(.interactively)
-            composer
+            ChatConversationView(model: model)
         }
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
@@ -53,8 +42,10 @@ struct VolunteerChatView: View {
                 Text(volunteer.name)
                     .font(.title3.bold())
                     .accessibilityAddTraits(.isHeader)
-                Text(volunteer.availableUntil)
-                    .font(.subheadline)
+                if !volunteer.availableUntil.isEmpty {
+                    Text(volunteer.availableUntil)
+                        .font(.subheadline)
+                }
             }
             .foregroundStyle(.white)
             .accessibilityElement(children: .combine)
@@ -73,37 +64,87 @@ struct VolunteerChatView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
     }
+}
+
+/// The messages and the composer, shared by the caller's screen and the volunteer's inbox.
+struct ChatConversationView: View {
+    @Bindable var model: ChatViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    if model.hasLoaded && model.messages.isEmpty {
+                        Text("No messages yet. Say hello to \(model.partnerName).")
+                            .font(.callout)
+                            .foregroundStyle(.white.opacity(0.85))
+                            .multilineTextAlignment(.center)
+                            .padding(.top, 24)
+                    }
+                    ForEach(model.messages) { message in
+                        bubble(message)
+                    }
+                }
+                .padding(20)
+            }
+            .defaultScrollAnchor(.bottom)
+            .scrollDismissesKeyboard(.interactively)
+            if let error = model.errorMessage {
+                HStack {
+                    Text(error)
+                        .font(.callout)
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Button("Dismiss") { model.dismissError() }
+                        .foregroundStyle(Theme.cyan)
+                        .minimumTapTarget()
+                }
+                .padding(.horizontal, 20)
+            }
+            composer
+        }
+        .background(Color.black.ignoresSafeArea())
+        .task { await model.start() }
+        .onChange(of: model.lastIncoming) { _, message in
+            guard let message else { return }
+            AccessibilityNotification.Announcement("\(model.partnerName): \(message.text)").post()
+        }
+        .onChange(of: model.errorMessage) { _, text in
+            if let text { AccessibilityNotification.Announcement(text).post() }
+        }
+    }
 
     private func bubble(_ message: ChatMessage) -> some View {
-        HStack {
-            if message.isFromMe { Spacer(minLength: 60) }
+        let isFromMe = model.isFromMe(message)
+        return HStack {
+            if isFromMe { Spacer(minLength: 60) }
             Text(message.text)
                 .font(.callout)
                 .foregroundStyle(.white)
                 .padding(12)
                 .background(Theme.bubble, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .accessibilityLabel(message.isFromMe ? "You: \(message.text)" : "\(volunteer.name): \(message.text)")
-            if !message.isFromMe { Spacer(minLength: 60) }
+                .accessibilityLabel(isFromMe ? "You: \(message.text)" : "\(model.partnerName): \(message.text)")
+            if !isFromMe { Spacer(minLength: 60) }
         }
     }
 
     private var composer: some View {
         HStack {
-            TextField("Message", text: $draft, prompt: Text("Enter message").foregroundStyle(.white.opacity(0.85)), axis: .vertical)
+            TextField("Message", text: $model.draft, prompt: Text("Enter message").foregroundStyle(.white.opacity(0.85)), axis: .vertical)
                 .font(.title3)
                 .foregroundStyle(.white)
                 .lineLimit(1...4)
                 .submitLabel(.send)
-                .onSubmit(send)
-            Button(action: send) {
+                .onSubmit { Task { await model.send() } }
+            Button { Task { await model.send() } } label: {
                 Image(systemName: "paperplane")
                     .font(.title2)
                     .foregroundStyle(.white)
                     .minimumTapTarget()
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Send")
-            .disabled(trimmedDraft.isEmpty)
+            .accessibilityLabel(model.isSending ? "Sending" : "Send")
+            .disabled(!model.canSend)
         }
         .padding(.leading, 20)
         .padding(.trailing, 8)
@@ -112,21 +153,11 @@ struct VolunteerChatView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
     }
-
-    private var trimmedDraft: String {
-        draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func send() {
-        guard !trimmedDraft.isEmpty else { return }
-        messages.append(ChatMessage(text: trimmedDraft, isFromMe: true))
-        draft = ""
-    }
 }
 
 #Preview {
     NavigationStack {
-        VolunteerChatView(volunteer: SampleContent.activeVolunteers[0])
+        VolunteerChatView(volunteer: SampleContent.activeVolunteers[0], services: .preview)
     }
     .environment(AppRouter())
     .preferredColorScheme(.dark)

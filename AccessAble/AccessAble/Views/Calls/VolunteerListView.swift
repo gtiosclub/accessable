@@ -28,9 +28,11 @@ struct VolunteerListView: View {
                         .font(.title3)
                         .padding(.vertical, 8)
                     ForEach(viewModel.rows) { row in
-                        VolunteerStatusRow(row: row) {
+                        VolunteerStatusRow(row: row, onCall: {
                             router.push(.call(Volunteer(id: row.id, name: row.name, availableUntil: "", isOnline: true)))
-                        }
+                        }, onMessage: {
+                            router.push(.chat(Volunteer(id: row.id, name: row.name, availableUntil: "", isOnline: row.isOnline)))
+                        })
                     }
                 }
             }
@@ -48,6 +50,7 @@ struct VolunteerListView: View {
 private struct VolunteerStatusRow: View {
     let row: VolunteerListViewModel.Row
     let onCall: () -> Void
+    let onMessage: () -> Void
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -75,14 +78,23 @@ private struct VolunteerStatusRow: View {
 
             if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 0) }
 
-            if row.isOnline {
+            HStack(spacing: 16) {
+                if row.isOnline {
+                    CircleIconButton(
+                        systemImage: "phone",
+                        label: "Video call \(row.name)",
+                        fill: Theme.red,
+                        foreground: .white,
+                        diameter: 54,
+                        action: onCall
+                    )
+                }
+                // Messages wait for an offline volunteer, so this shows either way.
                 CircleIconButton(
-                    systemImage: "phone",
-                    label: "Video call \(row.name)",
-                    fill: Theme.red,
-                    foreground: .white,
+                    systemImage: "ellipsis.message",
+                    label: "Message \(row.name)",
                     diameter: 54,
-                    action: onCall
+                    action: onMessage
                 )
             }
         }

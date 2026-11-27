@@ -107,8 +107,7 @@ struct ReportAwareRoutingServiceTests {
             coordinate: coordinate,
             area: area,
             createdAt: .now,
-            expiresAt: .now.addingTimeInterval(3600),
-            reporterID: "user-1"
+            expiresAt: .now.addingTimeInterval(3600)
         )
     }
 
@@ -156,7 +155,9 @@ struct ReportAwareRoutingServiceTests {
     /// REPORT-6's objective: a report voted gone ends now, and the next route no longer goes around it.
     @Test
     func aReportVotedGoneNoLongerShapesTheRoute() async throws {
-        let reports = PlaceholderReportService()
+        // reported signed out, so the user signed in later may vote on it
+        let auth = PlaceholderAuthService(signedIn: false)
+        let reports = PlaceholderReportService(auth: auth)
         var denied = report(at: corner)
         // old enough for a "no", with one already
         denied.createdAt = .now.addingTimeInterval(-3600)
@@ -167,6 +168,7 @@ struct ReportAwareRoutingServiceTests {
         let service = ReportAwareRoutingService(base: base, reports: reports, clock: clock)
         _ = try await route(with: service, base: base, clock: clock)
 
+        _ = try await auth.signIn(email: "voter@example.com", password: "password")
         try await reports.confirm(denied.id, isStillPresent: false)
         let after = try await route(with: service, base: base, clock: clock)
 
