@@ -102,6 +102,24 @@ struct RecentPlacesTests {
     }
 
     @Test
+    func undecodableStoredRecentsAreKeptAsideRatherThanOverwritten() {
+        let defaults = freshDefaults()
+        let backupKey = PlaceListDefaults.backupKey(for: "recentPlaces")
+        let unreadable = Data("written by a newer build".utf8)
+        defaults.set(unreadable, forKey: "recentPlaces")
+
+        let store = RecentPlacesStore(defaults: defaults)
+        #expect(store.places.isEmpty)
+        store.record(destination: destination("Clough Commons"))
+
+        #expect(defaults.data(forKey: backupKey) == unreadable)
+        #expect(RecentPlacesStore(defaults: defaults).places.map(\.name) == ["Clough Commons"])
+
+        store.clear()
+        #expect(defaults.data(forKey: backupKey) == nil)
+    }
+
+    @Test
     func signingOutClearsRecents() async throws {
         let defaults = freshDefaults()
         let store = RecentPlacesStore(defaults: defaults)
@@ -116,7 +134,7 @@ struct RecentPlacesTests {
     }
 
     @Test
-    func searchExposesFiltersAndClearsRecents() async throws {
+    func searchExposesFiltersAndClearsRecents() async {
         let defaults = freshDefaults()
         let store = RecentPlacesStore(defaults: defaults)
         store.record(destination: destination("Bobby Dodd Stadium", offset: 0.003), category: .labeledPlaces)
@@ -129,7 +147,7 @@ struct RecentPlacesTests {
 
         search.query = "Bobby"
         search.search()
-        try await Task.sleep(for: .milliseconds(50))
+        while search.isSearching { await Task.yield() }
 
         #expect(search.matchingRecentPlaces.map(\.name) == ["Bobby Dodd Stadium"])
         #expect(!search.showsNoResults)

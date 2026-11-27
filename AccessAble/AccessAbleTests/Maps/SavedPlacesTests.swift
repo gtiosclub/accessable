@@ -105,7 +105,7 @@ struct SavedPlacesTests {
 
         search.query = "Class"
         search.search()
-        try await waitUntil { !search.isSearching }
+        await waitUntil { !search.isSearching }
 
         #expect(search.matchingSavedPlaces.map(\.displayName) == ["Class"])
         #expect(!search.showsNoResults)
@@ -113,7 +113,7 @@ struct SavedPlacesTests {
 
         search.query = "zzzz"
         search.search()
-        try await waitUntil { !search.isSearching }
+        await waitUntil { !search.isSearching }
         #expect(search.matchingSavedPlaces.isEmpty)
         #expect(search.showsNoResults)
     }
@@ -136,7 +136,7 @@ struct SavedPlacesTests {
 
         search.query = "Campus Rec"
         search.search()
-        try await waitUntil { !search.isSearching }
+        await waitUntil { !search.isSearching }
 
         #expect(search.matchingSavedPlaces.map(\.displayName) == ["Gym"])
         #expect(search.suggestions.map(\.title) == ["Campus Recreation Center"])
@@ -159,10 +159,28 @@ struct SavedPlacesTests {
         #expect(SavedPlacesStore(defaults: defaults).places.isEmpty)
     }
 
-    private func waitUntil(_ condition: () -> Bool) async throws {
-        for _ in 0..<400 where !condition() {
-            try await Task.sleep(for: .milliseconds(5))
-        }
+    @Test
+    func undecodableStoredPlacesAreKeptAsideRatherThanOverwritten() {
+        let (defaults, suite) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let backupKey = PlaceListDefaults.backupKey(for: "savedPlaces")
+        let unreadable = Data("written by a newer build".utf8)
+        defaults.set(unreadable, forKey: "savedPlaces")
+
+        let store = SavedPlacesStore(defaults: defaults)
+        #expect(store.places.isEmpty)
+        store.save(destination: clough, label: "Class")
+
+        #expect(defaults.data(forKey: backupKey) == unreadable)
+        #expect(SavedPlacesStore(defaults: defaults).places.map(\.displayName) == ["Class"])
+
+        // Signing out takes the kept-aside copy too.
+        store.clear()
+        #expect(defaults.data(forKey: backupKey) == nil)
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async {
+        while !condition() { await Task.yield() }
     }
 
     @Test

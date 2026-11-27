@@ -1,9 +1,17 @@
 import Foundation
+import Observation
+import Synchronization
 import Testing
 @testable import AccessAble
 
 private let origin = GeoCoordinate(latitude: 33.7740, longitude: -84.3970)
 private let sampleTime = Date(timeIntervalSince1970: 1_700_000_000)
+
+/// Yields until `condition` holds, for samples the view model receives on its own tasks.
+@MainActor
+private func waitUntil(_ condition: () -> Bool) async {
+    while !condition() { await Task.yield() }
+}
 
 /// Moves `metres` from `origin` along `bearingDegrees` (0 = north, 90 = east) so tests can
 /// place targets in every 45° sector using real `GeoMath` geometry.
@@ -216,7 +224,32 @@ struct SearchResultSpeechIntegrationTests {
         #expect(mapKit.coordinateLookups.count == 5)
     }
 
-    @Test func placeSearchViewModelUsesHeadingWhenKnownAndCardinalWhenUnknown() async throws {
+    @Test func autocompleterSkipsCoordinateLookupsForReplacedResults() async {
+        let mapKit = StubMapKitAutocompleter()
+        let emptyDictionary = CampusNicknameDictionary(places: [])
+        let autocompleter = DestinationAutocompleter(dictionary: emptyDictionary, mapKit: mapKit)
+
+        var iterator = autocompleter.suggestions().makeAsyncIterator()
+        autocompleter.update(query: "coffee")
+
+        let replaced = (0..<3).map { SearchSuggestion(title: "Cafe \($0)", subtitle: "Atlanta") }
+        let current = (0..<2).map { SearchSuggestion(title: "Coffee \($0)", subtitle: "Atlanta") }
+        mapKit.coordinatesByID = Dictionary(uniqueKeysWithValues: (replaced + current).map { ($0.id, origin) })
+        // The second set arrives before the first one's lookups get to run.
+        mapKit.onResults?(replaced)
+        mapKit.onResults?(current)
+
+        // The stream keeps only the newest set, so the first set is never seen.
+        let initial = try? await iterator.next()?.get()
+        #expect(initial?.map(\.title) == current.map(\.title))
+        let enriched = try? await iterator.next()?.get()
+
+        #expect(enriched?.map(\.title) == current.map(\.title))
+        #expect(enriched?.allSatisfy { $0.coordinate == origin } == true)
+        #expect(mapKit.coordinateLookups.map(\.title) == current.map(\.title))
+    }
+
+    @Test func placeSearchViewModelUsesHeadingWhenKnownAndCardinalWhenUnknown() async {
         let locationProvider = ControllableLocationProvider()
         var services = AppServices.preview
         services.location = locationProvider
@@ -240,11 +273,18 @@ struct SearchResultSpeechIntegrationTests {
             horizontalAccuracy: 5,
             timestamp: sampleTime
         ))
-        try await Task.sleep(for: .milliseconds(50))
+        await waitUntil { viewModel.suggestions.count == 1 && viewModel.location != nil }
 
-        #expect(viewModel.suggestions.count == 1)
         #expect(viewModel.heading == nil)
         #expect(viewModel.spokenLabel(for: viewModel.suggestions[0], at: 0) == "Clough Commons, 350 feet, northeast")
+
+        // A row's label must re-render on a heading change alone.
+        let labelInvalidated = Flag()
+        withObservationTracking {
+            _ = viewModel.spokenLabel(for: viewModel.suggestions[0], at: 0)
+        } onChange: {
+            labelInvalidated.raise()
+        }
 
         // NAV-2 provides a compass heading facing east (90°); northeast (45°) is now slightly left.
         locationProvider.yieldHeading(HeadingSample(
@@ -253,13 +293,13 @@ struct SearchResultSpeechIntegrationTests {
             accuracy: 10,
             timestamp: sampleTime.addingTimeInterval(0.5)
         ))
-        try await Task.sleep(for: .milliseconds(50))
+        await waitUntil { viewModel.heading != nil }
 
-        #expect(viewModel.heading != nil)
+        #expect(labelInvalidated.isRaised)
         #expect(viewModel.spokenLabel(for: viewModel.suggestions[0], at: 0) == "Clough Commons, 350 feet, slightly left")
     }
 
-    @Test func destinationSearchViewModelSpeaksDistanceAndDirection() async throws {
+    @Test func destinationSearchViewModelSpeaksDistanceAndDirection() async {
         let locationProvider = ControllableLocationProvider()
         let settings = DistanceSettings()
         settings.units = .metres
@@ -285,12 +325,12 @@ struct SearchResultSpeechIntegrationTests {
             horizontalAccuracy: 5,
             timestamp: sampleTime
         ))
-        try await Task.sleep(for: .milliseconds(50))
+        await waitUntil { !viewModel.suggestions.isEmpty && viewModel.location != nil }
 
         #expect(viewModel.spokenLabel(for: viewModel.suggestions[0], at: 0) == "Tech Tower, 120 metres, south, 225 North Ave")
     }
 
-    @Test func staleFixDropsDistanceAndStaleHeadingFallsBackToCompassPoints() async throws {
+    @Test func staleFixDropsDistanceAndStaleHeadingFallsBackToCompassPoints() async {
         let locationProvider = ControllableLocationProvider()
         var services = AppServices.preview
         services.location = locationProvider
@@ -310,7 +350,7 @@ struct SearchResultSpeechIntegrationTests {
         viewModel.search()
         let label = { viewModel.spokenLabel(for: viewModel.suggestions[0], at: 0) }
 
-        try await Task.sleep(for: .milliseconds(50))
+        await waitUntil { !viewModel.suggestions.isEmpty }
         #expect(label() == "Clough Commons")
 
         locationProvider.yieldAuthorization(.authorized(preciseAccuracy: true))
@@ -318,7 +358,7 @@ struct SearchResultSpeechIntegrationTests {
         locationProvider.yieldHeading(HeadingSample(
             trueHeading: 90, magneticHeading: 92, accuracy: 10, timestamp: sampleTime
         ))
-        try await Task.sleep(for: .milliseconds(50))
+        await waitUntil { viewModel.location != nil && viewModel.heading != nil }
         #expect(label() == "Clough Commons, 350 feet, slightly left")
 
         time = sampleTime + HeadingEstimator.maximumSampleAge + 1
@@ -328,7 +368,7 @@ struct SearchResultSpeechIntegrationTests {
         #expect(label() == "Clough Commons")
     }
 
-    @Test func destinationSearchDropsDistanceAndDirectionFromAStaleFix() async throws {
+    @Test func destinationSearchDropsDistanceAndDirectionFromAStaleFix() async {
         let locationProvider = ControllableLocationProvider()
         let settings = DistanceSettings()
         settings.units = .metres
@@ -348,12 +388,19 @@ struct SearchResultSpeechIntegrationTests {
         viewModel.query = "Tech"
         viewModel.queryChanged()
         locationProvider.yieldLocation(LocationSample(coordinate: origin, horizontalAccuracy: 5, timestamp: sampleTime))
-        try await Task.sleep(for: .milliseconds(50))
+        await waitUntil { !viewModel.suggestions.isEmpty && viewModel.location != nil }
         #expect(viewModel.spokenLabel(for: viewModel.suggestions[0], at: 0) == "Tech Tower, 120 metres, south, 225 North Ave")
 
         time = sampleTime + SearchResultSpeech.maximumFixAge + 1
         #expect(viewModel.spokenLabel(for: viewModel.suggestions[0], at: 0) == "Tech Tower, 225 North Ave")
     }
+}
+
+/// Set from an observation's `onChange`, which may run off the main actor.
+private final class Flag: Sendable {
+    private let raised = Mutex(false)
+    var isRaised: Bool { raised.withLock { $0 } }
+    func raise() { raised.withLock { $0 = true } }
 }
 
 @MainActor
