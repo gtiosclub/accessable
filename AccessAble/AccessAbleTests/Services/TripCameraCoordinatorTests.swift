@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 @testable import AccessAble
 
@@ -31,7 +32,8 @@ private struct SteppedTrip: TripStateProviding {
         (states, continuation) = AsyncStream.makeStream()
     }
 
-    func go(_ phase: TripPhase) { continuation.yield(TripState(phase: phase, updatedAt: .now)) }
+    func go(_ phase: TripPhase) { send(TripState(phase: phase, updatedAt: .now)) }
+    func send(_ state: TripState) { continuation.yield(state) }
     func finish() { continuation.finish() }
 
     func tripStates() -> AsyncStream<TripState> { states }
@@ -101,6 +103,153 @@ private actor GeoScene: SceneObservationProviding, GeoTrackingProviding {
     }
 
     func setGeoTrackingWanted(_ wanted: Bool) async { calls.append(wanted ? "geo" : "no geo") }
+}
+
+/// A geo-tracking camera whose updates the test sends one by one, waiting until the trip has taken each in.
+private final class SteppedGeoScene: SceneObservationProviding, GeoTrackingProviding, Sendable {
+    private enum Condition { case takenIn, watcherGone }
+    private typealias Waiter = (condition: Condition, continuation: CheckedContinuation<Void, any Error>)
+
+    private struct State {
+        var pending: [GeoTrackingUpdate] = []
+        /// The trip's watcher, waiting for the next update.
+        var reader: (id: UUID, continuation: CheckedContinuation<GeoTrackingUpdate?, Never>)?
+        var isWatched = false
+        var timesWatched = 0
+        /// Reads and waits cancelled before they started waiting.
+        var cancelled: Set<UUID> = []
+        var waiters: [UUID: Waiter] = [:]
+
+        func holds(_ condition: Condition) -> Bool {
+            switch condition {
+            case .takenIn: reader != nil && pending.isEmpty
+            case .watcherGone: !isWatched
+            }
+        }
+
+        mutating func takeSatisfiedWaiters() -> [CheckedContinuation<Void, any Error>] {
+            let satisfied = waiters.filter { holds($0.value.condition) }
+            for id in satisfied.keys { waiters.removeValue(forKey: id) }
+            return satisfied.values.map(\.continuation)
+        }
+    }
+
+    private let state = Mutex(State())
+    private let available: Bool
+
+    init(available: Bool = true) { self.available = available }
+
+    /// How often the trip started watching geo updates.
+    var timesWatched: Int { state.withLock { $0.timesWatched } }
+
+    func send(_ update: GeoTrackingUpdate) {
+        let reader = state.withLock { state in
+            guard let reader = state.reader else {
+                state.pending.append(update)
+                return CheckedContinuation<GeoTrackingUpdate?, Never>?.none
+            }
+            state.reader = nil
+            return reader.continuation
+        }
+        reader?.resume(returning: update)
+    }
+
+    /// Returns once the trip has taken in every update sent and waits for the next.
+    func waitUntilTakenIn() async throws { try await wait(until: .takenIn) }
+
+    /// Returns once the trip has stopped watching geo updates.
+    func waitUntilUnwatched() async throws { try await wait(until: .watcherGone) }
+
+    private func wait(until condition: Condition) async throws {
+        let id = UUID()
+        defer { state.withLock { _ = $0.cancelled.remove(id) } }
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                enum Start { case cancelled, ready, waiting }
+                let start = state.withLock { state in
+                    if state.cancelled.remove(id) != nil { return Start.cancelled }
+                    if state.holds(condition) { return .ready }
+                    state.waiters[id] = (condition, continuation)
+                    return .waiting
+                }
+                switch start {
+                case .cancelled: continuation.resume(throwing: CancellationError())
+                case .ready: continuation.resume()
+                case .waiting: break
+                }
+            }
+        } onCancel: {
+            let waiter = state.withLock { state in
+                guard let waiter = state.waiters.removeValue(forKey: id) else {
+                    state.cancelled.insert(id)
+                    return Waiter?.none
+                }
+                return waiter
+            }
+            waiter?.continuation.resume(throwing: CancellationError())
+        }
+    }
+
+    /// The watcher's next update; nil once it is cancelled.
+    private func nextUpdate() async -> GeoTrackingUpdate? {
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<GeoTrackingUpdate?, Never>) in
+                enum Start { case cancelled, update(GeoTrackingUpdate), waiting }
+                let (start, satisfied) = state.withLock { state in
+                    let start: Start
+                    if state.cancelled.remove(id) != nil {
+                        state.isWatched = false
+                        start = .cancelled
+                    } else if !state.pending.isEmpty {
+                        start = .update(state.pending.removeFirst())
+                    } else {
+                        state.reader = (id, continuation)
+                        start = .waiting
+                    }
+                    return (start, state.takeSatisfiedWaiters())
+                }
+                for waiter in satisfied { waiter.resume() }
+                switch start {
+                case .cancelled: continuation.resume(returning: nil)
+                case let .update(update): continuation.resume(returning: update)
+                case .waiting: break
+                }
+            }
+        } onCancel: {
+            let (reader, satisfied) = state.withLock { state in
+                guard let reader = state.reader, reader.id == id else {
+                    state.cancelled.insert(id)
+                    return (CheckedContinuation<GeoTrackingUpdate?, Never>?.none, [CheckedContinuation<Void, any Error>]())
+                }
+                state.reader = nil
+                state.isWatched = false
+                return (reader.continuation, state.takeSatisfiedWaiters())
+            }
+            reader?.resume(returning: nil)
+            for waiter in satisfied { waiter.resume() }
+        }
+    }
+
+    // MARK: - SceneObservationProviding
+
+    func observations() -> AsyncStream<SceneObservation> { AsyncStream { $0.finish() } }
+    func start() async throws {}
+    func stop() async {}
+
+    // MARK: - GeoTrackingProviding
+
+    func prepareGeoTracking() async {}
+    func knownGeoAvailability() async -> Bool? { available }
+    func setGeoTrackingWanted(_ wanted: Bool) async {}
+
+    func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> {
+        state.withLock { state in
+            state.isWatched = true
+            state.timesWatched += 1
+        }
+        return AsyncStream(unfolding: { [self] in await nextUpdate() })
+    }
 }
 
 struct TripCameraCoordinatorTests {
@@ -317,6 +466,199 @@ struct TripGuidanceRecoveryTests {
 
         try await guidance.waitForSubscribers(0)
         #expect(guidance.calls == ["start", "stop"])
+    }
+}
+
+/// Settings → Phone Aiming Help, switched by the test mid-trip.
+private final class AimingHelpSetting: Sendable {
+    private let value = Mutex(true)
+
+    var isOn: Bool {
+        get { value.withLock { $0 } }
+        set { value.withLock { $0 = newValue } }
+    }
+}
+
+/// The AR-5 hold-up prompt, given while the trip holds the camera with geo-tracking.
+@MainActor
+struct TripAimingHelpTests {
+    private let geo = SteppedGeoScene()
+    private let sink = RecordingSink()
+    private let trip = SteppedTrip()
+    private let date = ManualDate()
+    private let aimingHelp = AimingHelpSetting()
+
+    private static let unlocked = GeoTrackingUpdate(
+        state: .localizing, accuracy: .undetermined, timestamp: .now, stateReason: .visualLocalizationFailed
+    )
+    private static let locked = GeoTrackingUpdate(state: .localized, accuracy: .high, timestamp: .now, stateReason: nil)
+
+    private func startRunning(_ scene: SteppedGeoScene? = nil) -> Task<Void, Never> {
+        let scene = scene ?? geo
+        let aimingHelp = aimingHelp
+        let date = date
+        let coordinator = TripCameraCoordinator(
+            trip: trip, camera: TripCamera(scene: scene, geoTracking: scene), announcements: sink,
+            phoneAimingHelp: { aimingHelp.isOn }, now: { date.now }
+        )
+        return Task { await coordinator.run() }
+    }
+
+    private func state(_ phase: TripPhase = .active, turnIn distance: Double) -> TripState {
+        TripState(
+            phase: phase,
+            nextManeuver: Maneuver(kind: .turnRight, instruction: "Turn right",
+                                   coordinate: GeoCoordinate(latitude: 33.77, longitude: -84.39)),
+            distanceToNextManeuver: distance
+        )
+    }
+
+    /// Walks up to a turn: the update that brings it, then the next.
+    private func reachTurn() {
+        trip.send(state(turnIn: 120))
+        trip.send(state(turnIn: 35))
+        trip.send(state(turnIn: 30))
+    }
+
+    private func send(_ update: GeoTrackingUpdate) async throws {
+        geo.send(update)
+        try await geo.waitUntilTakenIn()
+    }
+
+    private func finish(_ running: Task<Void, Never>) async {
+        trip.finish()
+        await running.value
+    }
+
+    private var prompts: Int { sink.keys.filter { $0 == GeoAimingCoach.dedupKey }.count }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aTurnWithoutALockIsPromptedThroughTheAnnouncements() async throws {
+        let running = startRunning()
+        trip.send(state(turnIn: 120))
+        try await send(Self.unlocked)
+        reachTurn()
+        await sink.waitFor(GeoAimingCoach.dedupKey)
+        await finish(running)
+
+        #expect(sink.keys == [GeoAimingCoach.dedupKey])
+    }
+
+    // the trip says the turn cue after publishing the update that brought the turn, and the prompt waits for the next
+    @Test(.timeLimit(.minutes(1)))
+    func thePromptFollowsTheTurnCue() async throws {
+        let running = startRunning()
+        trip.send(state(turnIn: 120))
+        try await send(Self.unlocked)
+        trip.send(state(turnIn: 35))
+        await sink.submit(AnnouncementEvent(category: .maneuver, priority: .normal, text: "In 35 metres, turn right.",
+                                            source: .navigation, dedupKey: "step-1-prepare"))
+        trip.send(state(turnIn: 30))
+        await sink.waitFor(GeoAimingCoach.dedupKey)
+        await finish(running)
+
+        #expect(sink.keys == ["step-1-prepare", GeoAimingCoach.dedupKey])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func noGeoUpdateYetMeansNoPrompt() async throws {
+        let running = startRunning()
+        trip.send(state(turnIn: 120))
+        try await geo.waitUntilTakenIn()
+        reachTurn()
+        await finish(running)
+
+        #expect(sink.keys.isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aLockLostBeforeTheTurnIsPrompted() async throws {
+        let running = startRunning()
+        trip.send(state(turnIn: 120))
+        try await send(Self.locked)
+        reachTurn()
+        try await send(Self.unlocked)
+        trip.send(state(turnIn: 20))
+        await sink.waitFor(GeoAimingCoach.dedupKey)
+        await finish(running)
+
+        #expect(sink.keys == [GeoAimingCoach.dedupKey])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func theSettingIsReadOnEveryUpdate() async throws {
+        let running = startRunning()
+        trip.send(state(turnIn: 120))
+        try await send(Self.unlocked)
+        aimingHelp.isOn = false
+        reachTurn()
+        date.advance(by: GeoAimingCoach.cooldown)
+        aimingHelp.isOn = true
+        reachTurn()
+        await sink.waitFor(GeoAimingCoach.dedupKey)
+        await finish(running)
+
+        #expect(sink.keys == [GeoAimingCoach.dedupKey])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func turningTheSettingOffMidTripSilencesIt() async throws {
+        let running = startRunning()
+        trip.send(state(turnIn: 120))
+        try await send(Self.unlocked)
+        reachTurn()
+        await sink.waitFor(GeoAimingCoach.dedupKey)
+        aimingHelp.isOn = false
+        date.advance(by: GeoAimingCoach.cooldown)
+        reachTurn()
+        await finish(running)
+
+        #expect(prompts == 1)
+    }
+
+    // the camera is let go and held again over a pause, and the cooldown carries over
+    @Test(.timeLimit(.minutes(1)))
+    func theCooldownOutlastsAPause() async throws {
+        let running = startRunning()
+        trip.send(state(turnIn: 120))
+        try await send(Self.unlocked)
+        reachTurn()
+        await sink.waitFor(GeoAimingCoach.dedupKey)
+        trip.send(state(.paused, turnIn: 30))
+        try await geo.waitUntilUnwatched()
+        date.advance(by: 60)
+        trip.send(state(turnIn: 120))
+        try await send(Self.unlocked)
+        reachTurn()
+        await finish(running)
+
+        #expect(geo.timesWatched == 2)
+        #expect(prompts == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [TripPhase.paused, .arrived, .planning])
+    func leavingTheTripStopsWatching(phase: TripPhase) async throws {
+        let running = startRunning()
+        trip.send(state(turnIn: 120))
+        try await send(Self.unlocked)
+        trip.send(state(turnIn: 35))
+        trip.send(state(phase, turnIn: 30))
+        try await geo.waitUntilUnwatched()
+        trip.send(state(phase, turnIn: 25))
+        await finish(running)
+
+        #expect(sink.keys.isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func noGeoTrackingMeansNoPrompt() async {
+        let scene = SteppedGeoScene(available: false)
+        let running = startRunning(scene)
+        reachTurn()
+        await finish(running)
+
+        #expect(scene.timesWatched == 0)
+        #expect(sink.keys.isEmpty)
     }
 }
 
