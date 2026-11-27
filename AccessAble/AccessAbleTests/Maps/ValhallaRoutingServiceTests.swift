@@ -265,6 +265,16 @@ struct ValhallaRoutingServiceTests {
         #expect(high["max_hiking_difficulty"] as? Int == 6)
     }
 
+    @Test(arguments: [Double.nan, .infinity, -.infinity])
+    func leavesOutNonFinitePreferences(_ value: Double) async throws {
+        let request = try await sentRequest(options: RouteOptions(
+            stepPenalty: value, elevatorPenalty: value, useHills: value, useLit: value,
+            walkwayFactor: value, sidewalkFactor: value, alleyFactor: value, drivewayFactor: value,
+            servicePenalty: value, serviceFactor: value, useTracks: value, maxHikingDifficulty: 1
+        ))
+        #expect(Set(try pedestrian(in: request).keys) == ["walking_speed", "max_hiking_difficulty"])
+    }
+
     @Test(arguments: [Double.nan, 0])
     func rejectsInvalidWalkingSpeedWithoutSending(_ metresPerSecond: Double) async {
         let recorder = RequestRecorder()

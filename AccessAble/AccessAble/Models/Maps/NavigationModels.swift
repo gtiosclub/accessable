@@ -144,8 +144,8 @@ struct RouteOptions: Equatable, Sendable {
     /// the route ahead. Only that service reads them; a plain routing service ignores them.
     var reports: [Report] = []
 
-    // Valhalla pedestrian costing preferences. Nil leaves Valhalla's default; Valhalla's client clamps the rest to
-    // the ranges noted.
+    // Valhalla pedestrian costing preferences. Nil, NaN, or infinite leaves Valhalla's default; Valhalla's client
+    // clamps the rest to the ranges noted.
     /// Seconds added for each flight of steps, 0–43200.
     var stepPenalty: Double?
     /// Seconds added for each elevator, 0–43200.
@@ -154,10 +154,13 @@ struct RouteOptions: Equatable, Sendable {
     var useHills: Double?
     /// 0 doesn't mind unlit ways, 1 prefers lit ones.
     var useLit: Double?
-    /// Multipliers on the cost of walkways, sidewalks, alleys, and driveways, 0.1–100000.
+    /// Multiplier on the cost of walkways, 0.1–100000.
     var walkwayFactor: Double?
+    /// Multiplier on the cost of sidewalks, 0.1–100000.
     var sidewalkFactor: Double?
+    /// Multiplier on the cost of alleys, 0.1–100000.
     var alleyFactor: Double?
+    /// Multiplier on the cost of driveways, 0.1–100000.
     var drivewayFactor: Double?
     /// Seconds added for entering a service road, 0–43200.
     var servicePenalty: Double?
