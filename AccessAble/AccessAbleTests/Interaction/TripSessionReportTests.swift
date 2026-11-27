@@ -225,7 +225,6 @@ struct TripSessionReportTests {
         #expect(report.coordinate == start)
         #expect(report.createdAt == now)
         #expect(report.expiresAt.timeIntervalSince(report.createdAt) == ReportKind.construction.lifetime)
-        #expect(report.reporterID == PlaceholderAuthService.sampleUser.id)
         #expect(await announcements.said == ["Reported construction. Thank you."])
     }
 
@@ -412,11 +411,11 @@ struct TripSessionReportTests {
     // MARK: Report questions
 
     private func question(
-        _ kind: ReportKind = .blockedPath, by reporter: String = "neighbour", askedAt: Date = now
+        _ kind: ReportKind = .blockedPath, isOwn: Bool = false, askedAt: Date = now
     ) -> ReportQuestion {
         ReportQuestion(report: Report(
             id: "passed", kind: kind, coordinate: start, createdAt: now.addingTimeInterval(-3600),
-            expiresAt: now.addingTimeInterval(3600), reporterID: reporter
+            expiresAt: now.addingTimeInterval(3600), isOwn: isOwn
         ), askedAt: askedAt)
     }
 
@@ -582,7 +581,7 @@ struct TripSessionReportTests {
     func theUsersOwnReportIsNotAskedAbout() async {
         let session = await makeSession(walked: 10, reports: CapturingReports())
 
-        await session.askAbout(question(by: PlaceholderAuthService.sampleUser.id))
+        await session.askAbout(question(isOwn: true))
 
         #expect(session.reportQuestion == nil)
         #expect(await announcements.said.isEmpty)
@@ -810,8 +809,7 @@ struct TripSessionReportTests {
     private func mapReports() -> [Report] {
         [("ahead", ReportKind.blockedPath, TripWalk.point(on: route, along: 60)),
          ("east", .construction, TripWalk.destination(from: start, bearing: 90, distance: 50))].map { id, kind, at in
-            Report(id: id, kind: kind, coordinate: at, createdAt: now, expiresAt: now.addingTimeInterval(3600),
-                   reporterID: "user-1")
+            Report(id: id, kind: kind, coordinate: at, createdAt: now, expiresAt: now.addingTimeInterval(3600))
         }
     }
 

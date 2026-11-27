@@ -77,7 +77,7 @@ struct SavedTripStoreTests {
         var trip = harness.trip()
         var route = trip.route
         route.unavoidedReports = [Report(id: "r1", kind: .blockedPath, coordinate: MapsSamples.origin,
-                                         createdAt: .now, expiresAt: .now, reporterID: "someone")]
+                                         createdAt: .now, expiresAt: .now)]
         trip.route = route
         harness.store.save(trip)
         _ = harness.store.load()

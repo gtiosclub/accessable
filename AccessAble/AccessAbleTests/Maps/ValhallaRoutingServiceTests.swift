@@ -91,10 +91,13 @@ struct ValhallaRoutingServiceTests {
         return try #require(JSONSerialization.jsonObject(with: body) as? [String: Any])
     }
 
-    private func walkingSpeed(in request: URLRequest) throws -> Double {
+    private func pedestrian(in request: URLRequest) throws -> [String: Any] {
         let costingOptions = try #require(jsonBody(of: request)["costing_options"] as? [String: Any])
-        let pedestrian = try #require(costingOptions["pedestrian"] as? [String: Any])
-        return try #require(pedestrian["walking_speed"] as? Double)
+        return try #require(costingOptions["pedestrian"] as? [String: Any])
+    }
+
+    private func walkingSpeed(in request: URLRequest) throws -> Double {
+        try #require(pedestrian(in: request)["walking_speed"] as? Double)
     }
 
     @Test
@@ -196,6 +199,80 @@ struct ValhallaRoutingServiceTests {
     func clampsWalkingSpeedToValhallaRange(metresPerSecond: Double, expectedKilometresPerHour: Double) async throws {
         let request = try await sentRequest(options: RouteOptions(walkingSpeed: metresPerSecond))
         #expect(try walkingSpeed(in: request) == expectedKilometresPerHour)
+    }
+
+    @Test
+    func defaultOptionsSendOnlyWalkingSpeed() async throws {
+        let request = try await sentRequest()
+        #expect(Set(try pedestrian(in: request).keys) == ["walking_speed"])
+    }
+
+    @Test
+    func encodesEachPedestrianPreference() async throws {
+        let request = try await sentRequest(options: RouteOptions(
+            stepPenalty: 3600, elevatorPenalty: 120, useHills: 0.2, useLit: 0.8,
+            walkwayFactor: 0.9, sidewalkFactor: 0.8, alleyFactor: 2, drivewayFactor: 5,
+            servicePenalty: 60, serviceFactor: 3, useTracks: 0.1, maxHikingDifficulty: 1
+        ))
+
+        let pedestrian = try pedestrian(in: request)
+        let expected: [String: Double] = [
+            "step_penalty": 3600, "elevator_penalty": 120, "use_hills": 0.2, "use_lit": 0.8,
+            "walkway_factor": 0.9, "sidewalk_factor": 0.8, "alley_factor": 2, "driveway_factor": 5,
+            "service_penalty": 60, "service_factor": 3, "use_tracks": 0.1, "max_hiking_difficulty": 1,
+        ]
+        #expect(Set(pedestrian.keys) == Set(expected.keys).union(["walking_speed"]))
+        for (key, value) in expected {
+            #expect(pedestrian[key] as? Double == value, "\(key)")
+        }
+    }
+
+    @Test
+    func leavesOutUnsetPreferences() async throws {
+        let request = try await sentRequest(options: RouteOptions(stepPenalty: 3600))
+        #expect(Set(try pedestrian(in: request).keys) == ["walking_speed", "step_penalty"])
+        let data = try #require(request.httpBody)
+        let body = try #require(String(data: data, encoding: .utf8))
+        #expect(!body.contains("null"))
+    }
+
+    @Test
+    func clampsPreferencesToValhallaRanges() async throws {
+        let low = try pedestrian(in: try await sentRequest(options: RouteOptions(
+            stepPenalty: -1, elevatorPenalty: -1, useHills: -1, useLit: -1,
+            walkwayFactor: 0, sidewalkFactor: 0, alleyFactor: 0, drivewayFactor: 0,
+            servicePenalty: -1, serviceFactor: 0, useTracks: -1, maxHikingDifficulty: -1
+        )))
+        let high = try pedestrian(in: try await sentRequest(options: RouteOptions(
+            stepPenalty: 1e9, elevatorPenalty: 1e9, useHills: 2, useLit: 2,
+            walkwayFactor: 1e9, sidewalkFactor: 1e9, alleyFactor: 1e9, drivewayFactor: 1e9,
+            servicePenalty: 1e9, serviceFactor: 1e9, useTracks: 2, maxHikingDifficulty: 7
+        )))
+
+        for key in ["step_penalty", "elevator_penalty", "service_penalty"] {
+            #expect(low[key] as? Double == 0, "\(key)")
+            #expect(high[key] as? Double == 43_200, "\(key)")
+        }
+        for key in ["use_hills", "use_lit", "use_tracks"] {
+            #expect(low[key] as? Double == 0, "\(key)")
+            #expect(high[key] as? Double == 1, "\(key)")
+        }
+        for key in ["walkway_factor", "sidewalk_factor", "alley_factor", "driveway_factor", "service_factor"] {
+            #expect(low[key] as? Double == 0.1, "\(key)")
+            #expect(high[key] as? Double == 100_000, "\(key)")
+        }
+        #expect(low["max_hiking_difficulty"] as? Int == 0)
+        #expect(high["max_hiking_difficulty"] as? Int == 6)
+    }
+
+    @Test(arguments: [Double.nan, .infinity, -.infinity])
+    func leavesOutNonFinitePreferences(_ value: Double) async throws {
+        let request = try await sentRequest(options: RouteOptions(
+            stepPenalty: value, elevatorPenalty: value, useHills: value, useLit: value,
+            walkwayFactor: value, sidewalkFactor: value, alleyFactor: value, drivewayFactor: value,
+            servicePenalty: value, serviceFactor: value, useTracks: value, maxHikingDifficulty: 1
+        ))
+        #expect(Set(try pedestrian(in: request).keys) == ["walking_speed", "max_hiking_difficulty"])
     }
 
     @Test(arguments: [Double.nan, 0])

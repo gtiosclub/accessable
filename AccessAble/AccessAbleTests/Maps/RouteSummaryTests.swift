@@ -97,7 +97,7 @@ struct RouteSummaryTests {
     private func report(_ kind: ReportKind, expiresIn seconds: TimeInterval = 3600) -> Report {
         Report(id: UUID().uuidString, kind: kind,
                coordinate: TripWalk.destination(from: start, bearing: 0, distance: 50),
-               createdAt: .now, expiresAt: .now.addingTimeInterval(seconds), reporterID: "user-1")
+               createdAt: .now, expiresAt: .now.addingTimeInterval(seconds))
     }
 
     /// The issue's example.

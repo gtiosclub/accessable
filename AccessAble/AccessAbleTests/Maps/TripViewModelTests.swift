@@ -476,8 +476,7 @@ struct TripStartTests {
     func aRouteThatPassesAReportWarnsOfIt() async {
         var route = plannedRoute
         route.unavoidedReports = [Report(id: "blocked-1", kind: .blockedPath, coordinate: library.coordinate,
-                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600),
-                                         reporterID: "user-1")]
+                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600))]
         let screen = TripScreen(route: route)
         await screen.plan()
 
@@ -491,8 +490,7 @@ struct TripStartTests {
     func aRefreshForStartLeavesTheWarningToTheTrip() async {
         var route = plannedRoute
         route.unavoidedReports = [Report(id: "blocked-1", kind: .blockedPath, coordinate: library.coordinate,
-                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600),
-                                         reporterID: "user-1")]
+                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600))]
         let screen = TripScreen(route: route)
         await screen.plan()
         while await screen.announcements.texts.isEmpty { await Task.yield() }

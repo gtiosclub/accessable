@@ -6,6 +6,9 @@ struct CallHelpView: View {
     @Environment(AppRouter.self) private var router
     @Environment(AppViewModel.self) private var app
     @State private var tab: Tab = .live
+    /// Who is online now, from the volunteer directory (sample volunteers without Firebase).
+    @State private var liveVolunteers: [Volunteer] = []
+    @State private var hasLoadedLive = false
 
     enum Tab: String, CaseIterable {
         case live = "Live"
@@ -19,7 +22,12 @@ struct CallHelpView: View {
                 tabPicker
                 switch tab {
                 case .live:
-                    volunteerSection("Currently Active", volunteers: SampleContent.activeVolunteers)
+                    volunteerSection("Currently Active", volunteers: liveVolunteers)
+                    if hasLoadedLive && liveVolunteers.isEmpty {
+                        Text("No volunteers are online right now.")
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                    }
                 case .history:
                     volunteerSection("Saved", volunteers: SampleContent.savedVolunteers)
                     volunteerSection("History", volunteers: SampleContent.recentVolunteers)
@@ -31,6 +39,12 @@ struct CallHelpView: View {
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
+        .task {
+            for await volunteers in app.services.volunteers.onlineVolunteers() {
+                liveVolunteers = volunteers
+                hasLoadedLive = true
+            }
+        }
     }
 
     private var tabPicker: some View {
@@ -91,7 +105,7 @@ private struct VolunteerRow: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(volunteer.name)
                         .font(.title3.bold())
-                    Text(volunteer.availableUntil)
+                    Text(volunteer.availableUntil.isEmpty ? "Online now" : volunteer.availableUntil)
                         .font(.subheadline)
                 }
                 .foregroundStyle(.white)

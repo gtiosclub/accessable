@@ -107,8 +107,7 @@ struct ReportAwareRoutingServiceTests {
             coordinate: coordinate,
             area: area,
             createdAt: .now,
-            expiresAt: .now.addingTimeInterval(3600),
-            reporterID: "user-1"
+            expiresAt: .now.addingTimeInterval(3600)
         )
     }
 
@@ -156,7 +155,9 @@ struct ReportAwareRoutingServiceTests {
     /// REPORT-6's objective: a report voted gone ends now, and the next route no longer goes around it.
     @Test
     func aReportVotedGoneNoLongerShapesTheRoute() async throws {
-        let reports = PlaceholderReportService()
+        // reported signed out, so the user signed in later may vote on it
+        let auth = PlaceholderAuthService(signedIn: false)
+        let reports = PlaceholderReportService(auth: auth)
         var denied = report(at: corner)
         // old enough for a "no", with one already
         denied.createdAt = .now.addingTimeInterval(-3600)
@@ -167,6 +168,7 @@ struct ReportAwareRoutingServiceTests {
         let service = ReportAwareRoutingService(base: base, reports: reports, clock: clock)
         _ = try await route(with: service, base: base, clock: clock)
 
+        _ = try await auth.signIn(email: "voter@example.com", password: "password")
         try await reports.confirm(denied.id, isStillPresent: false)
         let after = try await route(with: service, base: base, clock: clock)
 
@@ -263,6 +265,20 @@ struct ReportAwareRoutingServiceTests {
         #expect(options.map(\.excludeLocations) == [[otherCorner, corner], [otherCorner]])
         #expect(options.allSatisfy { $0.walkingSpeed == 0.8 })
         #expect(actual.unavoidedReports == [report])
+    }
+
+    @Test
+    func keepsPreferencesThroughTheRetryWithoutReports() async throws {
+        let base = RoutingServiceFake([.failure(.noRouteFound), .success(try route(via: corner))])
+        let clock = ManualClock()
+        let own = RouteOptions(stepPenalty: 3600, useHills: 0, servicePenalty: 60, serviceFactor: 3)
+
+        _ = try await route(with: service(.reports([report(at: corner)]), base: base, clock: clock), base: base,
+                            clock: clock, retries: 1, options: own)
+
+        var excluding = own
+        excluding.excludeLocations = [corner]
+        #expect(await base.receivedOptions == [excluding, own])
     }
 
     /// Only the reports the fallback route actually passes are warned about.
