@@ -2518,6 +2518,112 @@ struct TripManagerPreferencesTests {
     }
 }
 
+/// `cornerRoute`, with a step of each kind in `kinds` at the corner after the turn.
+private func cornerRoute(with kinds: [ManeuverKind]) throws -> NavigationRoute {
+    let route = try cornerRoute()
+    let added = kinds.map { RouteStep(kind: $0, coordinateIndex: 1, instruction: "Step", spokenInstruction: "Step") }
+    return try NavigationRoute(coordinates: route.coordinates,
+                               steps: route.steps.dropLast() + added + [route.steps[route.steps.count - 1]],
+                               estimatedDuration: route.estimatedDuration)
+}
+
+/// `eastRoute`, with a step of each kind in `kinds` 60 m along, past where setting off would prepare for it.
+private func eastRoute(from origin: GeoCoordinate, with kinds: [ManeuverKind]) throws -> NavigationRoute {
+    let coordinates = [origin, TripWalk.destination(from: origin, bearing: 90, distance: 60),
+                       TripWalk.destination(from: origin, bearing: 90, distance: 80)]
+    let added = kinds.map { RouteStep(kind: $0, coordinateIndex: 1, instruction: "Step", spokenInstruction: "Step") }
+    return try NavigationRoute(coordinates: coordinates, steps: [
+        RouteStep(kind: .depart, coordinateIndex: 0, instruction: "Head east.", spokenInstruction: "Head east."),
+    ] + added + [
+        RouteStep(kind: .arrive, coordinateIndex: 2, instruction: "Arrive", spokenInstruction: "You have arrived."),
+    ], estimatedDuration: 60)
+}
+
+private let oneFlight = "No step-free route found. This route has 1 flight of stairs."
+private let oneElevator = "No route without elevators found. This route uses 1 elevator."
+private let avoidingBoth = RoutePreferences(avoidStairs: true, avoidElevators: true)
+
+/// A route the preferences couldn't keep from stairs or elevators says so first.
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerUnhonouredPreferenceTests {
+    private func startText(_ kinds: [ManeuverKind], preferences: RoutePreferences) async throws -> String {
+        let harness = try Harness(route: try cornerRoute(with: kinds))
+        await harness.start(preferences: preferences)
+        await harness.waitForSleepers(2)
+        harness.clock.advance(by: 0.75)
+        return try #require(await harness.engine.waitForCount(1).first).text
+    }
+
+    @Test(arguments: [
+        ([ManeuverKind.stairs], stepFree, "\(oneFlight) "),
+        ([.stairs, .stairs], stepFree, "No step-free route found. This route has 2 flights of stairs. "),
+        ([.elevator], RoutePreferences(avoidElevators: true), "\(oneElevator) "),
+        ([.elevator, .elevator], RoutePreferences(avoidElevators: true),
+         "No route without elevators found. This route uses 2 elevators. "),
+        ([.elevator, .stairs], avoidingBoth, "\(oneFlight) \(oneElevator) "),
+        ([.stairs, .elevator], RoutePreferences(), ""),
+        ([.stairs], RoutePreferences(avoidElevators: true), ""),
+        ([.elevator], stepFree, ""),
+        ([], avoidingBoth, ""),
+    ])
+    func theStartSaysWhatTheRouteStillHas(_ kinds: [ManeuverKind], _ preferences: RoutePreferences,
+                                          _ warning: String) async throws {
+        #expect(try await startText(kinds, preferences: preferences)
+            == "Starting directions to Library, about 160 metres. \(warning)\(setOff)")
+    }
+
+    @Test
+    func aRerouteOntoSuchARouteWarns() async throws {
+        let walked = TripWalk.distances(from: 0, to: 20).last ?? 0
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked)
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: origin, with: [.elevator, .stairs]))])
+        await harness.start(preferences: avoidingBoth)
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        #expect(await harness.engine.texts.filter { $0.hasPrefix("New route.") }
+            == ["New route. \(oneFlight) \(oneElevator) \(setOff)"])
+    }
+
+    @Test
+    func aRerouteOntoSuchARouteWithThePreferenceOffDoesNotWarn() async throws {
+        let walked = TripWalk.distances(from: 0, to: 20).last ?? 0
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked)
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: origin, with: [.stairs]))])
+        await harness.start()
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        await harness.router.respond()
+
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
+        #expect(await harness.engine.texts.filter { $0.hasPrefix("New route.") } == [newRouteSpeech])
+    }
+
+    @Test
+    func aResumedTripOnSuchARouteWarns() async throws {
+        let straight = try longStraightRoute()
+        var steps = straight.steps
+        steps.insert(RouteStep(kind: .stairs, coordinateIndex: 20, instruction: "Take the stairs.",
+                               spokenInstruction: "Take the stairs."), at: 2)
+        let route = try NavigationRoute(coordinates: straight.coordinates, steps: steps,
+                                        estimatedDuration: straight.estimatedDuration)
+        let harness = try Harness(route: route)
+        await harness.resume(atStep: 1, preferences: stepFree)
+        await harness.waitForSleepers(2)
+
+        await harness.fix(harness.point(300))
+
+        #expect(try #require(await harness.engine.waitForCount(1).first).text
+            == "Resuming directions to Library, about 160 metres. \(oneFlight) In about 100 metres, turn right onto Ferst Drive.")
+    }
+}
+
 // MARK: Reports during a trip
 
 private let reportReroute = "New obstacle reported ahead. Finding a new route."
