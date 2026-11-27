@@ -40,6 +40,20 @@ enum ValhallaGeometryDecoder {
     private static func decodeManeuverLegs(_ response: Response) throws -> [DecodedLeg] {
         guard response.trip.status == 0 else { throw DecodeError.unsuccessfulRoute }
         guard !response.trip.legs.isEmpty else { throw DecodeError.missingGeometry }
+
+        // Drop only the generic footpath label, keeping the action, heading, distance and joined cues.
+        let unnamedWalkway = #/
+            ((?:^|\.\h(?:Then\h)?)
+              (?i:(?:Walk|Head)\h(?:north(?:east|west)?|south(?:east|west)?|east|west)
+                 |Continue
+                 |(?:Turn|Bear|Keep)\h(?:(?:slight(?:ly)?|sharp(?:ly)?)\h)?(?:left|right|straight)))
+            \h(?:on(?:to)?|to\h take|to\h stay\h on)\h the\h walkway(?=$|[.,;!?]|\h for\h\d)
+            /#
+        func withoutUnnamedWalkway(_ text: String) -> String {
+            guard text.contains(" the walkway") else { return text }
+            return text.replacing(unnamedWalkway) { String($0.output.1) }
+        }
+
         return try response.trip.legs.map { leg in
             let coordinates = try decodePolyline(leg.shape)
             guard let maneuvers = leg.maneuvers, !maneuvers.isEmpty else {
@@ -58,12 +72,13 @@ enum ValhallaGeometryDecoder {
                 previousIndex = maneuver.beginShapeIndex
                 let verbal = maneuver.verbalPreTransitionInstruction?
                     .trimmingCharacters(in: .whitespacesAndNewlines)
+                let instruction = withoutUnnamedWalkway(maneuver.instruction)
+                let spoken = if let verbal, !verbal.isEmpty { withoutUnnamedWalkway(verbal) } else { instruction }
                 return RouteStep(
                     kind: try maneuverKind(for: maneuver.type),
                     coordinateIndex: maneuver.beginShapeIndex,
-                    instruction: maneuver.instruction,
-                    spokenInstruction: RouteStep.withLowercaseThen(verbal.flatMap { $0.isEmpty ? nil : $0 }
-                        ?? maneuver.instruction),
+                    instruction: instruction,
+                    spokenInstruction: RouteStep.withLowercaseThen(spoken),
                     announcesNextStep: maneuver.verbalMultiCue ?? false
                 )
             }
