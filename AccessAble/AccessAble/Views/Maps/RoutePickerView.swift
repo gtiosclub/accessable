@@ -70,6 +70,7 @@ struct RoutePickerView: View {
             .padding(.top, 4)
         Button("Pick Route") {
             guard let planned = details.plannedRoute else { return }
+            Haptics.play(.success)
             router.push(.trip(TripPlan(place: place, route: nil, isRecording: false, origin: origin, plannedRoute: planned)))
         }
         .buttonStyle(.pill(.primary))

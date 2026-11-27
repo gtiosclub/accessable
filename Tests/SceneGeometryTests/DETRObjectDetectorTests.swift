@@ -5,7 +5,7 @@ import Testing
 
 /// Builds a synthetic (queries, classes)-shaped `MLMultiArray`, or (1, queries, classes)
 /// when `batched` — D-FINE's runtime shape has that leading 1 despite its spec not
-/// declaring one, and `dfineDetections` is expected to handle both.
+/// declaring one, and `detrDetections` is expected to handle both.
 private func confidenceArray(_ rows: [[Float]], batched: Bool) throws -> MLMultiArray {
     let queries = rows.count
     let classes = rows.first?.count ?? 0
@@ -40,14 +40,14 @@ private func coordinatesArray(_ rows: [[Float]], batched: Bool) throws -> MLMult
 /// A tiny two-class vocabulary so tests don't need all 80 COCO labels.
 private let testLabels = ["chair", "person"]
 
-@Suite("T31 — decoding D-FINE's raw (no-NMS) output")
-struct DFineObjectDetectorTests {
+@Suite("T31 — decoding DETR-style raw (no-NMS) output")
+struct DETRObjectDetectorTests {
     @Test("picks the highest-scoring class and converts cxcywh to the app's top-left box", arguments: [false, true])
     func decodesOneBox(batched: Bool) throws {
         let confidence = try confidenceArray([[0.9, 0.1]], batched: batched)
         let coordinates = try coordinatesArray([[0.5, 0.4, 0.2, 0.2]], batched: batched)
 
-        let detections = dfineDetections(
+        let detections = detrDetections(
             confidence: confidence, coordinates: coordinates,
             minimumConfidence: 0.5, classLabels: testLabels
         )
@@ -67,7 +67,7 @@ struct DFineObjectDetectorTests {
         let confidence = try confidenceArray([[0.9, 0.1], [0.4, 0.3]], batched: true)
         let coordinates = try coordinatesArray([[0.5, 0.5, 0.1, 0.1], [0.1, 0.1, 0.1, 0.1]], batched: true)
 
-        let detections = dfineDetections(
+        let detections = detrDetections(
             confidence: confidence, coordinates: coordinates,
             minimumConfidence: 0.5, classLabels: testLabels
         )
@@ -79,7 +79,7 @@ struct DFineObjectDetectorTests {
         let confidence = try confidenceArray([[0.1, 0.9]], batched: true)
         let coordinates = try coordinatesArray([[0.5, 0.5, 0.1, 0.1]], batched: true)
 
-        let detections = dfineDetections(
+        let detections = detrDetections(
             confidence: confidence, coordinates: coordinates,
             minimumConfidence: 0.5, ignoredLabels: ["person"], classLabels: testLabels
         )
@@ -94,7 +94,7 @@ struct DFineObjectDetectorTests {
             batched: true
         )
 
-        let detections = dfineDetections(
+        let detections = detrDetections(
             confidence: confidence, coordinates: coordinates,
             minimumConfidence: 0.5, classLabels: testLabels
         )
@@ -110,7 +110,7 @@ struct DFineObjectDetectorTests {
             batched: true
         )
 
-        let detections = dfineDetections(
+        let detections = detrDetections(
             confidence: confidence, coordinates: coordinates,
             minimumConfidence: 0.5, classLabels: testLabels
         )
@@ -122,7 +122,7 @@ struct DFineObjectDetectorTests {
         let confidence = try confidenceArray([[0.9, 0]], batched: true)
         let coordinates = try coordinatesArray([[0.5, 0.5, 0.1, 0.1]], batched: true)
 
-        let detections = dfineDetections(
+        let detections = detrDetections(
             confidence: confidence, coordinates: coordinates,
             minimumConfidence: 0.5, classLabels: testLabels
         )

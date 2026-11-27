@@ -45,7 +45,7 @@ enum DangerLevel: Int, Codable, CaseIterable, Comparable, Sendable {
         self = Self.vehicles.contains(label.lowercased()) ? .critical : .medium
     }
 
-    private static let vehicles: Set<String> = ["bicycle", "bus", "car", "motorcycle", "train", "truck"]
+    private static let vehicles: Set<String> = ["bicycle", "bus", "car", "motorcycle", "train", "truck", "scooter"]
 
     private static let byLabel: [String: DangerLevel] = {
         var levels: [String: DangerLevel] = [:]
@@ -53,6 +53,12 @@ enum DangerLevel: Int, Codable, CaseIterable, Comparable, Sendable {
         for label in ["fire hydrant", "parking meter", "stop sign", "traffic light", "wall", Detection.obstacleLabel] {
             levels[label] = .high
         }
+        // Street furniture from the outdoor model: hard, often thin, and walked into at speed.
+        for label in ["pole", "bollard", "sign post", "tree", "trash can", "traffic cone", "barrier",
+                      "bike rack", "stairs"] {
+            levels[label] = .high
+        }
+        for label in ["stroller", "wheelchair"] { levels[label] = .medium }
         for label in ["bench", "chair", "couch", "dining table", "bed", "potted plant", "suitcase",
                       "backpack", "handbag", "person", "dog", "toilet", "refrigerator", "tv", "crosswalk"] {
             levels[label] = .medium

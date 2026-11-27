@@ -136,8 +136,9 @@ struct ApproachAnnouncer: Sendable {
     private func urgency(ofLevel level: Int) -> (priority: AnnouncementPriority, haptic: HapticID) {
         switch level {
         case 2: (.critical, .stop)
-        case 1: (.high, .attention)
-        default: (.normal, .attention)
+        // Obstruction Ahead → Warning: all three levels play the warning haptic.
+        case 1: (.high, .obstacleNearer)
+        default: (.normal, .obstacleNear)
         }
     }
 

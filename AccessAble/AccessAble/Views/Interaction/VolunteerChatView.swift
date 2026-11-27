@@ -59,6 +59,7 @@ struct VolunteerChatView: View {
             if isOnline {
                 CircleIconButton(systemImage: "phone.fill", label: "Video call \(volunteer.name)", diameter: 44) {
                     // The real call flow: consent screen first, then rings this volunteer.
+                    Haptics.play(.medium)
                     router.push(.call(volunteer))
                 }
             }
@@ -140,8 +141,8 @@ struct ChatConversationView: View {
                 .foregroundStyle(.white)
                 .lineLimit(1...4)
                 .submitLabel(.send)
-                .onSubmit { Task { await model.send() } }
-            Button { Task { await model.send() } } label: {
+                .onSubmit { send() }
+            Button { send() } label: {
                 Image(systemName: "paperplane")
                     .font(.title2)
                     .foregroundStyle(.white)
@@ -157,6 +158,12 @@ struct ChatConversationView: View {
         .overlay(Capsule().strokeBorder(.white, lineWidth: 1.5))
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
+    }
+
+    private func send() {
+        guard model.canSend else { return }
+        Haptics.play(.light)
+        Task { await model.send() }
     }
 }
 

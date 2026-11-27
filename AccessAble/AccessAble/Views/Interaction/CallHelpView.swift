@@ -51,6 +51,7 @@ struct CallHelpView: View {
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
+        .onChange(of: tab) { Haptics.play(.selection) }
         .task {
             if model == nil {
                 model = CallHelpViewModel(services: app.services)
@@ -60,6 +61,18 @@ struct CallHelpView: View {
             async let me: Void = profile?.load() ?? ()
             _ = await (lists, me)
         }
+    }
+}
+
+private extension AppRouter {
+    func call(_ volunteer: Volunteer) {
+        Haptics.play(.medium)
+        push(.call(volunteer))
+    }
+
+    func message(_ volunteer: Volunteer) {
+        Haptics.play(.selection)
+        push(.chat(volunteer))
     }
 }
 
@@ -88,8 +101,8 @@ private struct LiveTab: View {
     private func volunteerCard(_ volunteers: [Volunteer]) -> some View {
         CardGroup(items: volunteers) { volunteer in
             PersonRow(userID: volunteer.id, name: volunteer.name, subtitle: volunteer.availableUntil, isOnline: true,
-                      onCall: { router.push(.call(volunteer)) },
-                      onMessage: { router.push(.chat(volunteer)) })
+                      onCall: { router.call(volunteer) },
+                      onMessage: { router.message(volunteer) })
         }
     }
 }
@@ -115,9 +128,9 @@ private struct HistoryTab: View {
                     name: row.name, subtitle: row.call.summary,
                     isOnline: row.volunteer.map(model.isOnline),
                     onCall: row.volunteer.flatMap { volunteer in
-                        model.isOnline(volunteer) ? { router.push(.call(volunteer)) } : nil
+                        model.isOnline(volunteer) ? { router.call(volunteer) } : nil
                     },
-                    onMessage: row.volunteer.map { volunteer in { router.push(.chat(volunteer)) } }
+                    onMessage: row.volunteer.map { volunteer in { router.message(volunteer) } }
                 )
                 .accessibilityLabel("\(row.name), \(row.call.spokenSummary)")
             }
@@ -128,8 +141,8 @@ private struct HistoryTab: View {
         let online = model.isOnline(volunteer)
         return PersonRow(
             userID: volunteer.id, name: volunteer.name, subtitle: volunteer.availableUntil, isOnline: online,
-            onCall: online ? { router.push(.call(volunteer)) } : nil,
-            onMessage: { router.push(.chat(volunteer)) }
+            onCall: online ? { router.call(volunteer) } : nil,
+            onMessage: { router.message(volunteer) }
         )
     }
 }

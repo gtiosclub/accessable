@@ -89,8 +89,8 @@ struct PlaceSearchView: View {
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
-        .sensoryFeedback(.selection, trigger: search.category)
-        .sensoryFeedback(.selection, trigger: search.origin)
+        // Choosing a category; follows the Haptics setting.
+        .onChange(of: search.category) { Haptics.play(.selection) }
         .task { await search.start() }
         .onDisappear { search.stop() }
         // Result count, "no results" and errors, spoken as in the old search screen.
@@ -288,6 +288,7 @@ struct PlaceSearchView: View {
     private var originChoices: some View {
         VStack(alignment: .leading, spacing: 14) {
             Button {
+                Haptics.play(.selection)
                 search.chooseOrigin(.myLocation)
                 focusedField = .destination
             } label: {
@@ -325,6 +326,7 @@ struct PlaceSearchView: View {
                     distance: search.distanceText(to: saved),
                     hint: "Plans from here. A live trip still starts where you are.",
                     action: {
+                        Haptics.play(.selection)
                         search.chooseOrigin(.place(saved.asSamplePlace()))
                         focusedField = .destination
                     },
@@ -443,6 +445,7 @@ struct PlaceSearchView: View {
                     isResolving: search.isResolving(suggestion),
                     spokenLabel: search.spokenLabel(for: suggestion, at: index)
                 ) {
+                    Haptics.play(.selection)
                     search.select(suggestion)
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
@@ -468,6 +471,11 @@ struct PlaceSearchView: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.red.opacity(0.25), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func selectDestination(_ place: SamplePlace) {
+        Haptics.play(.selection)
+        router.push(.place(place, origin: search.origin.place))
     }
 
     // MARK: - Saved and recent
@@ -498,6 +506,7 @@ struct PlaceSearchView: View {
                         highlight: highlight,
                         distance: search.distanceText(to: saved),
                         action: {
+                            Haptics.play(.selection)
                             router.push(.savedPlace(saved, origin: search.origin.place))
                         },
                         onRename: { beginRename(saved) },
@@ -577,7 +586,7 @@ struct PlaceSearchView: View {
                         highlight: highlight,
                         distance: search.distanceText(to: place)
                     ) {
-                        router.push(.place(place.asSamplePlace(), origin: search.origin.place))
+                        selectDestination(place.asSamplePlace())
                     }
                 }
                 if places.count > Self.collapsedCount {

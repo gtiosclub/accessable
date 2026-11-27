@@ -11,10 +11,10 @@ import Vision
 //
 // FLAG (T31): this class is no longer the bundled default. Its model, YOLO11n, was AGPL-3.0
 // (Ultralytics) — fine for the club build, not for public distribution — and has been
-// replaced by `DFineObjectDetector`, which has no NMS stage of its own and so needed a
+// replaced by `DETRObjectDetector`, which has no NMS stage of its own and so needed a
 // different class rather than just a new `modelName` here. `ObjectDetector` is kept, working
 // and tested, for the day a permissively licensed model with built-in NMS shows up; see
-// `DFineObjectDetector.swift`'s header for the model actually in use and why.
+// `DETRObjectDetector.swift`'s header for the model actually in use and why.
 
 /// Anything shaped like a Vision object-recognition result, so the conversion below can
 /// be tested without running a model.
@@ -29,12 +29,15 @@ extension VNRecognizedObjectObservation: RecognizedObjectObservation {
     var topLabel: String? { labels.first?.identifier }
 }
 
-/// COCO classes a walker can collide with or trip over. People are left out: they are
-/// detected by T14 and, because they move, handled by tracking rather than as fixed hazards.
-let hazardLabels: Set<String> = [
-    "bench", "bicycle", "car", "chair", "couch", "dining table", "fire hydrant",
+/// Classes a walker can collide with or trip over. People are left out: they are detected
+/// by T14 and, because they move, handled by tracking rather than as fixed hazards.
+///
+/// The COCO ones, plus the street furniture a fine-tuned outdoor model names
+/// (`OutdoorClasses.all`, which COCO has no word for).
+let hazardLabels: Set<String> = Set([
+    "bench", "bicycle", "bus", "car", "chair", "couch", "dining table", "fire hydrant",
     "motorcycle", "parking meter", "potted plant", "suitcase", "truck",
-]
+]).union(OutdoorClasses.hazards)
 
 /// Converts recognition results into `Detection`s, dropping anything below
 /// `minimumConfidence`, unlabelled, or in `ignoredLabels`. Highest confidence first.
@@ -75,7 +78,7 @@ func objectDetections(
 }
 
 /// What `ScenePerception` needs from an object-detection model, so a replacement that
-/// doesn't share `ObjectDetector`'s Vision-NMS assumptions (e.g. `DFineObjectDetector`) can
+/// doesn't share `ObjectDetector`'s Vision-NMS assumptions (e.g. `DETRObjectDetector`) can
 /// still drop in — the "swappable object model" this file's header describes, made literal.
 protocol ObjectDetecting: Sendable {
     func detect(pixelBuffer: CVPixelBuffer, orientation: CGImagePropertyOrientation) throws -> [Detection]

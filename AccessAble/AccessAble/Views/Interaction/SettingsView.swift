@@ -207,6 +207,8 @@ struct SettingsView: View {
 
     private var resetCard: some View {
         Button {
+            // Warning, since it asks for confirmation before resetting.
+            Haptics.play(.warning)
             isConfirmingReset = true
         } label: {
             HStack(spacing: 12) {
@@ -257,16 +259,21 @@ struct SettingsView: View {
                 .font(.subheadline)
                 .foregroundStyle(.white)
             Spacer(minLength: 0)
-            moveButton("chevron.up", isEnabled: position > 1) { viewModel.moveAIPriority(category, by: -1) }
-            moveButton("chevron.down", isEnabled: position < order.count) { viewModel.moveAIPriority(category, by: 1) }
+            moveButton("chevron.up", isEnabled: position > 1) { move(category, by: -1) }
+            moveButton("chevron.down", isEnabled: position < order.count) { move(category, by: 1) }
         }
         .frame(maxWidth: .infinity, minHeight: AccessibilityMetrics.minimumTapTarget, alignment: .leading)
         // VoiceOver hears one row and moves it with the rotor's Actions.
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(category.displayName)
         .accessibilityValue("\(position) of \(order.count)")
-        .accessibilityAction(named: "Move up") { viewModel.moveAIPriority(category, by: -1) }
-        .accessibilityAction(named: "Move down") { viewModel.moveAIPriority(category, by: 1) }
+        .accessibilityAction(named: "Move up") { move(category, by: -1) }
+        .accessibilityAction(named: "Move down") { move(category, by: 1) }
+    }
+
+    private func move(_ category: AIInfoCategory, by offset: Int) {
+        Haptics.play(.selection)
+        viewModel.moveAIPriority(category, by: offset)
     }
 
     private func moveButton(_ systemImage: String, isEnabled: Bool, action: @escaping () -> Void) -> some View {
@@ -385,7 +392,7 @@ struct SettingsToggleRow: View {
 
     var body: some View {
         SettingsRow {
-            Toggle(title, isOn: $isOn)
+            Toggle(title, isOn: $isOn.withSelectionHaptic())
                 .font(.body)
                 .foregroundStyle(.white)
                 .tint(SettingsPalette.accent)
@@ -410,7 +417,7 @@ struct SettingsPickerRow<Value: Hashable, Options: View>: View {
         SettingsRow {
             VStack(alignment: .leading, spacing: 2) {
                 LabeledContent {
-                    Picker(title, selection: $selection) { options }
+                    Picker(title, selection: $selection.withSelectionHaptic()) { options }
                         .pickerStyle(.menu)
                         .labelsHidden()
                         .tint(SettingsPalette.accent)
@@ -499,7 +506,10 @@ private struct SettingsOptionRow: View {
     }
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            Haptics.play(.selection)
+            action()
+        } label: {
             HStack(spacing: 12) {
                 Text(title)
                     .font(.subheadline)
