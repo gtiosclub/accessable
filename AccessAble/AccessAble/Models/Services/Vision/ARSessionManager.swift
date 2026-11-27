@@ -174,7 +174,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     private func pinWideCamera(_ configuration: ARConfiguration, from formats: [ARConfiguration.VideoFormat]) {
         guard let format = Self.primaryVideoFormat(in: formats) else { return }
         configuration.videoFormat = format
-        log.notice("camera: back wide-angle, \(Int(format.imageResolution.width), privacy: .public)x\(Int(format.imageResolution.height), privacy: .public) at \(format.framesPerSecond, privacy: .public) fps")
+        log.debug("camera: back wide-angle, \(Int(format.imageResolution.width), privacy: .public)x\(Int(format.imageResolution.height), privacy: .public) at \(format.framesPerSecond, privacy: .public) fps")
     }
 
     /// Turns the classified mesh on or off without restarting tracking. While the session
