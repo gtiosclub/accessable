@@ -724,6 +724,7 @@ struct TripManagerTests {
         await harness.manager.resumeTrip()
         await harness.fix(harness.point(96.6))
         await harness.fix(harness.point(98.0))
+        await waitUntil { await harness.engine.texts.contains("Turn right onto Ferst Drive.") }
         let texts = await harness.engine.texts
         // 4.8 m from the turn on resume says nothing of it; the next fix gives the turn, once
         #expect(Array(texts.dropFirst(2)) == ["Trip resumed.", "Turn right onto Ferst Drive."])
@@ -856,6 +857,8 @@ struct TripManagerTests {
         await harness.goOffRoute(at: 49)
         await harness.router.waitForRequests(1)
         #expect(await harness.router.requests == [harness0Origin])
+        // the request goes out before the fix's cue is submitted
+        await waitUntil { await harness.engine.texts.contains("You're off the route. Finding a new route.") }
         #expect(await harness.engine.texts.last == "You're off the route. Finding a new route.")
     }
 
@@ -1272,7 +1275,7 @@ struct TripManagerTests {
             #expect(await harness.states.current?.nextManeuver?.instruction == "Turn right onto Ferst Drive.")
             #expect(abs((await harness.states.current?.distanceRemaining ?? 0) - 160) < 0.01)
         } else {
-            #expect(await harness.states.current?.phase == .planning)
+            #expect(await harness.states.waitFor { $0.phase == .planning }.phase == .planning)
         }
         #expect(await !harness.engine.texts.contains(newRouteSpeech))
     }
@@ -1538,6 +1541,8 @@ struct TripManagerLandmarkTests {
         await harness.start()
         await harness.walk(from: 0, to: 160)
         #expect(await harness.states.waitFor { $0.phase == .arrived }.phase == .arrived)
+        // the arrived state is published before the arrival is submitted, so wait for the arrival
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("Arriving") } }
         let before = await harness.engine.submitted.count
 
         harness.landmarks.yield(sign("PRICE GILBERT LIBRARY"))
@@ -1711,6 +1716,8 @@ struct TripManagerDirectionTests {
         await harness.start(to: destination)
         // arrives at 151.2 m, walking east
         await harness.walk(from: 0, to: 160, course: cornerCourse)
+        // the arrived state is published before the arrival is submitted, so wait for the arrival
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("Arriving") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("Arriving") } == [expected])
     }
@@ -1720,6 +1727,7 @@ struct TripManagerDirectionTests {
         let harness = try Harness()
         await harness.start(to: Destination(name: "Library", coordinate: harness.point(151.2, lateral: 20)))
         await harness.walk(from: 0, to: 160)
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("Arriving") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("Arriving") } == ["Arriving at Library. Your destination is on the left."])
     }
@@ -1735,6 +1743,7 @@ struct TripManagerDirectionTests {
         for index in 0...11 {
             await harness.fix(harness.point(-1.4 * Double(index)), course: course)
         }
+        await waitUntil { await harness.engine.texts.contains { $0.contains("walking away") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.contains("walking away") } == [expected])
     }
@@ -1763,6 +1772,7 @@ struct TripManagerDirectionTests {
             await harness.fix(TripWalk.destination(from: corner, bearing: 0, distance: metres), accuracy: accuracy,
                               course: course)
         }
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("You may have passed the turn") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("You may have passed the turn") } == [expected])
     }
@@ -1785,6 +1795,7 @@ struct TripManagerDirectionTests {
             await harness.fix(TripWalk.destination(from: corner, bearing: 0, distance: metres), course: 0,
                               source: .ar)
         }
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("You may have passed the turn") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("You may have passed the turn") }
             == ["You may have passed the turn. It is behind you, about 20 metres away."])
@@ -1825,6 +1836,7 @@ struct TripManagerDirectionTests {
         for along in TripWalk.distances(from: 141.4, to: 160) {
             await harness.fix(harness.point(along), accuracy: accuracy, course: 90)
         }
+        await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("Arriving") } }
         let texts = await harness.engine.texts
         #expect(texts.filter { $0.hasPrefix("Arriving") } == [expected])
     }
@@ -2408,8 +2420,9 @@ struct TripManagerResumeTests {
             await harness.fix(harness.point(along, lateral: 80))
         }
         await harness.router.waitForRequests(1)
+        // the request goes out before the fix's cue is submitted
+        await waitUntil { await harness.engine.texts.contains("You're off the route. Finding a new route.") }
         let texts = await harness.engine.texts
-        #expect(texts.contains("You're off the route. Finding a new route."))
         #expect(!texts.contains { $0.contains("walking away from the route") })
         #expect(await harness.states.current?.isOffRoute == true)
     }

@@ -1,4 +1,3 @@
-import CoreLocation
 import Foundation
 import Testing
 @testable import AccessAble
@@ -122,9 +121,9 @@ struct GeoMathDistanceTests {
         GeoCoordinate(latitude: 33.7781, longitude: -84.4040),
         GeoCoordinate(latitude: 33.7710, longitude: -84.3920),
     ])
-    func agreesWithCoreLocationOnCampus(_ end: GeoCoordinate) {
-        let ellipsoid = CLLocation(latitude: campus.latitude, longitude: campus.longitude)
-            .distance(from: CLLocation(latitude: end.latitude, longitude: end.longitude))
+    func agreesWithTheEllipsoidOnCampus(_ end: GeoCoordinate) {
+        let ellipsoid = EllipsoidReference.distance(fromLatitude: campus.latitude, longitude: campus.longitude,
+                                                    toLatitude: end.latitude, longitude: end.longitude)
         let sphere = GeoMath.distance(from: campus, to: end)
         #expect(abs(sphere - ellipsoid) <= 0.003 * ellipsoid)
     }
@@ -134,6 +133,27 @@ struct GeoMathDistanceTests {
         let invalid = GeoCoordinate(latitude: latitude, longitude: 0)
         #expect(GeoMath.distance(from: campus, to: invalid).isNaN)
         #expect(GeoMath.distance(from: invalid, to: campus).isNaN)
+    }
+}
+
+/// The reference against published geodesics, so a mistake in it can't pass `GeoMath` off as right.
+struct EllipsoidReferenceTests {
+    @Test(arguments: [
+        // Flinders Peak to Buninyong, Geoscience Australia's worked example of Vincenty's formula
+        (-(37 + 57 / 60.0 + 3.72030 / 3600), 144 + 25 / 60.0 + 29.52440 / 3600,
+         -(37 + 39 / 60.0 + 10.15610 / 3600), 143 + 55 / 60.0 + 35.38390 / 3600, 54_972.271),
+        // the WGS-84 meridian quadrant, equator to pole
+        (0, 0, 90, 0, 10_001_965.729),
+        // one degree along the equator
+        (0, 0, 0, 1, 111_319.491),
+        // JFK to Heathrow, GeographicLib's example
+        (40.6, -73.8, 51.6, -0.5, 5_551_759.400),
+    ] as [(Double, Double, Double, Double, Double)])
+    func matchesPublishedGeodesics(_ latitude1: Double, _ longitude1: Double,
+                                   _ latitude2: Double, _ longitude2: Double, _ metres: Double) {
+        let distance = EllipsoidReference.distance(fromLatitude: latitude1, longitude: longitude1,
+                                                   toLatitude: latitude2, longitude: longitude2)
+        #expect(isClose(distance, metres, within: 0.001))
     }
 }
 

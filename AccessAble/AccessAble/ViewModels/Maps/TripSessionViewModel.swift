@@ -99,7 +99,7 @@ final class TripSessionViewModel {
     ///   - services: The app's services, for a real trip; nil for front end only.
     ///   - warningLifetime, infoLifetime: How long a red or blue bar stays before it fades.
     ///   - now: The time, for how old a location fix is and when a report is made.
-    ///   - clock: Times a report question's answer window.
+    ///   - clock: Times how long a bar stays and a report question's answer window.
     ///   - mayListenForAnswers: Whether a report question may switch on the microphone: only once speech and the
     ///     microphone are allowed, so a question never brings up a permission prompt mid-walk.
     init(
@@ -180,8 +180,8 @@ final class TripSessionViewModel {
         }
         // Bars fade away rather than pile up: a warning is stale sooner than a direction.
         let lifetime = announcement.kind == .warning ? warningLifetime : infoLifetime
-        Task { [weak self] in
-            try? await Task.sleep(for: lifetime)
+        Task { [weak self, clock] in
+            try? await clock.sleep(for: lifetime)
             self?.announcements.removeAll { $0.id == announcement.id }
         }
     }
