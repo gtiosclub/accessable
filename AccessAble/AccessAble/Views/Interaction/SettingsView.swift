@@ -24,6 +24,11 @@ struct SettingsView: View {
                     SettingsToggleRow("Haptics", isOn: channelBinding(.haptics))
                     SettingsToggleRow("Speech Sounds", isOn: channelBinding(.speech))
                     SettingsToggleRow("Phone Aiming Help", isOn: $viewModel.preferences.phoneAimingHelp)
+                    SettingsToggleRow(
+                        "Point to scan",
+                        isOn: $viewModel.preferences.pointToScan,
+                        hint: "Hold your phone flat on the home screen and turn to hear what's around you"
+                    )
                     SettingsToggleRow("Use Metric for Distance", isOn: $viewModel.preferences.usesMetricUnits)
                 }
                 .padding(.leading, 8)
@@ -401,10 +406,12 @@ private struct SettingsRow<Content: View>: View {
 
 struct SettingsToggleRow: View {
     let title: String
+    var hint: String?
     @Binding var isOn: Bool
 
-    init(_ title: String, isOn: Binding<Bool>) {
+    init(_ title: String, isOn: Binding<Bool>, hint: String? = nil) {
         self.title = title
+        self.hint = hint
         _isOn = isOn
     }
 
@@ -414,6 +421,7 @@ struct SettingsToggleRow: View {
                 .font(.body)
                 .foregroundStyle(.white)
                 .tint(SettingsPalette.accent)
+                .accessibilityHint(hint ?? "")
         }
     }
 }

@@ -8,12 +8,18 @@ import SwiftUI
 /// trip screen, where the switch is, and from Dev Tools.
 struct LandingView: View {
     @Environment(AppRouter.self) private var router
+    @Environment(AppViewModel.self) private var app
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var scanModel: PointToScanViewModel?
     @State private var showsCommands = false
 
     var body: some View {
         VStack(spacing: 12) {
             topBar
             Spacer()
+            if app.preferences.pointToScan {
+                muteScanButton
+            }
             searchButton
         }
         .padding(.horizontal, 24)
@@ -24,6 +30,47 @@ struct LandingView: View {
         .sheet(isPresented: $showsCommands) {
             VoiceCommandsSheet()
         }
+        .onAppear {
+            ensureScanModel()
+            scanModel?.setHomeVisible(true)
+            scanModel?.setEnabled(app.preferences.pointToScan)
+            scanModel?.setSceneActive(scenePhase == .active)
+            scanModel?.startIfNeeded()
+        }
+        .onDisappear {
+            scanModel?.setHomeVisible(false)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            scanModel?.setSceneActive(phase == .active)
+        }
+        .onChange(of: app.preferences.pointToScan) { _, enabled in
+            scanModel?.setEnabled(enabled)
+        }
+    }
+
+    private func ensureScanModel() {
+        guard scanModel == nil else { return }
+        scanModel = PointToScanViewModel(
+            location: app.services.location,
+            motion: CoreMotionDeviceMotion(),
+            campus: .bundled,
+            savedPlaces: { [app] in app.savedPlaces },
+            poiProvider: PointToScanPOIProvider(),
+            announcements: app.services.announcements,
+            distances: { [app] in app.services.distanceSettings.formatter }
+        )
+    }
+
+    private var muteScanButton: some View {
+        let muted = scanModel?.scanMuted ?? false
+        return Button {
+            scanModel?.toggleMute()
+        } label: {
+            Text(muted ? "Unmute scan" : "Mute scan")
+                .frame(maxWidth: .infinity, minHeight: AccessibilityMetrics.minimumTapTarget)
+        }
+        .buttonStyle(.pill(.outline))
+        .accessibilityLabel(muted ? "Unmute scan" : "Mute scan")
     }
 
     private var topBar: some View {
