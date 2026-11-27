@@ -88,12 +88,14 @@ struct AnnouncementStack: View {
     }
 }
 
+#if DEBUG
 #Preview {
     ZStack(alignment: .bottom) {
         CameraBackdrop()
         VStack(spacing: 12) {
-            AnnouncementStack(announcements: SampleContent.initialAnnouncements).padding(.horizontal, 24)
+            AnnouncementStack(announcements: MapsPreviewData.announcements).padding(.horizontal, 24)
             TripControlPanel(isMicMuted: true)
         }
     }
 }
+#endif

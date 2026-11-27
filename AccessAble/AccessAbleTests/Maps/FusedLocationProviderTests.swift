@@ -45,6 +45,8 @@ private struct ScriptedGeoTracking: GeoTrackingProviding {
     /// Called when the stream ends, however it ends.
     var onEnd: @Sendable () -> Void = {}
 
+    func prepareGeoTracking() async {}
+    func knownGeoAvailability() async -> Bool? { nil }
     func setGeoTrackingWanted(_ wanted: Bool) async {}
     func geoTrackingUpdates() -> AsyncStream<GeoTrackingUpdate> {
         AsyncStream { continuation in

@@ -9,15 +9,42 @@ import os
 
 private let log = Logger(subsystem: "AccessAble", category: "Placeholder")
 
+actor PlaceholderCallSafety: CallSafetyService {
+    private var consent = false
+    private var blocked: Set<String> = []
+    func hasConsent() async throws -> Bool { consent }
+    func acceptConsent() async throws { consent = true }
+    func report(callID: String, subjectID: String, reason: CallReportReason, details: String) async throws {
+        guard CallSafetyReportLimit.length(of: details) <= CallSafetyReportLimit.maxLength else { throw CallSafetyError.invalidReport }
+    }
+    func block(volunteerID: String, callID: String) async throws { blocked.insert(volunteerID) }
+}
+
+actor PlaceholderVolunteerSettings: VolunteerSettingsStore {
+    private var value = VolunteerPreferences()
+    func preferences() async throws -> VolunteerPreferences { value }
+    func save(_ preferences: VolunteerPreferences) async throws { value = preferences }
+    func isInvited() async throws -> Bool { true }
+}
+
 /// Logs events and republishes them; no priority queue or speech. Replaced by 3.3.
 actor PlaceholderAnnouncementEngine: AnnouncementEngineProtocol {
     private nonisolated let delivered = Broadcaster<AnnouncementEvent>()
     private var profile: GuidanceProfile = .default
     private var isPaused = false
+    private var isInCall = false
     private var last: AnnouncementEvent?
+    private let callSettings: CallerSettings
+
+    init(callSettings: CallerSettings = CallerSettings()) {
+        self.callSettings = callSettings
+    }
 
     func submit(_ event: AnnouncementEvent) async {
-        guard !isPaused, profile.allows(event), !event.isExpired() else { return }
+        // The same in-call rule as the real engine, so previews and tests behave like the app.
+        guard !isPaused, profile.allows(event), !event.isExpired(),
+              CallAnnouncementPolicy.allows(event, duringCall: isInCall, preferences: callSettings.preferences)
+        else { return }
         log.info("[\(event.category.rawValue)/\(event.priority.rawValue)] \(event.text)")
         last = event
         delivered.send(event)
@@ -34,6 +61,7 @@ actor PlaceholderAnnouncementEngine: AnnouncementEngineProtocol {
     func pause() async { isPaused = true }
     func resume() async { isPaused = false }
     func updateProfile(_ profile: GuidanceProfile) async { self.profile = profile }
+    func setInCall(_ inCall: Bool) async { isInCall = inCall }
 }
 
 struct PlaceholderHaptics: HapticRendering {
@@ -139,9 +167,21 @@ struct PlaceholderRoutingService: RoutingService {
 /// Hardcoded campus places so previews don't call MapKit.
 struct PlaceholderDestinationSearch: DestinationSearching {
     static let samples = [
-        SearchSuggestion(title: "Georgia Tech Library", subtitle: "260 Fourth St NW, Atlanta, GA"),
-        SearchSuggestion(title: "John Lewis Student Center", subtitle: "351 Ferst Dr NW, Atlanta, GA"),
-        SearchSuggestion(title: "Campus Recreation Center", subtitle: "750 Ferst Dr NW, Atlanta, GA"),
+        SearchSuggestion(
+            title: "Georgia Tech Library",
+            subtitle: "260 Fourth St NW, Atlanta, GA",
+            coordinate: GeoCoordinate(latitude: 33.774217, longitude: -84.395561)
+        ),
+        SearchSuggestion(
+            title: "John Lewis Student Center",
+            subtitle: "351 Ferst Dr NW, Atlanta, GA",
+            coordinate: GeoCoordinate(latitude: 33.773913, longitude: -84.398587)
+        ),
+        SearchSuggestion(
+            title: "Campus Recreation Center",
+            subtitle: "750 Ferst Dr NW, Atlanta, GA",
+            coordinate: GeoCoordinate(latitude: 33.775662, longitude: -84.404041)
+        ),
     ]
 
     /// Replays the latest results, so a listener that subscribes after a query still gets them.
@@ -173,11 +213,13 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
         AsyncStream { $0.finish() }
     }
 
-    func startTrip(route: NavigationRoute, destination: Destination) async {}
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {}
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 
     func currentLocationDescription() async -> String? { nil }
 }
@@ -207,11 +249,13 @@ struct PreviewTripProvider: TripStateProviding {
         AsyncStream { $0.finish() }
     }
 
-    func startTrip(route: NavigationRoute, destination: Destination) async {}
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {}
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 }
 
 actor PlaceholderAuthService: AuthService {
@@ -248,7 +292,7 @@ actor PlaceholderAuthService: AuthService {
 
 // MARK: - Calls
 
-/// Fixed sample volunteers so the Calls screen works with no backend. Replaced by MATCH-x.
+/// Fixed sample volunteers so the Calls screen works with no backend. Replaced by VOLUNTEER-6.
 struct PlaceholderVolunteerDirectory: VolunteerDirectory {
     var volunteers: [Volunteer] = SampleContent.activeVolunteers
 
@@ -266,7 +310,91 @@ struct PlaceholderVolunteerDirectory: VolunteerDirectory {
     }
 }
 
-/// Remembers the toggle in memory only. Replaced by MATCH-x.
+/// Keeps messages on this phone only, for previews and builds without Firebase.
+final class PlaceholderChatService: ChatService {
+    static let userID = "placeholder-caller"
+    private let chats = Broadcaster<[String: [ChatMessage]]>(replaysLatest: true)
+    private let userID: String?
+
+    init(userID: String? = PlaceholderChatService.userID, messages: [String: [ChatMessage]] = [:]) {
+        self.userID = userID
+        chats.send(messages)
+    }
+
+    func currentUserID() async -> String? { userID }
+
+    func messages(chatID: String) -> AsyncThrowingStream<[ChatMessage], Error> {
+        let all = chats.stream()
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                for await chats in all { continuation.yield(chats[chatID] ?? []) }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    func send(_ text: String, chatID: String) async throws {
+        guard let userID else { throw ChatError.signedOut }
+        guard let text = ChatMessage.sendable(text) else { throw ChatError.invalidMessage }
+        var all = chats.latest ?? [:]
+        all[chatID, default: []].append(ChatMessage(text: text, senderID: userID))
+        chats.send(all)
+    }
+
+    func volunteerChats() -> AsyncThrowingStream<[ChatThread], Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield([])
+            continuation.finish()
+        }
+    }
+
+    /// A message from the other person, as if it had just arrived.
+    func injectForTests(_ message: ChatMessage, chatID: String) async throws {
+        var all = chats.latest ?? [:]
+        all[chatID, default: []].append(message)
+        chats.send(all)
+    }
+}
+
+/// Stars kept in memory, for previews and builds without Firebase.
+final class PlaceholderSavesService: SavesService {
+    private let people = Broadcaster<[SavedPerson]>(replaysLatest: true)
+    private let names: [String: String]
+
+    /// `names` gives a name to each person who can be starred.
+    init(saved: [SavedPerson] = [], names: [String: String] = [:]) {
+        var all = Dictionary(uniqueKeysWithValues: SampleContent.activeVolunteers.map { ($0.id, $0.name) })
+        all.merge(names) { _, new in new }
+        self.names = all
+        people.send(saved)
+    }
+
+    func savedPeople() -> AsyncThrowingStream<[SavedPerson], Error> {
+        let stream = people.stream()
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                for await list in stream { continuation.yield(list) }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    func setSaved(_ saved: Bool, personID: String) async throws {
+        var list = people.latest ?? []
+        list.removeAll { $0.id == personID }
+        if saved { list.append(SavedPerson(id: personID, name: names[personID] ?? personID, isMutual: false)) }
+        people.send(list.sortedByName())
+    }
+}
+
+struct PlaceholderCallHistory: CallHistoryProviding {
+    var calls: [PastCall] = []
+    func pastCalls(as role: UserRole) async throws -> [PastCall] { calls }
+}
+
+/// Remembers the toggle in memory only. Replaced by VOLUNTEER-6.
 actor PlaceholderPresenceService: PresenceService {
     private nonisolated let states = Broadcaster<Bool>(replaysLatest: true)
 
@@ -280,26 +408,42 @@ actor PlaceholderPresenceService: PresenceService {
     }
 }
 
-/// Hands back a fake ticket and never rings anyone. Replaced by MATCH-x.
 struct PlaceholderCallSignaling: CallSignaling {
-    func incomingCalls() -> AsyncStream<CallTicket> {
-        AsyncStream { $0.finish() }
+    func requestCall(
+        preferring volunteerID: String?,
+        progress: @Sendable (CallRequestProgress) -> Void
+    ) async throws -> CallTicket {
+        progress(.ringing(attempt: 1))
+        return sampleTicket(volunteerID: volunteerID ?? "placeholder-volunteer")
     }
 
-    func startCall(to volunteerID: String) async throws -> CallTicket {
+    func accept(callID: String) async throws -> CallTicket {
+        sampleTicket(volunteerID: "placeholder-volunteer", callID: callID)
+    }
+
+    func decline(callID: String) async throws {}
+    func skip(callID: String) async throws {}
+    func endCall(callID: String) async {}
+
+    private func sampleTicket(volunteerID: String, callID: String = UUID().uuidString) -> CallTicket {
         CallTicket(
-            callID: UUID().uuidString, roomName: "placeholder-room", token: "placeholder-token",
+            callID: callID, roomName: "placeholder-room", token: "placeholder-token",
             callerID: "placeholder-caller", volunteerID: volunteerID,
             expiresAt: Date().addingTimeInterval(60)
         )
     }
-
-    func accept(_ ticket: CallTicket) async throws {}
-    func decline(_ ticket: CallTicket) async throws {}
-    func end(_ ticket: CallTicket) async {}
 }
 
-/// Walks through the states without touching LiveKit or the camera. Replaced by MATCH-x.
+/// No unsolicited incoming calls in normal previews. Supply an offer for a ringing preview.
+struct PlaceholderIncomingCalls: IncomingCallProviding {
+    var call: IncomingCall? = nil
+
+    @MainActor func incomingCalls(volunteerID: String) -> AsyncThrowingStream<IncomingCall?, Error> {
+        AsyncThrowingStream { continuation in continuation.yield(call) }
+    }
+}
+
+/// Walks through the states without touching LiveKit or the camera. Replaced by VOLUNTEER-6.
 actor PlaceholderVideoCallSession: VideoCallSession {
     private nonisolated let broadcaster = Broadcaster<CallState>(replaysLatest: true)
 
@@ -314,6 +458,18 @@ actor PlaceholderVideoCallSession: VideoCallSession {
 
     func disconnect() async {
         broadcaster.send(.ended(.hungUp))
+    }
+
+    func setMicrophoneMuted(_ muted: Bool) async throws {
+        log.info("call muted=\(muted)")
+    }
+
+    func flipCamera() async throws {
+        log.info("call flip camera")
+    }
+
+    func setFlashlight(_ on: Bool) async throws {
+        log.info("call flashlight=\(on)")
     }
 }
 
@@ -333,22 +489,51 @@ actor PlaceholderUserProfileStore: UserProfileStore {
             throw UserProfileError.invalidProfile
         }
         let profile = UserProfile(userID: userID, role: role, displayName: displayName,
-                                  languages: languages, createdAt: profiles[userID]?.createdAt ?? .now)
+                                  languages: languages, createdAt: profiles[userID]?.createdAt ?? .now,
+                                  details: profiles[userID]?.details ?? ProfileDetails())
         profiles[userID] = profile
         return profile
     }
+
+    func saveDetails(userID: String, details: ProfileDetails) async throws {
+        guard details.isValid else { throw UserProfileError.invalidProfile }
+        guard profiles[userID] != nil else { throw UserProfileError.invalidProfile }
+        profiles[userID]?.details = details
+    }
 }
 
-/// The in-memory stand-in for reports, used in previews and tests until REPORT-3's Firestore service.
+/// In-memory route preferences for previews, keyed by the shared auth UID.
+actor PlaceholderRoutePreferencesSync: RoutePreferencesSyncing {
+    private var preferences: [String: RoutePreferences] = [:]
+
+    func load(userID: String) async throws -> RoutePreferences? { preferences[userID] }
+
+    func save(_ preferences: RoutePreferences, userID: String) async throws {
+        self.preferences[userID] = preferences
+    }
+}
+
+/// The in-memory stand-in for reports, used in previews and tests. It refuses the votes the rules refuse, so they
+/// behave as they would with Firestore.
 actor PlaceholderReportService: ReportService {
     private var storedReports: [Report] = []
     private nonisolated let changes = Broadcaster<[Report]>(replaysLatest: true)
+    private let auth: any AuthService
+    private let now: @Sendable () -> Date
+    private var votes: [String: Set<String>] = [:]
+    private var lastVote: [String: Date] = [:]
+    /// Who was signed in when each report was submitted, so it is that user's own, as Firestore's private index says.
+    private var reporters: [String: String] = [:]
 
-    init() {
+    init(auth: any AuthService = PlaceholderAuthService(), now: @escaping @Sendable () -> Date = { .now }) {
+        self.auth = auth
+        self.now = now
         changes.send([])
     }
 
     func submit(_ report: Report) async throws {
+        let reporter = await auth.currentUser()?.id
+        reporters[report.id] = reporter
         storedReports.removeAll { $0.id == report.id }
         storedReports.append(report)
         changes.send(storedReports)
@@ -358,9 +543,17 @@ actor PlaceholderReportService: ReportService {
         near coordinate: GeoCoordinate,
         radius: Double
     ) async throws -> [Report] {
-        storedReports.filter {
-            $0.expiresAt > .now
-                && GeoMath.distance(from: coordinate, to: $0.coordinate) <= radius
+        let time = now()
+        return await markingOwn(storedReports.filter { $0.expiresAt > time && $0.isNear(coordinate, within: radius) })
+    }
+
+    /// The reports, each marked as the signed-in user's own or not.
+    private func markingOwn(_ reports: [Report]) async -> [Report] {
+        let userID = await auth.currentUser()?.id
+        return reports.map { report in
+            var report = report
+            report.isOwn = userID != nil && reporters[report.id] == userID
+            return report
         }
     }
 
@@ -373,17 +566,50 @@ actor PlaceholderReportService: ReportService {
         return AsyncStream { continuation in
             let task = Task {
                 for await reports in source {
-                    continuation.yield(reports.filter {
-                        $0.expiresAt > .now
-                            && GeoMath.distance(
-                                from: coordinate,
-                                to: $0.coordinate
-                            ) <= radius
-                    })
+                    let time = self.now()
+                    continuation.yield(await self.markingOwn(reports.filter {
+                        $0.expiresAt > time && $0.isNear(coordinate, within: radius)
+                    }))
                 }
                 continuation.finish()
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    @discardableResult
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool {
+        guard let user = await auth.currentUser() else { throw ReportServiceError.notSignedIn }
+        let time = now()
+        guard !FirestoreReportService.isRateLimited(lastReportAt: lastVote[user.id], now: time) else {
+            throw ReportServiceError.rateLimited
+        }
+        guard let index = storedReports.firstIndex(where: { $0.id == reportID }) else {
+            throw ReportServiceError.invalidReport
+        }
+        var report = storedReports[index]
+        report.isOwn = reporters[reportID] == user.id
+        guard FirestoreReportService.canVote(on: report, isStillPresent: isStillPresent, now: time),
+              votes[reportID, default: []].insert(user.id).inserted else {
+            throw ReportServiceError.permissionDenied
+        }
+        lastVote[user.id] = time
+
+        var voted = report
+        var extends = false
+        if isStillPresent {
+            voted.confirmations += 1
+            voted.negativesSinceConfirm = 0
+            let renewed = time.addingTimeInterval(report.kind.lifetime)
+            extends = renewed > report.expiresAt
+            if extends { voted.expiresAt = renewed }
+        } else {
+            voted.negativeConfirmations += 1
+            voted.negativesSinceConfirm += 1
+            if voted.negativesSinceConfirm >= FirestoreReportService.removalDenials { voted.expiresAt = time }
+        }
+        storedReports[index] = voted
+        changes.send(storedReports)
+        return extends
     }
 }

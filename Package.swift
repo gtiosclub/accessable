@@ -31,6 +31,7 @@ let package = Package(
                 "Core/AnnouncementEvent.swift",
                 "Core/ElevationHazard.swift",
                 "Core/HapticID.swift",
+                "Core/InteractionHaptic.swift",
                 "Core/RelativeBearing.swift",
                 "Core/SceneObservation.swift",
             ],

@@ -152,6 +152,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2110101B306C188400B311DF /* Build configuration list for PBXNativeTarget "AccessAble" */;
 			buildPhases = (
+				B5E0C0DE306C188100B311DF /* Require STADIA_API_KEY in Release */,
 				2110100C306C188100B311DF /* Sources */,
 				2110100D306C188100B311DF /* Frameworks */,
 				2110100E306C188100B311DF /* Resources */,
@@ -292,6 +293,28 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		B5E0C0DE306C188100B311DF /* Require STADIA_API_KEY in Release */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Require STADIA_API_KEY in Release";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "if [ \"$CONFIGURATION\" = \"Release\" ]; then\n  # Mirrors StadiaConfig.apiKey(from:): these values ship as no key.\n  key=$(printf %s \"$STADIA_API_KEY\" | tr -d \"[:space:]\" | sed -e 's/^\"\\(.*\\)\"$/\\1/' -e \"s/^'\\\\(.*\\\\)'$/\\\\1/\")\n  case \"$key\" in\n    \"\"|\\<*\\>|[Pp][Aa][Ss][Tt][Ee]-*|[Yy][Oo][Uu][Rr]_*|[Yy][Oo][Uu][Rr]-*)\n      echo \"error: STADIA_API_KEY is not set (see Config/Secrets.example.xcconfig)\"\n      exit 1\n      ;;\n  esac\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		2110100C306C188100B311DF /* Sources */ = {

@@ -13,7 +13,8 @@ import os
 /// east-up-south world keeps +Y up too; the floor fit and walking corridor assume it. On LiDAR
 /// devices it adds `sceneDepth` (T2). Smoothed scene depth
 /// is deliberately not requested: it averages several frames, so it lags behind anything
-/// moving toward the user, and nothing in the pipeline needs it.
+/// moving toward the user, and nothing in the pipeline needs it. During trips, where Apple
+/// has imagery, it geo-tracks instead (AR-2); +Y is still up there.
 ///
 /// Threading: frames arrive on a private serial queue, one at a time and in order, and
 /// handlers run on that queue. Handlers must return quickly and must not keep the `ARFrame`
@@ -61,6 +62,14 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// How many trip holders want the next `start()` to geo-track (AR-2); each asks only where
     /// geo-tracking is available.
     private let geoTrackingRequests = Mutex(0)
+    /// Apple's last availability answer, found in the background so a trip's camera needn't wait on it.
+    private let geoAvailability = Mutex<GeoAvailability?>(nil)
+    /// The background check in flight, so overlapping requests share it.
+    private let geoAvailabilityCheck = Mutex(GeoAvailabilityChecks())
+    /// Times out the availability check.
+    private let clock: any Clock<Duration>
+    /// Dates availability answers, so they go stale.
+    private let now: @Sendable () -> Date
     /// What the running session uses; nil while stopped or a call has the camera.
     private let runningTracking = Mutex<SessionTracking?>(nil)
     private let geoBroadcaster = Broadcaster<GeoTrackingUpdate>()
@@ -78,16 +87,10 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// the user is standing still waiting for guidance that is not coming back.
     private static let relocalizationTimeout: Duration = .seconds(5)
 
-    /// The back wide-angle camera's format, pinned so the preview never changes lens.
-    /// ARKit's default is usually this camera already; pinning it makes that a guarantee,
-    /// and the wide camera is the one LiDAR depth is registered to. Prefers ARKit's default
-    /// format when it is on that camera, so resolution and frame rate stay the same.
-    static func primaryVideoFormat(from formats: [ARConfiguration.VideoFormat]) -> ARConfiguration.VideoFormat? {
-        let isWideBack = { (format: ARConfiguration.VideoFormat) in
-            format.captureDeviceType == .builtInWideAngleCamera && format.captureDevicePosition == .back
-        }
-        if let first = formats.first, isWideBack(first) { return first }
-        return formats.first(where: isWideBack)
+    init(clock: any Clock<Duration> = ContinuousClock(), now: @escaping @Sendable () -> Date = { .now }) {
+        self.clock = clock
+        self.now = now
+        super.init()
     }
 
     // MARK: - Lifecycle
@@ -131,7 +134,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         let configuration = ARWorldTrackingConfiguration()
         configuration.worldAlignment = .gravity
         configuration.planeDetection = []
-        pinPrimaryVideoFormat(configuration, from: ARWorldTrackingConfiguration.supportedVideoFormats)
+        pinWideCamera(configuration, from: ARWorldTrackingConfiguration.supportedVideoFormats)
         if isDepthSupported {
             configuration.frameSemantics.insert(.sceneDepth)
         } else {
@@ -147,7 +150,7 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     private func geoTrackingConfiguration() -> ARGeoTrackingConfiguration {
         let configuration = ARGeoTrackingConfiguration()
         configuration.planeDetection = []
-        pinPrimaryVideoFormat(configuration, from: ARGeoTrackingConfiguration.supportedVideoFormats)
+        pinWideCamera(configuration, from: ARGeoTrackingConfiguration.supportedVideoFormats)
         if ARGeoTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
             configuration.frameSemantics.insert(.sceneDepth)
         } else {
@@ -156,11 +159,22 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         return configuration
     }
 
-    /// Pins the back wide-angle camera, when `formats` has it.
-    private func pinPrimaryVideoFormat(_ configuration: ARConfiguration, from formats: [ARConfiguration.VideoFormat]) {
-        guard let format = Self.primaryVideoFormat(from: formats) else { return }
+    /// The back wide-angle camera's format, pinned so the preview never changes lens.
+    /// ARKit's default is usually this camera already; pinning it makes that a guarantee,
+    /// and the wide camera is the one LiDAR depth is registered to. Prefers ARKit's default
+    /// format when it is on that camera, so resolution and frame rate stay the same.
+    static func primaryVideoFormat(in formats: [ARConfiguration.VideoFormat]) -> ARConfiguration.VideoFormat? {
+        let isWideBack = { (format: ARConfiguration.VideoFormat) in
+            format.captureDeviceType == .builtInWideAngleCamera && format.captureDevicePosition == .back
+        }
+        if let first = formats.first, isWideBack(first) { return first }
+        return formats.first(where: isWideBack)
+    }
+
+    private func pinWideCamera(_ configuration: ARConfiguration, from formats: [ARConfiguration.VideoFormat]) {
+        guard let format = Self.primaryVideoFormat(in: formats) else { return }
         configuration.videoFormat = format
-        log.notice("camera: back wide-angle, \(Int(format.imageResolution.width), privacy: .public)x\(Int(format.imageResolution.height), privacy: .public) at \(format.framesPerSecond, privacy: .public) fps")
+        log.debug("camera: back wide-angle, \(Int(format.imageResolution.width), privacy: .public)x\(Int(format.imageResolution.height), privacy: .public) at \(format.framesPerSecond, privacy: .public) fps")
     }
 
     /// Turns the classified mesh on or off without restarting tracking. While the session
@@ -269,34 +283,61 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// answer and any error.
     typealias GeoAvailabilityCheck = @Sendable (_ completion: @escaping @Sendable (Bool, (any Error)?) -> Void) -> Void
 
-    /// Whether Apple has geo-tracking imagery where the phone is. Gives up after `timeout`,
-    /// since the camera waits on it and obstacle warnings shouldn't; false if the task is
-    /// cancelled first. An answer that comes after that is dropped.
-    static func isGeoTrackingAvailableHere(
-        timeout: Duration = .seconds(3),
-        clock: any Clock<Duration> = ContinuousClock(),
-        check: @escaping GeoAvailabilityCheck = checkGeoAvailabilityWithARKit
-    ) async -> Bool {
-        let answer = FirstAnswer()
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                answer.wait(continuation)
-                // Not structured: the check can't be cancelled, and nothing should wait on it.
-                answer.setTimer(Task {
-                    do { try await clock.sleep(for: timeout) } catch { return }
-                    availabilityLog.notice("geo-tracking availability check timed out")
-                    answer.send(false)
-                })
-                check { available, error in
-                    if let error {
-                        availabilityLog.error("geo-tracking availability check failed: \(error.localizedDescription, privacy: .public)")
-                    }
-                    answer.send(available)
-                }
+    /// The answer `refreshGeoAvailability()` found, while it is fresh; nil before then.
+    var knownGeoAvailability: Bool? {
+        geoAvailability.withLock { known in known.flatMap { $0.isFresh(at: now()) ? $0.isAvailable : nil } }
+    }
+
+    /// How long a check may go unanswered before a refresh gives up on it and asks again.
+    static let geoAvailabilityTimeout: Duration = .seconds(30)
+
+    /// Asks Apple in the background whether geo-tracking is available here, unless a fresh answer
+    /// is kept or a check is running. Returns at once, since the camera never waits on it.
+    func refreshGeoAvailability(check: @escaping GeoAvailabilityCheck = checkGeoAvailabilityWithARKit) {
+        guard knownGeoAvailability == nil else { return }
+        let clock = self.clock
+        let isOverdue = Self.deadline(after: Self.geoAvailabilityTimeout, on: clock)
+        let started = geoAvailabilityCheck.withLock { checks -> Int? in
+            if let running = checks.running {
+                guard running.isOverdue() else { return nil }
+                Self.availabilityLog.notice("geo-tracking availability check timed out")
             }
-        } onCancel: {
-            answer.send(false)
+            checks.started += 1
+            checks.running = (checks.started, isOverdue)
+            return checks.started
         }
+        guard let started else { return }
+        check { [weak self] available, error in
+            self?.finishGeoAvailabilityCheck(started, available: available, error: error)
+        }
+    }
+
+    /// Keeps check `id`'s answer, unless a refresh has given up on it. A failed check isn't a "no":
+    /// it keeps nothing, so the next refresh asks again.
+    private func finishGeoAvailabilityCheck(_ id: Int, available: Bool, error: (any Error)?) {
+        geoAvailabilityCheck.withLock { checks in
+            guard checks.running?.id == id else { return }
+            checks.running = nil
+            if let error {
+                Self.availabilityLog.error("geo-tracking availability check failed: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+            geoAvailability.withLock { $0 = GeoAvailability(isAvailable: available, checkedAt: now()) }
+            log.notice("geo-tracking available here: \(available, privacy: .public)")
+        }
+    }
+
+    /// The availability checks started so far, and the one in flight.
+    private struct GeoAvailabilityChecks {
+        var started = 0
+        /// nil while no check is in flight.
+        var running: (id: Int, isOverdue: @Sendable () -> Bool)?
+    }
+
+    /// Whether `timeout` has passed on `clock` since this was called.
+    private static func deadline<C: Clock<Duration>>(after timeout: Duration, on clock: C) -> @Sendable () -> Bool {
+        let deadline = clock.now.advanced(by: timeout)
+        return { clock.now >= deadline }
     }
 
     /// ARKit's check, where the device can geo-track at all.
@@ -639,48 +680,5 @@ extension GuidanceStatus {
         case .running, .interrupted, .recovering: true
         case .idle, .stopped, .unavailable: false
         }
-    }
-}
-
-/// Resumes one continuation with whichever answer arrives first: ARKit's, the timeout or
-/// cancellation. Later answers are dropped, so the continuation is never resumed twice.
-private final class FirstAnswer: Sendable {
-    private struct State {
-        var continuation: CheckedContinuation<Bool, Never>?
-        var answer: Bool?
-        var timer: Task<Void, Never>?
-    }
-
-    private let state = Mutex(State())
-
-    func wait(_ continuation: CheckedContinuation<Bool, Never>) {
-        let answer = state.withLock { state in
-            if state.answer == nil { state.continuation = continuation }
-            return state.answer
-        }
-        if let answer { continuation.resume(returning: answer) }
-    }
-
-    func setTimer(_ timer: Task<Void, Never>) {
-        let answered = state.withLock { state in
-            if state.answer == nil { state.timer = timer }
-            return state.answer != nil
-        }
-        if answered { timer.cancel() }
-    }
-
-    func send(_ answer: Bool) {
-        let pending = state.withLock { state -> (CheckedContinuation<Bool, Never>?, Task<Void, Never>?)? in
-            guard state.answer == nil else { return nil }
-            state.answer = answer
-            defer {
-                state.continuation = nil
-                state.timer = nil
-            }
-            return (state.continuation, state.timer)
-        }
-        guard let (continuation, timer) = pending else { return }
-        timer?.cancel()
-        continuation?.resume(returning: answer)
     }
 }

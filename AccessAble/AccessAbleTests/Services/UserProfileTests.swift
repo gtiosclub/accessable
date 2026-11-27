@@ -39,6 +39,42 @@ struct UserProfileTests {
     }
 
     @Test
+    func signingOutDeletesTheSavedTrip() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "UserProfileTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let savedTrips = SavedTripStore(directory: directory)
+        savedTrips.save(SavedTrip(tripID: UUID(), route: MapsSamples.route, routeSource: .valhalla,
+                                  destination: MapsSamples.destination, passedStepCount: 1, startedAt: .now,
+                                  savedAt: .now))
+        #expect(savedTrips.load() != nil)
+        let session = AccountSessionViewModel(auth: PlaceholderAuthService(), profiles: PlaceholderUserProfileStore(),
+                                              savedTrips: savedTrips)
+        try await session.signOut()
+
+        #expect(savedTrips.load() == nil)
+        #expect(!FileManager.default.fileExists(atPath: savedTrips.url.path(percentEncoded: false)))
+    }
+
+    @Test
+    func signingOutEndsTheTripSoItIsntSavedAgain() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "UserProfileTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let savedTrips = SavedTripStore(directory: directory)
+        let trip = TripManager(location: PlaceholderLocationProvider(), routing: PlaceholderRoutingService(),
+                               announcements: PlaceholderAnnouncementEngine(), savedTrips: savedTrips)
+        await trip.startTrip(route: MapsSamples.route, destination: MapsSamples.destination,
+                             preferences: RoutePreferences(), resumingAtStep: nil)
+        #expect(savedTrips.load() != nil)
+        let session = AccountSessionViewModel(auth: PlaceholderAuthService(), profiles: PlaceholderUserProfileStore(),
+                                              savedTrips: savedTrips, trip: trip)
+        try await session.signOut()
+
+        var states = trip.tripStates().makeAsyncIterator()
+        #expect(await states.next()?.phase == .planning)
+        #expect(savedTrips.load() == nil)
+    }
+
+    @Test
     func readFailureDoesNotBecomeNewUserOnboarding() async throws {
         let auth = PlaceholderAuthService()
         let session = AccountSessionViewModel(auth: auth, profiles: UnconfiguredUserProfileStore())

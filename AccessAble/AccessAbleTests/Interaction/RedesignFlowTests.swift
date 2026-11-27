@@ -53,22 +53,25 @@ struct TripSessionViewModelTests {
         #expect(session.announcements.first?.text == "Note 2")
     }
 
-    @Test
+    // a timer that never fires fails the test instead of hanging the run
+    @Test(.timeLimit(.minutes(1)))
     func barsFadeAwayAfterTheirLifetime() async throws {
-        // Lifetimes far apart, so a busy test machine can't blur them.
+        let clock = ManualClock()
         let session = TripSessionViewModel(
-            plan: plan, warningLifetime: .milliseconds(50), infoLifetime: .seconds(30)
+            plan: plan, warningLifetime: .seconds(8), infoLifetime: .seconds(12), clock: clock
         )
         session.add(TripAnnouncement(text: "Pillar ahead", kind: .warning))
         session.add(TripAnnouncement(text: "Turn left", kind: .info))
-        try await Task.sleep(for: .seconds(1))
+        try await clock.waitForSleepers(2)
+
         // The warning has gone; the direction lasts longer.
+        clock.advance(by: .seconds(8) + .milliseconds(1))
+        while session.announcements.count > 1 { await Task.yield() }
         #expect(session.announcements.map(\.text) == ["Turn left"])
 
-        let directions = TripSessionViewModel(plan: plan, infoLifetime: .milliseconds(50))
-        directions.add(TripAnnouncement(text: "Turn left", kind: .info))
-        try await Task.sleep(for: .seconds(1))
-        #expect(directions.announcements.isEmpty)
+        clock.advance(by: .seconds(4))
+        while !session.announcements.isEmpty { await Task.yield() }
+        #expect(session.announcements.isEmpty)
     }
 
     @Test
@@ -223,40 +226,6 @@ struct AppRouterTests {
         let router = AppRouter()
         router.pop()
         #expect(router.path.isEmpty)
-    }
-}
-
-struct SampleContentSearchTests {
-    @Test
-    func emptyQueryWithoutCategoryFindsNothing() {
-        #expect(SampleContent.search("  ", category: nil).isEmpty)
-    }
-
-    @Test
-    func buildingInitialsMatch() {
-        let names = SampleContent.search("CULC", category: nil).map(\.name)
-        #expect(names.contains("Clough Undergraduate Learning Commons"))
-        #expect(names.contains("CULC Room 152"))
-    }
-
-    @Test
-    func categoryAloneFiltersPlaces() {
-        let parks = SampleContent.search("", category: .parks)
-        #expect(!parks.isEmpty)
-        #expect(parks.allSatisfy { $0.category == .parks })
-    }
-
-    @Test
-    func queryAndCategoryCombine() {
-        let results = SampleContent.search("North", category: .publicTransit)
-        #expect(results.map(\.id) == ["na-station"])
-    }
-
-    @Test
-    func recordedRoutesAlwaysOfferAtLeastOne() {
-        let place = SampleContent.places.first { $0.recordedRouteCount == 0 }!
-        #expect(SampleContent.routes(to: place, mode: .recorded).count == 1)
-        #expect(SampleContent.routes(to: place, mode: .new).count == 3)
     }
 }
 

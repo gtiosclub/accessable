@@ -25,7 +25,8 @@ private final class StuckTrip: TripStateProviding, Sendable {
 
     func tripRoutes() -> AsyncStream<NavigationRoute?> { AsyncStream { $0.finish() } }
 
-    func startTrip(route: NavigationRoute, destination: Destination) async {
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {
         count.withLock { $0 += 1 }
         started.yield()
     }
@@ -34,6 +35,7 @@ private final class StuckTrip: TripStateProviding, Sendable {
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 }
 
 private actor CountingScene: SceneObservationProviding {

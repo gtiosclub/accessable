@@ -1,166 +1,176 @@
 import SwiftUI
 
-/// Owner: User Interaction (3.x). Volunteers who are available now (Live) or saved / called before (History).
-/// Calls and messages use sample volunteers until the calling backend exists.
+/// Owner: User Interaction (3.x). The caller's volunteers: who's online now (Live), starred
+/// volunteers and past calls (History), and their own profile (Profile).
 struct CallHelpView: View {
     @Environment(AppRouter.self) private var router
+    @Environment(AppViewModel.self) private var app
     @State private var tab: Tab = .live
-    @State private var calling: Volunteer?
+    @State private var model: CallHelpViewModel?
+    @State private var profile: CallerProfileViewModel?
 
     enum Tab: String, CaseIterable {
         case live = "Live"
         case history = "History"
+        case profile = "Profile"
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: 12) {
                 ScreenHeader(title: "Call Help") { router.pop() }
-                tabPicker
-                switch tab {
-                case .live:
-                    volunteerSection("Currently Active", volunteers: SampleContent.activeVolunteers)
-                case .history:
-                    volunteerSection("Saved", volunteers: SampleContent.savedVolunteers)
-                    volunteerSection("History", volunteers: SampleContent.recentVolunteers)
+                CapsuleTabs(selection: $tab) { tab in
+                    switch tab {
+                    case .live: "Volunteers available now"
+                    case .history: "Saved volunteers and past calls"
+                    case .profile: "Your profile"
+                    }
+                }
+                if let model {
+                    if let error = model.errorMessage {
+                        HStack {
+                            Text(error).font(.callout)
+                            Spacer()
+                            Button("Dismiss") { model.dismissError() }
+                                .foregroundStyle(Theme.cyan).minimumTapTarget()
+                        }
+                        .foregroundStyle(.white)
+                    }
+                    switch tab {
+                    case .live: LiveTab(model: model, router: router)
+                    case .history: HistoryTab(model: model, router: router)
+                    case .profile:
+                        if let profile { CallerProfileTab(model: profile) }
+                    }
                 }
             }
-            .padding(.horizontal, 24)
+            .padding(.horizontal, 20)
             .padding(.bottom, 32)
         }
+        .scrollDismissesKeyboard(.interactively)
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
-        .fullScreenCover(item: $calling) { volunteer in
-            CallingView(volunteer: volunteer) { calling = nil }
-        }
-    }
-
-    private var tabPicker: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 0) {
-                ForEach(Tab.allCases, id: \.self) { item in
-                    let isSelected = tab == item
-                    Button {
-                        Haptics.play(.selection)
-                        tab = item
-                    } label: {
-                        Text(item.rawValue)
-                            .font(.title2)
-                            .foregroundStyle(isSelected ? .black : .white)
-                            .frame(maxWidth: .infinity, minHeight: 52)
-                            .background(isSelected ? Theme.cyan : .clear, in: Capsule())
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
-                    .accessibilityHint(item == .live ? "Volunteers available now" : "Saved and recent volunteers")
-                }
+        .onChange(of: tab) { Haptics.play(.selection) }
+        .task {
+            if model == nil {
+                model = CallHelpViewModel(services: app.services)
+                profile = CallerProfileViewModel(auth: app.services.auth, profiles: app.services.userProfiles)
             }
-            Rectangle()
-                .fill(.white.opacity(0.6))
-                .frame(height: 1)
-                .accessibilityHidden(true)
-        }
-    }
-
-    private func volunteerSection(_ title: String, volunteers: [Volunteer]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(title)
-                .font(.title2)
-                .foregroundStyle(.white)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-                .accessibilityAddTraits(.isHeader)
-            ForEach(volunteers) { volunteer in
-                VolunteerRow(
-                    volunteer: volunteer,
-                    onCall: {
-                        Haptics.play(.medium)
-                        calling = volunteer
-                    },
-                    onMessage: {
-                        Haptics.play(.selection)
-                        router.push(.chat(volunteer))
-                    }
-                )
-            }
+            async let lists: Void = model?.start() ?? ()
+            async let me: Void = profile?.load() ?? ()
+            _ = await (lists, me)
         }
     }
 }
 
-private struct VolunteerRow: View {
-    let volunteer: Volunteer
-    let onCall: () -> Void
-    let onMessage: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 16) {
-                HelperAvatar(isOnline: volunteer.isOnline)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(volunteer.name)
-                        .font(.title3.bold())
-                    Text(volunteer.availableUntil)
-                        .font(.subheadline)
-                }
-                .foregroundStyle(.white)
-                .accessibilityElement(children: .combine)
-                Spacer(minLength: 8)
-                CircleIconButton(
-                    systemImage: "phone",
-                    label: "Video call \(volunteer.name)",
-                    fill: Theme.red,
-                    foreground: .white,
-                    diameter: 54,
-                    action: onCall
-                )
-                CircleIconButton(
-                    systemImage: "ellipsis.message",
-                    label: "Message \(volunteer.name)",
-                    diameter: 54,
-                    action: onMessage
-                )
-            }
-            .padding(.vertical, 14)
-            .padding(.leading, 16)
-            Rectangle()
-                .fill(Theme.cyan.opacity(0.6))
-                .frame(height: 1)
-                .accessibilityHidden(true)
-        }
-    }
-}
-
-/// Placeholder call screen until video calling is built.
-struct CallingView: View {
-    let volunteer: Volunteer
-    let onEnd: () -> Void
-
-    var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            HelperAvatar(isOnline: volunteer.isOnline, size: 140)
-            Text(volunteer.name)
-                .font(.largeTitle.bold())
-            Text("Calling…")
-                .font(.title3)
-                .accessibilityLabel("Calling \(volunteer.name)")
-            Spacer()
-            Button("End Call", action: endCall)
-                .buttonStyle(.pill(.destructive))
-                .padding(.horizontal, 24)
-                .padding(.bottom, 24)
-        }
-        .foregroundStyle(.white)
-        .frame(maxWidth: .infinity)
-        .background(Color.black.ignoresSafeArea())
-        .accessibilityAction(.escape, endCall)
-    }
-
-    private func endCall() {
+private extension AppRouter {
+    func call(_ volunteer: Volunteer) {
         Haptics.play(.medium)
-        onEnd()
+        push(.call(volunteer))
+    }
+
+    func message(_ volunteer: Volunteer) {
+        Haptics.play(.selection)
+        push(.chat(volunteer))
+    }
+}
+
+private struct LiveTab: View {
+    let model: CallHelpViewModel
+    let router: AppRouter
+
+    var body: some View {
+        if !model.hasLoadedVolunteers {
+            ProgressView()
+                .tint(.white)
+                .accessibilityLabel("Loading volunteers")
+                .frame(maxWidth: .infinity).padding(.top, 40)
+        } else {
+            if !model.liveSaved.isEmpty {
+                CallHelpSectionHeader(title: "Saved")
+                volunteerCard(model.liveSaved)
+            }
+            if !model.liveOthers.isEmpty {
+                CallHelpSectionHeader(title: "Others")
+                volunteerCard(model.liveOthers)
+            }
+        }
+    }
+
+    private func volunteerCard(_ volunteers: [Volunteer]) -> some View {
+        CardGroup(items: volunteers) { volunteer in
+            PersonRow(userID: volunteer.id, name: volunteer.name, subtitle: volunteer.availableUntil, isOnline: true,
+                      onCall: { router.call(volunteer) },
+                      onMessage: { router.message(volunteer) })
+        }
+    }
+}
+
+private struct HistoryTab: View {
+    @Bindable var model: CallHelpViewModel
+    let router: AppRouter
+
+    var body: some View {
+        CallHelpSearchField(text: $model.search)
+            .padding(.top, 4)
+
+        CallHelpSectionHeader(title: "Mutually Saved", subtitle: "People who also saved you", starred: true)
+        if !model.mutuallySaved.isEmpty {
+            CardGroup(items: model.mutuallySaved) { volunteerRow($0) }
+        }
+
+        CallHelpSectionHeader(title: "Call History")
+        if !model.pastCalls.isEmpty {
+            CardGroup(items: model.pastCalls) { row in
+                PersonRow(
+                    userID: row.call.otherID,
+                    name: row.name, subtitle: row.call.summary,
+                    isOnline: row.volunteer.map(model.isOnline),
+                    onCall: row.volunteer.flatMap { volunteer in
+                        model.isOnline(volunteer) ? { router.call(volunteer) } : nil
+                    },
+                    onMessage: row.volunteer.map { volunteer in { router.message(volunteer) } }
+                )
+                .accessibilityLabel("\(row.name), \(row.call.spokenSummary)")
+            }
+        }
+    }
+
+    private func volunteerRow(_ volunteer: Volunteer) -> some View {
+        let online = model.isOnline(volunteer)
+        return PersonRow(
+            userID: volunteer.id, name: volunteer.name, subtitle: volunteer.availableUntil, isOnline: online,
+            onCall: online ? { router.call(volunteer) } : nil,
+            onMessage: { router.message(volunteer) }
+        )
+    }
+}
+
+private struct CallerProfileTab: View {
+    @Bindable var model: CallerProfileViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            ProfileHeader(name: model.displayName.isEmpty ? "Your profile" : model.displayName, userID: model.userID)
+                .padding(.vertical, 8)
+            if model.isLoaded {
+                ProfileFields {
+                    ProfileFieldRow(label: "Display name", text: $model.displayName)
+                    ProfileFieldRow(label: "Location", text: $model.location)
+                    ProfileFieldRow(label: "Condition", text: $model.condition, axis: .vertical)
+                }
+                Button(model.isSaving ? "Saving…" : "Save profile") { Task { await model.save() } }
+                    .buttonStyle(.pill(.primary))
+                    .disabled(!model.canSave)
+            }
+            if let message = model.message {
+                Text(message).font(.callout).foregroundStyle(.white)
+            }
+        }
+        .onChange(of: model.message) { _, text in
+            if let text { AccessibilityNotification.Announcement(text).post() }
+        }
     }
 }
 
@@ -169,5 +179,6 @@ struct CallingView: View {
         CallHelpView()
     }
     .environment(AppRouter())
+    .environment(AppViewModel.preview)
     .preferredColorScheme(.dark)
 }

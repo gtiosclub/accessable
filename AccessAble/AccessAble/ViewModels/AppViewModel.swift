@@ -24,12 +24,26 @@ final class AppViewModel {
         didSet { save(preferences, forKey: Keys.preferences) }
     }
 
+    /// Kept separately so older GuidanceProfile and SettingsPreferences data still decode.
+    var callerPreferences: CallerPreferences {
+        get { services.callerSettings.preferences }
+        set {
+            services.callerSettings.preferences = newValue
+            save(newValue.normalized, forKey: Keys.callerPreferences)
+        }
+    }
+
     var hasCompletedOnboarding: Bool {
         didSet { defaults.set(hasCompletedOnboarding, forKey: Keys.onboarded) }
     }
 
     let performance: PerformanceModeMonitor
     let services: AppServices
+    let savedPlacesStore: SavedPlacesStore
+    let recentPlacesStore: RecentPlacesStore
+
+    var savedPlaces: [SavedPlace] { savedPlacesStore.places }
+    var recentPlaces: [RecentPlace] { recentPlacesStore.places }
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var tripCameraTask: Task<Void, Never>?
@@ -40,6 +54,9 @@ final class AppViewModel {
         static let profile = "guidanceProfile"
         static let onboarded = "hasCompletedOnboarding"
         static let preferences = "settingsPreferences"
+        static let callerPreferences = "callerPreferences.v1"
+        static let savedPlaces = "savedPlaces"
+        static let recentPlaces = "recentPlaces"
     }
 
     init(defaults: UserDefaults = .standard, services: AppServices? = nil) {
@@ -47,11 +64,14 @@ final class AppViewModel {
         let performance = PerformanceModeMonitor()
         self.performance = performance
         self.services = services ?? .live(performance: performance)
+        self.savedPlacesStore = SavedPlacesStore(defaults: defaults, storageKey: Keys.savedPlaces)
+        self.recentPlacesStore = RecentPlacesStore(defaults: defaults, storageKey: Keys.recentPlaces)
         self.profile = Self.load(GuidanceProfile.self, forKey: Keys.profile, from: defaults) ?? .default
         self.preferences = Self.load(SettingsPreferences.self, forKey: Keys.preferences, from: defaults) ?? .default
         self.hasCompletedOnboarding = defaults.bool(forKey: Keys.onboarded)
         let (foregroundStream, foregrounds) = AsyncStream<Void>.makeStream()
         self.foregrounds = foregrounds
+        self.services.callerSettings.preferences = Self.load(CallerPreferences.self, forKey: Keys.callerPreferences, from: defaults) ?? CallerPreferences()
 
         let profile = self.profile
         self.services.askAISettings.priorities = profile.aiPriorities

@@ -16,14 +16,30 @@ final class AccountSessionViewModel {
     private let auth: any AuthService
     private let profiles: any UserProfileStore
     private let presence: any PresenceService
+    /// The trip saved for resuming, and the one running, which would save itself again: the next account on the
+    /// phone mustn't be offered either.
+    private let savedTrips: SavedTripStore?
+    private let trip: any TripStateProviding
+    private let routePreferences: RoutePreferencesStore?
+    /// Kept on the phone, not in the account, so they go with it.
+    private let savedPlaces: SavedPlacesStore?
+    private let recentPlaces: RecentPlacesStore?
     private var activeUser: AuthUser?
     private var loadTask: Task<Void, Never>?
     private var generation = UUID()
 
-    init(auth: any AuthService, profiles: any UserProfileStore, presence: any PresenceService = PlaceholderPresenceService()) {
+    init(auth: any AuthService, profiles: any UserProfileStore, presence: any PresenceService = PlaceholderPresenceService(),
+         savedTrips: SavedTripStore? = nil, trip: any TripStateProviding = PlaceholderTripProvider(),
+         savedPlaces: SavedPlacesStore? = nil, recentPlaces: RecentPlacesStore? = nil,
+         routePreferences: RoutePreferencesStore? = nil) {
         self.auth = auth
         self.profiles = profiles
         self.presence = presence
+        self.savedTrips = savedTrips
+        self.trip = trip
+        self.routePreferences = routePreferences
+        self.savedPlaces = savedPlaces
+        self.recentPlaces = recentPlaces
     }
 
     func listen() async {
@@ -33,7 +49,8 @@ final class AccountSessionViewModel {
             loadTask?.cancel()
             activeUser = user
             generation = UUID()
-            guard let user else { state = .signedOut; continue }
+            // Settings signs out through `auth` directly, so the preferences are forgotten here too.
+            guard let user else { routePreferences?.signedOut(); state = .signedOut; continue }
             state = .loading
             let expected = generation
             loadTask = Task { await load(user: user, generation: expected) }
@@ -53,6 +70,7 @@ final class AccountSessionViewModel {
             let profile = try await profiles.load(userID: user.id)
             guard !Task.isCancelled, generation == expected, activeUser == user else { return }
             state = profile.map(State.ready) ?? .needsProfile(user)
+            if profile != nil { syncRoutePreferences(for: user) }
         } catch {
             guard !Task.isCancelled, generation == expected, activeUser == user else { return }
             if let profileError = error as? UserProfileError {
@@ -73,11 +91,23 @@ final class AccountSessionViewModel {
         guard generation == expected, activeUser == user,
               await auth.currentUser() == user else { throw CancellationError() }
         state = .ready(profile)
+        syncRoutePreferences(for: user)
+    }
+
+    /// In the background: the account's preferences never hold up showing it.
+    private func syncRoutePreferences(for user: AuthUser) {
+        guard let routePreferences else { return }
+        Task { await routePreferences.signedIn(userID: user.id) }
     }
 
     func signOut() async throws {
         try? await presence.setOnline(false)
         try await auth.signOut()
+        await trip.endTrip()
+        savedTrips?.clear()
+        routePreferences?.signedOut()
+        savedPlaces?.clear()
+        recentPlaces?.clear()
         loadTask?.cancel()
         generation = UUID()
         activeUser = nil

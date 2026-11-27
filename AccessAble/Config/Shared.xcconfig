@@ -1,3 +1,8 @@
 // Tracked. Pulls in the untracked Secrets.xcconfig if it exists.
 // Copy Secrets.example.xcconfig to Secrets.xcconfig (same folder) and fill it in.
+
+// Valhalla servers asked for walking routes, in order; Apple Maps is always asked after them.
+// Secrets.xcconfig can override it (see Secrets.example.xcconfig).
+ROUTING_SERVERS = stadia,fossgis
+
 #include? "Secrets.xcconfig"

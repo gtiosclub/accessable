@@ -4,7 +4,7 @@ import {
   Timestamp, collection, deleteDoc, doc, getDoc, getDocs, limit, query,
   serverTimestamp, setDoc, updateDoc,
 } from 'firebase/firestore';
-import { startEnvironment } from './support.js';
+import { startEnvironment, seedCallPrerequisites } from './support.js';
 
 const env = await startEnvironment();
 beforeEach(() => env.clearFirestore());
@@ -30,14 +30,16 @@ async function seed(path, id, data) {
   });
 }
 
-const seedRole = (uid, role) => seed('users', uid, {
-  role, displayName: 'Sam', languages: ['English'], createdAt: Timestamp.now(),
-});
+const seedRole = async (uid, role) => {
+  if (role === 'volunteer') await seedCallPrerequisites(env, 'fixture-caller', uid);
+  return seed('users', uid, { role, displayName: 'Sam', languages: ['English'], createdAt: Timestamp.now() });
+};
 
 // A volunteer document whose last heartbeat was `secondsAgo` seconds ago.
-const seedVolunteer = (uid, secondsAgo = 0) => seed('volunteers', uid, volunteer({
-  lastSeen: Timestamp.fromMillis(Date.now() - secondsAgo * 1000),
-}));
+const seedVolunteer = async (uid, secondsAgo = 0) => {
+  await seedCallPrerequisites(env, 'fixture-caller', uid);
+  return seed('volunteers', uid, volunteer({ lastSeen: Timestamp.fromMillis(Date.now() - secondsAgo * 1000) }));
+};
 
 test('signed-out users cannot read volunteers', async () => {
   await seedVolunteer('sam');

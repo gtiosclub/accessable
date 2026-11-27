@@ -4,17 +4,24 @@ import os
 private let log = Logger(subsystem: "AccessAble", category: "TripManager")
 
 /// Guides a walk along a route: follows location fixes with `RouteProgressTracker`, speaks its cues, reroutes when
-/// the user leaves the route, and warns when GPS is too weak to guide.
+/// the user leaves the route, and warns when GPS is too weak to guide or the battery runs low.
 ///
 /// Every `await` is a point where `endTrip` or another `startTrip` can run, so each task and handler carries the
 /// `generation` it was started for and does nothing once it is stale. State changes happen before the next `await`.
 actor TripManager: TripStateProviding {
     private nonisolated let states = Broadcaster<TripState>(replaysLatest: true)
     private nonisolated let routes = Broadcaster<NavigationRoute?>(replaysLatest: true)
+    // not replayed: a question is for the trip it was asked on
+    private nonisolated let questions = Broadcaster<ReportQuestion>()
+    // replayed, so a map that opens mid-trip shows them; emptied when a trip starts or ends, so it never shows the
+    // last trip's
+    private nonisolated let shownReports = Broadcaster<[Report]>(replaysLatest: true)
 
     private let location: any LocationProvider
     private let routing: any RoutingService
     private let announcements: any AnnouncementEngineProtocol
+    /// Nil where reports aren't available, so a trip doesn't listen for them.
+    private let reports: (any ReportService)?
     private let landmarks: any LandmarkObserving
     /// Read when a trip starts, not at launch: loading them parses a large bundled file.
     private let campusBuildings: @Sendable () -> [CampusBuilding]
@@ -24,6 +31,11 @@ actor TripManager: TripStateProviding {
     private let distances: DistanceSettings
     /// Writes nothing unless recording is on, and fix rows aren't even built then.
     private let recorder: TripRecorder?
+    /// Where the trip in progress is kept for resuming after the app closes; nil keeps nothing.
+    private let savedTrips: SavedTripStore?
+    /// Nil where the battery isn't watched, as in tests of everything else. Its warnings are spoken from here, so
+    /// they wait for the start announcement and are recorded.
+    private let battery: BatteryMonitor?
     private let now: @Sendable () -> Date
     private let sleep: @Sendable (Duration) async throws -> Void
 
@@ -34,8 +46,19 @@ actor TripManager: TripStateProviding {
     private var tripID = UUID()
     private var phase: TripPhase = .planning
     private var arrivedWhilePaused = false
+    private enum ResumedStart {
+        /// Waiting out `startDelay`.
+        case delayed
+        /// Said, but the first usable fix hasn't placed the user yet, so the way on comes when it does.
+        case awaitingPlacement
+    }
+    /// A resumed trip's start announcement not yet said in full. Its turn cues wait for it, so the first is never
+    /// said before the trip is.
+    private var resumedStart: ResumedStart?
     private var destination: Destination?
     private var route: NavigationRoute?
+    /// Those the trip started with, kept for its reroutes whatever the settings say now.
+    private var preferences = RoutePreferences()
     private var tracker: RouteProgressTracker?
     /// The current route's crossings, in the order the tracker's `.crossing` indices refer to.
     private var routeCrossings: [RouteCrossing] = []
@@ -50,29 +73,78 @@ actor TripManager: TripStateProviding {
     private var rerouteTask: Task<Void, Never>?
     private var landmarkTask: Task<Void, Never>?
     private var headingTask: Task<Void, Never>?
+    private var reportTask: Task<Void, Never>?
     private var cueChecks: [Task<Void, Never>] = []
 
     /// Turn cues submitted and waiting for their delivery check, and those of them the engine has delivered.
     private var pendingCueIDs: Set<UUID> = []
     private var deliveredIDs: Set<UUID> = []
+    /// Battery warnings submitted and not yet delivered, which the monitor gives again until one is.
+    private var batteryWarningIDs: [UUID: BatteryMonitor.Level] = [:]
     private var missedTurnStep: Int?
     private var rerouteCount = 0
     private var lastRerouteRequest: Date?
     private var hasRerouted = false
-    /// Where an asked-for reroute starts: the latest fix precise enough to start a route from.
+    /// Where an asked-for reroute starts: the latest fix precise enough to start a route from, and when it was.
     private var lastPreciseFix: GeoCoordinate?
+    private var lastPreciseFixAt: Date?
     /// The latest fix, however rough, for saying which way the path or the destination lies only when it is precise.
     private var lastFix: LocationSample?
     private var headingEstimator = HeadingEstimator()
     private var tripStartedAt = Date.distantPast
     private var lastGoodFixAt: Date?
     private var isSignalWeak = false
+    /// The latest active reports near the route, without the user's own.
+    private var nearbyReports: [Report] = []
+    /// The latest snapshot as it came, the user's own reports included, for the map.
+    private var latestReports: [Report] = []
+    /// Reports rerouted around or warned of this trip; kept across reroutes and new subscriptions.
+    private var actedOnReportIDs: Set<String> = []
+    private var reportRerouteCount = 0
+    /// Bumped on each subscription to reports, so a snapshot from a replaced one is dropped.
+    private var reportSubscription = 0
+    /// A report reroute kept the route, or failed, while paused: said on resuming, since the route still passes it.
+    private var unavoidedReportOnResume = false
+    /// Reports put to the user this trip, or walked too far past to ask; kept across reroutes.
+    private var promptedReportIDs: Set<String> = []
+    /// The question sent and not yet ended by the screen, and when it was sent.
+    private var openQuestion: (reportID: String, askedAt: Date)?
+    /// The nearest each report not yet asked about has been to a precise fix this trip, in metres.
+    private var closestApproaches: [String: Double] = [:]
+    /// When the last question was answered with a vote, and when the screen last didn't ask about each report.
+    private var lastVoteAt: Date?
+    private var notAskedAt: [String: Date] = [:]
 
     // the public routing server is shared and slow to recover; this spaces requests and bounds a bad walk
     private static let rerouteInterval: TimeInterval = 30
     // a reroute that came back shows the server is answering, and a user still lost shouldn't wait as long again
     private static let reroutedInterval: TimeInterval = 15
     private static let maximumReroutes = 5
+    // seconds; a reroute from an older precise fix would start where the user was, not where they are
+    private static let rerouteFixAge: TimeInterval = 10
+    // reroutes for new reports ahead, apart from the off-route ones, so reports can't use up a lost user's
+    private static let maximumReportReroutes = 2
+    // waits before listening again after the report stream ends, on an error or signed out: longer each time in a
+    // row, so a stream that keeps ending doesn't spin
+    private static let reportRetryDelays: [Duration] = [.seconds(5), .seconds(15), .seconds(60)]
+    // metres beyond the route's reach that reports are listened for
+    private static let reportSearchMargin: Double = 250
+    // metres; a report passed nearer than this is one the user could see, and the distance must then grow by the
+    // margin, more than GPS jitter, before they have passed it
+    private static let questionPassRadius: Double = 10
+    private static let questionPassMargin: Double = 5
+    // metres; a question nearer a turn or crossing than this would talk over its cue, so it waits, unless the user is
+    // this far past the report by then and it is no longer "here"
+    private static let questionManeuverClearance: Double = 30
+    private static let questionGiveUpDistance: Double = 60
+    // seconds from a vote to the next question: the rules allow one vote a minute
+    private static let questionSpacing: TimeInterval = 60
+    // seconds before a question the screen didn't ask is sent again, so it isn't sent on every fix
+    private static let questionRetryDelay: TimeInterval = 10
+    // seconds; a question the screen hasn't ended by then, such as one sent with the screen closed, counts as asked
+    private static let questionReplyLimit: TimeInterval = 60
+    private static let unavoidedReportSpeech =
+        "Couldn't find a way around the reported obstacle. Keep following the current route carefully."
     // a new route from a rough fix would start on the wrong side of the street, and a direction from one can point
     // the wrong way
     private static let rerouteAccuracy: Double = 20
@@ -103,24 +175,30 @@ actor TripManager: TripStateProviding {
         location: any LocationProvider,
         routing: any RoutingService,
         announcements: any AnnouncementEngineProtocol,
+        reports: (any ReportService)? = nil,
         landmarks: any LandmarkObserving = PlaceholderLandmarkProvider(),
         campusBuildings: @escaping @Sendable () -> [CampusBuilding] = { CampusLandmarks.buildings },
         campusCrossings: @escaping @Sendable () -> [CampusCrossing] = { CampusCrossings.all },
         setTripTracking: @escaping @Sendable (Bool) async -> Void = { _ in },
         distances: DistanceSettings = DistanceSettings(units: .metres),
         recorder: TripRecorder? = nil,
+        savedTrips: SavedTripStore? = nil,
+        battery: BatteryMonitor? = nil,
         now: @escaping @Sendable () -> Date = { .now },
         sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
     ) {
         self.location = location
         self.routing = routing
         self.announcements = announcements
+        self.reports = reports
         self.landmarks = landmarks
         self.campusBuildings = campusBuildings
         self.campusCrossings = campusCrossings
         self.setTripTracking = setTripTracking
         self.distances = distances
         self.recorder = recorder
+        self.savedTrips = savedTrips
+        self.battery = battery
         self.now = now
         self.sleep = sleep
         states.send(TripState(phase: .planning, updatedAt: now()))
@@ -134,7 +212,16 @@ actor TripManager: TripStateProviding {
         routes.stream()
     }
 
-    func startTrip(route: NavigationRoute, destination: Destination) async {
+    nonisolated func reportQuestions() -> AsyncStream<ReportQuestion> {
+        questions.stream()
+    }
+
+    nonisolated func mapReports() -> AsyncStream<[Report]> {
+        shownReports.stream()
+    }
+
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {
         generation += 1
         let generation = generation
         cancelTasks()
@@ -142,11 +229,14 @@ actor TripManager: TripStateProviding {
         routeVersion = 0
         phase = .active
         arrivedWhilePaused = false
+        resumedStart = resumingAtStep.map { _ in .delayed }
         self.destination = destination
         self.route = route
+        self.preferences = preferences
         routeCrossings = RouteCrossings.along(route, crossings: campusCrossings())
         let tracker = RouteProgressTracker(route: route, startedAt: now(),
-                                           crossings: routeCrossings.map(\.distanceAlongRoute))
+                                           crossings: routeCrossings.map(\.distanceAlongRoute),
+                                           resumingAtStep: resumingAtStep)
         self.tracker = tracker
         progress = tracker.state
         landmarkMatcher = LandmarkMatcher(
@@ -155,18 +245,32 @@ actor TripManager: TripStateProviding {
         entranceGuide = EntranceGuide()
         pendingCueIDs = []
         deliveredIDs = []
+        batteryWarningIDs = [:]
         missedTurnStep = nil
         rerouteCount = 0
         lastRerouteRequest = nil
         hasRerouted = false
         lastPreciseFix = nil
+        lastPreciseFixAt = nil
         lastFix = nil
         headingEstimator = HeadingEstimator()
         tripStartedAt = now()
         lastGoodFixAt = nil
         isSignalWeak = false
+        nearbyReports = []
+        latestReports = []
+        shownReports.send([])
+        actedOnReportIDs = []
+        reportRerouteCount = 0
+        unavoidedReportOnResume = false
+        promptedReportIDs = []
+        closestApproaches = [:]
+        openQuestion = nil
+        lastVoteAt = nil
+        notAskedAt = [:]
         routes.send(route)
         publish(at: now())
+        saveTrip()
         recorder?.tripStarted(at: now())
 
         // subscribed before any await, so a fix or delivery can't slip past while this trip is set up
@@ -174,6 +278,7 @@ actor TripManager: TripStateProviding {
         let headings = location.headingSamples()
         let delivered = announcements.deliveredEvents()
         let sightings = landmarks.landmarkObservations()
+        subscribeToReports(along: route, generation: generation)
         headingTask = Task {
             for await sample in headings { self.handle(sample, generation: generation) }
         }
@@ -198,6 +303,9 @@ actor TripManager: TripStateProviding {
     func pauseTrip() async {
         guard phase == .active else { return }
         phase = .paused
+        // "Trip resumed." says what to do next instead, once a fix has placed the user to say it from
+        if tracker?.placement != .awaitingFix { resumedStart = nil }
+        battery?.setPaused(true)
         publish(at: now())
         await submit(confirmation("Trip paused."))
     }
@@ -215,9 +323,17 @@ actor TripManager: TripStateProviding {
             return
         }
         phase = .active
+        battery?.setPaused(false)
         publish(at: now())
+        // "Trip resumed." stands for a start announcement not said, and the way on comes with the placing fix
+        if resumedStart != nil { resumedStart = tracker?.placement == .awaitingFix ? .awaitingPlacement : nil }
         let guidance = resumeAnnouncement()
         await submit(confirmation("Trip resumed."))
+        if self.generation == generation, phase == .active, unavoidedReportOnResume {
+            unavoidedReportOnResume = false
+            // off the route since, so it no longer passes the report
+            if !needsReroute { await submit(unavoidedReportAnnouncement()) }
+        }
         // a reroute that landed meanwhile has its own announcement, and this one is about the old route
         guard self.generation == generation, routeVersion == version, phase == .active, let guidance else { return }
         await submit(guidance)
@@ -228,6 +344,8 @@ actor TripManager: TripStateProviding {
         generation += 1
         let generation = generation
         cancelTasks()
+        savedTrips?.clear()
+        battery?.stop()
         phase = .planning
         tracker = nil
         progress = nil
@@ -235,17 +353,30 @@ actor TripManager: TripStateProviding {
         routeCrossings = []
         route = nil
         destination = nil
+        nearbyReports = []
+        latestReports = []
+        shownReports.send([])
+        actedOnReportIDs = []
+        unavoidedReportOnResume = false
+        promptedReportIDs = []
+        closestApproaches = [:]
+        openQuestion = nil
+        lastVoteAt = nil
+        notAskedAt = [:]
         routes.send(nil)
         states.send(TripState(phase: .planning, updatedAt: now()))
         await setTripTracking(false)
         // a trip started meanwhile shouldn't hear that it ended, and has its own recording
         guard self.generation == generation else { return }
         await submit(confirmation("Trip ended."))
-        recorder?.tripEnded()
+        // a trip started while that was said has finished this one's file for its own
+        guard self.generation == generation else { return }
+        recorder?.tripEnded(at: now())
     }
 
     private func cancelTasks() {
-        for task in [trackingTask, deliveryTask, startTask, watchdogTask, rerouteTask, landmarkTask, headingTask] {
+        for task in [trackingTask, deliveryTask, startTask, watchdogTask, rerouteTask, landmarkTask, headingTask,
+                     reportTask] {
             task?.cancel()
         }
         for task in cueChecks {
@@ -253,6 +384,7 @@ actor TripManager: TripStateProviding {
         }
         landmarkTask = nil
         headingTask = nil
+        reportTask = nil
         trackingTask = nil
         deliveryTask = nil
         startTask = nil
@@ -275,7 +407,11 @@ actor TripManager: TripStateProviding {
                 if phase == .active { pending.append((signalAnnouncement("Location signal is back.", .normal, 6), nil)) }
             }
         }
-        if sample.horizontalAccuracy <= Self.rerouteAccuracy { lastPreciseFix = sample.coordinate }
+        // a late fix is no longer where they are
+        if sample.horizontalAccuracy <= Self.rerouteAccuracy, sample.timestamp >= lastPreciseFixAt ?? .distantPast {
+            lastPreciseFix = sample.coordinate
+            lastPreciseFixAt = sample.timestamp
+        }
         // a bearing from a NaN fix would trap when turned into a direction, and a late fix is no longer where they are
         if sample.coordinate.latitude.isFinite, sample.coordinate.longitude.isFinite,
            sample.horizontalAccuracy.isFinite, sample.timestamp >= lastFix?.timestamp ?? .distantPast {
@@ -283,7 +419,9 @@ actor TripManager: TripStateProviding {
         }
         headingEstimator.update(with: sample)
 
-        let update = tracker.update(with: sample, emitsCues: phase == .active)
+        let previousStep = progress?.nextStepIndex
+        let wasAwaitingPlacement = resumedStart == .awaitingPlacement
+        let update = tracker.update(with: sample, emitsCues: phase == .active && resumedStart == nil)
         self.tracker = tracker
         progress = update.state
         record(sample, update, on: tracker.route)
@@ -291,6 +429,7 @@ actor TripManager: TripStateProviding {
             await arrive(at: sample.timestamp, generation: generation)
             return
         }
+        if update.state.nextStepIndex != previousStep { saveTrip() }
         if let step = missedTurnStep, update.state.nextStepIndex != step { missedTurnStep = nil }
         for case let .missedTurn(step, _) in update.events { missedTurnStep = step }
         if update.events.contains(.backOnRoute) { missedTurnStep = nil }
@@ -302,6 +441,11 @@ actor TripManager: TripStateProviding {
         }
 
         guard phase == .active else { return }
+        if wasAwaitingPlacement, tracker.placement != .awaitingFix {
+            resumedStart = nil
+            let guidance = resumedGuidance()
+            if !guidance.isEmpty { pending.append((maneuver(guidance, .high, expiresIn: 15, key: "placed"), nil)) }
+        }
         pending += update.events.compactMap { event in
             announcement(for: event, progress: update.state).map { ($0, Self.cueStep(of: event)) }
         }
@@ -321,6 +465,9 @@ actor TripManager: TripStateProviding {
                                  generation: generation)
             }
         }
+        // after this fix's cues, so a question doesn't go ahead of them
+        askAboutPassedReports(generation: generation)
+        await considerReports(generation: generation)
     }
 
     private func handle(_ sample: HeadingSample, generation: Int) {
@@ -333,8 +480,9 @@ actor TripManager: TripStateProviding {
     }
 
     private func arrive(at time: Date, generation: Int) async {
+        savedTrips?.clear()
         // the heading only words guidance, and the compass runs while it is subscribed
-        for task in [watchdogTask, rerouteTask, deliveryTask, headingTask] {
+        for task in [watchdogTask, rerouteTask, deliveryTask, headingTask, reportTask] {
             task?.cancel()
         }
         for task in cueChecks {
@@ -343,6 +491,8 @@ actor TripManager: TripStateProviding {
         cueChecks = []
         pendingCueIDs = []
         deliveredIDs = []
+        batteryWarningIDs = [:]
+        battery?.stop()
         if phase == .paused {
             arrivedWhilePaused = true
             publish(at: time)
@@ -352,7 +502,7 @@ actor TripManager: TripStateProviding {
             if let arrival = arrivalAnnouncement() { await submit(arrival) }
         }
         guard self.generation == generation else { return }
-        recorder?.tripEnded()
+        recorder?.tripEnded(at: now())
         // last, since this runs inside the tracking task
         trackingTask?.cancel()
         trackingTask = nil
@@ -360,8 +510,12 @@ actor TripManager: TripStateProviding {
     }
 
     private func markDelivered(_ id: UUID, generation: Int) {
-        guard self.generation == generation, pendingCueIDs.contains(id) else { return }
-        deliveredIDs.insert(id)
+        guard self.generation == generation else { return }
+        if let level = batteryWarningIDs.removeValue(forKey: id) {
+            battery?.delivered(level)
+        } else if pendingCueIDs.contains(id) {
+            deliveredIDs.insert(id)
+        }
     }
 
     private func publish(at time: Date) {
@@ -380,6 +534,14 @@ actor TripManager: TripStateProviding {
             hasArrived: phase == .arrived || arrivedWhilePaused,
             updatedAt: time
         ))
+    }
+
+    /// Keeps the route being followed and how far along its steps the user is, for resuming after the app closes.
+    private func saveTrip() {
+        guard let savedTrips, let route, let destination, let progress else { return }
+        savedTrips.save(SavedTrip(tripID: tripID, route: route, routeSource: route.source,
+                                  destination: destination, passedStepCount: progress.nextStepIndex,
+                                  startedAt: tripStartedAt, savedAt: now(), preferences: preferences))
     }
 
     private var offRouteInstruction: String {
@@ -446,6 +608,168 @@ actor TripManager: TripStateProviding {
         }
     }
 
+    // MARK: Community reports
+
+    /// Listens for reports near `route` until the trip ends or the route changes, and again after a wait whenever the
+    /// stream ends.
+    private func subscribeToReports(along route: NavigationRoute, generation: Int) {
+        reportTask?.cancel()
+        reportTask = nil
+        guard let reports else { return }
+        reportSubscription += 1
+        let subscription = reportSubscription
+        // every point of the route is within half its length, along it, of its middle
+        let center = GeoMath.coordinate(atDistance: route.totalDistance / 2, along: route.coordinates,
+                                        cumulativeDistances: route.cumulativeDistances)
+        let radius = route.totalDistance / 2 + Self.reportSearchMargin
+        reportTask = Task {
+            var retries = 0
+            // an injected sleep may return rather than throw once cancelled
+            while !Task.isCancelled {
+                for await snapshot in reports.reportChanges(near: center, radius: radius) {
+                    retries = 0
+                    await self.receive(snapshot, subscription: subscription, generation: generation)
+                }
+                guard !Task.isCancelled else { return }
+                let delay = Self.reportRetryDelays[min(retries, Self.reportRetryDelays.count - 1)]
+                retries += 1
+                log.notice("Report stream ended; listening again in \(String(describing: delay), privacy: .public)")
+                do { try await self.sleep(delay) } catch { return }
+            }
+        }
+    }
+
+    private func receive(_ snapshot: [Report], subscription: Int, generation: Int) async {
+        guard self.generation == generation, subscription == reportSubscription else { return }
+        latestReports = snapshot
+        // the user's own don't reroute their trip: Route Blocked Ahead's Re-Route is their way round
+        nearbyReports = snapshot.filter { !$0.isOwn }
+        publishMapReports()
+        await considerReports(generation: generation)
+    }
+
+    /// The active reports near the route for the map, the user's own included: they want to see what they reported.
+    /// Near is within the corridor the route summary counts avoided reports in, so the map shows those it mentions.
+    private func publishMapReports() {
+        guard let route else { return }
+        let time = now()
+        shownReports.send(ReportExclusions.reports(
+            latestReports.filter { $0.expiresAt > time },
+            within: ReportAwareRoutingService.avoidanceCorridor, of: route
+        ))
+    }
+
+    /// Reroutes around reports the route ahead passes but wasn't planned around, or warns of them where a reroute
+    /// can't help. A report not acted on stays a candidate, so one put off (paused, off route, a weak signal, a reroute
+    /// in flight or too soon after the last) is weighed again on the next fix or snapshot.
+    private func considerReports(generation: Int) async {
+        guard self.generation == generation, phase == .active, !needsReroute, let route, let progress else { return }
+        let walked = route.totalDistance - progress.distanceRemaining
+        let time = now()
+        // warned of when the route was planned
+        let planned = Set(route.unavoidedReports.map(\.id))
+        var nearUser: [Report] = []
+        var nearEnd: [Report] = []
+        var avoidable: [Report] = []
+        for report in nearbyReports
+        where report.expiresAt > time && !actedOnReportIDs.contains(report.id) && !planned.contains(report.id) {
+            guard let along = ReportExclusions.distanceAlong(route, passing: report, from: walked) else { continue }
+            // the routing drops a report this near either end first, so a new route would pass it anyway
+            if along - walked < ReportAwareRoutingService.endpointClearance {
+                nearUser.append(report)
+            } else if route.totalDistance - along < ReportAwareRoutingService.endpointClearance {
+                nearEnd.append(report)
+            } else {
+                avoidable.append(report)
+            }
+        }
+        var warned = nearUser + nearEnd
+        let warning = nearUser.isEmpty ? "New obstacle reported ahead." : "New obstacle reported just ahead."
+        if !avoidable.isEmpty, rerouteTask == nil {
+            if reportRerouteCount >= Self.maximumReportReroutes {
+                warned += avoidable
+            } else if !isSignalWeak, let origin = recentPreciseFix, rerouteSpacingElapsed {
+                actedOnReportIDs.formUnion((avoidable + warned).map(\.id))
+                // said by the reroute's task before it asks, so its answer can't come first; and in flight from here,
+                // so a fix or snapshot meanwhile waits for it
+                // the reroute's own line covers those near the end
+                var announcements = nearUser.first.map { near in
+                    [maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(near.id)")]
+                } ?? []
+                announcements.append(maneuver("New obstacle reported ahead. Finding a new route.", .high,
+                                              haptic: .attention, expiresIn: 15,
+                                              key: "report-reroute-\(avoidable[0].id)"))
+                // the near ones too, so a new route that passes them warns of them
+                requestReroute(from: origin, generation: generation, requested: true, avoiding: avoidable,
+                               alsoAvoiding: warned, announcing: announcements)
+                return
+            }
+        }
+        guard let first = warned.first else { return }
+        actedOnReportIDs.formUnion(warned.map(\.id))
+        await submit(maneuver(warning, .high, haptic: .attention, expiresIn: 10, key: "report-warning-\(first.id)"))
+    }
+
+    /// The screen has ended the question about `reportID`. One it didn't put to the user may be asked again after
+    /// `questionRetryDelay`; after a vote, the next question waits `questionSpacing`.
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {
+        endQuestion(reportID, outcome: outcome)
+    }
+
+    private func endQuestion(_ reportID: String, outcome: ReportQuestionOutcome) {
+        // a vote still counts once the question has ended, as a button pressed as it closed does
+        if outcome == .voted {
+            promptedReportIDs.insert(reportID)
+            lastVoteAt = now()
+        }
+        guard openQuestion?.reportID == reportID else { return }
+        openQuestion = nil
+        switch outcome {
+        case .notAsked:
+            notAskedAt[reportID] = now()
+        case .unanswered:
+            promptedReportIDs.insert(reportID)
+        case .voted:
+            break
+        }
+    }
+
+    /// Asks about a report the user has just walked past: their nearest approach to it was within
+    /// `questionPassRadius`, and they are now `questionPassMargin` further away. Only from a recent precise fix, while
+    /// following the route, and not near a turn or crossing; one question at a time, `questionSpacing` after the
+    /// last vote, and once a report a trip.
+    private func askAboutPassedReports(generation: Int) {
+        guard self.generation == generation, phase == .active, !needsReroute, rerouteTask == nil,
+              let route, let progress, let fix = recentPreciseFix else { return }
+        let time = now()
+        let walked = route.totalDistance - progress.distanceRemaining
+        let nearManeuver = progress.distanceToNextStep < Self.questionManeuverClearance
+            || routeCrossings.contains { (0..<Self.questionManeuverClearance).contains($0.distanceAlongRoute - walked) }
+        if let open = openQuestion, time.timeIntervalSince(open.askedAt) >= Self.questionReplyLimit {
+            log.notice("A report question wasn't ended by the screen; counting it as asked")
+            endQuestion(open.reportID, outcome: .unanswered)
+        }
+        let spaced = lastVoteAt.map { time.timeIntervalSince($0) >= Self.questionSpacing } ?? true
+        var canAsk = openQuestion == nil && spaced && !nearManeuver
+        for report in nearbyReports
+        where report.expiresAt > time && !promptedReportIDs.contains(report.id) && openQuestion?.reportID != report.id
+            && notAskedAt[report.id].map({ time.timeIntervalSince($0) >= Self.questionRetryDelay }) ?? true {
+            let distance = report.distance(from: fix)
+            let closest = min(closestApproaches[report.id] ?? .infinity, distance)
+            closestApproaches[report.id] = closest
+            guard closest < Self.questionPassRadius, distance >= closest + Self.questionPassMargin else { continue }
+            if distance > Self.questionGiveUpDistance {
+                promptedReportIDs.insert(report.id)
+                closestApproaches[report.id] = nil
+                continue
+            }
+            guard canAsk else { continue }
+            canAsk = false
+            openQuestion = (report.id, time)
+            questions.send(ReportQuestion(report: report, askedAt: time))
+        }
+    }
+
     // MARK: Rerouting
 
     private var needsReroute: Bool {
@@ -459,17 +783,28 @@ actor TripManager: TripStateProviding {
 
     private var canRequestReroute: Bool {
         guard rerouteTask == nil, rerouteCount < Self.maximumReroutes else { return false }
+        return rerouteSpacingElapsed
+    }
+
+    /// `lastPreciseFix` while it is recent enough to start a reroute from.
+    private var recentPreciseFix: GeoCoordinate? {
+        guard let lastPreciseFixAt, now().timeIntervalSince(lastPreciseFixAt) <= Self.rerouteFixAge else { return nil }
+        return lastPreciseFix
+    }
+
+    /// Long enough since the last request, whatever it was for, for the public routing server.
+    private var rerouteSpacingElapsed: Bool {
         let interval = hasRerouted ? Self.reroutedInterval : Self.rerouteInterval
         return lastRerouteRequest.map { now().timeIntervalSince($0) >= interval } ?? true
     }
 
     /// A new route from where the user is now, asked for by the user (Route Blocked Ahead's
-    /// "find another way") rather than because they left the route. The routing service doesn't
-    /// know about the obstacle, so the new route is the best one from here, not one around it.
+    /// "find another way") rather than because they left the route. The new route avoids the obstacle only once it
+    /// has been reported, and says so when it can't.
     func reroute() async {
         guard phase == .active || phase == .paused else { return }
         // with a weak signal the last precise fix is old, and the user has walked on from it
-        guard let origin = lastPreciseFix, !isSignalWeak else {
+        guard let origin = recentPreciseFix, !isSignalWeak else {
             await submit(maneuver("Couldn't find where you are precisely enough for a new route. Try again in a moment.",
                                   .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
             return
@@ -483,32 +818,57 @@ actor TripManager: TripStateProviding {
         requestReroute(from: origin, generation: generation, requested: true)
     }
 
-    /// - Parameter requested: Asked for by the user, so it lands even while still on the route.
-    private func requestReroute(from origin: GeoCoordinate, generation: Int, requested: Bool = false) {
+    /// - Parameters:
+    ///   - requested: Asked for by the user or for new reports, so it lands even while still on the route.
+    ///   - triggers: New reports ahead to route around. A reroute for them counts apart from the off-route ones.
+    ///   - others: Reports the route should avoid if it can, without being for them.
+    ///   - announcements: Said, in order, before the request goes out.
+    private func requestReroute(from origin: GeoCoordinate, generation: Int, requested: Bool = false,
+                                avoiding triggers: [Report] = [], alsoAvoiding others: [Report] = [],
+                                announcing announcements: [AnnouncementEvent] = []) {
         guard let destination else { return }
-        rerouteCount += 1
+        if triggers.isEmpty { rerouteCount += 1 } else { reportRerouteCount += 1 }
         lastRerouteRequest = now()
         let version = routeVersion
+        var tripOptions = preferences.routeOptions
+        tripOptions.reports = triggers + others
         rerouteTask = Task { [routing] in
+            // not after a pause that came first
+            for announcement in announcements where !Task.isCancelled && self.phase == .active {
+                await self.submit(announcement)
+            }
             let result: Result<NavigationRoute, any Error>
             do {
                 result = .success(try await routing.route(from: origin, to: destination.coordinate,
-                                                          options: RouteOptions()))
+                                                          options: tripOptions))
             } catch {
                 result = .failure(error)
             }
-            await self.finishReroute(result, generation: generation, version: version, requested: requested)
+            await self.finishReroute(result, generation: generation, version: version, requested: requested,
+                                     triggers: triggers)
         }
     }
 
     private func finishReroute(_ result: Result<NavigationRoute, any Error>, generation: Int, version: Int,
-                               requested: Bool) async {
+                               requested: Bool, triggers: [Report]) async {
         guard self.generation == generation, routeVersion == version else { return }
         rerouteTask = nil
         // back on the route, or arrived, since the request went out
         guard phase == .active || phase == .paused, !arrivedWhilePaused, needsReroute || requested else { return }
         switch result {
         case .success(let newRoute):
+            // passing every report it was for, it is no better than the route the user is already following
+            let unavoided = Set(newRoute.unavoidedReports.map(\.id))
+            if !triggers.isEmpty, !needsReroute, triggers.allSatisfy({ unavoided.contains($0.id) }) {
+                guard phase == .active else {
+                    unavoidedReportOnResume = true
+                    return
+                }
+                await submit(unavoidedReportAnnouncement())
+                return
+            }
+            unavoidedReportOnResume = false
+            let sourceChange = Self.sourceChange(from: route, to: newRoute)
             routeVersion += 1
             hasRerouted = true
             route = newRoute
@@ -521,16 +881,31 @@ actor TripManager: TripStateProviding {
             landmarkMatcher?.replaceLandmarks(
                 RouteLandmarks.along(newRoute, destination: destination, buildings: campusBuildings())
             )
+            saveTrip()
             routes.send(newRoute)
             publish(at: now())
+            publishMapReports()
+            subscribeToReports(along: newRoute, generation: generation)
             guard phase == .active else { return }
-            await submit(maneuver("New route. " + departure(on: newRoute), .high, haptic: .routeReady, expiresIn: 15,
+            await submit(maneuver("New route. " + preferenceWarning(on: newRoute) + Self.reportWarning(on: newRoute)
+                                      + sourceChange
+                                      + departure(on: newRoute), .high, haptic: .routeReady, expiresIn: 15,
                                   key: "reroute"))
         case .failure(let error):
-            guard !(error is CancellationError), phase == .active else { return }
+            guard !(error is CancellationError) else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
             // still on the route, so there is nothing to walk back to
             let isOnRoute = requested && !needsReroute
+            if isOnRoute, !triggers.isEmpty {
+                // still on the route that passes it
+                guard phase == .active else {
+                    unavoidedReportOnResume = true
+                    return
+                }
+                await submit(unavoidedReportAnnouncement())
+                return
+            }
+            guard phase == .active else { return }
             let text = if isOnRoute {
                 "Couldn't get a new route. Keep following the current one."
             } else if rerouteCount < Self.maximumReroutes {
@@ -543,14 +918,64 @@ actor TripManager: TripStateProviding {
         }
     }
 
+    private func unavoidedReportAnnouncement() -> AnnouncementEvent {
+        maneuver(Self.unavoidedReportSpeech, .high, haptic: .attention, expiresIn: 10, key: "report-unavoided")
+    }
+
     // MARK: Timed announcements
 
     private func announceStart(generation: Int) async {
         do { try await sleep(Self.startDelay) } catch { return }
-        guard self.generation == generation, phase == .active, let route, let destination else { return }
-        let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
-            + departure(on: route)
-        await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
+        guard self.generation == generation else { return }
+        if phase == .active, let route, let destination {
+            if tracker?.placement != nil {
+                await announceResumedStart(on: route, to: destination)
+            } else {
+                let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
+                    + preferenceWarning(on: route) + Self.reportWarning(on: route)
+                    + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "") + departure(on: route)
+                await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
+            }
+        }
+        // after the start, so a warning neither goes first nor is cut off as VoiceOver's focus moves
+        guard self.generation == generation, phase == .active || phase == .paused, !arrivedWhilePaused else { return }
+        battery?.start(isPaused: phase == .paused) { warning in
+            await self.warnBattery(warning, generation: generation)
+        }
+    }
+
+    /// Spoken only while guiding; one the engine drops is given again at the monitor's next check.
+    private func warnBattery(_ warning: BatteryMonitor.Warning, generation: Int) async {
+        guard self.generation == generation, phase == .active else { return }
+        let event = AnnouncementEvent(category: .system, priority: .high, text: warning.text, source: .navigation,
+                                      createdAt: now(), dedupKey: "\(tripID)-battery-\(warning.level)")
+        batteryWarningIDs[event.id] = warning.level
+        await submit(event)
+    }
+
+    /// "Resuming directions to Library, about 160 metres.", then the way on from where the first usable fix placed
+    /// the user, unless already given. Before that fix, without the distance, and the way on comes with it.
+    private func announceResumedStart(on route: NavigationRoute, to destination: Destination) async {
+        let placement = tracker?.placement
+        let remaining = placement == .onRoute ? progress.map { ", " + spoken($0.distanceRemaining) } : nil
+        var text = "Resuming directions to \(destination.name)\(remaining ?? ""). " + preferenceWarning(on: route)
+            + Self.reportWarning(on: route)
+            + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "")
+        if placement == .awaitingFix {
+            resumedStart = .awaitingPlacement
+        } else if resumedStart != nil {
+            // nil once the placing fix or "Trip resumed." gave the way on
+            resumedStart = nil
+            text += resumedGuidance()
+        }
+        await submit(maneuver(text.trimmingCharacters(in: .whitespaces), .high, expiresIn: 15, key: "start"))
+    }
+
+    /// Which way the path is and the next step, from where a resumed trip's first usable fix placed the user; nothing
+    /// for one it found far from the route, whom the off-route rules guide.
+    private func resumedGuidance() -> String {
+        guard tracker?.placement == .onRoute else { return "" }
+        return [pathSentence(), nextStepPrepare()].compactMap { $0 }.joined(separator: " ")
     }
 
     /// Clock-based rather than fix-based, so it notices when fixes stop arriving at all.
@@ -700,6 +1125,26 @@ actor TripManager: TripStateProviding {
         return direction == .behind ? "Turn around, the path is behind you." : "The path is \(direction.phrase)."
     }
 
+    /// Said before setting off on a route that still has stairs or elevators the trip's preferences asked to avoid.
+    private func preferenceWarning(on route: NavigationRoute) -> String {
+        RouteSummary.preferenceWarnings(on: route, preferences: preferences).map { $0 + " " }.joined()
+    }
+
+    /// Said before setting off on a route that passes reports it couldn't avoid.
+    private static func reportWarning(on route: NavigationRoute) -> String {
+        route.unavoidedReports.isEmpty ? "" : ReportExclusions.warning + " "
+    }
+
+    /// Said on a new route from a different service than the one before: a backup that may include stairs, or the
+    /// accessible directions again.
+    private static func sourceChange(from previous: NavigationRoute?, to route: NavigationRoute) -> String {
+        guard let previous, previous.source != route.source else { return "" }
+        return switch route.source {
+        case .appleMaps: RouteSource.backupNotice + " "
+        case .valhalla: "Back to accessible directions. "
+        }
+    }
+
     /// How to set off, at the start and on a new route: which way the path is, then the first turn when it is near.
     ///
     /// Never Valhalla's first instruction, whose compass direction ("Walk north on Ferst Drive.") a blind user can't
@@ -727,13 +1172,20 @@ actor TripManager: TripStateProviding {
         return " " + prepareText(step, in: distance)
     }
 
-    /// What to do next, spoken after "Trip resumed.". Nothing within `nowDistance` of a turn, where the user may
-    /// already have walked past it: the next fix's turn cue, confirmation or missed turn says the right thing.
+    /// What to do next, spoken after "Trip resumed.".
     private func resumeAnnouncement() -> AnnouncementEvent? {
-        guard let route, let progress, var tracker else { return nil }
+        // measured from the saved step, not where the user is
+        guard let progress, tracker?.placement != .awaitingFix else { return nil }
         if progress.isOffRoute {
             return maneuver(offRouteSpeech, .high, haptic: .wrongDirection, expiresIn: 10, key: nil)
         }
+        return nextStepPrepare().map { maneuver($0, .normal, expiresIn: 8, key: nil) }
+    }
+
+    /// The next step's prepare, for picking up guidance mid-route. Nothing within `nowDistance` of it, where the user
+    /// may already have walked past it: the next fix's turn cue, confirmation or missed turn says the right thing.
+    private func nextStepPrepare() -> String? {
+        guard let route, let progress, var tracker else { return nil }
         let index = progress.nextStepIndex
         let distance = progress.distanceToNextStep
         guard distance > RouteProgressTracker.nowDistance, missedTurnStep != index else { return nil }
@@ -742,7 +1194,7 @@ actor TripManager: TripStateProviding {
             tracker.markPrepared(step: index)
             self.tracker = tracker
         }
-        return maneuver(prepareText(route.steps[index], in: distance), .normal, expiresIn: 8, key: nil)
+        return prepareText(route.steps[index], in: distance)
     }
 
     /// "In about 30 feet, turn left onto Ferst Drive." Stairs say which way they go instead of Valhalla's "Take the

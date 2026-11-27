@@ -17,10 +17,18 @@ final class SpeechDictation {
     @ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
     @ObservationIgnored private var task: SFSpeechRecognitionTask?
     @ObservationIgnored private var wasCancelled = false
+    /// From activating the audio session until capture stops. Without it, cancelling a dictation that
+    /// never started still deactivated the session, which cuts off speech that's playing.
+    @ObservationIgnored private var isCapturing = false
     /// Partial and final transcripts. `isFinal` is true once Speech has finished the utterance.
     @ObservationIgnored var onTranscript: ((String, _ isFinal: Bool) -> Void)?
     /// Called with a message that's safe to read aloud whenever dictation fails.
     @ObservationIgnored var onError: ((String) -> Void)?
+
+    /// Whether speech recognition and the microphone are already allowed, so `start()` won't ask.
+    static var isAllowed: Bool {
+        SFSpeechRecognizer.authorizationStatus() == .authorized && AVAudioApplication.shared.recordPermission == .granted
+    }
 
     func start() async {
         guard !isRecording else { return }
@@ -56,6 +64,7 @@ final class SpeechDictation {
             // iOS mutes haptics while recording unless told otherwise; trip haptics have to keep working.
             try? session.setAllowHapticsAndSystemSoundsDuringRecording(true)
             try session.setActive(true, options: .notifyOthersOnDeactivation)
+            isCapturing = true
 
             let audioEngine = audioEngine ?? AVAudioEngine()
             self.audioEngine = audioEngine
@@ -104,6 +113,8 @@ final class SpeechDictation {
     }
 
     private func stopAudioCapture() {
+        guard isCapturing else { return }
+        isCapturing = false
         if let audioEngine {
             if audioEngine.isRunning { audioEngine.stop() }
             audioEngine.inputNode.removeTap(onBus: 0)

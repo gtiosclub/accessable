@@ -8,34 +8,112 @@ service cloud.firestore {
 
     function isValidCoordinate(c) {
       return c is map
-        && c.keys().hasAll(['latitude', 'longitude'])
-        && c.keys().hasOnly(['latitude', 'longitude'])
+        && c.keys().toSet() == ['latitude', 'longitude'].toSet()
         && c.latitude is number && c.latitude >= -90 && c.latitude <= 90
         && c.longitude is number && c.longitude >= -180 && c.longitude <= 180;
     }
 
-    function isValidPointAt(area, i) {
-      return i >= area.size() || isValidCoordinate(area[i]);
+    function reportLifetime(kind) {
+      return kind == 'construction' ? duration.value(7, 'd')
+        : kind == 'elevatorOut' ? duration.value(24, 'h')
+        : duration.value(4, 'h');
     }
 
+    function isValidPointAt(area, size, i) {
+      return i >= size || isValidCoordinate(area[i]);
+    }
 
+    // The checks are written to stay within the rules' budget of 1000 expressions a request with ten points.
     function isValidArea(area) {
-      return area is list && area.size() >= 3 && area.size() <= 10
-        && isValidPointAt(area, 0) && isValidPointAt(area, 1) && isValidPointAt(area, 2)
-        && isValidPointAt(area, 3) && isValidPointAt(area, 4) && isValidPointAt(area, 5)
-        && isValidPointAt(area, 6) && isValidPointAt(area, 7) && isValidPointAt(area, 8)
-        && isValidPointAt(area, 9);
+      let size = area.size();
+      return size >= 3 && size <= 10
+        && isValidPointAt(area, size, 0) && isValidPointAt(area, size, 1) && isValidPointAt(area, size, 2)
+        && isValidPointAt(area, size, 3) && isValidPointAt(area, size, 4) && isValidPointAt(area, size, 5)
+        && isValidPointAt(area, size, 6) && isValidPointAt(area, size, 7) && isValidPointAt(area, size, 8)
+        && isValidPointAt(area, size, 9);
     }
 
-
-    function isValidReport(data) {
-      return data.keys().hasAll(['id', 'kind', 'coordinate', 'createdAt', 'expiresAt', 'confirmations', 'reporterID'])
-        && data.keys().hasOnly(['id', 'kind', 'coordinate', 'area', 'createdAt', 'expiresAt', 'confirmations', 'reporterID'])
+    // A new report, sent in one batch with its reporter's stamp, which names it so one stamp can't cover a batch
+    // of many reports. The vote counts are optional, so an app from before REPORT-6 can still report.
+    // Reports are readable by everyone signed in, so they don't say who reported them: the same batch lists the
+    // report in its reporter's private ownReportPath. reporterID stays, always empty, only because apps from
+    // before the private list need it to read reports; remove it once every app reads without it.
+    function isValidNewReport(data, reportId) {
+      let keys = data.keys();
+      let stamp = getAfter(rateLimitPath()).data;
+      return keys.hasAll(['id', 'kind', 'coordinate', 'createdAt', 'expiresAt', 'confirmations', 'reporterID'])
+        && keys.hasOnly([
+          'id', 'kind', 'coordinate', 'area', 'createdAt', 'expiresAt', 'confirmations', 'reporterID',
+          'negativeConfirmations', 'negativesSinceConfirm'
+        ])
+        && data.id == reportId
+        && data.reporterID == ''
+        && existsAfter(ownReportPath(request.auth.uid, reportId))
+        && getAfter(ownReportPath(request.auth.uid, reportId)).data.createdAt == request.time
         && data.kind in ['construction', 'blockedPath', 'closedEntrance', 'elevatorOut', 'other']
         && isValidCoordinate(data.coordinate)
-        && (!('area' in data) || data.area == null || isValidArea(data.area))
+        && (!('area' in keys) || data.area == null || (data.area is list && isValidArea(data.area)))
+        && data.createdAt == request.time
         && data.expiresAt is timestamp
-        && data.expiresAt <= data.createdAt + duration.value(30, 'd');
+        && data.expiresAt > request.time
+        && data.expiresAt <= request.time + reportLifetime(data.kind) + clockTolerance()
+        && data.confirmations == 0
+        && data.get('negativeConfirmations', 0) == 0
+        && data.get('negativesSinceConfirm', 0) == 0
+        && stamp.lastReportAt == request.time
+        && stamp.lastReportId == reportId;
+    }
+
+    // REPORT-6: a phone's clock may be this far off the server's when it sets an expiry.
+    function clockTolerance() {
+      return duration.value(2, 'm');
+    }
+
+    // The user's private record that they reported reportId.
+    function ownReportPath(userId, reportId) {
+      return /databases/$(database)/documents/users/$(userId)/reports/$(reportId);
+    }
+
+    function votePath(reportId) {
+      return /databases/$(database)/documents/reports/$(reportId)/votes/$(request.auth.uid);
+    }
+
+    // A vote on someone else's live report, written in one batch with the voter's private vote
+    // document and their vote stamp. "Yes" counts a confirmation and moves the expiry to one
+    // lifetime from now, never earlier; "no" counts a denial and, the second one since the last
+    // "yes", ends the report now, so every expiry filter drops it.
+    function isValidVote(reportId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      let isStillPresent = getAfter(votePath(reportId)).data.isStillPresent;
+      let lifetime = reportLifetime(before.kind);
+      let denials = before.get('negativesSinceConfirm', 0) + 1;
+      let stamp = getAfter(rateLimitPath()).data;
+
+      return !exists(ownReportPath(request.auth.uid, reportId))
+        // reports from before the private list name their reporter until they expire
+        && request.auth.uid != before.reporterID
+        && before.expiresAt > request.time
+        && !exists(votePath(reportId))
+        && existsAfter(votePath(reportId))
+        // the stamp names this report, so one stamp can't cover votes on many reports
+        && stamp.lastVoteAt == request.time
+        && stamp.lastVoteReportId == reportId
+        && (isStillPresent
+          ? after.diff(before).affectedKeys().hasOnly(['confirmations', 'negativesSinceConfirm', 'expiresAt'])
+            && after.confirmations == before.confirmations + 1
+            && after.get('negativesSinceConfirm', 0) == 0
+            && after.expiresAt >= before.expiresAt
+            && after.expiresAt >= request.time + lifetime - clockTolerance()
+            // one already further out than a lifetime from now stays as it is
+            && (after.expiresAt == before.expiresAt
+              || after.expiresAt <= request.time + lifetime + clockTolerance())
+          : after.diff(before).affectedKeys().hasOnly(['negativeConfirmations', 'negativesSinceConfirm', 'expiresAt'])
+            // a report this new hasn't been walked past yet
+            && request.time >= before.createdAt + duration.value(10, 'm')
+            && after.negativeConfirmations == before.get('negativeConfirmations', 0) + 1
+            && after.negativesSinceConfirm == denials
+            && (denials >= 2 ? after.expiresAt == request.time : after.expiresAt == before.expiresAt));
     }
 
     function rateLimitPath() {
@@ -50,9 +128,17 @@ service cloud.firestore {
             && languages[i].size() <= 40 && languages[i].matches('.*[^ ].*'));
     }
 
+    // PROFILE-1: optional details shown on the Profile tab. Availability is a volunteer's schedule.
+    function isValidProfileDetails(data) {
+      return (!('location' in data) || (data.location is string && data.location.size() <= 80))
+        && (!('condition' in data) || (data.condition is string && data.condition.size() <= 200))
+        && (!('availability' in data) || data.availability in ['always', 'weekdays', 'manual']);
+    }
+
     function isValidUser(data) {
       return data.keys().hasAll(['role', 'displayName', 'languages', 'createdAt'])
-        && data.keys().hasOnly(['role', 'displayName', 'languages', 'createdAt'])
+        && data.keys().hasOnly(['role', 'displayName', 'languages', 'createdAt', 'location', 'condition', 'availability'])
+        && isValidProfileDetails(data)
         && data.role in ['caller', 'volunteer']
         && data.displayName is string && data.displayName.size() >= 1
         && data.displayName.size() <= 80 && data.displayName.matches('.*[^ ].*')
@@ -73,10 +159,74 @@ service cloud.firestore {
       allow update: if signedIn() && request.auth.uid == userId
         && isValidUser(request.resource.data)
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['role', 'displayName', 'languages']);
+             .hasOnly(['role', 'displayName', 'languages', 'location', 'condition', 'availability']);
       allow delete: if signedIn() && request.auth.uid == userId;
     }
     
+    // Safety gates are authoritative. For the demo there are no invites: any account that
+    // signed up with the volunteer role may go Online and be rung. A caller account still can't.
+    function isVolunteerAccount(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data.role == 'volunteer';
+    }
+    function consented(uid) {
+      return exists(/databases/$(database)/documents/callConsents/$(uid))
+        && get(/databases/$(database)/documents/callConsents/$(uid)).data.version == 1;
+    }
+    function blocked(caller, volunteer) {
+      // Include pending writes: a single batch cannot both create a block and ring its target.
+      return existsAfter(/databases/$(database)/documents/users/$(caller)/blockedVolunteers/$(volunteer));
+    }
+    match /callConsents/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasAll(['version', 'acceptedAt'])
+        && request.resource.data.keys().hasOnly(['version', 'acceptedAt'])
+        && request.resource.data.version == 1 && request.resource.data.acceptedAt == request.time;
+      allow update, delete, list: if false;
+    }
+    match /volunteerSettings/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && get(/databases/$(database)/documents/users/$(uid)).data.role == 'volunteer'
+        && request.resource.data.keys().hasAll(['onlineByDefault', 'keepScreenAwake', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['onlineByDefault', 'keepScreenAwake', 'updatedAt'])
+        && request.resource.data.onlineByDefault is bool && request.resource.data.keepScreenAwake is bool
+        && request.resource.data.updatedAt == request.time;
+      allow delete, list: if false;
+    }
+    match /users/{caller}/blockedVolunteers/{volunteer} {
+      // The target can get this one verdict for their own token request, never list blockers.
+      allow get: if signedIn() && request.auth.uid in [caller, volunteer];
+      allow list: if signedIn() && request.auth.uid == caller;
+      allow create: if signedIn() && request.auth.uid == caller && caller != volunteer
+        && request.resource.data.keys().hasAll(['callId', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['callId', 'createdAt'])
+        && request.resource.data.callId is string && request.resource.data.callId.size() <= 128
+        && request.resource.data.createdAt == request.time
+        && get(/databases/$(database)/documents/calls/$(request.resource.data.callId)).data.callerId == caller
+        && get(/databases/$(database)/documents/calls/$(request.resource.data.callId)).data.volunteerId == volunteer
+        && get(/databases/$(database)/documents/calls/$(request.resource.data.callId)).data.status in ['accepted', 'ended'];
+      allow update, delete: if false;
+    }
+    match /callSafetyReports/{id} {
+      function validSafetyReport() {
+        let data = request.resource.data;
+        let call = get(/databases/$(database)/documents/calls/$(data.callId)).data;
+        return data.keys().hasAll(['callId', 'reporterId', 'subjectId', 'reason', 'details', 'createdAt'])
+          && data.keys().hasOnly(['callId', 'reporterId', 'subjectId', 'reason', 'details', 'createdAt'])
+          && data.callId is string && data.callId.size() <= 128
+          && data.reporterId == request.auth.uid && data.subjectId is string
+          && data.reason in ['harassment', 'inappropriateBehavior', 'unsafeAdvice', 'other']
+          && data.details is string && data.details.size() <= 2000 && data.createdAt == request.time
+          && call.status in ['accepted', 'ended']
+          && ((call.callerId == request.auth.uid && call.volunteerId == data.subjectId)
+              || (call.volunteerId == request.auth.uid && call.callerId == data.subjectId));
+      }
+      allow create: if signedIn() && validSafetyReport();
+      // Moderators read reports through the trusted console, not a client collection query.
+      allow read, update, delete: if false;
+    }
+
     function isValidVolunteer(data) {
         return data.keys().hasAll(['displayName', 'languages', 'bio', 'isOnline', 'inCall', 'lastSeen'])
             && data.keys().hasOnly(['displayName', 'languages', 'bio', 'isOnline', 'inCall',
@@ -102,55 +252,395 @@ service cloud.firestore {
       allow list: if signedIn() && request.query.limit <= 100;
       allow create: if signedIn() && request.auth.uid == uid
         && isValidVolunteer(request.resource.data)
+        && isVolunteerAccount(uid)
+        && request.resource.data.inCall == false
+        && request.resource.data.get('ringingCallId', null) == null
+        && request.resource.data.get('ringingSince', null) == null
         && request.resource.data.lastSeen == request.time
         && get(/databases/$(database)/documents/users/$(uid)).data.role == 'volunteer';
-      allow update: if signedIn() && request.auth.uid == uid
-        && isValidVolunteer(request.resource.data)
-        && request.resource.data.lastSeen == request.time
-        && (!request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeen'])
-            || request.time >= resource.data.lastSeen + duration.value(20, 's'));
+            allow update: if signedIn() && isValidVolunteer(request.resource.data)
+        && (isOwnUpdate() || isRing() || isCallerClear());
+
+      function isOwnUpdate() {
+        return request.auth.uid == uid
+          && (!request.resource.data.isOnline || isVolunteerAccount(uid))
+          && request.resource.data.lastSeen == request.time
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['inCall'])
+              || request.resource.data.inCall == false || isOwnAnswerClear())
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['ringingCallId', 'ringingSince'])
+              || isOwnAnswerClear())
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeen'])
+              || request.time >= resource.data.lastSeen + duration.value(20, 's'));
+      }
+
+      // An owner's profile/availability write must not forge, replace or silently erase a ring.
+      function isOwnAnswerClear() {
+        let id = resource.data.get('ringingCallId', null);
+        return id is string
+          && request.resource.data.get('ringingCallId', null) == null
+          && request.resource.data.get('ringingSince', null) == null
+          && getAfter(/databases/$(database)/documents/calls/$(id)).data.volunteerId == uid
+          && getAfter(/databases/$(database)/documents/calls/$(id)).data.status in ['accepted', 'declined', 'ended'];
+      }
+
+      function isRing() {
+        return request.auth.uid != uid
+          && isVolunteerAccount(uid) && consented(request.auth.uid) && !blocked(request.auth.uid, uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ringingCallId', 'ringingSince'])
+          && request.resource.data.ringingCallId is string
+          && request.resource.data.ringingSince == request.time
+          // Free: nobody is ringing them, or that ring is more than 45 seconds old.
+          && (resource.data.get('ringingCallId', null) == null
+              || request.time > resource.data.get('ringingSince', timestamp.value(0)) + duration.value(45, 's'))
+          // Reachable: Online, not in a call, heard from in the last 90 seconds.
+          && resource.data.isOnline == true
+          // get(): a document written before inCall existed counts as not in a call.
+          && resource.data.get('inCall', false) == false
+          && request.time < resource.data.lastSeen + duration.value(90, 's')
+          && isNewRingFromMe(request.resource.data.ringingCallId);
+      }
+
+      function isNewRingFromMe(callId) {
+        let call = getAfter(/databases/$(database)/documents/calls/$(callId)).data;
+        return !exists(/databases/$(database)/documents/calls/$(callId))
+          && call.callerId == request.auth.uid && call.volunteerId == uid && call.status == 'ringing';
+      }
+
+      function isCallerClear() {
+        return request.auth.uid != uid
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ringingCallId', 'ringingSince'])
+          && resource.data.get('ringingCallId', null) is string
+          && request.resource.data.get('ringingCallId', null) == null
+          && request.resource.data.get('ringingSince', null) == null
+          && isFinishedRingFromMe(resource.data.ringingCallId);
+      }
+
+      function isFinishedRingFromMe(callId) {
+        let call = getAfter(/databases/$(database)/documents/calls/$(callId)).data;
+        return call.callerId == request.auth.uid && call.status in ['skipped', 'ended'];
+      }
 
       allow delete: if signedIn() && request.auth.uid == uid;
+    }
+    
+    match /calls/{callId} {
+      function isParty() {
+        return request.auth.uid == resource.data.callerId || request.auth.uid == resource.data.volunteerId;
+      }
+
+      function moves(from, to) {
+        return resource.data.status == from && request.resource.data.status == to;
+      }
+
+      // The call was still ringing this volunteer, and the same write marks them in the call.
+      function isAccept() {
+        let path = /databases/$(database)/documents/volunteers/$(resource.data.volunteerId);
+        let before = get(path).data;
+        let after = getAfter(path).data;
+        return isVolunteerAccount(resource.data.volunteerId) && !blocked(resource.data.callerId, resource.data.volunteerId)
+          && before.get('ringingCallId', null) == callId
+          && after.inCall == true
+          && after.get('ringingCallId', null) == null;
+      }
+
+      // Only project this caller's own first name. Do not open users/{uid} to volunteers.
+      // Optional for compatibility with older clients/call documents; immutable after create.
+      function validCallerFirstName() {
+        let name = request.resource.data.get('callerFirstName', null);
+        return !('callerFirstName' in request.resource.data) || (name is string && name.size() > 0 && name.size() <= 80
+          && name == get(/databases/$(database)/documents/users/$(request.auth.uid))
+            .data.displayName.replace('^\\s+', '').split('\\s+')[0]);
+      }
+
+      // Require a new paired reservation, not a pointer left behind by an earlier write.
+      // Rules enforce atomic invariants, whether a client uses a transaction or write batch.
+      function hasFreshReservation() {
+        let path = /databases/$(database)/documents/volunteers/$(request.resource.data.volunteerId);
+        let before = get(path).data;
+        let after = getAfter(path).data;
+        return before.get('ringingCallId', null) != callId
+          && after.get('ringingCallId', null) == callId
+          && after.get('ringingSince', null) == request.time;
+      }
+
+      allow get: if signedIn() && isParty();
+      // HISTORY-1: each side's own calls; the query must filter on the reader's id.
+      allow list: if signedIn() && request.query.limit <= 100
+        && (resource.data.callerId == request.auth.uid || resource.data.volunteerId == request.auth.uid);
+
+      // CALLBACK-1: a volunteer rings a caller who saved them back. The caller answers on their
+      // own phone; no directory reservation is involved, so the call doc alone carries the ring.
+      function isVolunteerRing() {
+        let data = request.resource.data;
+        return data.keys().hasAll(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt', 'startedBy'])
+          && data.keys().hasOnly(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt', 'startedBy'])
+          && data.startedBy == 'volunteer'
+          && data.volunteerId == request.auth.uid
+          && isVolunteerAccount(request.auth.uid)
+          && data.callerId is string && data.callerId != data.volunteerId
+          && get(/databases/$(database)/documents/users/$(data.callerId)).data.role == 'caller'
+          && isMutualSave(data.callerId, data.volunteerId)
+          && !blocked(data.callerId, data.volunteerId)
+          && data.status == 'ringing'
+          && data.roomName == 'call-' + callId
+          && data.createdAt == request.time
+          && data.updatedAt == request.time;
+      }
+
+      function startedByVolunteer() {
+        return resource.data.get('startedBy', 'caller') == 'volunteer';
+      }
+
+      allow create: if signedIn() && isVolunteerRing();
+      allow create: if signedIn()
+        && request.resource.data.keys().hasAll(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt', 'callerFirstName'])
+        && validCallerFirstName()
+        && request.resource.data.callerId == request.auth.uid
+        && isVolunteerAccount(request.resource.data.volunteerId) && consented(request.auth.uid)
+        && !blocked(request.auth.uid, request.resource.data.volunteerId)
+        && request.resource.data.volunteerId is string
+        && request.resource.data.volunteerId != request.auth.uid
+        && request.resource.data.status == 'ringing'
+        && request.resource.data.roomName == 'call-' + callId
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time
+        // The same write must ring the volunteer; the volunteers rules check they were free.
+        && hasFreshReservation();
+
+      allow update: if signedIn()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'acceptedAt'])
+        && request.resource.data.updatedAt == request.time
+        // HISTORY-1: answering may stamp when the call began, once, at server time.
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['acceptedAt'])
+            || (moves('ringing', 'accepted') && request.resource.data.acceptedAt == request.time))
+        && (
+          // Caller: skip or give up while ringing; hang up once accepted.
+          (request.auth.uid == resource.data.callerId
+            && (moves('ringing', 'skipped') || moves('ringing', 'ended') || moves('accepted', 'ended')))
+          // Caller answering or declining a volunteer's ring (CALLBACK-1).
+          || (request.auth.uid == resource.data.callerId && startedByVolunteer()
+            && ((moves('ringing', 'accepted') && !blocked(resource.data.callerId, resource.data.volunteerId))
+                || moves('ringing', 'declined')))
+          // Volunteer: accept or decline while ringing; hang up once accepted.
+          || (request.auth.uid == resource.data.volunteerId
+            && ((moves('ringing', 'accepted') && isAccept())
+                || moves('ringing', 'declined')
+                || moves('accepted', 'ended')))
+        );
+      // No delete, so a finished call can never be reused.
+    }
+
+    // CHAT-1: text chat between one caller and one volunteer. The id is `<callerId>_<volunteerId>`,
+    // so who may read a chat is known before it exists, and nobody else can read or join it.
+    function isPairParty(pairId) {
+      let parts = pairId.split('_');
+      return parts.size() == 2 && request.auth.uid in parts;
+    }
+
+    function firstNameOf(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data.displayName.replace('^\\s+', '').split('\\s+')[0];
+    }
+
+    function isMutualSave(a, b) {
+      return exists(/databases/$(database)/documents/saves/$(a + '_' + b))
+        && exists(/databases/$(database)/documents/saves/$(b + '_' + a));
+    }
+
+    // A caller starts a chat with a volunteer account that hasn't been blocked; a volunteer may start
+    // one only once both have saved each other. The names are projected here because neither side
+    // may read the other's users doc.
+    function isValidNewChat(chatId, data) {
+      let name = data.get('callerFirstName', null);
+      return data.keys().hasAll(['callerId', 'volunteerId', 'volunteerName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['callerId', 'volunteerId', 'volunteerName', 'callerFirstName', 'createdAt', 'updatedAt'])
+        && data.callerId is string && data.volunteerId is string && data.volunteerId != data.callerId
+        && !data.callerId.matches('.*_.*') && !data.volunteerId.matches('.*_.*')
+        && chatId == data.callerId + '_' + data.volunteerId
+        && get(/databases/$(database)/documents/users/$(data.callerId)).data.role == 'caller'
+        && (data.callerId == request.auth.uid
+            || (data.volunteerId == request.auth.uid && isMutualSave(data.callerId, data.volunteerId)))
+        && isVolunteerAccount(data.volunteerId)
+        && !blocked(data.callerId, data.volunteerId)
+        && data.volunteerName == get(/databases/$(database)/documents/volunteers/$(data.volunteerId)).data.displayName
+        && (!('callerFirstName' in data) || (name is string && name.size() > 0 && name.size() <= 80
+          && name == firstNameOf(data.callerId)))
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    // PROFILE-2: a small profile picture, shown next to the person's name to anyone signed in.
+    // Kept in Firestore as JPEG bytes, resized on the phone, so no separate storage is needed.
+    match /avatars/{uid} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasAll(['jpeg', 'updatedAt'])
+        && request.resource.data.keys().hasOnly(['jpeg', 'updatedAt'])
+        && request.resource.data.jpeg is bytes
+        && request.resource.data.jpeg.size() > 0 && request.resource.data.jpeg.size() <= 200000
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if signedIn() && request.auth.uid == uid;
+    }
+
+    // SAVE-1: a caller starring a volunteer, or a volunteer starring a caller. The id is
+    // `<saverId>_<savedId>`, and either person may read it, so saves in both directions show each
+    // of them a mutual save. Both first names are projected, checked against the profiles.
+    match /saves/{saveId} {
+      allow get: if signedIn() && isPairParty(saveId);
+      allow list: if signedIn() && request.query.limit <= 200 && resource.data.saverId == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasAll(['saverId', 'savedId', 'saverName', 'savedName', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['saverId', 'savedId', 'saverName', 'savedName', 'createdAt'])
+        && request.resource.data.saverId == request.auth.uid
+        && request.resource.data.savedId is string
+        && request.resource.data.savedId != request.auth.uid
+        && !request.auth.uid.matches('.*_.*') && !request.resource.data.savedId.matches('.*_.*')
+        && saveId == request.auth.uid + '_' + request.resource.data.savedId
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+          != get(/databases/$(database)/documents/users/$(request.resource.data.savedId)).data.role
+        && request.resource.data.saverName == firstNameOf(request.auth.uid)
+        && request.resource.data.savedName == firstNameOf(request.resource.data.savedId)
+        && request.resource.data.createdAt == request.time;
+      allow delete: if signedIn() && resource.data.saverId == request.auth.uid;
+      allow update: if false;
+    }
+
+    match /chats/{chatId} {
+      allow get: if signedIn() && isPairParty(chatId);
+      // A volunteer's inbox, or a caller's chats: the query must filter on the reader's own id.
+      allow list: if signedIn() && request.query.limit <= 50
+        && (resource.data.callerId == request.auth.uid || resource.data.volunteerId == request.auth.uid);
+      allow create: if signedIn() && isValidNewChat(chatId, request.resource.data);
+      // Only the inbox order moves, and only with a new message (checked by the message rule).
+      allow update: if signedIn() && isPairParty(chatId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        // Readable before the chat exists, so the caller's screen can listen from the start.
+        allow get, list: if signedIn() && isPairParty(chatId);
+        // Sent in one write with the chat's updatedAt, which also requires the chat to exist.
+        allow create: if signedIn() && isPairParty(chatId)
+          && request.resource.data.keys().hasAll(['senderId', 'text', 'sentAt'])
+          && request.resource.data.keys().hasOnly(['senderId', 'text', 'sentAt'])
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 1 && request.resource.data.text.size() <= 1000
+          && request.resource.data.text.matches('(?s).*\\S.*')
+          && request.resource.data.sentAt == request.time
+          && getAfter(/databases/$(database)/documents/chats/$(chatId)).data.updatedAt == request.time
+          && !blocked(getAfter(/databases/$(database)/documents/chats/$(chatId)).data.callerId,
+                      getAfter(/databases/$(database)/documents/chats/$(chatId)).data.volunteerId);
+        allow update, delete: if false;
+      }
     }
 
     match /reports/{reportId} {
       allow get: if signedIn();
       allow list: if signedIn() && request.query.limit <= 200;
 
-      allow create: if signedIn()
-        && isValidReport(request.resource.data)
-        && request.resource.data.id == reportId
-        && request.resource.data.reporterID == request.auth.uid
+      allow create: if signedIn() && isValidNewReport(request.resource.data, reportId);
+
+      // Votes are the only edits: the reporter could otherwise extend, move or revive a report others voted on.
+      allow update: if signedIn() && isValidVote(reportId);
+
+      allow delete: if signedIn()
+        && (exists(ownReportPath(request.auth.uid, reportId)) || resource.data.reporterID == request.auth.uid);
+
+      // One vote per user per report, readable only by its voter. Written only with the report's
+      // matching count, which the report's update rule checks the other way round.
+      match /votes/{voterId} {
+        function reportPath() {
+          return /databases/$(database)/documents/reports/$(reportId);
+        }
+
+        allow get: if signedIn() && request.auth.uid == voterId;
+        allow create: if signedIn() && request.auth.uid == voterId
+          && request.resource.data.keys().hasAll(['isStillPresent', 'votedAt'])
+          && request.resource.data.keys().hasOnly(['isStillPresent', 'votedAt'])
+          && request.resource.data.isStillPresent is bool
+          && request.resource.data.votedAt == request.time
+          && (request.resource.data.isStillPresent
+            ? getAfter(reportPath()).data.confirmations == get(reportPath()).data.confirmations + 1
+            : getAfter(reportPath()).data.get('negativeConfirmations', 0)
+              == get(reportPath()).data.get('negativeConfirmations', 0) + 1);
+      }
+    }
+
+    // Each user's private list of their own reports, so the reports themselves needn't say who made them. An entry
+    // is made only in the batch that creates its report, is never changed, and goes only once its report has gone:
+    // while the report exists, the entry is what stops its reporter voting on it.
+    match /users/{userId}/reports/{reportId} {
+      allow get, list: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['createdAt'])
         && request.resource.data.createdAt == request.time
-        && request.resource.data.expiresAt > request.time
-        && request.resource.data.confirmations == 0
-        // The stamp names this report, so one stamp can't cover a batch of many reports.
-        && getAfter(rateLimitPath()).data.lastReportAt == request.time
-        && getAfter(rateLimitPath()).data.lastReportId == reportId;
-
-
-      allow update: if signedIn()
-        && resource.data.reporterID == request.auth.uid
-        && isValidReport(request.resource.data)
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['kind', 'coordinate', 'area', 'expiresAt']);
-
-      allow delete: if signedIn() && resource.data.reporterID == request.auth.uid;
+        && existsAfter(/databases/$(database)/documents/reports/$(reportId))
+        && getAfter(/databases/$(database)/documents/reports/$(reportId)).data.createdAt == request.time;
+      allow delete: if signedIn() && request.auth.uid == userId
+        && !existsAfter(/databases/$(database)/documents/reports/$(reportId));
     }
 
     match /rateLimits/{userId} {
-      function isOwnStamp() {
-        return request.auth.uid == userId
-          && request.resource.data.keys().hasAll(['lastReportAt', 'lastReportId'])
-          && request.resource.data.keys().hasOnly(['lastReportAt', 'lastReportId'])
+      // Each stamp names the report it was written with.
+      function isReportStamp(keys) {
+        return keys.hasOnly(['lastReportAt', 'lastReportId'])
           && request.resource.data.lastReportAt == request.time
           && request.resource.data.lastReportId is string;
       }
 
+      function isVoteStamp(keys) {
+        return keys.hasOnly(['lastVoteAt', 'lastVoteReportId'])
+          && request.resource.data.lastVoteAt == request.time
+          && request.resource.data.lastVoteReportId is string;
+      }
+
+      function hasKnownKeys() {
+        return request.resource.data.keys().hasOnly(['lastReportAt', 'lastReportId', 'lastVoteAt', 'lastVoteReportId']);
+      }
+
+      function isSpaced(field) {
+        return !(field in resource.data) || request.time >= resource.data[field] + duration.value(60, 's');
+      }
+
       allow read: if signedIn() && request.auth.uid == userId;
-      allow create: if signedIn() && isOwnStamp();
-      allow update: if signedIn() && isOwnStamp()
-        && request.time >= resource.data.lastReportAt + duration.value(60, 's');
+      allow create: if signedIn() && request.auth.uid == userId && hasKnownKeys()
+        && ((request.resource.data.keys().hasAll(['lastReportAt', 'lastReportId'])
+              && isReportStamp(request.resource.data.keys()))
+          || (request.resource.data.keys().hasAll(['lastVoteAt', 'lastVoteReportId'])
+              && isVoteStamp(request.resource.data.keys())));
+      allow update: if signedIn() && request.auth.uid == userId && hasKnownKeys()
+        && ((isReportStamp(request.resource.data.diff(resource.data).affectedKeys())
+              && request.resource.data.keys().hasAll(['lastReportAt', 'lastReportId'])
+              && isSpaced('lastReportAt'))
+          || (isVoteStamp(request.resource.data.diff(resource.data).affectedKeys())
+              && isSpaced('lastVoteAt')));
+    }
+
+    // PREF-2: each user's route choices, read and written only by that user.
+    match /users/{userId}/settings/routePreferences {
+      function isValidRoutePreferences(data) {
+        return data.keys().hasAll([
+            'avoidStairs', 'avoidElevators', 'avoidSteepHills', 'preferWellLit', 'preferFootpaths',
+            'avoidAlleysAndDriveways', 'avoidServiceRoads', 'avoidUnpavedPaths', 'walkingSpeed', 'updatedAt'
+          ])
+          && data.keys().hasOnly([
+            'avoidStairs', 'avoidElevators', 'avoidSteepHills', 'preferWellLit', 'preferFootpaths',
+            'avoidAlleysAndDriveways', 'avoidServiceRoads', 'avoidUnpavedPaths', 'walkingSpeed', 'updatedAt'
+          ])
+          && data.avoidStairs is bool && data.avoidElevators is bool && data.avoidSteepHills is bool
+          && data.preferWellLit is bool && data.preferFootpaths is bool
+          && data.avoidAlleysAndDriveways is bool && data.avoidServiceRoads is bool
+          && data.avoidUnpavedPaths is bool
+          && data.walkingSpeed in ['slow', 'normal', 'fast']
+          && data.updatedAt == request.time;
+      }
+
+      allow get, delete: if signedIn() && request.auth.uid == userId;
+      allow create, update: if signedIn() && request.auth.uid == userId
+        && isValidRoutePreferences(request.resource.data);
     }
   }
 }

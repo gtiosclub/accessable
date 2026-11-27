@@ -4,6 +4,10 @@ import UIKit
 @MainActor
 final class SpeechOutput: NSObject {
     private let synthesizer = AVSpeechSynthesizer()
+    private var isInCall = false
+
+    /// LiveKit owns the shared audio session until disconnect finishes.
+    func setInCall(_ inCall: Bool) { isInCall = inCall }
     private var waiting: [ObjectIdentifier: CheckedContinuation<Void, Never>] = [:]
     private var voiceOverWaiter: (text: String, continuation: CheckedContinuation<Void, Never>)?
     /// Set once in init and read in deinit, which can run on any thread.
@@ -38,11 +42,11 @@ final class SpeechOutput: NSObject {
  
     // Speaks text and returns when finished, interrupted, or stop()
     // interrupting: cut off whatever is currently speaking for critical events
-    func speak(_ text: String, rate: Float, interrupting: Bool) async {
+    func speak(_ text: String, rate: Float, interrupting: Bool, volume: Float = 1) async {
         if UIAccessibility.isVoiceOverRunning, UIApplication.shared.applicationState == .active {
             await announceWithVoiceOver(text, interrupting: interrupting)
         } else {
-            await speakWithSynthesizer(text, rate: rate, interrupting: interrupting)
+            await speakWithSynthesizer(text, rate: rate, interrupting: interrupting, volume: volume)
         }
     }
  
@@ -54,17 +58,20 @@ final class SpeechOutput: NSObject {
  
     // AVSpeechSynthesizer stuff
     
-    private func speakWithSynthesizer(_ text: String, rate: Float, interrupting: Bool) async {
+    private func speakWithSynthesizer(_ text: String, rate: Float, interrupting: Bool, volume: Float) async {
         if interrupting, synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
-        // Set every time: dictation switches the shared session to .record, which would make speech silent
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(
-            .playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers]
-        )
-        try? session.setActive(true)
+        // Outside calls, restore playback after dictation. During calls, LiveKit owns the session.
+        if !isInCall {
+            let session = AVAudioSession.sharedInstance()
+            try? session.setCategory(
+                .playback, mode: .voicePrompt, options: [.duckOthers, .interruptSpokenAudioAndMixWithOthers]
+            )
+            try? session.setActive(true)
+        }
         let utterance = AVSpeechUtterance(string: text)
+        utterance.volume = min(max(volume, 0), 1)
         utterance.voice = voice
         utterance.rate = rate // GuidanceProfile.speechRate is already in AVSpeechUtterance units
         await withCheckedContinuation { continuation in
@@ -90,7 +97,7 @@ final class SpeechOutput: NSObject {
 
     private func utteranceEnded(_ id: ObjectIdentifier) {
         waiting.removeValue(forKey: id)?.resume()
-        if waiting.isEmpty, !synthesizer.isSpeaking {
+        if waiting.isEmpty, !synthesizer.isSpeaking, !isInCall {
             // De-active
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }

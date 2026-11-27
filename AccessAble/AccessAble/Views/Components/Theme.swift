@@ -209,6 +209,20 @@ struct BottomCard<Content: View>: View {
     }
 }
 
+extension View {
+    /// Fills the bottom safe area with black under a scrolling `BottomCard`. A ScrollView clips its
+    /// content's background at the safe area, which would leave a strip of the backdrop there; a
+    /// zero-height inset outside the scroll view is not clipped, and the buttons stay in the scroll
+    /// content so they remain reachable in landscape and at large text sizes.
+    func blackToBottomEdge() -> some View {
+        safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear
+                .frame(height: 0)
+                .background(Color.black.ignoresSafeArea(edges: .bottom))
+        }
+    }
+}
+
 /// Light-gray rounded square where a place photo will go.
 struct PlaceThumbnail: View {
     var size: CGFloat = 72
@@ -218,35 +232,6 @@ struct PlaceThumbnail: View {
             .fill(Theme.placeholder)
             .frame(width: size, height: size)
             .accessibilityHidden(true)
-    }
-}
-
-/// "4.5 ★★★★☆ (45)"
-struct RatingView: View {
-    let rating: Double
-    let reviewCount: Int
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(rating, format: .number.precision(.fractionLength(1)))
-            HStack(spacing: 2) {
-                ForEach(0..<5, id: \.self) { index in
-                    Image(systemName: symbol(for: index))
-                }
-            }
-            Text(verbatim: "(\(reviewCount))")
-        }
-        .font(.subheadline)
-        .foregroundStyle(.white)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Rated \(rating.formatted(.number.precision(.fractionLength(1)))) out of 5, \(reviewCount) reviews")
-    }
-
-    private func symbol(for index: Int) -> String {
-        let value = rating - Double(index)
-        if value >= 1 { return "star.fill" }
-        if value >= 0.5 { return "star.leadinghalf.filled" }
-        return "star"
     }
 }
 

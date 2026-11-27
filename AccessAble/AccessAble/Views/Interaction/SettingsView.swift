@@ -28,6 +28,24 @@ struct SettingsView: View {
                 }
                 .padding(.leading, 8)
 
+                NavigationLink {
+                    RoutePreferencesView(store: app.services.routePreferences)
+                } label: {
+                    HStack {
+                        Text("Route preferences")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .accessibilityHidden(true)
+                    }
+                    .font(.body)
+                    .foregroundStyle(.white)
+                    .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .accessibilityHint("Stairs, hills, lighting and walking speed for your routes")
+
                 SettingsSectionTitle("Navigation Info Output")
                 SettingsCard("Auto Repeat Announcements") {
                     ForEach(AutoRepeat.allCases, id: \.self) { option in
@@ -312,7 +330,7 @@ struct SettingsView: View {
 
 // MARK: - Styling
 
-private enum SettingsPalette {
+enum SettingsPalette {
     static let background = Color(red: 0.11, green: 0.16, blue: 0.23)
     static let card = Color(white: 0.29)
     static let done = Color(red: 0.22, green: 0.55, blue: 0.24)
@@ -332,7 +350,7 @@ private extension View {
     }
 }
 
-private struct SettingsSectionTitle: View {
+struct SettingsSectionTitle: View {
     let title: String
 
     init(_ title: String) { self.title = title }
@@ -363,7 +381,7 @@ private struct SettingsRow<Content: View>: View {
     }
 }
 
-private struct SettingsToggleRow: View {
+struct SettingsToggleRow: View {
     let title: String
     @Binding var isOn: Bool
 
@@ -382,7 +400,7 @@ private struct SettingsToggleRow: View {
     }
 }
 
-private struct SettingsPickerRow<Value: Hashable, Options: View>: View {
+struct SettingsPickerRow<Value: Hashable, Options: View>: View {
     let title: String
     @Binding var selection: Value
     var footnote: String?

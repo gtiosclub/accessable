@@ -115,6 +115,7 @@ struct Destination: Codable, Hashable, Sendable {
 struct SearchSuggestion: Identifiable, Equatable, Sendable {
     let title: String
     let subtitle: String
+    var coordinate: GeoCoordinate? = nil
 
     var id: String { "\(title)\n\(subtitle)" }
 }
@@ -131,16 +132,58 @@ struct PlannedRoute: Hashable, Sendable {
     var route: NavigationRoute
     /// When it was requested, so the trip can tell if it is too old to start on.
     var requestedAt: Date
+    /// The preferences the route was found with, which the trip's reroutes keep to.
+    var preferences = RoutePreferences()
+    /// For a saved trip being resumed, the step of `route` that was next; nil for a trip from the route's start.
+    var resumingAtStep: Int? = nil
 }
 
 struct RouteOptions: Equatable, Sendable {
     /// Metres per second, greater than 0. Valhalla takes km/h, so its client converts.
     var walkingSpeed: Double = 1.2
+    var excludeLocations: [GeoCoordinate] = []
+    var excludePolygons: [[GeoCoordinate]] = []
+    /// Reports to route around besides those `ReportAwareRoutingService` fetches, such as one that just appeared on
+    /// the route ahead. Only that service reads them; a plain routing service ignores them.
+    var reports: [Report] = []
+
+    // Valhalla pedestrian costing preferences. Nil, NaN, or infinite leaves Valhalla's default; Valhalla's client
+    // clamps the rest to the ranges noted.
+    /// Seconds added for each flight of steps, 0–43200.
+    var stepPenalty: Double?
+    /// Seconds added for each elevator, 0–43200.
+    var elevatorPenalty: Double?
+    /// 0 avoids hills, 1 doesn't mind them.
+    var useHills: Double?
+    /// 0 doesn't mind unlit ways, 1 prefers lit ones.
+    var useLit: Double?
+    /// Multiplier on the cost of walkways, 0.1–100000.
+    var walkwayFactor: Double?
+    /// Multiplier on the cost of sidewalks, 0.1–100000.
+    var sidewalkFactor: Double?
+    /// Multiplier on the cost of alleys, 0.1–100000.
+    var alleyFactor: Double?
+    /// Multiplier on the cost of driveways, 0.1–100000.
+    var drivewayFactor: Double?
+    /// Seconds added for entering a service road, 0–43200.
+    var servicePenalty: Double?
+    /// Multiplier on the cost of service roads, 0.1–100000.
+    var serviceFactor: Double?
+    /// 0 avoids tracks, 1 prefers them.
+    var useTracks: Double?
+    /// Hardest SAC hiking scale path allowed, 0–6.
+    var maxHikingDifficulty: Int?
 }
 
 enum RoutingError: Error, Equatable, Sendable {
     case noRouteFound
     case serverUnavailable
+    /// HTTP 429 or 402: the routing service is out of credits or throttling us.
+    case usageLimitReached
+    /// HTTP 401/403 from Stadia: the app's API key is missing, revoked, or rotated. Not fixable by the user.
+    case notAuthorized
+    /// Valhalla refused the exclusions themselves: too many points, or too long a polygon perimeter.
+    case exclusionsRejected
     /// The request could not be built or was rejected, or the response could not be decoded or failed
     /// `NavigationRoute` validation.
     case invalidResponse
@@ -176,8 +219,10 @@ extension RouteStep {
             .split(whereSeparator: { !$0.isLetter }).joined(separator: " ")
         let padded = " \(text) "
         func says(_ phrases: [String]) -> Bool { phrases.contains { padded.contains(" \($0) ") } }
-        if says(["stairs up", "up the stairs", "upstairs"]) { return "stairs going up" }
-        if says(["stairs down", "down the stairs", "downstairs"]) { return "stairs going down" }
+        if says(["stairs up", "up the stairs", "upstairs", "steps up", "up the steps"]) { return "stairs going up" }
+        if says(["stairs down", "down the stairs", "downstairs", "steps down", "down the steps"]) {
+            return "stairs going down"
+        }
         return "stairs"
     }
 
@@ -203,6 +248,16 @@ extension RouteStep {
     }
 }
 
+enum RouteSource: String, Codable, Sendable {
+    /// Valhalla, which knows about stairs, kerbs and step-free paths.
+    case valhalla
+    /// Apple Maps, the backup when Valhalla fails or is slow. It knows nothing of stairs or crossings.
+    case appleMaps
+
+    /// Said when the user is given an Apple Maps route.
+    static let backupNotice = "Using backup directions. They may include stairs, and crossings may not be announced."
+}
+
 /// Always valid: created and decoded only through the validating init, which derives the distances.
 struct NavigationRoute: Codable, Hashable, Sendable {
     let coordinates: [GeoCoordinate]
@@ -211,6 +266,13 @@ struct NavigationRoute: Codable, Hashable, Sendable {
     let estimatedDuration: Double
     /// Metres from the start to each coordinate. Same count as `coordinates`; starts at 0.
     let cumulativeDistances: [Double]
+    /// Active reports this route passes because it couldn't avoid them. Not encoded: reports name their reporter.
+    var unavoidedReports: [Report] = []
+    /// Active reports near this route that it goes around. Not encoded: reports name their reporter.
+    var avoidedReports: [Report] = []
+    /// Which service found the route, for telling the user about a backup route. Not encoded: only the trip it was
+    /// found for announces it.
+    var source: RouteSource = .valhalla
 
     enum ValidationError: Error, Equatable, Sendable {
         case tooFewCoordinates

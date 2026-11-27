@@ -29,7 +29,9 @@ final class CoreLocationProvider: NSObject, LocationProvider, CLLocationManagerD
 
     private var lastAuthorization: LocationAuthorization?
     
-    private nonisolated let locationUpdates = Broadcaster<LocationSample>()
+    /// A new subscriber, such as a screen finding a route, gets the last fix at once instead of waiting for the next.
+    /// Only a recent one: an older position may be far from where the user now is.
+    private nonisolated let locationUpdates = Broadcaster<LocationSample>(replaysWithin: 5)
     private var locationSubscriberCount = 0
     /// Metres, from the latest fix; logged when the tuning changes, to compare trip accuracy with browsing.
     private var lastAccuracy: Double?
