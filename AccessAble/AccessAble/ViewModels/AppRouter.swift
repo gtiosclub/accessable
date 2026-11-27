@@ -17,6 +17,8 @@ enum AppRoute: Hashable {
     case callHelp
     case volunteers
     case call(Volunteer?)
+    /// Answering a volunteer who is calling (CALLBACK-1).
+    case answerCall(Volunteer, VolunteerRing)
     case chat(Volunteer)
     /// The pre-redesign feature screens: computer vision, maps, haptics, commands.
     case developerTools

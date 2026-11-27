@@ -12,40 +12,26 @@ struct CallerCallControlsTests {
         await model.hangUp()
     }
 
-    @Test func savedTorchPreferenceIsAppliedOnlyAfterConnectionAndReleasedOnHangup() async throws {
+    @Test func oldFlashlightOnStartSettingNoLongerTurnsTheLightOn() async throws {
+        // The call screen has no flashlight button, so a call must never light it by itself.
         let (model, video, settings) = harness()
         settings.preferences.flashlightOnStart = true
         await model.start()
         try await waitFor { model.state == .connected }
-        #expect(video.torchRequests == [true])
-        #expect(model.isFlashlightOn && video.torchOn)
-        #expect(!video.torchRequestedBeforeConnection)
-        await model.hangUp()
-        #expect(!video.torchOn)
-    }
-
-    @Test func unsupportedTorchDoesNotFailTheCall() async throws {
-        let (model, video, settings) = harness()
-        settings.preferences.flashlightOnStart = true
-        video.failTorch = true
-        await model.start()
-        try await waitFor { model.state == .connected }
-        #expect(model.controlError != nil)
+        #expect(video.torchRequests.isEmpty)
         #expect(!model.isFlashlightOn)
-        #expect(video.connected)
         await model.hangUp()
     }
 
-    @Test func retryUsesTheLatestPreferenceAndKeepsTheAcceptedCallSafetySummary() async throws {
+    @Test func retryKeepsTheAcceptedCallSafetySummary() async throws {
         let (model, video, settings) = harness()
         await model.start()
         try await waitFor { model.state == .connected }
         await model.hangUp()
         #expect(model.lastCallForSafety?.id == "control-1")
-        settings.preferences.flashlightOnStart = true
+        _ = settings
         model.retry()
         try await waitFor { model.state == .connected && video.connections == 2 }
-        #expect(video.torchOn)
         #expect(model.lastCallForSafety?.id == "control-2")
         await model.hangUp()
     }

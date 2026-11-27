@@ -5,12 +5,15 @@ import Observation
 @MainActor
 @Observable
 final class IncomingCallViewModel {
-    enum Phase: Equatable { case idle, ringing, accepting, connecting, connected, ending }
+    /// `calling`: the volunteer is ringing a caller (CALLBACK-1).
+    enum Phase: Equatable { case idle, ringing, calling, accepting, connecting, connected, ending }
     private(set) var call: IncomingCall?
     private(set) var phase: Phase = .idle
     private(set) var message: String?
     private(set) var listenerError: String?
     private(set) var isMuted = false
+    /// The volunteer's own camera; off until they turn it on.
+    private(set) var isCameraOn = false
     private(set) var isUpdatingControls = false
     private(set) var listenerAttempt = 0
     /// Calls the volunteer can still report, newest first. A new call doesn't replace one they
@@ -34,6 +37,12 @@ final class IncomingCallViewModel {
     @ObservationIgnored private var endingTask: Task<Void, Never>?
     @ObservationIgnored private var listenerGeneration = UUID()
     @ObservationIgnored private var actionGeneration = UUID()
+    @ObservationIgnored private var messageClearTask: Task<Void, Never>?
+    /// Told when the volunteer starts (true) and finishes (false) calling someone, so they can
+    /// be Offline meanwhile and nobody else rings them.
+    @ObservationIgnored var onOutgoingCall: ((Bool) async -> Void)?
+    @ObservationIgnored private var isOutgoing = false
+    private static let outgoingPrefix = "outgoing-"
     @ObservationIgnored private var foreground = false
     @ObservationIgnored private var latestOffer: IncomingCall?
     @ObservationIgnored private var dismissedIDs: Set<String> = []
@@ -97,6 +106,7 @@ final class IncomingCallViewModel {
         call = offer
         phase = .ringing
         isMuted = false
+        isCameraOn = false
         alerts.start()
         deadlineTask = Task { [weak self, sleep] in
             do { try await sleep(.seconds(remaining)) }
@@ -184,6 +194,69 @@ final class IncomingCallViewModel {
         }
     }
 
+    // MARK: - Calling a caller (CALLBACK-1)
+
+    /// Rings a caller who saved this volunteer back, then joins the call when they answer.
+    func callCaller(id callerID: String, name: String) {
+        guard phase == .idle else { return }
+        call = IncomingCall(id: Self.outgoingPrefix + UUID().uuidString, callerFirstName: name, ringingSince: now())
+        phase = .calling
+        isCameraOn = false
+        isMuted = false
+        message = nil
+        isOutgoing = true
+        let generation = UUID()
+        actionGeneration = generation
+        alerts.announce("Calling \(name)")
+        actionTask = Task { [weak self] in
+            await self?.performCall(callerID: callerID, name: name, generation: generation)
+        }
+    }
+
+    private func performCall(callerID: String, name: String, generation: UUID) async {
+        await onOutgoingCall?(true)
+        var callID: String?
+        do {
+            let ticket = try await signaling.callCaller(callerID)
+            callID = ticket.callID
+            try Task.checkCancellation()
+            guard generation == actionGeneration else { await signaling.endCall(callID: ticket.callID); return }
+            call = IncomingCall(id: ticket.callID, callerFirstName: name, ringingSince: now())
+            phase = .connecting
+            await announcements.setInCall(true)
+            try await video.connect(with: ticket)
+            try Task.checkCancellation()
+            guard generation == actionGeneration else { return }
+            phase = .connected
+            alerts.announce("Connected to \(name)")
+            sessionTask = Task { [weak self, video] in
+                for await state in video.states() {
+                    guard !Task.isCancelled, let self, generation == actionGeneration else { return }
+                    if case .ended = state { endCall(); return }
+                    if case .failed = state { endCall(); return }
+                }
+            }
+        } catch {
+            guard !Task.isCancelled, generation == actionGeneration else { return }
+            call = nil
+            phase = .ending
+            report(error as? CallSignalingError == .nobodyAnswered ? "\(name) didn't answer." : "Couldn't call \(name).")
+            await video.disconnect()
+            if let callID { await signaling.endCall(callID: callID) }
+            await announcements.setInCall(false)
+            await finishOutgoing()
+            guard generation == actionGeneration else { return }
+            phase = .idle
+            presentLatestIfPossible()
+        }
+    }
+
+    private func finishOutgoing() async {
+        guard isOutgoing else { return }
+        isOutgoing = false
+        await onOutgoingCall?(false)
+    }
+
     func decline() {
         guard phase == .ringing, let call else { return }
         dismissedIDs.insert(call.id)
@@ -207,11 +280,14 @@ final class IncomingCallViewModel {
         endingTask = Task { [weak self, video, signaling, announcements] in
             await pending?.value
             await video.disconnect()
-            await signaling.endCall(callID: call.id)
+            // A ring the volunteer cancelled was already ended when its request was cancelled.
+            if !call.id.hasPrefix(Self.outgoingPrefix) { await signaling.endCall(callID: call.id) }
             await announcements.setInCall(false)
+            await self?.finishOutgoing()
             guard let self else { return }
             self.call = nil
             phase = .idle
+            message = nil
             alerts.announce("Call ended")
             actionTask = nil
             endingTask = nil
@@ -234,6 +310,35 @@ final class IncomingCallViewModel {
         }
     }
 
+    func toggleCamera() async {
+        guard phase == .connected, !isUpdatingControls else { return }
+        isUpdatingControls = true
+        defer { isUpdatingControls = false }
+        let generation = actionGeneration
+        do {
+            try await video.setCameraEnabled(!isCameraOn)
+            guard generation == actionGeneration, phase == .connected else { return }
+            isCameraOn.toggle()
+        } catch {
+            guard generation == actionGeneration, phase == .connected else { return }
+            report(isCameraOn ? "Couldn't turn your camera off." : "Couldn't turn your camera on.")
+        }
+    }
+
+    /// Only while the volunteer's camera is on.
+    func flipCamera() async {
+        guard phase == .connected, isCameraOn, !isUpdatingControls else { return }
+        isUpdatingControls = true
+        defer { isUpdatingControls = false }
+        let generation = actionGeneration
+        do {
+            try await video.flipCamera()
+        } catch {
+            guard generation == actionGeneration, phase == .connected else { return }
+            report("Couldn't switch cameras.")
+        }
+    }
+
     /// Root volunteer host disappeared (for example sign-out), not just a navigation push.
     func shutdown() {
         suspendListening()
@@ -253,5 +358,18 @@ final class IncomingCallViewModel {
         phase = .idle
     }
 
-    private func report(_ text: String) { message = text; alerts.announce(text) }
+    /// Shown on the call screen and spoken, then cleared after a few seconds, so it never stays
+    /// on the volunteer's home screen.
+    private func report(_ text: String) {
+        message = text
+        alerts.announce(text)
+        messageClearTask?.cancel()
+        messageClearTask = Task { [weak self, sleep] in
+            do { try await sleep(Self.messageLifetime) } catch { return }
+            guard let self, message == text else { return }
+            message = nil
+        }
+    }
+
+    static let messageLifetime: Duration = .seconds(4)
 }

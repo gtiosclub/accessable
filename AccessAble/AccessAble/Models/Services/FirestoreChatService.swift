@@ -48,10 +48,11 @@ struct FirestoreChatService: ChatService {
                     if try transaction.getDocument(chatRef).exists {
                         transaction.updateData(["updatedAt": FieldValue.serverTimestamp()], forDocument: chatRef)
                     } else {
-                        // Only the caller starts a chat; a volunteer replies to one.
-                        guard me == parties.caller else { throw ChatError.notAllowed }
+                        // A caller starts a chat; a volunteer only once both have starred each other,
+                        // which the rules check.
                         transaction.setData(
-                            try newChat(parties: parties, transaction: transaction, db: db), forDocument: chatRef)
+                            try newChat(parties: parties, startedBy: me, transaction: transaction, db: db),
+                            forDocument: chatRef)
                     }
                     transaction.setData(
                         ["senderId": me, "text": text, "sentAt": FieldValue.serverTimestamp()],
@@ -69,7 +70,7 @@ struct FirestoreChatService: ChatService {
 
     /// Neither side may read the other's private users doc, so the chat carries both names.
     private func newChat(
-        parties: (caller: String, volunteer: String), transaction: Transaction, db: Firestore
+        parties: (caller: String, volunteer: String), startedBy me: String, transaction: Transaction, db: Firestore
     ) throws -> [String: Any] {
         let volunteer = try transaction.getDocument(db.collection("volunteers").document(parties.volunteer)).data()
         guard let volunteerName = volunteer?["displayName"] as? String else { throw ChatError.volunteerUnavailable }
@@ -81,11 +82,19 @@ struct FirestoreChatService: ChatService {
             "updatedAt": FieldValue.serverTimestamp(),
         ]
         // Left out when the rules would refuse it; the volunteer then sees "Caller".
-        let profile = try transaction.getDocument(db.collection("users").document(parties.caller)).data()
-        if let name = profile?["displayName"] as? String,
-           !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            let first = IncomingCall.firstName(from: name)
-            if first.unicodeScalars.count <= 80 { data["callerFirstName"] = first }
+        if me == parties.caller {
+            let profile = try transaction.getDocument(db.collection("users").document(parties.caller)).data()
+            if let name = profile?["displayName"] as? String,
+               !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let first = IncomingCall.firstName(from: name)
+                if first.unicodeScalars.count <= 80 { data["callerFirstName"] = first }
+            }
+        } else {
+            // A volunteer can't read the caller's profile; the caller's star carries their first name.
+            let save = try transaction.getDocument(
+                db.collection("saves").document(PairID.make(parties.caller, parties.volunteer))).data()
+            guard let name = save?["saverName"] as? String else { throw ChatError.notAllowed }
+            data["callerFirstName"] = name
         }
         return data
     }
