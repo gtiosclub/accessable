@@ -63,7 +63,7 @@ struct PlaceDetailView: View {
                         Button("Start New Route") {
                             router.push(.routes(place, .new, origin: origin, planned: details.plannedRoute))
                         }
-                            .buttonStyle(.pill(.primary))
+                        .buttonStyle(.pill(.primary))
                         Button("Back") { router.pop() }
                             .buttonStyle(.pill(.outline))
                     }
@@ -73,6 +73,7 @@ struct PlaceDetailView: View {
             }
             .defaultScrollAnchor(.bottom)
             .scrollBounceBehavior(.basedOnSize)
+            .blackToBottomEdge()
         }
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
