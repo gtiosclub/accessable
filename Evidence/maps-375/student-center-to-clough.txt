@@ -1,0 +1,1 @@
+MAPS_SMOKE: Walk east. | Continue on Skiles Walkway. | Turn left. | You have arrived at your destination.
