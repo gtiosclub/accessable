@@ -1,11 +1,11 @@
 import CoreGraphics
 import Foundation
 
-// What the ground is made of, from semantic segmentation (Apple's Core ML DETR, COCO-panoptic
-// labels). Owner: Computer Vision (1.1). After PathSense and SENSATION: geometry says where
+// What the ground is made of, from semantic segmentation (Apple's Core ML DETR with
+// COCO-panoptic labels, or SegFormer with ADE20K's). Owner: Computer Vision (1.1). After PathSense and SENSATION: geometry says where
 // the ground changes height; segmentation says whether it is floor, pavement, road or stairs.
 
-/// The ground classes that matter for walking, from the model's 133 labels.
+/// The ground classes that matter for walking, folded from the model's own labels.
 enum SurfaceKind: String, Sendable {
     /// Indoor floor, carpet or rug.
     case floor
@@ -25,19 +25,23 @@ enum SurfaceKind: String, Sendable {
     case ceiling
     case other
 
+    /// From a label of either bundled segmentation model: Apple's DETR (COCO-panoptic names,
+    /// "floor (wood)") or SegFormer (ADE20K names, "sidewalk").
     init(label: String) {
-        self = switch label {
-        case "floor (wood)", "floor (other)", "rug", "platform", "playingfield": .floor
-        case "pavement": .pavement
-        case "road": .road
-        case "grass": .grass
-        case "dirt", "gravel", "sand", "snow": .rough
-        case "stairs": .stairs
-        case "river", "sea", "water (other)": .water
+        self = switch label.trimmingCharacters(in: .whitespaces).lowercased() {
+        case "floor (wood)", "floor (other)", "floor", "rug", "platform", "playingfield", "stage": .floor
+        case "pavement", "sidewalk", "path": .pavement
+        case "road", "runway": .road
+        case "grass", "field": .grass
+        case "dirt", "gravel", "sand", "snow", "earth", "land", "dirt track": .rough
+        case "stairs", "stairway", "step", "escalator": .stairs
+        case "river", "sea", "water (other)", "water", "lake", "swimming pool", "waterfall": .water
         case "railroad": .rail
-        case "table", "dining table", "counter", "shelf", "cabinet", "bed": .raised
-        case "sky (other)", "tree", "building (other)", "house", "mountain": .outdoors
-        case "ceiling", "light": .ceiling
+        case "table", "dining table", "counter", "shelf", "cabinet", "bed", "desk", "countertop",
+             "kitchen island", "coffee table", "pool table": .raised
+        case "sky (other)", "sky", "tree", "building (other)", "building", "house", "mountain",
+             "skyscraper", "palm", "hill": .outdoors
+        case "ceiling", "light", "chandelier": .ceiling
         default: .other
         }
     }
@@ -173,7 +177,7 @@ struct SurfaceAnnouncer: Sendable {
             category: .hazard,
             priority: .high,
             text: text,
-            haptic: .attention,
+            haptic: .obstacleNear, // Obstruction Ahead → Warning
             bearing: .ahead,
             source: .obstacleDetection,
             createdAt: now,

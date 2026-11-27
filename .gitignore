@@ -83,3 +83,10 @@ Secrets.xcconfig
 Workers/**/node_modules/
 Workers/**/.wrangler/
 Workers/**/.dev.vars
+
+# Built locally by Scripts/models/ (RF-DETR detectors, street segmentation)
+AccessAble/AccessAble/Resources/rfdetr_*.mlpackage/
+AccessAble/AccessAble/Resources/segformer_*.mlpackage/
+
+# Python bytecode from the model scripts
+__pycache__/

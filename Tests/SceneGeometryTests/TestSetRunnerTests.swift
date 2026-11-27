@@ -46,7 +46,7 @@ private let compiledModel = Task {
 
 /// What the app runs on a frame: the object model (T13) and people detection (T14).
 private func detectWithAppDetectors() async throws -> (URL) throws -> [Detection] {
-    let objects = DFineObjectDetector(compiledModelURL: try await compiledModel.value)
+    let objects = DETRObjectDetector(compiledModelURL: try await compiledModel.value)
     let people = PeopleDetector()
     // Load the model now so the first frame's time is detection, not loading.
     if let blank = CGContext(data: nil, width: 64, height: 64, bitsPerComponent: 8, bytesPerRow: 0,

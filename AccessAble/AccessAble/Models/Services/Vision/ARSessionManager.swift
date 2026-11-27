@@ -178,8 +178,9 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     }
 
     /// Turns the classified mesh on or off without restarting tracking. While the session
-    /// isn't running it only records the wish, and the next `start()` applies it: re-running
-    /// a paused session here and again in `start()` made the preview visibly jump.
+    /// isn't running (stopped, or a call has the camera) it only records the wish, and the next
+    /// `start()` applies it: re-running a paused session here and again in `start()` made the
+    /// preview visibly jump.
     ///
     /// - Returns: true when tracking had to restart from scratch: the mesh was wanted while
     ///   geo-tracking, which can't build one, on a device that can, so the session went back

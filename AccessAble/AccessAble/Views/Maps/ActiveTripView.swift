@@ -67,9 +67,12 @@ struct ActiveTripView: View {
                 }
                 TripControlPanel(
                     isMicMuted: session.isMicOff,
-                    onCallHelp: { router.push(.callHelp) },
-                    onMicrophone: { Task { await session.toggleMicrophone() } },
-                    onPauseTrip: { session.pause() },
+                    onCallHelp: callHelp,
+                    onMicrophone: {
+                        Haptics.play(.selection)
+                        Task { await session.toggleMicrophone() }
+                    },
+                    onPauseTrip: pauseTrip,
                     hasArrived: session.hasArrived,
                     onEndTrip: {
                         session.exit()
@@ -82,10 +85,13 @@ struct ActiveTripView: View {
             if session.isRouteBlocked {
                 RouteBlockedScreen(
                     postsAnnouncement: !session.isSpokenByEngine,
-                    onCallHelp: { router.push(.callHelp) },
-                    onReroute: { session.reroute() },
-                    onPause: { session.pause() },
-                    onContinue: { session.resume() },
+                    onCallHelp: callHelp,
+                    onReroute: {
+                        Haptics.play(.selection)
+                        session.reroute()
+                    },
+                    onPause: pauseTrip,
+                    onContinue: continueWalking,
                     onReport: session.isReportingAvailable ? { reportSource = .routeAhead } : nil
                 )
                 .transition(.opacity)
@@ -99,13 +105,13 @@ struct ActiveTripView: View {
                 ScrollView {
                     TripPausedCard(
                         isRecording: session.plan.isRecording,
-                        onContinue: { session.resume() },
+                        onContinue: continueWalking,
                         onExit: {
                             session.exit()
                             router.popToRoot()
                         },
                         onSettings: { router.push(.settings) },
-                        onCallHelp: { router.push(.callHelp) }
+                        onCallHelp: callHelp
                     )
                     .padding(.horizontal, 24)
                 }
@@ -117,16 +123,21 @@ struct ActiveTripView: View {
         .animation(.easeInOut(duration: 0.25), value: session.isPaused)
         .animation(.easeInOut(duration: 0.25), value: session.isRouteBlocked)
         .animation(.easeInOut(duration: 0.25), value: session.showsMap)
-        .gesture(TwoFingerSwipe { session.showsMap.toggle() })
-        .accessibilityAction(named: session.showsMap ? "Show camera view" : "Show map view") {
-            session.showsMap.toggle()
-        }
+        .gesture(TwoFingerSwipe(direction: .left, action: switchView))
+        .accessibilityAction(named: session.showsMap ? "Show camera view" : "Show map view", switchView)
         .animation(.easeInOut(duration: 0.2), value: voiceState)
         .animation(.easeInOut(duration: 0.2), value: session.reportQuestion)
         .toolbar(.hidden, for: .navigationBar)
         .task {
             session.onCallHelp = { router.push(.call(nil)) }
             await session.run()
+        }
+        // Trip information loaded / missing or invalid (no route, no Precise Location).
+        .onChange(of: session.directions?.route != nil) { _, hasRoute in
+            if hasRoute { Haptics.play(.success) }
+        }
+        .onChange(of: session.directions.map { $0.routeErrorMessage != nil || $0.needsLocationAccess } ?? false) { _, failed in
+            if failed { Haptics.play(.error) }
         }
         .onChange(of: session.latestAnnouncement) { _, announcement in
             // On a real trip the announcement engine has already spoken it, through VoiceOver
@@ -159,11 +170,11 @@ struct ActiveTripView: View {
             VoiceCommandsSheet(
                 onTry: { command in
                     showsCommands = false
-                    guard !session.run(command) else { return }
                     switch command {
-                    case .callHelp: router.push(.callHelp)
+                    case .pauseTrip: pauseTrip()
+                    case .callHelp: callHelp()
                     case .reportProblem: reportsAfterCommands = true
-                    default: break
+                    default: session.run(command)
                     }
                 },
                 onSimulateBlockedRoute: {
@@ -179,6 +190,29 @@ struct ActiveTripView: View {
     private enum ReportSource {
         case here
         case routeAhead
+    }
+
+    // MARK: - Actions
+
+    private func callHelp() {
+        Haptics.play(.medium)
+        router.push(.callHelp)
+    }
+
+    private func pauseTrip() {
+        Haptics.play(.medium)
+        session.pause()
+    }
+
+    private func continueWalking() {
+        Haptics.play(.success)
+        session.resume()
+    }
+
+    /// Camera ↔ map by two-finger swipe or the VoiceOver action.
+    private func switchView() {
+        Haptics.play(.light)
+        session.showsMap.toggle()
     }
 
     private enum VoiceState: Equatable {
@@ -291,6 +325,7 @@ struct ActiveTripView: View {
                 viewSwitch
                 Spacer(minLength: 0)
                 CircleIconButton(systemImage: "info", label: "Voice commands") {
+                    Haptics.play(.selection)
                     showsCommands = true
                 }
             }
@@ -299,7 +334,7 @@ struct ActiveTripView: View {
 
     /// Camera or map, also switched by a two-finger swipe or the VoiceOver action.
     private var viewSwitch: some View {
-        Picker("View", selection: $session.showsMap) {
+        Picker("View", selection: $session.showsMap.withSelectionHaptic()) {
             Label("Camera", systemImage: "camera").tag(false)
             Label("Map", systemImage: "map").tag(true)
         }

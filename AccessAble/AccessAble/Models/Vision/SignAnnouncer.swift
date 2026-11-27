@@ -60,6 +60,7 @@ struct SignAnnouncer: Sendable {
                 category: .landmark,
                 priority: .normal,
                 text: text,
+                haptic: .feature,
                 distance: position.flatMap { position in heading.map { Double($0.distance(to: position)) } },
                 bearing: position.flatMap { position in heading.map { $0.bearing(to: position) } },
                 source: .textRecognition,

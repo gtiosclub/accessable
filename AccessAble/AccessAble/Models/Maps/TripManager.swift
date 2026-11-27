@@ -889,11 +889,14 @@ actor TripManager: TripStateProviding {
             guard phase == .active else { return }
             await submit(maneuver("New route. " + preferenceWarning(on: newRoute) + Self.reportWarning(on: newRoute)
                                       + sourceChange
-                                      + departure(on: newRoute), .high, expiresIn: 15, key: "reroute"))
+                                      + departure(on: newRoute), .high, haptic: .routeReady, expiresIn: 15,
+                                  key: "reroute"))
         case .failure(let error):
             guard !(error is CancellationError) else { return }
             log.error("Reroute failed: \(error.localizedDescription, privacy: .public)")
-            if requested, !needsReroute, !triggers.isEmpty {
+            // still on the route, so there is nothing to walk back to
+            let isOnRoute = requested && !needsReroute
+            if isOnRoute, !triggers.isEmpty {
                 // still on the route that passes it
                 guard phase == .active else {
                     unavoidedReportOnResume = true
@@ -903,15 +906,15 @@ actor TripManager: TripStateProviding {
                 return
             }
             guard phase == .active else { return }
-            let text = if requested, !needsReroute {
-                // still on the route, so there is nothing to walk back to
+            let text = if isOnRoute {
                 "Couldn't get a new route. Keep following the current one."
             } else if rerouteCount < Self.maximumReroutes {
                 "Couldn't get a new route. Walk back the way you came."
             } else {
                 "Off route. End the trip and choose your destination again."
             }
-            await submit(maneuver(text, .high, haptic: .attention, expiresIn: 10, key: "reroute-failed"))
+            await submit(maneuver(text, .high, haptic: isOnRoute ? .attention : .wrongDirection, expiresIn: 10,
+                                  key: "reroute-failed"))
         }
     }
 
@@ -1039,16 +1042,16 @@ actor TripManager: TripStateProviding {
             } else {
                 "You may have passed the turn. Turn around and walk back \(spoken(distanceBack))."
             }
-            return maneuver(text, .high, haptic: .attention, expiresIn: 12, key: "step-\(step)-missed")
+            return maneuver(text, .high, haptic: .wrongDirection, expiresIn: 12, key: "step-\(step)-missed")
         case let .crossing(index):
             return maneuver(crossingText(routeCrossings[index]), .high, haptic: .attention, expiresIn: 8,
                             key: "crossing-\(index)")
         case .wrongWay:
             let text = pathSentence().map { "You're walking away from the route. \($0)" }
                 ?? "You seem to be walking away from the route. Turn around."
-            return maneuver(text, .high, haptic: .attention, expiresIn: 10, key: "wrong-way")
+            return maneuver(text, .high, haptic: .wrongDirection, expiresIn: 10, key: "wrong-way")
         case .offRoute:
-            return maneuver(offRouteSpeech, .high, haptic: .attention, expiresIn: 10, key: "off-route")
+            return maneuver(offRouteSpeech, .high, haptic: .wrongDirection, expiresIn: 10, key: "off-route")
         case .backOnRoute:
             return maneuver("Back on the route.", .normal, expiresIn: 6, key: "back-on-route")
         case .arrived:
@@ -1174,7 +1177,7 @@ actor TripManager: TripStateProviding {
         // measured from the saved step, not where the user is
         guard let progress, tracker?.placement != .awaitingFix else { return nil }
         if progress.isOffRoute {
-            return maneuver(offRouteSpeech, .high, haptic: .attention, expiresIn: 10, key: nil)
+            return maneuver(offRouteSpeech, .high, haptic: .wrongDirection, expiresIn: 10, key: nil)
         }
         return nextStepPrepare().map { maneuver($0, .normal, expiresIn: 8, key: nil) }
     }

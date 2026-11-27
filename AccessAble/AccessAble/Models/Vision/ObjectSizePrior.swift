@@ -49,6 +49,16 @@ enum ObjectSizePriors {
         "parking meter": ObjectSizePrior(label: "parking meter", heightRange: 1.10 ... 1.50),
         "door": ObjectSizePrior(label: "door", heightRange: 1.95 ... 2.10),
         "dog": ObjectSizePrior(label: "dog", heightRange: 0.25 ... 0.80),
+        // Outdoor model classes (`OutdoorClasses`). Poles, sign posts and trees vary too
+        // much in height to range from, so they rely on floor contact alone.
+        "bollard": ObjectSizePrior(label: "bollard", heightRange: 0.75 ... 1.10),
+        "trash can": ObjectSizePrior(label: "trash can", heightRange: 0.80 ... 1.20),
+        "traffic cone": ObjectSizePrior(label: "traffic cone", heightRange: 0.45 ... 0.95),
+        "barrier": ObjectSizePrior(label: "barrier", heightRange: 0.80 ... 1.15),
+        "bike rack": ObjectSizePrior(label: "bike rack", heightRange: 0.70 ... 0.95),
+        "scooter": ObjectSizePrior(label: "scooter", heightRange: 1.00 ... 1.25),
+        "stroller": ObjectSizePrior(label: "stroller", heightRange: 0.90 ... 1.10),
+        "wheelchair": ObjectSizePrior(label: "wheelchair", heightRange: 0.85 ... 1.10),
     ]
 
     static func prior(for label: String) -> ObjectSizePrior? {

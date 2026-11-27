@@ -83,6 +83,23 @@ struct SceneNavigationRestartTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
+    func cancellingRightAwaySwitchesOnlyOff() async {
+        let meshSwitch = RestartingMeshSwitch()
+        let perception = ScenePerception()
+        let analyzer = analyzer(meshSwitch, perception: perception)
+
+        analyzer.navigate(to: "the door")
+        analyzer.navigate(to: nil)
+        // Mesh changes are debounced, so only the latest one reaches the session.
+        for await enabled in meshSwitch.switches {
+            #expect(!enabled)
+            break
+        }
+
+        #expect(perception.navigationQuery == nil)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
     func takeMeToSurvivesRestartingGuidance() async throws {
         let perception = ScenePerception()
         let analyzer = ARSceneAnalyzer(

@@ -134,7 +134,10 @@ struct CallView: View {
                         CallControlsColumn(isFolded: $controlsFolded,
                                            endLabel: viewModel.state == .ringing ? "Cancel call" : "End call",
                                            endHint: "Ends this call",
-                                           onEnd: { Task { await viewModel.hangUp() } }) {
+                                           onEnd: {
+                                               Haptics.play(.medium)
+                                               Task { await viewModel.hangUp() }
+                                           }) {
                             if connected { controls }
                         }
                     }

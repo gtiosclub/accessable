@@ -143,10 +143,10 @@ struct RoleQuestionView: View {
                     .font(.title3.bold())
                     .foregroundStyle(.white)
                 VStack(spacing: 20) {
-                    Button("Sighted / standard guidance") { onChoose(.sighted) }
+                    Button("Sighted / standard guidance") { choose(.sighted) }
                         .buttonStyle(.pill(.primary))
                         .accessibilityLabel("Sighted guidance preferences")
-                    Button("Blind / low vision guidance") { onChoose(.blind) }
+                    Button("Blind / low vision guidance") { choose(.blind) }
                         .buttonStyle(.pill(.primary))
                         .accessibilityLabel("I am blind or have low vision")
                 }
@@ -158,6 +158,11 @@ struct RoleQuestionView: View {
         .scrollBounceBehavior(.basedOnSize)
         .defaultScrollAnchor(.center)
         .background(Color.black.ignoresSafeArea())
+    }
+
+    private func choose(_ level: VisionLevel) {
+        Haptics.play(.selection)
+        onChoose(level)
     }
 }
 
@@ -172,10 +177,10 @@ struct VoiceOverQuestionView: View {
                     .font(.title3.bold())
                     .foregroundStyle(.white)
                 VStack(spacing: 20) {
-                    Button("Yes") { onAnswer(true) }
+                    Button("Yes") { answer(true) }
                         .buttonStyle(.pill(.primary))
                         .accessibilityLabel("Yes, I use VoiceOver")
-                    Button("No") { onAnswer(false) }
+                    Button("No") { answer(false) }
                         .buttonStyle(.pill(.destructive))
                         .accessibilityLabel("No, I don't use VoiceOver")
                 }
@@ -187,6 +192,11 @@ struct VoiceOverQuestionView: View {
         .scrollBounceBehavior(.basedOnSize)
         .defaultScrollAnchor(.center)
         .background(Color.black.ignoresSafeArea())
+    }
+
+    private func answer(_ usesVoiceOver: Bool) {
+        Haptics.play(.selection)
+        onAnswer(usesVoiceOver)
     }
 }
 
