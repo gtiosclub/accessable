@@ -69,9 +69,6 @@ struct VolunteerHomeView: View {
         if let listenerError {
             notice(listenerError, action: "Retry incoming calls", perform: retryListening)
         }
-        if let callMessage {
-            notice(callMessage, action: "Dismiss", perform: dismissCallMessage)
-        }
         if let callHelp {
             @Bindable var callHelp = callHelp
             CallHelpSearchField(text: $callHelp.search)

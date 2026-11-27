@@ -36,6 +36,7 @@ final class IncomingCallViewModel {
     @ObservationIgnored private var endingTask: Task<Void, Never>?
     @ObservationIgnored private var listenerGeneration = UUID()
     @ObservationIgnored private var actionGeneration = UUID()
+    @ObservationIgnored private var messageClearTask: Task<Void, Never>?
     @ObservationIgnored private var foreground = false
     @ObservationIgnored private var latestOffer: IncomingCall?
     @ObservationIgnored private var dismissedIDs: Set<String> = []
@@ -215,6 +216,7 @@ final class IncomingCallViewModel {
             guard let self else { return }
             self.call = nil
             phase = .idle
+            message = nil
             alerts.announce("Call ended")
             actionTask = nil
             endingTask = nil
@@ -285,5 +287,18 @@ final class IncomingCallViewModel {
         phase = .idle
     }
 
-    private func report(_ text: String) { message = text; alerts.announce(text) }
+    /// Shown on the call screen and spoken, then cleared after a few seconds, so it never stays
+    /// on the volunteer's home screen.
+    private func report(_ text: String) {
+        message = text
+        alerts.announce(text)
+        messageClearTask?.cancel()
+        messageClearTask = Task { [weak self, sleep] in
+            do { try await sleep(Self.messageLifetime) } catch { return }
+            guard let self, message == text else { return }
+            message = nil
+        }
+    }
+
+    static let messageLifetime: Duration = .seconds(4)
 }
