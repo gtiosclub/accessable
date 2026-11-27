@@ -189,15 +189,18 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         guard clientCount > 0 else { return }
         clientCount -= 1
         guard clientCount == 0 else { return }
-        let (subscription, modeTask) = state.withLock { state in
+        let (subscription, modeTask, meshTask) = state.withLock { state in
             defer {
                 state.subscription = nil
                 state.modeTask = nil
+                state.meshTask = nil
             }
-            return (state.subscription, state.modeTask)
+            return (state.subscription, state.modeTask, state.meshTask)
         }
         if let subscription { sessionManager.removeFrameHandler(subscription) }
         modeTask?.cancel()
+        // nothing runs on the stopped session; the next start() applies the mode as it is then
+        meshTask?.cancel()
         processor.cancelPending()
         sessionManager.stop()
         steering?.update(nil)

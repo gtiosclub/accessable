@@ -143,4 +143,24 @@ struct SceneNavigationRestartTests {
 
         #expect(await remainingSwitches(meshSwitch).isEmpty)
     }
+
+    @Test(.timeLimit(.minutes(1)))
+    func stoppingWhileASwitchIsPendingLeavesItToTheNextStart() async throws {
+        let meshSwitch = RestartingMeshSwitch()
+        let clock = ManualClock()
+        let perception = ScenePerception()
+        let analyzer = analyzer(meshSwitch, perception: perception, clock: clock)
+        try await analyzer.start()
+
+        analyzer.setMode(.find)
+        try await clock.waitForSleepers(1)
+        await analyzer.stop()
+        clock.advance(by: .milliseconds(300))
+        try await analyzer.start()
+
+        // the start's switches only: off for Walk, then on for the Find still wanted
+        #expect(await remainingSwitches(meshSwitch) == [false, true])
+        #expect(perception.mode == .find)
+        await analyzer.stop()
+    }
 }
