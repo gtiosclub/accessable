@@ -6,6 +6,7 @@ import SwiftUI
 /// looks it up and opens it as a real `Destination`.
 struct PlaceSearchView: View {
     @Environment(AppRouter.self) private var router
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var search: PlaceSearchViewModel
     @State private var showsAllSaved = false
     @State private var showsAllRecents = false
@@ -122,32 +123,37 @@ struct PlaceSearchView: View {
 
     // MARK: - From / To
 
+    private var usesStackedRouteCard: Bool { dynamicTypeSize.isAccessibilitySize }
+
     private var routeCard: some View {
-        HStack(spacing: 10) {
+        let layout = usesStackedRouteCard ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout(spacing: 10))
+        return layout {
             VStack(spacing: 0) {
                 fieldRow(.origin)
                 Divider()
                     .overlay(.white.opacity(0.25))
-                    .padding(.leading, 40)
+                    .padding(.leading, usesStackedRouteCard ? 0 : 40)
                 fieldRow(.destination)
             }
             swapButton
         }
         .padding(.vertical, 6)
         .padding(.leading, 14)
-        .padding(.trailing, 8)
+        .padding(.trailing, usesStackedRouteCard ? 14 : 8)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(.white.opacity(0.8), lineWidth: 1.5)
         )
         .overlay(alignment: .leading) {
-            // The dotted line joining From to To, as in a maps app.
-            Line()
-                .stroke(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [2, 4]))
-                .frame(width: 2, height: 30)
-                .padding(.leading, 14 + 13)
-                .accessibilityHidden(true)
+            if !usesStackedRouteCard {
+                // The dotted line joining From to To in the compact card.
+                Line()
+                    .stroke(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [2, 4]))
+                    .frame(width: 2, height: 30)
+                    .padding(.leading, 14 + 13)
+                    .accessibilityHidden(true)
+            }
         }
         .environment(\.colorScheme, .dark)
     }
@@ -156,64 +162,79 @@ struct PlaceSearchView: View {
         let isOrigin = field == .origin
         let text = isOrigin ? $search.originQuery : $search.query
         let isListening = search.dictatingField == field
-        return HStack(spacing: 12) {
-            Image(systemName: isOrigin ? "circle.inset.filled" : "mappin.circle.fill")
-                .font(.title3)
-                .foregroundStyle(isOrigin ? Theme.cyan : Theme.red)
-                .frame(width: 28)
-                .accessibilityHidden(true)
-            ZStack(alignment: .leading) {
-                TextField(
-                    isOrigin ? "From" : "To",
-                    text: text,
-                    // Without a prompt the field shows its label, "From", behind the My Location tag.
-                    prompt: Text(prompt(for: field)).foregroundStyle(.white.opacity(0.7))
-                )
-                .font(.title3)
-                .foregroundStyle(.white)
-                .focused($focusedField, equals: field)
-                .submitLabel(isOrigin ? .next : .search)
-                // autocorrect rewrites place names like "Ferst" into real words
-                .autocorrectionDisabled()
-                .onSubmit {
-                    search.search()
-                    if isOrigin { focusedField = .destination }
-                }
-                .accessibilityLabel(isOrigin ? "From" : "To")
-                .accessibilityValue(isOrigin && search.originQuery.isEmpty ? originName : text.wrappedValue)
-
-                if isOrigin, focusedField != .origin, search.originQuery.isEmpty {
-                    originTag
-                        // Taps go through to the field underneath.
-                        .allowsHitTesting(false)
+        let layout = usesStackedRouteCard
+            ? AnyLayout(VStackLayout(alignment: .trailing, spacing: 0))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
+            HStack(spacing: 12) {
+                if !usesStackedRouteCard {
+                    Image(systemName: isOrigin ? "circle.inset.filled" : "mappin.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(isOrigin ? Theme.cyan : Theme.red)
+                        .frame(width: 28)
                         .accessibilityHidden(true)
                 }
+                fieldInput(field, text: text)
             }
-            if !text.wrappedValue.isEmpty {
+            HStack(spacing: 12) {
+                if !text.wrappedValue.isEmpty {
+                    Button {
+                        text.wrappedValue = ""
+                        search.search()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.white.opacity(0.7))
+                            .minimumTapTarget()
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(isOrigin ? "Clear starting point" : "Clear search")
+                }
                 Button {
-                    text.wrappedValue = ""
-                    search.search()
+                    Task { await search.toggleDictation(into: field) }
                 } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.white.opacity(0.7))
+                    Image(systemName: isListening ? "waveform" : "mic")
+                        .font(.title3)
+                        .foregroundStyle(isListening ? Theme.red : .white)
+                        .symbolEffect(.variableColor.iterative, isActive: isListening)
                         .minimumTapTarget()
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(isOrigin ? "Clear starting point" : "Clear search")
+                .accessibilityLabel(isListening ? "Stop dictating" : "Dictate \(isOrigin ? "starting point" : "destination")")
             }
-            Button {
-                Task { await search.toggleDictation(into: field) }
-            } label: {
-                Image(systemName: isListening ? "waveform" : "mic")
-                    .font(.title3)
-                    .foregroundStyle(isListening ? Theme.red : .white)
-                    .symbolEffect(.variableColor.iterative, isActive: isListening)
-                    .minimumTapTarget()
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(isListening ? "Stop dictating" : "Dictate \(isOrigin ? "starting point" : "destination")")
         }
         .frame(minHeight: 56)
+        .padding(.vertical, usesStackedRouteCard ? 6 : 0)
+    }
+
+    private func fieldInput(_ field: PlaceSearchViewModel.Field, text: Binding<String>) -> some View {
+        let isOrigin = field == .origin
+        return ZStack(alignment: .leading) {
+            TextField(
+                isOrigin ? "From" : "To",
+                text: text,
+                // Without a prompt the field shows its label, "From", behind the My Location tag.
+                prompt: Text(prompt(for: field)).foregroundStyle(.white.opacity(0.7))
+            )
+            .font(.title3)
+            .foregroundStyle(.white)
+            .focused($focusedField, equals: field)
+            .submitLabel(isOrigin ? .next : .search)
+            // autocorrect rewrites place names like "Ferst" into real words
+            .autocorrectionDisabled()
+            .onSubmit {
+                search.search()
+                if isOrigin { focusedField = .destination }
+            }
+            .accessibilityLabel(isOrigin ? "From" : "To")
+            .accessibilityValue(isOrigin && search.originQuery.isEmpty ? originName : text.wrappedValue)
+
+            if isOrigin, focusedField != .origin, search.originQuery.isEmpty {
+                originTag
+                    // Taps go through to the field underneath.
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+        }
     }
 
     /// Empty while the From tag covers the field; a hint once the user is typing there.
@@ -234,7 +255,7 @@ struct PlaceSearchView: View {
             if let place = search.origin.place {
                 Text(place.displayName)
                     .font(.title3)
-                    .lineLimit(1)
+                    .lineLimit(usesStackedRouteCard ? nil : 1)
             } else {
                 Image(systemName: search.isLocationOff ? "location.slash.fill" : "location.fill")
                     .foregroundStyle(search.isLocationOff ? Theme.red : Theme.cyan)
@@ -244,14 +265,15 @@ struct PlaceSearchView: View {
                     Text(search.locationDetail)
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.75))
-                        .lineLimit(1)
+                        .lineLimit(usesStackedRouteCard ? nil : 1)
                 }
             }
         }
+        .fixedSize(horizontal: false, vertical: usesStackedRouteCard)
         .foregroundStyle(.white)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
-        .background(.white.opacity(0.12), in: Capsule())
+        .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: usesStackedRouteCard ? 16 : 100))
     }
 
     private var swapButton: some View {
@@ -259,11 +281,21 @@ struct PlaceSearchView: View {
             search.swap()
             focusedField = nil
         } label: {
-            Image(systemName: "arrow.up.arrow.down")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.white)
-                .minimumTapTarget()
-                .background(.white.opacity(0.12), in: Circle())
+            if usesStackedRouteCard {
+                Label("Swap", systemImage: "arrow.up.arrow.down")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 16))
+            } else {
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .minimumTapTarget()
+                    .background(.white.opacity(0.12), in: Circle())
+            }
         }
         .buttonStyle(.plain)
         .disabled(!search.canSwap)
