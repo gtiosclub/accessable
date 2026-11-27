@@ -2606,6 +2606,24 @@ struct TripManagerUnhonouredPreferenceTests {
         await waitUntil { await harness.engine.texts.contains { $0.hasPrefix("New route.") } }
         #expect(await harness.engine.texts.filter { $0.hasPrefix("New route.") } == [newRouteSpeech])
     }
+
+    @Test
+    func aResumedTripOnSuchARouteWarns() async throws {
+        let straight = try longStraightRoute()
+        var steps = straight.steps
+        steps.insert(RouteStep(kind: .stairs, coordinateIndex: 20, instruction: "Take the stairs.",
+                               spokenInstruction: "Take the stairs."), at: 2)
+        let route = try NavigationRoute(coordinates: straight.coordinates, steps: steps,
+                                        estimatedDuration: straight.estimatedDuration)
+        let harness = try Harness(route: route)
+        await harness.resume(atStep: 1, preferences: stepFree)
+        await harness.waitForSleepers(2)
+
+        await harness.fix(harness.point(300))
+
+        #expect(try #require(await harness.engine.waitForCount(1).first).text
+            == "Resuming directions to Library, about 160 metres. \(oneFlight) In about 100 metres, turn right onto Ferst Drive.")
+    }
 }
 
 // MARK: Reports during a trip

@@ -91,7 +91,7 @@ struct RouteSummaryTests {
         var route = try route(metres: 100, seconds: 60)
         route.avoidedReports = avoided
         route.unavoidedReports = unavoided
-        return RouteSummary(route: route, crossings: []).text(distances: .metric)
+        return RouteSummary(route: route, crossings: []).text(distances: .metric, preferences: RoutePreferences())
     }
 
     /// Halfway along, rather than at the start, which the routing can't go around.
@@ -158,7 +158,8 @@ struct RouteSummaryTests {
                                                       kinds: [.straight, .cross, .enterBuilding, .exitBuilding]),
                                      crossings: [])
         #expect(uncounted.turns == 0)
-        #expect(uncounted.text(distances: .metric) == "About 1 minute, 100 metres. No turns.")
+        #expect(uncounted.text(distances: .metric, preferences: RoutePreferences())
+            == "About 1 minute, 100 metres. No turns.")
     }
 }
 
