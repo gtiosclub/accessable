@@ -11,6 +11,7 @@ private final class StartRecordingTrip: TripStateProviding, Sendable {
     struct Start: Sendable {
         var route: NavigationRoute
         var destination: Destination
+        var preferences: RoutePreferences
         var resumingAtStep: Int?
     }
 
@@ -27,8 +28,10 @@ private final class StartRecordingTrip: TripStateProviding, Sendable {
 
     func tripRoutes() -> AsyncStream<NavigationRoute?> { AsyncStream { $0.finish() } }
 
-    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async {
-        started.yield(Start(route: route, destination: destination, resumingAtStep: resumingAtStep))
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {
+        started.yield(Start(route: route, destination: destination, preferences: preferences,
+                            resumingAtStep: resumingAtStep))
     }
 
     func pauseTrip() async {}
@@ -59,10 +62,11 @@ private final class ResumeHarness: Sendable {
     var fileExists: Bool { FileManager.default.fileExists(atPath: store.url.path(percentEncoded: false)) }
 
     @discardableResult
-    func saveTrip(source: RouteSource = .valhalla) -> SavedTrip {
+    func saveTrip(source: RouteSource = .valhalla, preferences: RoutePreferences? = nil) -> SavedTrip {
         let now = time.now
         let trip = SavedTrip(tripID: UUID(), route: route, routeSource: source, destination: MapsSamples.destination,
-                             passedStepCount: 1, startedAt: now.addingTimeInterval(-300), savedAt: now)
+                             passedStepCount: 1, startedAt: now.addingTimeInterval(-300), savedAt: now,
+                             preferences: preferences)
         store.save(trip)
         return trip
     }
@@ -169,9 +173,20 @@ struct ResumeTripViewModelTests {
     }
 
     @Test
+    func aTripSavedWithoutPreferencesResumesWithTheDefaults() async throws {
+        let harness = ResumeHarness()
+        harness.saveTrip(preferences: nil)
+        let model = ResumeTripViewModel(store: harness.store, trip: PlaceholderTripProvider())
+        await model.check()
+        let plan = model.resume(try #require(model.offer))
+
+        #expect(plan.plannedRoute?.preferences == RoutePreferences())
+    }
+
+    @Test
     func resumingStartsTheTripOnTheSavedRoute() async throws {
         let harness = ResumeHarness()
-        let saved = harness.saveTrip()
+        let saved = harness.saveTrip(preferences: RoutePreferences(avoidStairs: true, walkingSpeed: .slow))
         // two hours on, the route is far older than a start would take without asking for a fresh one
         harness.time.advance(by: SavedTripStore.maximumAge - 1)
         let model = ResumeTripViewModel(store: harness.store, trip: PlaceholderTripProvider(),
@@ -196,6 +211,7 @@ struct ResumeTripViewModelTests {
 
         #expect(start.route == saved.route)
         #expect(start.destination == saved.destination)
+        #expect(start.preferences == saved.preferences)
         #expect(start.resumingAtStep == saved.passedStepCount)
     }
 }

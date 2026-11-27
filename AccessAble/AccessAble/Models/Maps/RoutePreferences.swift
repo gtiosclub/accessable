@@ -2,7 +2,7 @@ import Foundation
 
 /// The user's walking route choices. Each is a preference Valhalla weighs, not a guarantee: a route still uses
 /// stairs, say, when there's no other way.
-struct RoutePreferences: Codable, Equatable, Sendable {
+struct RoutePreferences: Codable, Hashable, Sendable {
     enum WalkingSpeed: String, Codable, CaseIterable, Sendable {
         case slow, normal, fast
 

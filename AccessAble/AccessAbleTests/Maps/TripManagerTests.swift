@@ -511,13 +511,14 @@ private struct Harness {
         }
     }
 
-    func start(to destination: Destination = library) async {
-        await manager.startTrip(route: route, destination: destination)
+    func start(to destination: Destination = library, preferences: RoutePreferences = RoutePreferences()) async {
+        await manager.startTrip(route: route, destination: destination, preferences: preferences,
+                                resumingAtStep: nil)
     }
 
     /// Starts the trip as one resumed after the app closed, with `step` next when it was saved.
-    func resume(atStep step: Int) async {
-        await manager.startTrip(route: route, destination: library, resumingAtStep: step)
+    func resume(atStep step: Int, preferences: RoutePreferences = RoutePreferences()) async {
+        await manager.startTrip(route: route, destination: library, preferences: preferences, resumingAtStep: step)
     }
 
     /// Feeds one fix on the current trip's stream and waits until it is handled, then moves the clock on. A
@@ -2446,6 +2447,74 @@ struct TripManagerResumeTests {
         #expect(abs(try #require(placed.distanceRemaining) - resumed.remaining) < 1)
         #expect(placed.nextManeuver?.kind == resumed.next)
         #expect(placed.isOffRoute == false)
+    }
+}
+
+// MARK: Route preferences
+
+private let stepFree = RoutePreferences(avoidStairs: true, walkingSpeed: .slow)
+
+@Suite(.timeLimit(.minutes(1)))
+struct TripManagerPreferencesTests {
+    @Test
+    func anOffRouteRerouteUsesTheTripsPreferences() async throws {
+        let harness = try Harness(reroutes: [.success(try eastRoute(from: harness0Origin))])
+        await harness.start(preferences: stepFree)
+        await harness.walk(from: 0, to: 50)
+
+        await harness.goOffRoute(at: 49)
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.options == [stepFree.routeOptions])
+    }
+
+    /// Both reroutes, the one around a report included, send the preferences the trip started with.
+    @Test
+    func everyRerouteKeepsThePreferencesTheTripStartedWith() async throws {
+        let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
+        let newRoute = try eastRoute(from: origin)
+        let harness = try Harness(reroutes: [.success(newRoute)])
+        await harness.start(preferences: stepFree)
+        await harness.walk(from: 0, to: 20)
+
+        await harness.manager.reroute()
+        await harness.router.waitForRequests(1)
+        let blocked = [report("on the new route", at: TripWalk.point(on: newRoute, along: 52))]
+        await harness.reports.publish(blocked)
+        await harness.answerReroute()
+        await harness.manager.resumeTrip()
+        await harness.reports.waitForSubscriptions(2)
+        await harness.reports.publish(blocked)
+        await harness.fix(origin, then: 15)
+        await harness.fix(origin)
+
+        await harness.router.waitForRequests(2)
+        var aroundReport = stepFree.routeOptions
+        aroundReport.reports = blocked
+        #expect(await harness.router.options == [stepFree.routeOptions, aroundReport])
+    }
+
+    @Test
+    func aResumedTripReroutesWithItsPreferences() async throws {
+        let harness = try Harness(route: try longStraightRoute())
+        await harness.resume(atStep: 1, preferences: stepFree)
+        await harness.waitForSleepers(2)
+
+        for along in TripWalk.distances(from: 300, to: 330) {
+            await harness.fix(harness.point(along, lateral: 80))
+        }
+        await harness.router.waitForRequests(1)
+        #expect(await harness.router.options == [stepFree.routeOptions])
+    }
+
+    @Test
+    func savesTheTripsPreferences() async throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: "TripManagerPreferencesTests-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let harness = try Harness(savedTripsDirectory: directory)
+        let store = try #require(harness.savedTrips)
+        await harness.start(preferences: stepFree)
+
+        #expect(store.load()?.preferences == stepFree)
     }
 }
 

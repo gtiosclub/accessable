@@ -57,6 +57,8 @@ actor TripManager: TripStateProviding {
     private var resumedStart: ResumedStart?
     private var destination: Destination?
     private var route: NavigationRoute?
+    /// Those the trip started with, kept for its reroutes whatever the settings say now.
+    private var preferences = RoutePreferences()
     private var tracker: RouteProgressTracker?
     /// The current route's crossings, in the order the tracker's `.crossing` indices refer to.
     private var routeCrossings: [RouteCrossing] = []
@@ -218,7 +220,8 @@ actor TripManager: TripStateProviding {
         shownReports.stream()
     }
 
-    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async {
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {
         generation += 1
         let generation = generation
         cancelTasks()
@@ -229,6 +232,7 @@ actor TripManager: TripStateProviding {
         resumedStart = resumingAtStep.map { _ in .delayed }
         self.destination = destination
         self.route = route
+        self.preferences = preferences
         routeCrossings = RouteCrossings.along(route, crossings: campusCrossings())
         let tracker = RouteProgressTracker(route: route, startedAt: now(),
                                            crossings: routeCrossings.map(\.distanceAlongRoute),
@@ -537,7 +541,7 @@ actor TripManager: TripStateProviding {
         guard let savedTrips, let route, let destination, let progress else { return }
         savedTrips.save(SavedTrip(tripID: tripID, route: route, routeSource: route.source,
                                   destination: destination, passedStepCount: progress.nextStepIndex,
-                                  startedAt: tripStartedAt, savedAt: now()))
+                                  startedAt: tripStartedAt, savedAt: now(), preferences: preferences))
     }
 
     private var offRouteInstruction: String {
@@ -826,6 +830,8 @@ actor TripManager: TripStateProviding {
         if triggers.isEmpty { rerouteCount += 1 } else { reportRerouteCount += 1 }
         lastRerouteRequest = now()
         let version = routeVersion
+        var tripOptions = preferences.routeOptions
+        tripOptions.reports = triggers + others
         rerouteTask = Task { [routing] in
             // not after a pause that came first
             for announcement in announcements where !Task.isCancelled && self.phase == .active {
@@ -834,7 +840,7 @@ actor TripManager: TripStateProviding {
             let result: Result<NavigationRoute, any Error>
             do {
                 result = .success(try await routing.route(from: origin, to: destination.coordinate,
-                                                          options: RouteOptions(reports: triggers + others)))
+                                                          options: tripOptions))
             } catch {
                 result = .failure(error)
             }
