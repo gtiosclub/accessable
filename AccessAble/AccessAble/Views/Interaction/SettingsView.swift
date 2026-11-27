@@ -122,6 +122,24 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
                 .padding(.horizontal, 8)
                 .accessibilityHint("Camera guidance, live detection, and trip screens for testing")
+
+                NavigationLink {
+                    CreditsView()
+                } label: {
+                    HStack {
+                        Text("Credits")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .accessibilityHidden(true)
+                    }
+                    .font(.body)
+                    .foregroundStyle(.white)
+                    .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .accessibilityHint("OpenStreetMap, Stadia Maps and Apple Maps")
             }
             .padding(.horizontal, 16)
             .padding(.bottom, 24)
@@ -340,7 +358,7 @@ enum SettingsPalette {
     static let cardSeparator = Color.white.opacity(0.35)
 }
 
-private extension View {
+extension View {
     func settingsCardBackground() -> some View {
         background(SettingsPalette.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(

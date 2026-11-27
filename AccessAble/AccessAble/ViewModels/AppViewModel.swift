@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import Synchronization
 
 /// App-wide state: the user's GuidanceProfile, onboarding status, performance mode, and the service container.
 /// Injected into the view hierarchy with `.environment(appViewModel)`.
@@ -21,7 +22,10 @@ final class AppViewModel {
 
     /// Settings-page choices that are not part of the GuidanceProfile.
     var preferences: SettingsPreferences {
-        didSet { save(preferences, forKey: Keys.preferences) }
+        didSet {
+            save(preferences, forKey: Keys.preferences)
+            phoneAimingHelpFlag.set(preferences.phoneAimingHelp)
+        }
     }
 
     /// Kept separately so older GuidanceProfile and SettingsPreferences data still decode.
@@ -49,6 +53,8 @@ final class AppViewModel {
     @ObservationIgnored private var tripCameraTask: Task<Void, Never>?
     @ObservationIgnored private var tripActivityTask: Task<Void, Never>?
     @ObservationIgnored private let foregrounds: AsyncStream<Void>.Continuation
+    /// Readable off the main actor by the trip camera's AR-5 hold-up prompt.
+    @ObservationIgnored private let phoneAimingHelpFlag = PhoneAimingHelpFlag(true)
 
     private enum Keys {
         static let profile = "guidanceProfile"
@@ -82,9 +88,12 @@ final class AppViewModel {
         let announcements = self.services.announcements
         Task { await announcements.updateProfile(profile) }
 
+        phoneAimingHelpFlag.set(preferences.phoneAimingHelp)
+        let aimingFlag = phoneAimingHelpFlag
         let tripCamera = TripCameraCoordinator(
             trip: self.services.trip, camera: self.services.tripCamera,
-            recovery: self.services.guidanceRecovery, announcements: announcements
+            recovery: self.services.guidanceRecovery, announcements: announcements,
+            phoneAimingHelp: { aimingFlag.get() }
         )
         tripCameraTask = Task { await tripCamera.run() }
         let tripActivity = TripActivityController(
@@ -131,4 +140,12 @@ extension AppViewModel {
         vm.hasCompletedOnboarding = true
         return vm
     }
+}
+
+/// Settings → Phone Aiming Help, readable off the main actor by the trip camera.
+private final class PhoneAimingHelpFlag: Sendable {
+    private let value: Mutex<Bool>
+    init(_ initial: Bool) { value = Mutex(initial) }
+    func get() -> Bool { value.withLock { $0 } }
+    func set(_ next: Bool) { value.withLock { $0 = next } }
 }
