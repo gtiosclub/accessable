@@ -23,14 +23,28 @@ private final class RestartingMeshSwitch: Sendable {
 
 @MainActor
 struct SceneNavigationRestartTests {
-    private func analyzer(_ meshSwitch: RestartingMeshSwitch, perception: ScenePerception) -> ARSceneAnalyzer {
+    private func analyzer(
+        _ meshSwitch: RestartingMeshSwitch,
+        perception: ScenePerception,
+        clock: any Clock<Duration> = ContinuousClock()
+    ) -> ARSceneAnalyzer {
         ARSceneAnalyzer(
             sessionManager: ARSessionManager(),
             perception: perception,
             performance: PerformanceModeMonitor(),
             announcements: PlaceholderAnnouncementEngine(),
-            setMeshReconstruction: { meshSwitch.set($0) }
+            setMeshReconstruction: { meshSwitch.set($0) },
+            startSession: {},
+            clock: clock
         )
+    }
+
+    /// The switches made until now, ending the stream.
+    private func remainingSwitches(_ meshSwitch: RestartingMeshSwitch) async -> [Bool] {
+        meshSwitch.finish()
+        var switches: [Bool] = []
+        for await enabled in meshSwitch.switches { switches.append(enabled) }
+        return switches
     }
 
     @Test(.timeLimit(.minutes(1)))
@@ -90,22 +104,43 @@ struct SceneNavigationRestartTests {
 
     // quick changes re-run the session once, for the latest
     @Test(.timeLimit(.minutes(1)))
-    func quickMeshChangesCollapseIntoTheLatest() async {
+    func quickMeshChangesCollapseIntoTheLatest() async throws {
         let meshSwitch = RestartingMeshSwitch()
-        let analyzer = analyzer(meshSwitch, perception: ScenePerception())
+        let clock = ManualClock()
+        let analyzer = analyzer(meshSwitch, perception: ScenePerception(), clock: clock)
 
         analyzer.navigate(to: "the door")
         analyzer.navigate(to: nil)
         analyzer.navigate(to: "the stairs")
+        // the earlier two were cancelled before they could wait
+        try await clock.waitForSleepers(1)
+        clock.advance(by: .milliseconds(300))
         for await enabled in meshSwitch.switches {
             #expect(enabled)
             break
         }
-        try? await Task.sleep(for: .milliseconds(600))
-        meshSwitch.finish()
 
-        var later: [Bool] = []
-        for await enabled in meshSwitch.switches { later.append(enabled) }
-        #expect(later.isEmpty)
+        #expect(await remainingSwitches(meshSwitch).isEmpty)
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aChangeCancelledWithinTheDelayMakesNoSwitch() async throws {
+        let meshSwitch = RestartingMeshSwitch()
+        let clock = ManualClock()
+        let analyzer = analyzer(meshSwitch, perception: ScenePerception(), clock: clock)
+
+        analyzer.navigate(to: "the door")
+        try await clock.waitForSleepers(1)
+        clock.advance(by: .milliseconds(299))
+        analyzer.navigate(to: nil)
+        // the door's sleep is gone, so this one is the cancel's
+        try await clock.waitForSleepers(1)
+        clock.advance(by: .milliseconds(300))
+        for await enabled in meshSwitch.switches {
+            #expect(!enabled)
+            break
+        }
+
+        #expect(await remainingSwitches(meshSwitch).isEmpty)
     }
 }

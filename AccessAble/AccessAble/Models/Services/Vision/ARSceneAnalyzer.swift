@@ -31,6 +31,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     private let setMeshReconstruction: @MainActor @Sendable (Bool) -> Bool
     /// `ARSessionManager.start()`.
     private let startSession: @MainActor @Sendable () throws -> Void
+    /// Times the mesh debounce.
+    private let clock: any Clock<Duration>
     /// Announcements go through a stream drained by one task, so they reach the sink in
     /// order without the analysis queue ever waiting on it.
     private let announcementQueue: AsyncStream<AnnouncementEvent>.Continuation
@@ -66,11 +68,13 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         askAI: AskAI = AskAI(),
         steering: SteeringTones? = nil,
         setMeshReconstruction: (@MainActor @Sendable (Bool) -> Bool)? = nil,
-        startSession: (@MainActor @Sendable () throws -> Void)? = nil
+        startSession: (@MainActor @Sendable () throws -> Void)? = nil,
+        clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.sessionManager = sessionManager
         self.setMeshReconstruction = setMeshReconstruction ?? { sessionManager.setMeshReconstruction($0) }
         self.startSession = startSession ?? { try sessionManager.start() }
+        self.clock = clock
         self.perception = perception
         self.performance = performance
         self.askAI = askAI
@@ -373,9 +377,10 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     /// Turning the mesh on or off re-runs the session, which makes the preview hitch, and while
     /// geo-tracking turning it on restarts tracking from scratch. So the change waits a moment
     /// and only the latest one is applied: tapping through Find to another mode does nothing.
+    /// Starting or ending a "take me to…" waits the same moment.
     private func updateMesh() {
-        let task = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: Self.meshDebounce)
+        let task = Task { @MainActor [weak self, clock] in
+            try? await clock.sleep(for: Self.meshDebounce)
             guard !Task.isCancelled, let self else { return }
             let wanted = perception.mode.usesMesh || state.withLock { $0.navigationQuery != nil }
             // leaving geo-tracking for the mesh restarts the world
