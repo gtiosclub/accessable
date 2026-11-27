@@ -31,6 +31,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     private let setMeshReconstruction: @MainActor @Sendable (Bool) -> Bool
     /// `ARSessionManager.start()`.
     private let startSession: @MainActor @Sendable () throws -> Void
+    /// Times the mesh debounce.
+    private let clock: any Clock<Duration>
     /// Announcements go through a stream drained by one task, so they reach the sink in
     /// order without the analysis queue ever waiting on it.
     private let announcementQueue: AsyncStream<AnnouncementEvent>.Continuation
@@ -45,6 +47,8 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         var lastAskedImage: Data?
         /// The active "take me to…" request, which needs the mesh in any mode.
         var navigationQuery: String?
+        /// The pending mesh change, debounced so quick mode taps re-run the session once.
+        var meshTask: Task<Void, Never>?
     }
 
     private let state = Mutex(State())
@@ -64,11 +68,13 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         askAI: AskAI = AskAI(),
         steering: SteeringTones? = nil,
         setMeshReconstruction: (@MainActor @Sendable (Bool) -> Bool)? = nil,
-        startSession: (@MainActor @Sendable () throws -> Void)? = nil
+        startSession: (@MainActor @Sendable () throws -> Void)? = nil,
+        clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.sessionManager = sessionManager
         self.setMeshReconstruction = setMeshReconstruction ?? { sessionManager.setMeshReconstruction($0) }
         self.startSession = startSession ?? { try sessionManager.start() }
+        self.clock = clock
         self.perception = perception
         self.performance = performance
         self.askAI = askAI
@@ -183,15 +189,18 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         guard clientCount > 0 else { return }
         clientCount -= 1
         guard clientCount == 0 else { return }
-        let (subscription, modeTask) = state.withLock { state in
+        let (subscription, modeTask, meshTask) = state.withLock { state in
             defer {
                 state.subscription = nil
                 state.modeTask = nil
+                state.meshTask = nil
             }
-            return (state.subscription, state.modeTask)
+            return (state.subscription, state.modeTask, state.meshTask)
         }
         if let subscription { sessionManager.removeFrameHandler(subscription) }
         modeTask?.cancel()
+        // nothing runs on the stopped session; the next start() applies the mode as it is then
+        meshTask?.cancel()
         processor.cancelPending()
         sessionManager.stop()
         steering?.update(nil)
@@ -368,16 +377,37 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     }
 
     /// Doors come from the mesh, which is only built in Find or during a "take me to…".
+    /// Turning the mesh on or off re-runs the session, which makes the preview hitch, and while
+    /// geo-tracking turning it on restarts tracking from scratch. So the change waits a moment
+    /// and only the latest one is applied: tapping through Find to another mode does nothing.
+    /// Starting or ending a "take me to…" waits the same moment.
     private func updateMesh() {
-        let wanted = perception.mode.usesMesh || state.withLock { $0.navigationQuery != nil }
-        Task { @MainActor [self] in
+        let task = Task { @MainActor [weak self, clock] in
+            try? await clock.sleep(for: Self.meshDebounce)
+            guard !Task.isCancelled, let self else { return }
+            let wanted = perception.mode.usesMesh || state.withLock { $0.navigationQuery != nil }
             // leaving geo-tracking for the mesh restarts the world
             guard setMeshReconstruction(wanted) else { return }
             resetPerceptionKeepingNavigation()
         }
+        let previous = state.withLock { state in
+            defer { state.meshTask = task }
+            return state.meshTask
+        }
+        previous?.cancel()
     }
 
+    private static let meshDebounce: Duration = .milliseconds(300)
+
     // MARK: - GeoTrackingProviding (AR-2)
+
+    func prepareGeoTracking() async {
+        sessionManager.refreshGeoAvailability()
+    }
+
+    func knownGeoAvailability() async -> Bool? {
+        sessionManager.knownGeoAvailability
+    }
 
     func setGeoTrackingWanted(_ wanted: Bool) async {
         await MainActor.run { sessionManager.setGeoTracking(wanted) }
