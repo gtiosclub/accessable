@@ -248,6 +248,7 @@ struct RoutePreview: View {
                     if remaining > 0 {
                         Text(remaining == 1 ? "+ 1 more step" : "+ \(remaining) more steps")
                             .foregroundStyle(.white.opacity(0.7))
+                            .accessibilityLabel(remaining == 1 ? "1 more step" : "\(remaining) more steps")
                     }
                 }
                 .font(.subheadline)
