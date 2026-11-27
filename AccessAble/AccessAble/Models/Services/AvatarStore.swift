@@ -1,6 +1,9 @@
 import FirebaseFirestore
 import Foundation
+import OSLog
 import UIKit
+
+private let log = Logger(subsystem: "AccessAble", category: "Avatars")
 
 /// Profile pictures (PROFILE-2): a small JPEG per person, read by anyone signed in.
 protocol AvatarStore: Sendable {
@@ -83,6 +86,8 @@ struct FirestoreAvatarStore: AvatarStore {
                 "jpeg": jpeg, "updatedAt": FieldValue.serverTimestamp(),
             ])
         } catch {
+            // The screen only says it couldn't be saved; the real reason (often missing rules) goes here.
+            log.error("avatar upload failed: \(String(describing: error), privacy: .public)")
             throw AvatarError.unavailable
         }
         await cache.set(jpeg, for: me)
