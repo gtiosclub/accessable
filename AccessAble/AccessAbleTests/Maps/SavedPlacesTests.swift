@@ -99,7 +99,7 @@ struct SavedPlacesTests {
         store.save(destination: clough, label: "Class")
         store.save(destination: dorm, label: "Home")
 
-        let search = PlaceSearchViewModel(places: SampleContent.places, savedPlaces: store)
+        let search = PlaceSearchViewModel(savedPlaces: store)
         let listening = Task { await search.start() }
         defer { listening.cancel() }
 
@@ -191,7 +191,7 @@ struct SavedPlacesTests {
         let store = SavedPlacesStore(defaults: defaults)
         store.save(destination: dorm, label: "Home")
 
-        let search = PlaceSearchViewModel(places: SampleContent.places, savedPlaces: store)
+        let search = PlaceSearchViewModel(savedPlaces: store)
         #expect(search.originResults.map(\.displayName) == ["Home"])
         #expect(search.originResults.allSatisfy { $0.isSaved })
 

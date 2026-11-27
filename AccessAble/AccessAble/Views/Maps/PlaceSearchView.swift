@@ -332,20 +332,6 @@ struct PlaceSearchView: View {
                     onDelete: { deleteSavedPlace(saved) }
                 )
             }
-            if !search.settledOriginQuery.trimmingCharacters(in: .whitespaces).isEmpty {
-                let otherMatches = search.originResults.filter { !$0.isSaved }
-                ForEach(otherMatches) { place in
-                    PlaceRow(
-                        place: place,
-                        highlight: search.settledOriginQuery,
-                        distance: search.distanceText(to: place),
-                        hint: "Plans from here. A live trip still starts where you are."
-                    ) {
-                        search.chooseOrigin(.place(place))
-                        focusedField = .destination
-                    }
-                }
-            }
             if search.originResults.isEmpty {
                 Text(search.originQuery.isEmpty ? "No saved places yet." : "No places match.")
                     .foregroundStyle(.white)
@@ -693,79 +679,6 @@ private struct SuggestionRow: View {
             title[attributed].inlinePresentationIntent = .stronglyEmphasized
         }
         return title
-    }
-}
-
-private struct PlaceRow: View {
-    let place: SamplePlace
-    var highlight = ""
-    var distance: String?
-    var hint: String?
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 16) {
-                ZStack {
-                    PlaceThumbnail()
-                    Image(systemName: place.category.systemImage)
-                        .font(.title2)
-                        .foregroundStyle(Theme.navy)
-                        .accessibilityHidden(true)
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(highlightedName)
-                        .font(.title3)
-                        .multilineTextAlignment(.leading)
-                    if let distance {
-                        Label(distance, systemImage: "figure.walk")
-                            .font(.subheadline)
-                            .foregroundStyle(.white.opacity(0.8))
-                    }
-                    if place.recordedRouteCount > 0 {
-                        Text(recordedRoutesText)
-                            .font(.subheadline)
-                    }
-                    if place.reviewCount > 0 {
-                        RatingView(rating: place.rating, reviewCount: place.reviewCount)
-                    }
-                }
-                .foregroundStyle(.white)
-                Spacer(minLength: 0)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilityText)
-        .accessibilityHint(hint ?? "")
-        .accessibilityAddTraits(.isButton)
-    }
-
-    /// The name with the letters that matched the search lit in cyan.
-    private var highlightedName: AttributedString {
-        var name = AttributedString(place.displayName)
-        for range in PlaceSearchViewModel.matchedRanges(in: place.displayName, for: highlight) {
-            guard let attributed = Range(range, in: name) else { continue }
-            name[attributed].foregroundColor = Theme.cyan
-            name[attributed].inlinePresentationIntent = .stronglyEmphasized
-        }
-        return name
-    }
-
-    private var recordedRoutesText: String {
-        place.recordedRouteCount == 1 ? "1 recorded route" : "\(place.recordedRouteCount) recorded routes"
-    }
-
-    private var accessibilityText: String {
-        var parts = [place.displayName]
-        if let label = place.label, !label.isEmpty { parts.append(place.name) }
-        if let distance { parts.append(distance.replacingOccurrences(of: " · ", with: ", ")) }
-        if place.recordedRouteCount > 0 { parts.append(recordedRoutesText) }
-        if place.reviewCount > 0 {
-            parts.append("rated \(place.rating.formatted(.number.precision(.fractionLength(1)))) out of 5, \(place.reviewCount) reviews")
-        }
-        return parts.joined(separator: ", ")
     }
 }
 

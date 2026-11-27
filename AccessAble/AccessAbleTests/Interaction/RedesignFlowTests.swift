@@ -226,40 +226,6 @@ struct AppRouterTests {
     }
 }
 
-struct SampleContentSearchTests {
-    @Test
-    func emptyQueryWithoutCategoryFindsNothing() {
-        #expect(SampleContent.search("  ", category: nil).isEmpty)
-    }
-
-    @Test
-    func buildingInitialsMatch() {
-        let names = SampleContent.search("CULC", category: nil).map(\.name)
-        #expect(names.contains("Clough Undergraduate Learning Commons"))
-        #expect(names.contains("CULC Room 152"))
-    }
-
-    @Test
-    func categoryAloneFiltersPlaces() {
-        let parks = SampleContent.search("", category: .parks)
-        #expect(!parks.isEmpty)
-        #expect(parks.allSatisfy { $0.category == .parks })
-    }
-
-    @Test
-    func queryAndCategoryCombine() {
-        let results = SampleContent.search("North", category: .publicTransit)
-        #expect(results.map(\.id) == ["na-station"])
-    }
-
-    @Test
-    func recordedRoutesAlwaysOfferAtLeastOne() {
-        let place = SampleContent.places.first { $0.recordedRouteCount == 0 }!
-        #expect(SampleContent.routes(to: place, mode: .recorded).count == 1)
-        #expect(SampleContent.routes(to: place, mode: .new).count == 3)
-    }
-}
-
 @MainActor
 struct PlaceSearchViewModelTests {
     private func names(_ name: String, _ query: String) -> [String] {

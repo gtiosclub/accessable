@@ -171,9 +171,6 @@ enum VoiceCommandHint: String, CaseIterable, Identifiable, Sendable {
 }
 
 enum SampleContent {
-    static let campusLatitude = 33.7756
-    static let campusLongitude = -84.3963
-
     static let pillarWarning = "Stop and move left; pillar in front"
 
     static let places: [SamplePlace] = [
@@ -212,54 +209,6 @@ enum SampleContent {
                     isSaved: false, isRecent: false, latitude: 33.7716, longitude: -84.3870),
     ]
 
-    /// Places whose name or address contains `query`, optionally limited to one category.
-    static func search(_ query: String, category: PlaceCategory?) -> [SamplePlace] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty || category != nil else { return [] }
-        return places.filter { place in
-            let matchesQuery = trimmed.isEmpty
-                || place.name.localizedStandardContains(trimmed)
-                || place.address.localizedStandardContains(trimmed)
-                || initials(of: place.name).localizedStandardContains(trimmed)
-            let matchesCategory = category.map { place.category == $0 } ?? true
-            return matchesQuery && matchesCategory
-        }
-    }
-
-    /// "Clough Undergraduate Learning Commons" → "CULC", so short names find the building.
-    private static func initials(of name: String) -> String {
-        String(name.split(separator: " ").compactMap(\.first))
-    }
-
-    static let walkSteps: [SampleRouteStep] = [
-        SampleRouteStep(text: "Walk out the house"),
-        SampleRouteStep(text: "Turn left once got out the building"),
-        SampleRouteStep(text: "Walk 50 ft", details: ["Walk past 1 crossroad"]),
-        SampleRouteStep(text: "Wait for the bus", details: ["Use camera to identify bus route number"]),
-        SampleRouteStep(text: "Go on bus", details: ["Get down at North Ave"]),
-    ]
-
-    static func routes(to place: SamplePlace, mode: RoutePlanMode) -> [SampleRoute] {
-        switch mode {
-        case .recorded:
-            return (0..<max(place.recordedRouteCount, 1)).map { index in
-                SampleRoute(
-                    id: "\(place.id)-recorded-\(index)",
-                    title: index == 0 ? "Route with more stairs" : "Route with fewer crossings",
-                    minutes: 16 + index * 4,
-                    isRecorded: true,
-                    steps: walkSteps
-                )
-            }
-        case .new:
-            return [
-                SampleRoute(id: "\(place.id)-fastest", title: "Fastest Route", minutes: 16, isRecorded: false, steps: walkSteps),
-                SampleRoute(id: "\(place.id)-accessible", title: "Step-Free Route", minutes: 20, isRecorded: false, steps: walkSteps),
-                SampleRoute(id: "\(place.id)-longer", title: "Longer Route", minutes: 24, isRecorded: false, steps: walkSteps),
-            ]
-        }
-    }
-
     static let activeVolunteers: [Volunteer] = [
         Volunteer(id: "shruthi", name: "Shruthi", availableUntil: "Until 4 PM", isOnline: true),
         Volunteer(id: "anaika", name: "Anaika", availableUntil: "Until 4 PM", isOnline: true),
@@ -270,18 +219,5 @@ enum SampleContent {
     static let recentVolunteers: [Volunteer] = [
         Volunteer(id: "catherine", name: "Catherine", availableUntil: "Until 4 PM", isOnline: true),
         Volunteer(id: "mahati", name: "Mahati", availableUntil: "Until 4 PM", isOnline: true),
-    ]
-
-    static let initialAnnouncements: [TripAnnouncement] = [
-        TripAnnouncement(text: "Walk straight for 10 min; turn left", kind: .info),
-        TripAnnouncement(text: pillarWarning, kind: .warning),
-    ]
-
-    /// A short walk across campus for the map view.
-    static let sampleRouteLine: [CLLocationCoordinate2D] = [
-        CLLocationCoordinate2D(latitude: 33.7790, longitude: -84.3925),
-        CLLocationCoordinate2D(latitude: 33.7765, longitude: -84.3922),
-        CLLocationCoordinate2D(latitude: 33.7740, longitude: -84.3918),
-        CLLocationCoordinate2D(latitude: 33.7727, longitude: -84.3912),
     ]
 }
