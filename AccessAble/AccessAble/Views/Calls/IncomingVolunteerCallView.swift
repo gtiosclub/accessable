@@ -8,6 +8,7 @@ struct IncomingVolunteerCallView: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
 
     @State private var connectedAt: Date?
+    @State private var videoIsBright = false
 
     var body: some View {
         Group {
@@ -82,14 +83,15 @@ struct IncomingVolunteerCallView: View {
             TimelineView(.periodic(from: .now, by: 0.5)) { _ in
                 CallVideoBackground(
                     track: connected ? (video as? LiveKitVideoCallSession)?.remoteVideoTrack : nil,
-                    label: "Live video from the caller's camera")
+                    label: "Live video from the caller's camera",
+                    isBright: $videoIsBright)
             }
             VStack(alignment: .leading, spacing: 8) {
                 CallTitleBlock(name: name,
                                status: connected ? nil : title,
                                connectedSince: connected ? connectedAt : nil)
                 if connected, (video as? LiveKitVideoCallSession)?.remoteVideoTrack == nil {
-                    Text("Waiting for caller video").font(.callout)
+                    Text("Waiting for caller video").font(.callout).callTextGlow()
                 }
                 if let message = model.message {
                     Text(message).font(.callout)
@@ -119,6 +121,7 @@ struct IncomingVolunteerCallView: View {
             .padding(.vertical, 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .environment(\.callBackgroundIsBright, connected && videoIsBright)
     }
 
     private var title: String {

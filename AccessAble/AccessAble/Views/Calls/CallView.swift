@@ -8,6 +8,7 @@ struct CallView: View {
     @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
     @AccessibilityFocusState private var statusFocused: Bool
     @State private var connectedAt: Date?
+    @State private var videoIsBright = false
     private let onClose: () -> Void
     private let safety: any CallSafetyService
     private let video: any VideoCallSession
@@ -83,7 +84,8 @@ struct CallView: View {
                 CallVideoBackground(
                     track: connected ? (video as? LiveKitVideoCallSession)?.localVideoTrack : nil,
                     mirrored: !viewModel.isUsingBackCamera,
-                    label: "Your camera, which the volunteer sees")
+                    label: "Your camera, which the volunteer sees",
+                    isBright: $videoIsBright)
             }
             VStack(alignment: .leading, spacing: 8) {
                 CallTitleBlock(name: viewModel.title,
@@ -91,7 +93,7 @@ struct CallView: View {
                                connectedSince: connected ? connectedAt : nil)
                 Text(viewModel.statusText).font(.callout)
                     .fixedSize(horizontal: false, vertical: true)
-                    .shadow(color: .black.opacity(0.6), radius: 4)
+                    .callTextGlow()
                     .accessibilityFocused($statusFocused)
                 if let error = viewModel.controlError {
                     Text(error).font(.callout).fixedSize(horizontal: false, vertical: true)
@@ -124,6 +126,7 @@ struct CallView: View {
             .padding(.vertical, 16)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .environment(\.callBackgroundIsBright, connected && videoIsBright)
     }
 
     @ViewBuilder private var controls: some View {

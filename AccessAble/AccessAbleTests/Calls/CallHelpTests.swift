@@ -161,3 +161,13 @@ struct CallHelpTests {
         #expect(model.message == "Profile saved.")
     }
 }
+
+struct VideoBrightnessMeterTests {
+    @Test func switchesOnlyPastEitherThreshold() {
+        #expect(!VideoBrightnessMeter.isBright(luma: 140, wasBright: false))
+        #expect(VideoBrightnessMeter.isBright(luma: 160, wasBright: false))
+        // Between the thresholds it keeps what it was, so the glow doesn't flicker.
+        #expect(VideoBrightnessMeter.isBright(luma: 130, wasBright: true))
+        #expect(!VideoBrightnessMeter.isBright(luma: 110, wasBright: true))
+    }
+}
