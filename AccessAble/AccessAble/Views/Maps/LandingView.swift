@@ -70,7 +70,7 @@ struct CampusMap: View {
 
     /// Shown until a location arrives, and in previews.
     private static let campus = MapCameraPosition.region(MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: SampleContent.campusLatitude, longitude: SampleContent.campusLongitude),
+        center: CLLocationCoordinate2D(latitude: 33.7756, longitude: -84.3963),
         latitudinalMeters: 1200,
         longitudinalMeters: 1200
     ))
