@@ -19,6 +19,7 @@ struct BroadcasterReplayWindowTests {
     @Test func aNewSubscriberGetsAFreshLastValueAtOnce() async {
         let broadcaster = broadcaster()
         broadcaster.send(1)
+        // exactly the window: still fresh, the boundary is inclusive
         time.advance(by: 5)
         var values = broadcaster.stream().makeAsyncIterator()
         #expect(await values.next() == 1)
@@ -28,9 +29,12 @@ struct BroadcasterReplayWindowTests {
         let broadcaster = broadcaster()
         broadcaster.send(1)
         time.advance(by: 5.1)
-        var values = broadcaster.stream().makeAsyncIterator()
+        let stream = broadcaster.stream(bufferingPolicy: .unbounded)
         broadcaster.send(2)
-        #expect(await values.next() == 2)
+        broadcaster.finish()
+        var received: [Int] = []
+        for await value in stream { received.append(value) }
+        #expect(received == [2])
     }
 
     @Test func laterValuesFollowTheReplayedOneInOrder() async {

@@ -209,21 +209,17 @@ struct BottomCard<Content: View>: View {
     }
 }
 
-/// The buttons under a `BottomCard` that scrolls. Goes in the scroll view's bottom
-/// `safeAreaInset`: a ScrollView clips its content's background, so only a view outside it
-/// can fill the black down to the bottom edge.
-struct BottomCardActions<Content: View>: View {
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(spacing: 14) {
-            content
+extension View {
+    /// Fills the bottom safe area with black under a scrolling `BottomCard`. A ScrollView clips its
+    /// content's background at the safe area, which would leave a strip of the backdrop there; a
+    /// zero-height inset outside the scroll view is not clipped, and the buttons stay in the scroll
+    /// content so they remain reachable in landscape and at large text sizes.
+    func blackToBottomEdge() -> some View {
+        safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear
+                .frame(height: 0)
+                .background(Color.black.ignoresSafeArea(edges: .bottom))
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 4)
-        .padding(.bottom, 16)
-        .frame(maxWidth: .infinity)
-        .background(Color.black.ignoresSafeArea(edges: .bottom))
     }
 }
 
