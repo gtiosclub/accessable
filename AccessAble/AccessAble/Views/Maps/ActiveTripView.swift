@@ -305,6 +305,8 @@ struct ActiveTripView: View {
                 reports: session.mapReports
             )
             .padding(.bottom, controlPanelHeight)
+            // fills the panel's rounded top corners, so the map's edge never shows behind them
+            .background(alignment: .bottom) { Theme.panel.frame(height: controlPanelHeight) }
         } else if let services, session.isCameraReady {
             LiveSceneView(services: services, mode: .walk, chrome: .cameraOnly)
         } else {

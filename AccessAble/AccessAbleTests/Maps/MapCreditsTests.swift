@@ -8,21 +8,25 @@ struct MapCreditsTests {
         let credit = try #require(MapCredits.all.first { $0.id == "openstreetmap" })
         #expect(credit.text.contains("© OpenStreetMap contributors"))
         #expect(credit.text.contains("Open Database License"))
-        #expect(credit.url.absoluteString == "https://www.openstreetmap.org/copyright")
+        #expect(credit.url.host() == "www.openstreetmap.org")
+        #expect(credit.url.path() == "/copyright")
     }
 
     @Test
-    func stadiaCreditLinksToStadiaMaps() throws {
+    func stadiaCreditNamesValhallaAndLinksToStadiaMaps() throws {
         let credit = try #require(MapCredits.all.first { $0.id == "stadia" })
         #expect(credit.text.contains("Stadia Maps"))
+        #expect(credit.text.contains("Valhalla"))
         #expect(credit.url.host() == "stadiamaps.com")
     }
 
     @Test
-    func everyLinkSaysItOpensInSafari() {
+    func everyCreditHasReadableTextAndASecureLink() {
+        #expect(Set(MapCredits.all.map(\.id)).count == MapCredits.all.count)
         for credit in MapCredits.all {
-            #expect(credit.linkAccessibilityLabel.hasSuffix("opens in Safari"))
             #expect(credit.url.scheme == "https")
+            #expect(credit.url.host() != nil)
+            #expect(!credit.heading.isEmpty && !credit.text.isEmpty && !credit.linkTitle.isEmpty)
         }
     }
 }

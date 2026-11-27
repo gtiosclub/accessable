@@ -358,7 +358,7 @@ enum SettingsPalette {
     static let cardSeparator = Color.white.opacity(0.35)
 }
 
-private extension View {
+extension View {
     func settingsCardBackground() -> some View {
         background(SettingsPalette.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(

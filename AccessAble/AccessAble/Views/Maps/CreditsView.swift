@@ -5,7 +5,6 @@ struct CreditsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                SettingsSectionTitle("Credits")
                 ForEach(MapCredits.all) { credit in
                     creditCard(credit)
                 }
@@ -32,16 +31,12 @@ struct CreditsView: View {
                 .font(.body.weight(.semibold))
                 .foregroundStyle(SettingsPalette.accent)
                 .frame(minHeight: AccessibilityMetrics.minimumTapTarget, alignment: .leading)
-                .accessibilityLabel(credit.linkAccessibilityLabel)
+                .accessibilityHint("Opens in Safari")
         }
         .foregroundStyle(.white)
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(SettingsPalette.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(.white, lineWidth: 1.5)
-        )
+        .settingsCardBackground()
         .accessibilityElement(children: .contain)
     }
 }
