@@ -36,8 +36,8 @@ where Tab.RawValue == String, Tab.AllCases: RandomAccessCollection {
             }
         }
         .padding(4)
-        .background(Theme.card, in: Capsule())
-        .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 1))
+        // A subtle glass bar, as in the design. Reduce Transparency makes it solid on its own.
+        .glassEffect(.regular.tint(Theme.card.opacity(0.6)), in: Capsule())
     }
 }
 

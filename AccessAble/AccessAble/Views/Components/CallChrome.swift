@@ -44,7 +44,8 @@ struct CallControlButton: View {
                 .font(.system(size: diameter * 0.38, weight: .semibold))
                 .foregroundStyle(foreground)
                 .frame(width: diameter, height: diameter)
-                .background(background, in: Circle())
+                // Tinted glass over the video, as in the design.
+                .glassEffect(.regular.tint(background.opacity(style == .toggledOn ? 0.7 : 0.85)), in: Circle())
                 .overlay { if style == .toggledOn { Circle().strokeBorder(.white, lineWidth: 2) } }
                 .opacity(isEnabled ? 1 : Theme.dimmedOpacity)
                 .contentShape(Circle())
