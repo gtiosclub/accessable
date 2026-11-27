@@ -264,7 +264,7 @@ final class GeoTrackingSpikeViewModel: NSObject {
     private func openLog() {
         let name = "geo-spike-\(ISO8601DateFormatter().string(from: .now).replacingOccurrences(of: ":", with: "-")).csv"
         let url = URL.documentsDirectory.appending(path: name)
-        FileManager.default.createFile(atPath: url.path(), contents: nil)
+        FileManager.default.createFile(atPath: url.path(percentEncoded: false), contents: nil)
         log = try? FileHandle(forWritingTo: url)
         logURL = url
         rowCount = 0

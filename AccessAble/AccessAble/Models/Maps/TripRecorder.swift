@@ -108,8 +108,9 @@ final class TripRecorder: Sendable {
             try excluded.setResourceValues(values)
             let name = "trip-" + Self.fileTime.format(time).replacingOccurrences(of: ":", with: "-") + ".csv"
             let url = directory.appending(path: name)
-            guard FileManager.default.createFile(atPath: url.path(), contents: Data((Self.header + "\n").utf8)) else {
-                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path()])
+            let path = url.path(percentEncoded: false)
+            guard FileManager.default.createFile(atPath: path, contents: Data((Self.header + "\n").utf8)) else {
+                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: path])
             }
             let file = try FileHandle(forWritingTo: url)
             try file.seekToEnd()
@@ -168,7 +169,7 @@ final class TripRecorder: Sendable {
 
     /// The recordings on this phone, newest first.
     func recordings() throws -> [URL] {
-        guard FileManager.default.fileExists(atPath: directory.path()) else { return [] }
+        guard FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)) else { return [] }
         return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "csv" }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
