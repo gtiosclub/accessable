@@ -296,6 +296,53 @@ struct PlaceholderVolunteerDirectory: VolunteerDirectory {
     }
 }
 
+/// Keeps messages on this phone only, for previews and builds without Firebase.
+final class PlaceholderChatService: ChatService {
+    static let userID = "placeholder-caller"
+    private let chats = Broadcaster<[String: [ChatMessage]]>(replaysLatest: true)
+    private let userID: String?
+
+    init(userID: String? = PlaceholderChatService.userID, messages: [String: [ChatMessage]] = [:]) {
+        self.userID = userID
+        chats.send(messages)
+    }
+
+    func currentUserID() async -> String? { userID }
+
+    func messages(chatID: String) -> AsyncThrowingStream<[ChatMessage], Error> {
+        let all = chats.stream()
+        return AsyncThrowingStream { continuation in
+            let task = Task {
+                for await chats in all { continuation.yield(chats[chatID] ?? []) }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    func send(_ text: String, chatID: String) async throws {
+        guard let userID else { throw ChatError.signedOut }
+        guard let text = ChatMessage.sendable(text) else { throw ChatError.invalidMessage }
+        var all = chats.latest ?? [:]
+        all[chatID, default: []].append(ChatMessage(text: text, senderID: userID))
+        chats.send(all)
+    }
+
+    func volunteerChats() -> AsyncThrowingStream<[ChatThread], Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield([])
+            continuation.finish()
+        }
+    }
+
+    /// A message from the other person, as if it had just arrived.
+    func injectForTests(_ message: ChatMessage, chatID: String) async throws {
+        var all = chats.latest ?? [:]
+        all[chatID, default: []].append(message)
+        chats.send(all)
+    }
+}
+
 /// Remembers the toggle in memory only. Replaced by VOLUNTEER-6.
 actor PlaceholderPresenceService: PresenceService {
     private nonisolated let states = Broadcaster<Bool>(replaysLatest: true)

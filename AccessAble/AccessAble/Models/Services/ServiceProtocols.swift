@@ -261,6 +261,17 @@ protocol IncomingCallProviding: Sendable {
 }
 
 
+/// Text chat between a caller and one volunteer (CHAT-1). firestore.rules decide who may write.
+protocol ChatService: Sendable {
+    func currentUserID() async -> String?
+    /// The chat's messages, oldest first, replaced on each change. Works before the chat exists.
+    func messages(chatID: String) -> AsyncThrowingStream<[ChatMessage], Error>
+    /// Sends from the signed-in user. A caller's first message starts the chat.
+    func send(_ text: String, chatID: String) async throws
+    /// The signed-in volunteer's chats, most recent first.
+    func volunteerChats() -> AsyncThrowingStream<[ChatThread], Error>
+}
+
 protocol CallSafetyService: Sendable {
     func hasConsent() async throws -> Bool
     func acceptConsent() async throws

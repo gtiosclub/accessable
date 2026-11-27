@@ -389,6 +389,65 @@ service cloud.firestore {
       // No delete, so a finished call can never be reused.
     }
 
+    // CHAT-1: text chat between one caller and one volunteer. The id is `<callerId>_<volunteerId>`,
+    // so who may read a chat is known before it exists, and nobody else can read or join it.
+    function isChatParty(chatId) {
+      let parts = chatId.split('_');
+      return parts.size() == 2 && request.auth.uid in parts;
+    }
+
+    // Only a caller starts a chat, with a volunteer account that hasn't been blocked. The names are
+    // projected here because neither side may read the other's users doc.
+    function isValidNewChat(chatId, data) {
+      let name = data.get('callerFirstName', null);
+      return data.keys().hasAll(['callerId', 'volunteerId', 'volunteerName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['callerId', 'volunteerId', 'volunteerName', 'callerFirstName', 'createdAt', 'updatedAt'])
+        && data.callerId == request.auth.uid
+        && data.volunteerId is string && data.volunteerId != data.callerId
+        && !data.callerId.matches('.*_.*') && !data.volunteerId.matches('.*_.*')
+        && chatId == data.callerId + '_' + data.volunteerId
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'caller'
+        && isVolunteerAccount(data.volunteerId)
+        && !blocked(data.callerId, data.volunteerId)
+        && data.volunteerName == get(/databases/$(database)/documents/volunteers/$(data.volunteerId)).data.displayName
+        && (!('callerFirstName' in data) || (name is string && name.size() > 0 && name.size() <= 80
+          && name == get(/databases/$(database)/documents/users/$(request.auth.uid))
+            .data.displayName.replace('^\\s+', '').split('\\s+')[0]))
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    match /chats/{chatId} {
+      allow get: if signedIn() && isChatParty(chatId);
+      // A volunteer's inbox, or a caller's chats: the query must filter on the reader's own id.
+      allow list: if signedIn() && request.query.limit <= 50
+        && (resource.data.callerId == request.auth.uid || resource.data.volunteerId == request.auth.uid);
+      allow create: if signedIn() && isValidNewChat(chatId, request.resource.data);
+      // Only the inbox order moves, and only with a new message (checked by the message rule).
+      allow update: if signedIn() && isChatParty(chatId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        // Readable before the chat exists, so the caller's screen can listen from the start.
+        allow get, list: if signedIn() && isChatParty(chatId);
+        // Sent in one write with the chat's updatedAt, which also requires the chat to exist.
+        allow create: if signedIn() && isChatParty(chatId)
+          && request.resource.data.keys().hasAll(['senderId', 'text', 'sentAt'])
+          && request.resource.data.keys().hasOnly(['senderId', 'text', 'sentAt'])
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 1 && request.resource.data.text.size() <= 1000
+          && request.resource.data.text.matches('(?s).*\\S.*')
+          && request.resource.data.sentAt == request.time
+          && getAfter(/databases/$(database)/documents/chats/$(chatId)).data.updatedAt == request.time
+          && !blocked(getAfter(/databases/$(database)/documents/chats/$(chatId)).data.callerId,
+                      getAfter(/databases/$(database)/documents/chats/$(chatId)).data.volunteerId);
+        allow update, delete: if false;
+      }
+    }
+
     match /reports/{reportId} {
       allow get: if signedIn();
       allow list: if signedIn() && request.query.limit <= 200;
