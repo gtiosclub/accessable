@@ -267,6 +267,20 @@ struct ReportAwareRoutingServiceTests {
         #expect(actual.unavoidedReports == [report])
     }
 
+    @Test
+    func keepsPreferencesThroughTheRetryWithoutReports() async throws {
+        let base = RoutingServiceFake([.failure(.noRouteFound), .success(try route(via: corner))])
+        let clock = ManualClock()
+        let own = RouteOptions(stepPenalty: 3600, useHills: 0, servicePenalty: 60, serviceFactor: 3)
+
+        _ = try await route(with: service(.reports([report(at: corner)]), base: base, clock: clock), base: base,
+                            clock: clock, retries: 1, options: own)
+
+        var excluding = own
+        excluding.excludeLocations = [corner]
+        #expect(await base.receivedOptions == [excluding, own])
+    }
+
     /// Only the reports the fallback route actually passes are warned about.
     @Test
     func aFallbackRouteAwayFromTheReportPassesNone() async throws {

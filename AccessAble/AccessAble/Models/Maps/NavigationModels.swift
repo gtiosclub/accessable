@@ -143,6 +143,33 @@ struct RouteOptions: Equatable, Sendable {
     /// Reports to route around besides those `ReportAwareRoutingService` fetches, such as one that just appeared on
     /// the route ahead. Only that service reads them; a plain routing service ignores them.
     var reports: [Report] = []
+
+    // Valhalla pedestrian costing preferences. Nil, NaN, or infinite leaves Valhalla's default; Valhalla's client
+    // clamps the rest to the ranges noted.
+    /// Seconds added for each flight of steps, 0–43200.
+    var stepPenalty: Double?
+    /// Seconds added for each elevator, 0–43200.
+    var elevatorPenalty: Double?
+    /// 0 avoids hills, 1 doesn't mind them.
+    var useHills: Double?
+    /// 0 doesn't mind unlit ways, 1 prefers lit ones.
+    var useLit: Double?
+    /// Multiplier on the cost of walkways, 0.1–100000.
+    var walkwayFactor: Double?
+    /// Multiplier on the cost of sidewalks, 0.1–100000.
+    var sidewalkFactor: Double?
+    /// Multiplier on the cost of alleys, 0.1–100000.
+    var alleyFactor: Double?
+    /// Multiplier on the cost of driveways, 0.1–100000.
+    var drivewayFactor: Double?
+    /// Seconds added for entering a service road, 0–43200.
+    var servicePenalty: Double?
+    /// Multiplier on the cost of service roads, 0.1–100000.
+    var serviceFactor: Double?
+    /// 0 avoids tracks, 1 prefers them.
+    var useTracks: Double?
+    /// Hardest SAC hiking scale path allowed, 0–6.
+    var maxHikingDifficulty: Int?
 }
 
 enum RoutingError: Error, Equatable, Sendable {
