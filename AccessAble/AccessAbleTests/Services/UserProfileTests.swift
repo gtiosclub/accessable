@@ -62,7 +62,8 @@ struct UserProfileTests {
         let savedTrips = SavedTripStore(directory: directory)
         let trip = TripManager(location: PlaceholderLocationProvider(), routing: PlaceholderRoutingService(),
                                announcements: PlaceholderAnnouncementEngine(), savedTrips: savedTrips)
-        await trip.startTrip(route: MapsSamples.route, destination: MapsSamples.destination)
+        await trip.startTrip(route: MapsSamples.route, destination: MapsSamples.destination,
+                             preferences: RoutePreferences(), resumingAtStep: nil)
         #expect(savedTrips.load() != nil)
         let session = AccountSessionViewModel(auth: PlaceholderAuthService(), profiles: PlaceholderUserProfileStore(),
                                               savedTrips: savedTrips, trip: trip)

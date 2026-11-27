@@ -7,8 +7,8 @@ private let log = Logger(subsystem: "AccessAble", category: "RoutePreferences")
 /// The user's route preferences, kept on the phone and, while signed in, in their account.
 ///
 /// A change applies at once and uploads in the background. A failed upload leaves the change on the phone and is
-/// tried again with the next change or sign-in. Without `sync`, where the phone has no accounts, the preferences
-/// stay on the phone.
+/// tried again with the next change, or at sign-in if the account has no copy yet. At sign-in the account's copy
+/// replaces the phone's. Without `sync`, where the phone has no accounts, the preferences stay on the phone.
 final class RoutePreferencesStore: Sendable {
     private struct State {
         var preferences: RoutePreferences
@@ -20,8 +20,6 @@ final class RoutePreferencesStore: Sendable {
 
     private enum Keys {
         static let preferences = "routePreferences.v1"
-        /// Set until a change reaches the account, so the next sign-in uploads it rather than replacing it.
-        static let needsUpload = "routePreferences.needsUpload"
     }
 
     private let state: Mutex<State>
@@ -34,7 +32,7 @@ final class RoutePreferencesStore: Sendable {
     init(
         defaults: UserDefaults = .standard,
         sync: (any RoutePreferencesSyncing)? = nil,
-        logError: @escaping @Sendable (String) -> Void = { log.error("\($0)") }
+        logError: @escaping @Sendable (String) -> Void = { log.error("\($0, privacy: .public)") }
     ) {
         self.defaults = defaults
         self.sync = sync
@@ -65,19 +63,18 @@ final class RoutePreferencesStore: Sendable {
         }
         guard changed else { return }
         store(preferences)
-        if sync != nil { defaults.set(true, forKey: Keys.needsUpload) }
         uploadInBackground()
     }
 
-    /// Brings in the account's preferences, which replace the phone's. The phone's are uploaded instead when the
-    /// account has none, or holds a change that didn't reach it.
+    /// Brings in the account's preferences, which replace the phone's, even a change that never reached the
+    /// account. The phone's are uploaded instead when the account has none. A failed or unreadable download keeps
+    /// the phone's.
     func signedIn(userID: String) async {
         guard let sync else { return }
         let revision = state.withLock { state in
             state.userID = userID
             return state.revision
         }
-        guard !defaults.bool(forKey: Keys.needsUpload) else { uploadInBackground(); return }
         let remote: RoutePreferences?
         do {
             remote = try await sync.load(userID: userID)
@@ -85,11 +82,14 @@ final class RoutePreferencesStore: Sendable {
             logError("Couldn't load route preferences: \(error.localizedDescription)")
             return
         }
-        let isUnchanged = state.withLock { $0.userID == userID && $0.revision == revision }
-        // a change made meanwhile is already uploading
+        let isUnchanged = state.withLock { state in
+            // a change made meanwhile is newer than the download, and is already uploading
+            guard state.userID == userID, state.revision == revision else { return false }
+            if let remote { state.preferences = remote }
+            return true
+        }
         guard isUnchanged else { return }
         guard let remote else { uploadInBackground(); return }
-        state.withLock { $0.preferences = remote }
         store(remote)
     }
 
@@ -102,7 +102,6 @@ final class RoutePreferencesStore: Sendable {
             state.revision += 1
         }
         defaults.removeObject(forKey: Keys.preferences)
-        defaults.removeObject(forKey: Keys.needsUpload)
         broadcaster.send(preferences)
     }
 
@@ -129,17 +128,12 @@ final class RoutePreferencesStore: Sendable {
     }
 
     private func upload(to sync: any RoutePreferencesSyncing, userID: String) async {
-        let snapshot: (RoutePreferences, Int)? = state.withLock { state in
-            state.userID == userID ? (state.preferences, state.revision) : nil
-        }
-        guard let (preferences, revision) = snapshot else { return }
+        let preferences = state.withLock { $0.userID == userID ? $0.preferences : nil }
+        guard let preferences else { return }
         do {
             try await sync.save(preferences, userID: userID)
         } catch {
             logError("Couldn't upload route preferences: \(error.localizedDescription)")
-            return
         }
-        let isLatest = state.withLock { $0.userID == userID && $0.revision == revision }
-        if isLatest { defaults.removeObject(forKey: Keys.needsUpload) }
     }
 }

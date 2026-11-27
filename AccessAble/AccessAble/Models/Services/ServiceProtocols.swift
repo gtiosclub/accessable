@@ -161,10 +161,6 @@ protocol TripStateProviding: Sendable {
 }
 
 extension TripStateProviding {
-    func startTrip(route: NavigationRoute, destination: Destination) async {
-        await startTrip(route: route, destination: destination, preferences: RoutePreferences(), resumingAtStep: nil)
-    }
-
     func reportQuestions() -> AsyncStream<ReportQuestion> {
         AsyncStream { $0.finish() }
     }

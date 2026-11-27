@@ -2469,18 +2469,14 @@ struct TripManagerPreferencesTests {
         #expect(await harness.router.options == [stepFree.routeOptions])
     }
 
-    /// The settings change after the start, which the running trip doesn't take up.
+    /// Both reroutes, the one around a report included, send the preferences the trip started with.
     @Test
     func everyRerouteKeepsThePreferencesTheTripStartedWith() async throws {
-        let settings = RoutePreferencesStore(defaults: UserDefaults(suiteName: "TripManagerPreferences-\(UUID())")
-                                             ?? .standard)
-        settings.update(stepFree)
         let origin = TripWalk.point(on: try cornerRoute(), along: walked20)
         let newRoute = try eastRoute(from: origin)
         let harness = try Harness(reroutes: [.success(newRoute)])
-        await harness.start(preferences: settings.current)
+        await harness.start(preferences: stepFree)
         await harness.walk(from: 0, to: 20)
-        settings.update(RoutePreferences(avoidSteepHills: true))
 
         await harness.manager.reroute()
         await harness.router.waitForRequests(1)

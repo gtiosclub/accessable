@@ -1,3 +1,4 @@
+import FirebaseFirestore
 import Foundation
 import Synchronization
 import Testing
@@ -56,12 +57,21 @@ private actor FakeRoutePreferencesSync: RoutePreferencesSyncing {
     private(set) var remote: [String: RoutePreferences] = [:]
     private(set) var saveCount = 0
     var failsSaves = false
+    var loadError: (any Error)?
 
     init(remote: [String: RoutePreferences] = [:]) { self.remote = remote }
 
     func setFailsSaves(_ fails: Bool) { failsSaves = fails }
 
-    func load(userID: String) async throws -> RoutePreferences? { remote[userID] }
+    func setLoadError(_ error: any Error) { loadError = error }
+
+    /// A save from another phone.
+    func setRemote(_ preferences: RoutePreferences, userID: String) { remote[userID] = preferences }
+
+    func load(userID: String) async throws -> RoutePreferences? {
+        if let loadError { throw loadError }
+        return remote[userID]
+    }
 
     func save(_ preferences: RoutePreferences, userID: String) async throws {
         saveCount += 1
@@ -94,6 +104,7 @@ private final class Harness {
 }
 
 @MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct RoutePreferencesStoreTests {
     private let user = PlaceholderAuthService.sampleUser
 
@@ -122,65 +133,114 @@ struct RoutePreferencesStoreTests {
         #expect(harness.store().current.avoidSteepHills)
     }
 
-    @Test func signingInReplacesThePhonesPreferencesWithTheAccounts() async throws {
+    @Test func viewModelShowsTheDownloadAtSignInAndBuildsTheNextChangeOnIt() async {
+        let harness = Harness()
+        let remote = RoutePreferences(avoidElevators: true, walkingSpeed: .slow)
+        let sync = FakeRoutePreferencesSync(remote: [user.id: remote])
+        let store = harness.store(sync: sync)
+        let viewModel = RoutePreferencesViewModel(store: store)
+        let listening = Task { await viewModel.listen() }
+        defer { listening.cancel() }
+        await store.signedIn(userID: user.id)
+        await waitFor { viewModel.preferences == remote }
+
+        viewModel.preferences.preferWellLit = true
+
+        let changed = RoutePreferences(avoidElevators: true, preferWellLit: true, walkingSpeed: .slow)
+        #expect(store.current == changed)
+        await waitFor { await sync.remote[user.id] == changed }
+    }
+
+    @Test func signingInReplacesThePhonesPreferencesWithTheAccounts() async {
         let harness = Harness()
         let remote = RoutePreferences(avoidElevators: true, walkingSpeed: .slow)
         let sync = FakeRoutePreferencesSync(remote: [user.id: remote])
         let store = harness.store(sync: sync)
         store.update(RoutePreferences(avoidStairs: true))
-        harness.defaults.removeObject(forKey: "routePreferences.needsUpload")
-        let session = try await readySession(store: store)
+        let session = await readySession(store: store)
         defer { session.task.cancel() }
-        try await waitFor { store.current == remote }
+        await waitFor { store.current == remote }
         #expect(harness.store().current == remote)
         #expect(await sync.saveCount == 0)
     }
 
-    @Test func signingInToAnAccountWithoutPreferencesUploadsThePhones() async throws {
-        let harness = Harness()
-        let sync = FakeRoutePreferencesSync()
-        let store = harness.store(sync: sync)
-        store.update(RoutePreferences(preferWellLit: true))
-        let session = try await readySession(store: store)
-        defer { session.task.cancel() }
-        try await waitFor { await sync.remote[user.id] == RoutePreferences(preferWellLit: true) }
-        #expect(store.current == RoutePreferences(preferWellLit: true))
-    }
-
-    @Test func aChangeWhileSignedInIsSaved() async throws {
-        let sync = FakeRoutePreferencesSync(remote: [user.id: RoutePreferences()])
-        let store = Harness().store(sync: sync)
-        await store.signedIn(userID: user.id)
-        store.update(RoutePreferences(avoidUnpavedPaths: true))
-        try await waitFor { await sync.remote[user.id] == RoutePreferences(avoidUnpavedPaths: true) }
-    }
-
-    @Test func aFailedSaveKeepsTheChangeAndRetriesWithTheNextChangeAndSignIn() async throws {
+    @Test func signingInReplacesAChangeThatNeverUploadedWithTheAccountsNewerCopy() async {
         let harness = Harness()
         let sync = FakeRoutePreferencesSync(remote: [user.id: RoutePreferences()])
         let store = harness.store(sync: sync)
         await store.signedIn(userID: user.id)
         await sync.setFailsSaves(true)
         store.update(RoutePreferences(avoidStairs: true))
-        try await waitFor { await sync.saveCount == 1 }
-        try await waitFor { !harness.errors.isEmpty }
+        await waitFor { await sync.saveCount == 1 }
+        await waitFor { !harness.errors.isEmpty }
+        await sync.setFailsSaves(false)
+        let fromAnotherPhone = RoutePreferences(avoidSteepHills: true)
+        await sync.setRemote(fromAnotherPhone, userID: user.id)
+
+        let relaunched = harness.store(sync: sync)
+        #expect(relaunched.current == RoutePreferences(avoidStairs: true))
+        await relaunched.signedIn(userID: user.id)
+
+        #expect(relaunched.current == fromAnotherPhone)
+        #expect(harness.store().current == fromAnotherPhone)
+        #expect(await sync.saveCount == 1)
+        #expect(await sync.remote[user.id] == fromAnotherPhone)
+    }
+
+    @Test func anUnreadableAccountCopyIsLoggedAndKeepsThePhones() async throws {
+        let harness = Harness()
+        let sync = FakeRoutePreferencesSync()
+        let badDocument = Data(#"{"walkingSpeed":"sprint"}"#.utf8)
+        let decodingError = try #require(throws: DecodingError.self) {
+            try JSONDecoder().decode(RoutePreferences.self, from: badDocument)
+        }
+        await sync.setLoadError(decodingError)
+        let store = harness.store(sync: sync)
+        store.update(RoutePreferences(avoidAlleysAndDriveways: true))
+
+        await store.signedIn(userID: user.id)
+
+        #expect(store.current == RoutePreferences(avoidAlleysAndDriveways: true))
+        #expect(harness.store().current == RoutePreferences(avoidAlleysAndDriveways: true))
+        #expect(harness.errors.count == 1)
+        #expect(await sync.saveCount == 0)
+    }
+
+    @Test func signingInToAnAccountWithoutPreferencesUploadsThePhones() async {
+        let harness = Harness()
+        let sync = FakeRoutePreferencesSync()
+        let store = harness.store(sync: sync)
+        store.update(RoutePreferences(preferWellLit: true))
+        let session = await readySession(store: store)
+        defer { session.task.cancel() }
+        await waitFor { await sync.remote[user.id] == RoutePreferences(preferWellLit: true) }
+        #expect(store.current == RoutePreferences(preferWellLit: true))
+    }
+
+    @Test func aChangeWhileSignedInIsSaved() async {
+        let sync = FakeRoutePreferencesSync(remote: [user.id: RoutePreferences()])
+        let store = Harness().store(sync: sync)
+        await store.signedIn(userID: user.id)
+        store.update(RoutePreferences(avoidUnpavedPaths: true))
+        await waitFor { await sync.remote[user.id] == RoutePreferences(avoidUnpavedPaths: true) }
+    }
+
+    @Test func aFailedSaveKeepsTheChangeAndRetriesWithTheNextChange() async {
+        let harness = Harness()
+        let sync = FakeRoutePreferencesSync(remote: [user.id: RoutePreferences()])
+        let store = harness.store(sync: sync)
+        await store.signedIn(userID: user.id)
+        await sync.setFailsSaves(true)
+        store.update(RoutePreferences(avoidStairs: true))
+        await waitFor { await sync.saveCount == 1 }
+        await waitFor { !harness.errors.isEmpty }
         #expect(store.current == RoutePreferences(avoidStairs: true))
         #expect(await sync.remote[user.id] == RoutePreferences())
 
-        // relaunched: the account's older copy doesn't replace the change that never reached it
         await sync.setFailsSaves(false)
-        let relaunched = harness.store(sync: sync)
-        await relaunched.signedIn(userID: user.id)
-        try await waitFor { await sync.remote[user.id] == RoutePreferences(avoidStairs: true) }
-        #expect(relaunched.current == RoutePreferences(avoidStairs: true))
-
-        await sync.setFailsSaves(true)
-        relaunched.update(RoutePreferences(avoidStairs: true, avoidElevators: true))
-        try await waitFor { await sync.saveCount == 3 }
-        await sync.setFailsSaves(false)
-        relaunched.update(RoutePreferences(avoidStairs: true, avoidElevators: true, walkingSpeed: .fast))
-        try await waitFor {
-            await sync.remote[user.id] == RoutePreferences(avoidStairs: true, avoidElevators: true, walkingSpeed: .fast)
+        store.update(RoutePreferences(avoidStairs: true, walkingSpeed: .fast))
+        await waitFor {
+            await sync.remote[user.id] == RoutePreferences(avoidStairs: true, walkingSpeed: .fast)
         }
     }
 
@@ -188,9 +248,9 @@ struct RoutePreferencesStoreTests {
         let harness = Harness()
         let sync = FakeRoutePreferencesSync(remote: [user.id: RoutePreferences(avoidStairs: true)])
         let store = harness.store(sync: sync)
-        let session = try await readySession(store: store)
+        let session = await readySession(store: store)
         defer { session.task.cancel() }
-        try await waitFor { store.current.avoidStairs }
+        await waitFor { store.current.avoidStairs }
         try await session.model.signOut()
         #expect(store.current == RoutePreferences())
         #expect(harness.store().current == RoutePreferences())
@@ -208,22 +268,51 @@ struct RoutePreferencesStoreTests {
     }
 
     /// A session signed in to `user`, whose profile exists, so it reaches `.ready`.
-    private func readySession(store: RoutePreferencesStore) async throws -> (model: AccountSessionViewModel, task: Task<Void, Never>) {
+    private func readySession(store: RoutePreferencesStore) async -> (model: AccountSessionViewModel, task: Task<Void, Never>) {
         let profiles = PlaceholderUserProfileStore(profiles: [
             UserProfile(userID: user.id, role: .caller, displayName: "Alice", languages: ["English"], createdAt: .now)
         ])
         let session = AccountSessionViewModel(auth: PlaceholderAuthService(), profiles: profiles, routePreferences: store)
         let task = Task { await session.listen() }
-        try await waitFor { if case .ready = session.state { return true }; return false }
+        await waitFor { if case .ready = session.state { return true }; return false }
         return (session, task)
     }
 
-    private func waitFor(_ condition: () async -> Bool) async throws {
-        for _ in 0..<400 {
-            if await condition() { return }
-            try await Task.sleep(for: .milliseconds(5))
-        }
-        throw WaitError.timedOut
+    /// Yields until `condition` holds; the suite's time limit fails a wait that never ends.
+    private func waitFor(_ condition: () async -> Bool) async {
+        while await !condition() { await Task.yield() }
     }
-    private enum WaitError: Error { case timedOut }
+}
+
+@Suite(.timeLimit(.minutes(1)))
+struct FirestoreRoutePreferencesStoreTests {
+    private struct Boom: Error {}
+
+    @Test func anAnswerReturns() async throws {
+        let value = try await FirestoreRoutePreferencesStore.answer(within: .seconds(10), clock: ManualClock()) {
+            $0(.success(RoutePreferences(avoidStairs: true)))
+        }
+        #expect(value == RoutePreferences(avoidStairs: true))
+    }
+
+    @Test func aRefusalIsPermissionDenied() async {
+        let denied = NSError(domain: FirestoreErrorDomain, code: FirestoreErrorCode.permissionDenied.rawValue)
+        await #expect(throws: RoutePreferencesSyncError.permissionDenied) {
+            try await FirestoreRoutePreferencesStore.answer(within: .seconds(10), clock: ManualClock()) {
+                $0(Result<Void, any Error>.failure(denied))
+            }
+        }
+    }
+
+    @Test func noAnswerTimesOut() async throws {
+        let clock = ManualClock()
+        let request = Task { () async throws -> Void in
+            try await FirestoreRoutePreferencesStore.answer(within: .seconds(10), clock: clock) { _ in }
+        }
+        try await clock.waitForSleepers(1)
+
+        clock.advance(by: .seconds(10))
+
+        await #expect(throws: RoutePreferencesSyncError.timedOut) { try await request.value }
+    }
 }

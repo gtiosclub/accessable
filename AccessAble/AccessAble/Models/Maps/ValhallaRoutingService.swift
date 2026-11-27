@@ -207,11 +207,17 @@ struct ValhallaRoutingService: RoutingService {
         let useTracks: Double?
         let maxHikingDifficulty: Int?
 
-        /// Clamped to the ranges Valhalla documents.
+        /// Clamped to the ranges Valhalla documents. A NaN or infinite preference is logged and left out, since
+        /// `min`/`max` pass NaN through and `JSONEncoder` can't encode it.
         init(_ options: RouteOptions) {
-            let use = { (value: Double?) in value.map { min(max($0, 0), 1) } }
-            let penalty = { (value: Double?) in value.map { min(max($0, 0), 43_200) } }
-            let factor = { (value: Double?) in value.map { min(max($0, 0.1), 100_000) } }
+            let finite = { (value: Double?) -> Double? in
+                guard let value, !value.isFinite else { return value }
+                log.error("Dropping non-finite routing preference: \(value, privacy: .public)")
+                return nil
+            }
+            let use = { (value: Double?) in finite(value).map { min(max($0, 0), 1) } }
+            let penalty = { (value: Double?) in finite(value).map { min(max($0, 0), 43_200) } }
+            let factor = { (value: Double?) in finite(value).map { min(max($0, 0.1), 100_000) } }
             // Valhalla documents 0.5–25 km/h for walking_speed.
             walkingSpeed = min(max(options.walkingSpeed * 3.6, 0.5), 25)
             stepPenalty = penalty(options.stepPenalty)
