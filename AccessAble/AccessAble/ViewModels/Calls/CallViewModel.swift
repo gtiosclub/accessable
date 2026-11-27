@@ -228,14 +228,6 @@ final class CallViewModel {
             try Task.checkCancellation()
             try await services.videoCall.connect(with: ticket)
             try Task.checkCancellation()
-            if services.callerSettings.preferences.flashlightOnStart {
-                do {
-                    try await services.videoCall.setFlashlight(true)
-                    try Task.checkCancellation()
-                    isFlashlightOn = true
-                } catch is CancellationError { throw CancellationError() }
-                catch { controlError = "The flashlight couldn't turn on. You can keep talking." }
-            }
             try Task.checkCancellation()
             // Subscribe only after this join, with a generation fence. An old session's
             // replayed/queued terminal state must not end a subsequent call.

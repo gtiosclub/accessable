@@ -156,12 +156,6 @@ struct VolunteerHomeView: View {
                    title: \.title) { choice in Task { await settings.setAvailability(choice) } }
             .disabled(!settings.isLoaded || settings.isBusy)
 
-        Toggle("Keep screen awake while available", isOn: Binding(
-            get: { settings.preferences.keepScreenAwake },
-            set: { value in Task { await settings.setKeepAwake(value) } }))
-            .tint(Theme.cyan)
-            .disabled(!settings.isLoaded || settings.isBusy)
-            .padding(.top, 8)
 
         if let message = settings.message { Text(message).font(.callout) }
 
