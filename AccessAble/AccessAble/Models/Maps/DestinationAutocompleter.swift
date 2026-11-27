@@ -98,11 +98,13 @@ final class DestinationAutocompleter: DestinationSearching {
         let unresolvedTop = enriched.prefix(SearchResultSpeech.maxSpokenResults).filter { $0.coordinate == nil }
         guard !unresolvedTop.isEmpty else { return }
 
+        // Cancelled when the results are replaced, so a replaced set never starts its lookups.
         coordinateTask = Task { [weak self] in
-            guard let self else { return }
+            guard let self, !Task.isCancelled else { return }
             let lookups = unresolvedTop.map { suggestion in
-                (suggestion.id, Task { @MainActor [weak self] in
-                    await self?.mapKit.coordinate(for: suggestion)
+                (suggestion.id, Task { @MainActor [weak self] () -> GeoCoordinate? in
+                    guard !Task.isCancelled else { return nil }
+                    return await self?.mapKit.coordinate(for: suggestion)
                 })
             }
             let resolved: [SearchSuggestion.ID: GeoCoordinate] = await withTaskCancellationHandler {
@@ -199,7 +201,18 @@ private final class LiveMapKitAutocompleter: NSObject, MapKitAutocompleting, MKL
         let request = MKLocalSearch.Request(completion: completion)
         request.region = region
         request.regionPriority = .required
-        let response = try await MKLocalSearch(request: request).start()
+        let response: MKLocalSearch.Response
+        do {
+            response = try await MKLocalSearch(request: request).start()
+        } catch {
+            let code = (error as NSError).code
+            if (error as? MKError)?.code == .loadingThrottled {
+                log.error("Place lookup throttled by MapKit (code \(code, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            } else {
+                log.error("Place lookup failed (code \(code, privacy: .public)): \(error.localizedDescription, privacy: .public)")
+            }
+            throw error
+        }
         guard let place = response.mapItems.first else {
             throw DestinationSearchError.noMatch
         }
@@ -212,7 +225,15 @@ private final class LiveMapKitAutocompleter: NSObject, MapKitAutocompleting, MKL
         if let cached = resolvedDestinations[suggestion.id] {
             return cached.coordinate
         }
-        return try? await resolve(suggestion).coordinate
+        do {
+            return try await resolve(suggestion).coordinate
+        } catch {
+            // A replaced result set cancels its lookups; that isn't a failure.
+            if !Task.isCancelled {
+                log.error("No coordinate for a spoken result: \(error.localizedDescription, privacy: .public)")
+            }
+            return nil
+        }
     }
 
     // dedupes results and keeps each completion for resolve
