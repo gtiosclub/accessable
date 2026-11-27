@@ -152,7 +152,6 @@ struct PlaceSearchView: View {
                     .stroke(.white.opacity(0.6), style: StrokeStyle(lineWidth: 2, dash: [2, 4]))
                     .frame(width: 2, height: 30)
                     .padding(.leading, 14 + 13)
-                    .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
         }
@@ -258,21 +257,19 @@ struct PlaceSearchView: View {
                     .font(.title3)
                     .lineLimit(usesStackedRouteCard ? nil : 1)
             } else {
-                if !usesStackedRouteCard {
-                    Image(systemName: search.isLocationOff ? "location.slash.fill" : "location.fill")
-                        .foregroundStyle(search.isLocationOff ? Theme.red : Theme.cyan)
-                }
+                Image(systemName: search.isLocationOff ? "location.slash.fill" : "location.fill")
+                    .foregroundStyle(search.isLocationOff ? Theme.red : Theme.cyan)
                 VStack(alignment: .leading, spacing: 0) {
                     Text("My Location")
                         .font(.headline)
                     Text(search.locationDetail)
                         .font(.caption)
                         .foregroundStyle(.white.opacity(0.75))
-                        .lineLimit(usesStackedRouteCard ? nil : 2)
+                        .lineLimit(usesStackedRouteCard ? nil : 1)
                 }
             }
         }
-        .fixedSize(horizontal: false, vertical: true)
+        .fixedSize(horizontal: false, vertical: usesStackedRouteCard)
         .foregroundStyle(.white)
         .padding(.horizontal, 10)
         .padding(.vertical, 4)
@@ -287,6 +284,7 @@ struct PlaceSearchView: View {
             if usesStackedRouteCard {
                 Label("Swap", systemImage: "arrow.up.arrow.down")
                     .font(.headline)
+                    .foregroundStyle(.white)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
                     .frame(maxWidth: .infinity, minHeight: 44)
@@ -294,12 +292,12 @@ struct PlaceSearchView: View {
             } else {
                 Image(systemName: "arrow.up.arrow.down")
                     .font(.title3.weight(.semibold))
+                    .foregroundStyle(.white)
                     .minimumTapTarget()
                     .background(.white.opacity(0.12), in: Circle())
             }
         }
         .buttonStyle(.plain)
-        .foregroundStyle(.white)
         .disabled(!search.canSwap)
         .opacity(search.canSwap ? 1 : Theme.dimmedOpacity)
         .accessibilityLabel("Swap starting point and destination")
