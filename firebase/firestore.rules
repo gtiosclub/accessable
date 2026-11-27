@@ -618,5 +618,29 @@ service cloud.firestore {
           || (isVoteStamp(request.resource.data.diff(resource.data).affectedKeys())
               && isSpaced('lastVoteAt')));
     }
+
+    // PREF-2: each user's route choices, read and written only by that user.
+    match /users/{userId}/settings/routePreferences {
+      function isValidRoutePreferences(data) {
+        return data.keys().hasAll([
+            'avoidStairs', 'avoidElevators', 'avoidSteepHills', 'preferWellLit', 'preferFootpaths',
+            'avoidAlleysAndDriveways', 'avoidServiceRoads', 'avoidUnpavedPaths', 'walkingSpeed', 'updatedAt'
+          ])
+          && data.keys().hasOnly([
+            'avoidStairs', 'avoidElevators', 'avoidSteepHills', 'preferWellLit', 'preferFootpaths',
+            'avoidAlleysAndDriveways', 'avoidServiceRoads', 'avoidUnpavedPaths', 'walkingSpeed', 'updatedAt'
+          ])
+          && data.avoidStairs is bool && data.avoidElevators is bool && data.avoidSteepHills is bool
+          && data.preferWellLit is bool && data.preferFootpaths is bool
+          && data.avoidAlleysAndDriveways is bool && data.avoidServiceRoads is bool
+          && data.avoidUnpavedPaths is bool
+          && data.walkingSpeed in ['slow', 'normal', 'fast']
+          && data.updatedAt == request.time;
+      }
+
+      allow get, delete: if signedIn() && request.auth.uid == userId;
+      allow create, update: if signedIn() && request.auth.uid == userId
+        && isValidRoutePreferences(request.resource.data);
+    }
   }
 }
