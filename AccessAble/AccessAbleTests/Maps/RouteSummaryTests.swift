@@ -23,10 +23,11 @@ private func summary(
     seconds: Double = 360,
     kinds: [ManeuverKind] = [],
     crosswalks: Int = 0,
-    distances: DistanceFormatter = .imperial
+    distances: DistanceFormatter = .imperial,
+    preferences: RoutePreferences = RoutePreferences()
 ) throws -> String {
     RouteSummary(route: try route(metres: metres, seconds: seconds, kinds: kinds), crossings: crossings(crosswalks))
-        .text(distances: distances)
+        .text(distances: distances, preferences: preferences)
 }
 
 struct RouteSummaryTests {
@@ -158,5 +159,62 @@ struct RouteSummaryTests {
                                      crossings: [])
         #expect(uncounted.turns == 0)
         #expect(uncounted.text(distances: .metric) == "About 1 minute, 100 metres. No turns.")
+    }
+}
+
+private let avoidingStairs = RoutePreferences(avoidStairs: true)
+private let avoidingElevators = RoutePreferences(avoidElevators: true)
+
+struct RouteSummaryPreferenceWarningTests {
+    @Test
+    func stairsTheUserAvoidsAreWarnedOfFirstAndNotCountedAgain() throws {
+        #expect(try summary(kinds: [.turnLeft, .stairs], crosswalks: 1, preferences: avoidingStairs)
+            == "No step-free route found. This route has 1 flight of stairs. "
+                + "About 6 minutes, 450 feet. 1 turn, 1 crosswalk.")
+        #expect(try summary(kinds: [.stairs, .stairs], preferences: avoidingStairs)
+            == "No step-free route found. This route has 2 flights of stairs. About 6 minutes, 450 feet. No turns.")
+    }
+
+    @Test
+    func elevatorsTheUserAvoidsAreWarnedOfFirstAndNotCountedAgain() throws {
+        #expect(try summary(kinds: [.elevator, .escalator], preferences: avoidingElevators)
+            == "No route without elevators found. This route uses 1 elevator. "
+                + "About 6 minutes, 450 feet. No turns, 1 escalator.")
+        #expect(try summary(kinds: [.elevator, .elevator], preferences: avoidingElevators)
+            == "No route without elevators found. This route uses 2 elevators. About 6 minutes, 450 feet. No turns.")
+    }
+
+    @Test
+    func bothWarningsComeStairsFirst() throws {
+        let both = RoutePreferences(avoidStairs: true, avoidElevators: true)
+        #expect(try summary(kinds: [.elevator, .stairs], preferences: both)
+            == "No step-free route found. This route has 1 flight of stairs. "
+                + "No route without elevators found. This route uses 1 elevator. About 6 minutes, 450 feet. No turns.")
+    }
+
+    @Test
+    func withThePreferenceOffTheyAreOnlyCounted() throws {
+        #expect(try summary(kinds: [.stairs, .elevator], preferences: RoutePreferences())
+            == "About 6 minutes, 450 feet. No turns, 1 flight of stairs, 1 elevator.")
+        #expect(try summary(kinds: [.stairs], preferences: avoidingElevators)
+            == "About 6 minutes, 450 feet. No turns, 1 flight of stairs.")
+        #expect(try summary(kinds: [.elevator], preferences: avoidingStairs)
+            == "About 6 minutes, 450 feet. No turns, 1 elevator.")
+    }
+
+    @Test
+    func aRouteWithoutThemHasNoWarning() throws {
+        let both = RoutePreferences(avoidStairs: true, avoidElevators: true)
+        #expect(try summary(kinds: [.turnLeft, .escalator], preferences: both)
+            == "About 6 minutes, 450 feet. 1 turn, 1 escalator.")
+    }
+
+    /// None of these has a count on the route to check.
+    @Test
+    func otherPreferencesHaveNoWarning() throws {
+        let others = RoutePreferences(avoidSteepHills: true, preferWellLit: true, preferFootpaths: true,
+                                      avoidAlleysAndDriveways: true, avoidServiceRoads: true, avoidUnpavedPaths: true)
+        #expect(try summary(kinds: [.stairs, .elevator], preferences: others)
+            == "About 6 minutes, 450 feet. No turns, 1 flight of stairs, 1 elevator.")
     }
 }

@@ -892,7 +892,8 @@ actor TripManager: TripStateProviding {
             publishMapReports()
             subscribeToReports(along: newRoute, generation: generation)
             guard phase == .active else { return }
-            await submit(maneuver("New route. " + Self.reportWarning(on: newRoute) + sourceChange
+            await submit(maneuver("New route. " + preferenceWarning(on: newRoute) + Self.reportWarning(on: newRoute)
+                                      + sourceChange
                                       + departure(on: newRoute), .high, expiresIn: 15, key: "reroute"))
         case .failure(let error):
             guard !(error is CancellationError) else { return }
@@ -933,7 +934,7 @@ actor TripManager: TripStateProviding {
                 await announceResumedStart(on: route, to: destination)
             } else {
                 let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
-                    + Self.reportWarning(on: route)
+                    + preferenceWarning(on: route) + Self.reportWarning(on: route)
                     + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "") + departure(on: route)
                 await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
             }
@@ -959,7 +960,8 @@ actor TripManager: TripStateProviding {
     private func announceResumedStart(on route: NavigationRoute, to destination: Destination) async {
         let placement = tracker?.placement
         let remaining = placement == .onRoute ? progress.map { ", " + spoken($0.distanceRemaining) } : nil
-        var text = "Resuming directions to \(destination.name)\(remaining ?? ""). " + Self.reportWarning(on: route)
+        var text = "Resuming directions to \(destination.name)\(remaining ?? ""). " + preferenceWarning(on: route)
+            + Self.reportWarning(on: route)
             + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "")
         if placement == .awaitingFix {
             resumedStart = .awaitingPlacement
@@ -1123,6 +1125,11 @@ actor TripManager: TripStateProviding {
                                         cumulativeDistances: route.cumulativeDistances)
         guard let direction = direction(to: target) else { return nil }
         return direction == .behind ? "Turn around, the path is behind you." : "The path is \(direction.phrase)."
+    }
+
+    /// Said before setting off on a route that still has stairs or elevators the trip's preferences asked to avoid.
+    private func preferenceWarning(on route: NavigationRoute) -> String {
+        RouteSummary.preferenceWarnings(on: route, preferences: preferences).map { $0 + " " }.joined()
     }
 
     /// Said before setting off on a route that passes reports it couldn't avoid.
