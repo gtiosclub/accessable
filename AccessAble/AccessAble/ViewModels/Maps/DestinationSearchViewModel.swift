@@ -85,7 +85,8 @@ final class DestinationSearchViewModel {
             for: suggestion,
             at: index,
             from: SearchResultSpeech.origin(of: location, at: time),
-            heading: headingEstimator.heading(at: time),
+            // Reads the observed `heading` so a heading change alone re-renders the rows.
+            heading: heading == nil ? nil : headingEstimator.heading(at: time),
             distances: distances?.formatter ?? DistanceSettings().formatter
         )
     }

@@ -219,7 +219,8 @@ final class PlaceSearchViewModel {
             for: suggestion,
             at: index,
             from: searchOriginCoordinate(at: time),
-            heading: origin == .myLocation ? headingEstimator.heading(at: time) : nil,
+            // Reads the observed `heading` so a heading change alone re-renders the rows.
+            heading: origin == .myLocation && heading != nil ? headingEstimator.heading(at: time) : nil,
             distances: services?.distanceSettings.formatter ?? DistanceSettings().formatter
         )
     }
