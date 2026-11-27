@@ -93,7 +93,12 @@ final class SurfaceReader: @unchecked Sendable {
         }
         guard isDue else { return }
 
-        let request = SegmentRequest(image: image, orientation: orientation, time: time)
+        guard let copy = PixelBufferCopy.copy(image) else {
+            state.withLock { $0.isReading = false }
+            log.error("segmentation skipped: could not copy camera buffer")
+            return
+        }
+        let request = SegmentRequest(image: copy, orientation: orientation, time: time)
         queue.async { [self] in
             let kinds = segment(request)
             state.withLock { state in
@@ -156,8 +161,8 @@ final class SurfaceReader: @unchecked Sendable {
     }
 }
 
-/// Carries the image to the segmentation queue. `@unchecked Sendable` for the same reason as
-/// `TextReader`'s request: the buffer is only read, and ARKit doesn't reuse it while retained.
+/// Carries a copied image to the segmentation queue. `@unchecked Sendable` for the same reason
+/// as `TextReader`'s request: the buffer is our copy, only read, on the segmentation queue.
 private struct SegmentRequest: @unchecked Sendable {
     let image: CVPixelBuffer
     let orientation: CGImagePropertyOrientation

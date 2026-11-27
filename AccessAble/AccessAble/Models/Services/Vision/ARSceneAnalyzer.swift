@@ -334,13 +334,16 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     /// The next frame from the shared session as an upright JPEG. Frames only flow while
     /// the session runs, so this gives up after `timeout` rather than waiting forever.
+    /// The frame handler is removed as soon as the first buffer arrives, and the JPEG is
+    /// encoded from a copy so ARKit's pool buffer is not held during encode.
     @concurrent
     private func captureStillImage(timeout: Duration = .seconds(1)) async throws -> Data {
         let orientation = CGImagePropertyOrientation(cameraImageIn: state.withLock { $0.interfaceOrientation })
         let (frames, continuation) = AsyncStream.makeStream(of: CapturedImage.self, bufferingPolicy: .bufferingNewest(1))
-        // Only hands the buffer on; the JPEG is encoded here, off the frame queue.
         let subscription = sessionManager.addFrameHandler { frame in
-            continuation.yield(CapturedImage(pixelBuffer: frame.capturedImage))
+            // Copy on the frame queue; skip the frame if the copy fails rather than hold ARKit's buffer.
+            guard let buffer = PixelBufferCopy.copy(frame.capturedImage) else { return }
+            continuation.yield(CapturedImage(pixelBuffer: buffer))
         }
         let timeoutTask = Task {
             try? await Task.sleep(for: timeout)
@@ -352,10 +355,13 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
             timeoutTask.cancel()
         }
 
-        for await image in frames {
-            return try stillImageJPEG(from: image.pixelBuffer, orientation: orientation)
-        }
-        throw AskAIError.noCameraImage
+        // Unsubscribe as soon as the first copy arrives, before JPEG encode.
+        guard let image = await FirstFrame.take(frames, onFirst: {
+            sessionManager.removeFrameHandler(subscription)
+            timeoutTask.cancel()
+            continuation.finish()
+        }) else { throw AskAIError.noCameraImage }
+        return try stillImageJPEG(from: image.pixelBuffer, orientation: orientation)
     }
 
     // MARK: - AskedImageProviding
