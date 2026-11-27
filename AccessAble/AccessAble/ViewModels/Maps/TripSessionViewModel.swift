@@ -60,8 +60,8 @@ final class TripSessionViewModel {
     @ObservationIgnored private var voiceTask: Task<Void, Never>?
     /// Whether geo-tracking was asked for with the camera the screen holds; nil while it holds none.
     @ObservationIgnored private var heldCamera: Bool?
-    /// Whether this trip can geo-track, asked once: the view model lives for one trip, so the
-    /// screen coming back doesn't wait on Apple again.
+    /// Apple's answer for this trip, kept once it is in (the view model lives for one trip); nil
+    /// until then, so the next open asks again.
     @ObservationIgnored private var canGeoTrack: Bool?
 
     /// - Parameters:
@@ -155,18 +155,11 @@ final class TripSessionViewModel {
     }
 
     /// Opens the camera beside the route request rather than before it, since asking Apple about
-    /// geo-tracking can take a few seconds. The screen usually opens it before the trip goes active,
-    /// so it decides the tracking.
+    /// geo-tracking, or starting the camera, shouldn't hold up the route. The screen usually opens it
+    /// before the trip goes active, so it decides the tracking.
     func openCamera(_ camera: TripCamera) async {
-        let geoTracking: Bool
-        if let canGeoTrack {
-            geoTracking = canGeoTrack
-        } else {
-            geoTracking = await camera.canGeoTrack()
-            // a cancelled check says no without Apple's answer, so it isn't kept
-            guard !Task.isCancelled else { return }
-            canGeoTrack = geoTracking
-        }
+        if canGeoTrack == nil { canGeoTrack = await camera.canGeoTrack() }
+        let geoTracking = canGeoTrack ?? false
         // the screen closed while Apple was asked
         guard !Task.isCancelled else { return }
         do {

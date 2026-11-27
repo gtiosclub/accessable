@@ -52,7 +52,7 @@ protocol GeoTrackingProviding: Sendable {
     /// What `prepareGeoTracking()` found, while recent; nil before it answers.
     func knownGeoAvailability() async -> Bool?
     /// Asks for geo-tracking from the session's next start (true), or gives it back (false). Calls nest like the
-    /// scene's `start()`/`stop()`. Ask only where `ARSessionManager.isGeoTrackingAvailableHere` said yes; the
+    /// scene's `start()`/`stop()`. Ask only where `knownGeoAvailability()` said yes; the
     /// session doesn't check again. A session already running keeps its tracking, so the world CV has mapped isn't
     /// reset under it.
     func setGeoTrackingWanted(_ wanted: Bool) async

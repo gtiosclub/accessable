@@ -13,20 +13,15 @@ struct TripCameraCoordinator: Sendable {
     func run() async {
         /// Whether geo-tracking was asked for with the camera held; nil while it isn't held.
         var held: Bool?
-        /// Asked once per trip, so resuming from a pause doesn't wait on Apple again.
+        /// Apple's answer for this trip, kept once it is in; nil until then, so the next start asks again.
         var canGeoTrack: Bool?
         for await state in trip.tripStates() {
             // between trips, so the answer is in before the next one opens the camera
             if state.phase == .planning { await camera.prepare() }
             let wantsCamera = state.phase == .active
             if wantsCamera, held == nil {
-                let geoTracking: Bool
-                if let canGeoTrack {
-                    geoTracking = canGeoTrack
-                } else {
-                    geoTracking = await camera.canGeoTrack()
-                    canGeoTrack = geoTracking
-                }
+                if canGeoTrack == nil { canGeoTrack = await camera.canGeoTrack() }
+                let geoTracking = canGeoTrack ?? false
                 do {
                     try await camera.start(geoTracking: geoTracking)
                     held = geoTracking

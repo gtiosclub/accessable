@@ -11,8 +11,6 @@ struct AppServices: Sendable {
     var sceneDescriber: any SceneDescribing
     /// Lets trips ask the camera for geo-tracking (AR-2); nil where it can't (the sample scene).
     var geoTracking: (any GeoTrackingProviding)?
-    /// Whether Apple has geo-tracking imagery here; capped, so the camera never waits long on it.
-    var isGeoTrackingAvailableHere: @Sendable () async -> Bool = { await ARSessionManager.isGeoTrackingAvailableHere() }
     var location: any LocationProvider
     var routing: any RoutingService
     var destinationSearch: any DestinationSearching
@@ -121,7 +119,7 @@ struct AppServices: Sendable {
 
     /// How trips open the camera: the trip screen and `TripCameraCoordinator` both go through it.
     var tripCamera: TripCamera {
-        TripCamera(scene: scene, geoTracking: geoTracking, isGeoTrackingAvailableHere: isGeoTrackingAvailableHere)
+        TripCamera(scene: scene, geoTracking: geoTracking)
     }
 
     /// For SwiftUI previews and unit tests.

@@ -7,20 +7,21 @@ struct TripCamera: Sendable {
     let scene: any SceneObservationProviding
     /// nil where the camera can't geo-track (the sample scene).
     let geoTracking: (any GeoTrackingProviding)?
-    /// Whether Apple has geo-tracking imagery here. Capped, since the camera waits on it.
-    let isGeoTrackingAvailableHere: @Sendable () async -> Bool
 
     /// Starts Apple's availability check in the background, so `canGeoTrack()` needn't wait on it.
     func prepare() async {
         await geoTracking?.prepareGeoTracking()
     }
 
-    /// Whether this trip can geo-track. Ask once per trip and pass the answer to `start(geoTracking:)`.
-    func canGeoTrack() async -> Bool {
+    /// Whether this trip can geo-track, without waiting on Apple: nil while the answer isn't in, which
+    /// starts the check so a later start can use it. Keep a non-nil answer for the trip and pass
+    /// `?? false` to `start(geoTracking:)`; ask again while it is nil.
+    func canGeoTrack() async -> Bool? {
         guard let geoTracking else { return false }
         // found by prepare() before the trip, so obstacle warnings don't wait on Apple
         if let known = await geoTracking.knownGeoAvailability() { return known }
-        return await isGeoTrackingAvailableHere()
+        await geoTracking.prepareGeoTracking()
+        return nil
     }
 
     /// Asks for geo-tracking when `wanted`, then starts the scene. A start that succeeds needs a
