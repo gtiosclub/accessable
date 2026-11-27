@@ -35,6 +35,9 @@ service cloud.firestore {
 
     // A new report, sent in one batch with its reporter's stamp, which names it so one stamp can't cover a batch
     // of many reports. The vote counts are optional, so an app from before REPORT-6 can still report.
+    // Reports are readable by everyone signed in, so they don't say who reported them: the same batch lists the
+    // report in its reporter's private ownReportPath. reporterID stays, always empty, only because apps from
+    // before the private list need it to read reports; remove it once every app reads without it.
     function isValidNewReport(data, reportId) {
       let keys = data.keys();
       let stamp = getAfter(rateLimitPath()).data;
@@ -44,7 +47,9 @@ service cloud.firestore {
           'negativeConfirmations', 'negativesSinceConfirm'
         ])
         && data.id == reportId
-        && data.reporterID == request.auth.uid
+        && data.reporterID == ''
+        && existsAfter(ownReportPath(request.auth.uid, reportId))
+        && getAfter(ownReportPath(request.auth.uid, reportId)).data.createdAt == request.time
         && data.kind in ['construction', 'blockedPath', 'closedEntrance', 'elevatorOut', 'other']
         && isValidCoordinate(data.coordinate)
         && (!('area' in keys) || data.area == null || (data.area is list && isValidArea(data.area)))
@@ -64,6 +69,11 @@ service cloud.firestore {
       return duration.value(2, 'm');
     }
 
+    // The user's private record that they reported reportId.
+    function ownReportPath(userId, reportId) {
+      return /databases/$(database)/documents/users/$(userId)/reports/$(reportId);
+    }
+
     function votePath(reportId) {
       return /databases/$(database)/documents/reports/$(reportId)/votes/$(request.auth.uid);
     }
@@ -80,7 +90,9 @@ service cloud.firestore {
       let denials = before.get('negativesSinceConfirm', 0) + 1;
       let stamp = getAfter(rateLimitPath()).data;
 
-      return request.auth.uid != before.reporterID
+      return !exists(ownReportPath(request.auth.uid, reportId))
+        // reports from before the private list name their reporter until they expire
+        && request.auth.uid != before.reporterID
         && before.expiresAt > request.time
         && !exists(votePath(reportId))
         && existsAfter(votePath(reportId))
@@ -377,6 +389,65 @@ service cloud.firestore {
       // No delete, so a finished call can never be reused.
     }
 
+    // CHAT-1: text chat between one caller and one volunteer. The id is `<callerId>_<volunteerId>`,
+    // so who may read a chat is known before it exists, and nobody else can read or join it.
+    function isChatParty(chatId) {
+      let parts = chatId.split('_');
+      return parts.size() == 2 && request.auth.uid in parts;
+    }
+
+    // Only a caller starts a chat, with a volunteer account that hasn't been blocked. The names are
+    // projected here because neither side may read the other's users doc.
+    function isValidNewChat(chatId, data) {
+      let name = data.get('callerFirstName', null);
+      return data.keys().hasAll(['callerId', 'volunteerId', 'volunteerName', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['callerId', 'volunteerId', 'volunteerName', 'callerFirstName', 'createdAt', 'updatedAt'])
+        && data.callerId == request.auth.uid
+        && data.volunteerId is string && data.volunteerId != data.callerId
+        && !data.callerId.matches('.*_.*') && !data.volunteerId.matches('.*_.*')
+        && chatId == data.callerId + '_' + data.volunteerId
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'caller'
+        && isVolunteerAccount(data.volunteerId)
+        && !blocked(data.callerId, data.volunteerId)
+        && data.volunteerName == get(/databases/$(database)/documents/volunteers/$(data.volunteerId)).data.displayName
+        && (!('callerFirstName' in data) || (name is string && name.size() > 0 && name.size() <= 80
+          && name == get(/databases/$(database)/documents/users/$(request.auth.uid))
+            .data.displayName.replace('^\\s+', '').split('\\s+')[0]))
+        && data.createdAt == request.time
+        && data.updatedAt == request.time;
+    }
+
+    match /chats/{chatId} {
+      allow get: if signedIn() && isChatParty(chatId);
+      // A volunteer's inbox, or a caller's chats: the query must filter on the reader's own id.
+      allow list: if signedIn() && request.query.limit <= 50
+        && (resource.data.callerId == request.auth.uid || resource.data.volunteerId == request.auth.uid);
+      allow create: if signedIn() && isValidNewChat(chatId, request.resource.data);
+      // Only the inbox order moves, and only with a new message (checked by the message rule).
+      allow update: if signedIn() && isChatParty(chatId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])
+        && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        // Readable before the chat exists, so the caller's screen can listen from the start.
+        allow get, list: if signedIn() && isChatParty(chatId);
+        // Sent in one write with the chat's updatedAt, which also requires the chat to exist.
+        allow create: if signedIn() && isChatParty(chatId)
+          && request.resource.data.keys().hasAll(['senderId', 'text', 'sentAt'])
+          && request.resource.data.keys().hasOnly(['senderId', 'text', 'sentAt'])
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() >= 1 && request.resource.data.text.size() <= 1000
+          && request.resource.data.text.matches('(?s).*\\S.*')
+          && request.resource.data.sentAt == request.time
+          && getAfter(/databases/$(database)/documents/chats/$(chatId)).data.updatedAt == request.time
+          && !blocked(getAfter(/databases/$(database)/documents/chats/$(chatId)).data.callerId,
+                      getAfter(/databases/$(database)/documents/chats/$(chatId)).data.volunteerId);
+        allow update, delete: if false;
+      }
+    }
+
     match /reports/{reportId} {
       allow get: if signedIn();
       allow list: if signedIn() && request.query.limit <= 200;
@@ -386,7 +457,8 @@ service cloud.firestore {
       // Votes are the only edits: the reporter could otherwise extend, move or revive a report others voted on.
       allow update: if signedIn() && isValidVote(reportId);
 
-      allow delete: if signedIn() && resource.data.reporterID == request.auth.uid;
+      allow delete: if signedIn()
+        && (exists(ownReportPath(request.auth.uid, reportId)) || resource.data.reporterID == request.auth.uid);
 
       // One vote per user per report, readable only by its voter. Written only with the report's
       // matching count, which the report's update rule checks the other way round.
@@ -406,6 +478,20 @@ service cloud.firestore {
             : getAfter(reportPath()).data.get('negativeConfirmations', 0)
               == get(reportPath()).data.get('negativeConfirmations', 0) + 1);
       }
+    }
+
+    // Each user's private list of their own reports, so the reports themselves needn't say who made them. An entry
+    // is made only in the batch that creates its report, is never changed, and goes only once its report has gone:
+    // while the report exists, the entry is what stops its reporter voting on it.
+    match /users/{userId}/reports/{reportId} {
+      allow get, list: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && request.auth.uid == userId
+        && request.resource.data.keys().hasOnly(['createdAt'])
+        && request.resource.data.createdAt == request.time
+        && existsAfter(/databases/$(database)/documents/reports/$(reportId))
+        && getAfter(/databases/$(database)/documents/reports/$(reportId)).data.createdAt == request.time;
+      allow delete: if signedIn() && request.auth.uid == userId
+        && !existsAfter(/databases/$(database)/documents/reports/$(reportId));
     }
 
     match /rateLimits/{userId} {

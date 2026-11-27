@@ -19,7 +19,7 @@ private let user = TripWalk.point(on: route, along: 20)
 
 private func report(_ kind: ReportKind, at coordinate: GeoCoordinate) -> Report {
     Report(id: UUID().uuidString, kind: kind, coordinate: coordinate, createdAt: .now,
-           expiresAt: .now.addingTimeInterval(3600), reporterID: "user-1")
+           expiresAt: .now.addingTimeInterval(3600))
 }
 
 private func text(

@@ -32,6 +32,12 @@ struct PlaceholderReportServiceTests {
 
     /// One stored report from one captured date, so every read of it is equal.
     private let sample: Report
+    /// The sample as its reporter reads it back.
+    private var own: Report {
+        var own = sample
+        own.isOwn = true
+        return own
+    }
 
     init() {
         let createdAt = Date.now
@@ -40,8 +46,7 @@ struct PlaceholderReportServiceTests {
             kind: .construction,
             coordinate: coordinate,
             createdAt: createdAt,
-            expiresAt: createdAt.addingTimeInterval(3600),
-            reporterID: "test-user"
+            expiresAt: createdAt.addingTimeInterval(3600)
         )
     }
 
@@ -51,7 +56,7 @@ struct PlaceholderReportServiceTests {
         try await service.submit(sample)
 
         let actual = try await service.reports(near: coordinate, radius: 100)
-        #expect(actual == [sample])
+        #expect(actual == [own])
     }
 
     @Test
@@ -64,7 +69,21 @@ struct PlaceholderReportServiceTests {
 
         #expect(await iterator.next() == [])
         try await service.submit(sample)
-        #expect(await iterator.next() == [sample])
+        #expect(await iterator.next() == [own])
+    }
+
+    @Test
+    func aReportIsOwnOnlyForTheUserWhoSubmittedIt() async throws {
+        let auth = SwitchableAuth()
+        let service = PlaceholderReportService(auth: auth)
+        auth.use("reporter")
+        try await service.submit(sample)
+
+        #expect(try await service.reports(near: coordinate, radius: 100) == [own])
+        auth.use("someone else")
+        #expect(try await service.reports(near: coordinate, radius: 100) == [sample])
+        auth.use(nil)
+        #expect(try await service.reports(near: coordinate, radius: 100) == [sample])
     }
 
     // MARK: Votes
@@ -76,9 +95,10 @@ struct PlaceholderReportServiceTests {
         let auth = SwitchableAuth()
         let clock = TestTime(Self.start)
         let service = PlaceholderReportService(auth: auth, now: { clock.now() })
+        auth.use("reporter")
         try await service.submit(Report(
             id: "r1", kind: .blockedPath, coordinate: coordinate, createdAt: Self.start,
-            expiresAt: Self.start.addingTimeInterval(3600), reporterID: "reporter"
+            expiresAt: Self.start.addingTimeInterval(3600)
         ))
         clock.advance(by: 15 * 60)
         auth.use(voter)
@@ -122,11 +142,13 @@ struct PlaceholderReportServiceTests {
 
     @Test
     func votesAreOneAMinute() async throws {
-        let (service, _, clock) = try await votingService()
+        let (service, auth, clock) = try await votingService()
+        auth.use("reporter")
         try await service.submit(Report(
             id: "r2", kind: .construction, coordinate: coordinate, createdAt: Self.start,
-            expiresAt: Self.start.addingTimeInterval(3600), reporterID: "reporter"
+            expiresAt: Self.start.addingTimeInterval(3600)
         ))
+        auth.use("voter")
         try await service.confirm("r1", isStillPresent: true)
 
         await #expect(throws: ReportServiceError.rateLimited) {

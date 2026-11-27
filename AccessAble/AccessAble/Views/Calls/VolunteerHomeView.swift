@@ -13,6 +13,8 @@ struct VolunteerHomeView: View {
     var retryListening: () -> Void = {}
     var callMessage: String? = nil
     var dismissCallMessage: () -> Void = {}
+    /// Chats callers have started with this volunteer; nil hides the section.
+    var inbox: ChatInboxViewModel? = nil
     @State private var signingOut = false
     @State private var signOutError: String?
     @Environment(\.scenePhase) private var scenePhase
@@ -52,6 +54,7 @@ struct VolunteerHomeView: View {
                         Button("Check again") { Task { await settings.load() } }.disabled(settings.isBusy)
                     }
                 }
+                if let inbox { VolunteerMessagesSection(model: inbox) }
                 Section {
                     Toggle("Online by default", isOn: Binding(get: { settings.preferences.onlineByDefault }, set: { value in Task { await settings.setOnlineByDefault(value) } }))
                         .disabled(!settings.isLoaded || settings.isBusy)

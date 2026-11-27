@@ -445,15 +445,13 @@ private func eastRoute(from origin: GeoCoordinate) throws -> NavigationRoute {
 
 private func blockedPath(at coordinate: GeoCoordinate) -> Report {
     Report(id: "blocked-1", kind: .blockedPath, coordinate: coordinate, createdAt: TripWalk.start,
-           expiresAt: TripWalk.start.addingTimeInterval(3600), reporterID: "user-1")
+           expiresAt: TripWalk.start.addingTimeInterval(3600))
 }
 
-/// The signed-in user, as the harness's trip sees them.
-private let reporterSelf = "me"
-
-private func report(_ id: String, at coordinate: GeoCoordinate, by reporter: String = "neighbour") -> Report {
+/// `isOwn` when the signed-in user reported it.
+private func report(_ id: String, at coordinate: GeoCoordinate, isOwn: Bool = false) -> Report {
     Report(id: id, kind: .blockedPath, coordinate: coordinate, createdAt: TripWalk.start,
-           expiresAt: TripWalk.start.addingTimeInterval(3600), reporterID: reporter)
+           expiresAt: TripWalk.start.addingTimeInterval(3600), isOwn: isOwn)
 }
 
 private final class BackgroundRecorder: Sendable {
@@ -497,7 +495,7 @@ private struct Harness {
         savedTrips = savedTripsDirectory.map { [clock] in SavedTripStore(directory: $0, now: { clock.now() }) }
         manager = TripManager(
             location: location, routing: router, announcements: engine,
-            reports: reports, currentUserID: { reporterSelf },
+            reports: reports,
             landmarks: landmarks, campusBuildings: { buildings }, campusCrossings: { crossings },
             setTripTracking: { [background] in background.record($0) },
             distances: distances,
@@ -2668,7 +2666,7 @@ struct TripManagerReportTests {
         await harness.start()
         await harness.walk(from: 0, to: 20)
 
-        await harness.reports.publish([report("mine", at: harness.point(60), by: reporterSelf)])
+        await harness.reports.publish([report("mine", at: harness.point(60), isOwn: true)])
         await harness.walk(from: 21, to: 30)
 
         #expect(await harness.router.requests.isEmpty)
@@ -3031,7 +3029,7 @@ struct TripManagerReportTests {
     func theMapShowsLiveReportsNearTheRouteTheUsersOwnIncluded() async throws {
         let harness = try Harness()
         await harness.start()
-        let own = report("own", at: harness.point(30), by: reporterSelf)
+        let own = report("own", at: harness.point(30), isOwn: true)
         let beside = report("beside", at: harness.point(50, lateral: -40))
         let far = report("far", at: harness.point(50, lateral: -200))
         var ended = report("ended", at: harness.point(60))
@@ -3070,7 +3068,7 @@ struct TripManagerReportTests {
     func theMapStartsEachTripWithoutTheLastTripsReports() async throws {
         let harness = try Harness()
         await harness.start()
-        await harness.reports.publish([report("own", at: harness.point(30), by: reporterSelf)])
+        await harness.reports.publish([report("own", at: harness.point(30), isOwn: true)])
         #expect(await shownOnTheMap(harness) == ["own"])
 
         await harness.manager.endTrip()
@@ -3262,7 +3260,7 @@ struct TripManagerReportQuestionTests {
     @Test
     func neverAsksAboutTheUsersOwnReport() async throws {
         let route = try cornerRoute()
-        let own = report("own", at: TripWalk.point(on: route, along: 30), by: reporterSelf)
+        let own = report("own", at: TripWalk.point(on: route, along: 30), isOwn: true)
         let theirs = report("theirs", at: TripWalk.point(on: route, along: 55))
         let (harness, questions) = try await harness(passing: [own, theirs])
 
