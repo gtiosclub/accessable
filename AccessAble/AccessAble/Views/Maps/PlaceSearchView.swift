@@ -1,20 +1,34 @@
 import SwiftUI
 
 /// Owner: Maps (2.x). "Search Destination": a From / To card like a maps app (From is My
-/// Location unless another place is picked), category chips, live campus results from MapKit
-/// with the matched letters lit, then saved and recent places. Picking a result looks it up
-/// and opens it as a real `Destination`. From, saved and recent places are still samples.
+/// Location unless another place is picked), category chips, user-saved places first, live
+/// campus results from MapKit with the matched letters lit, and recent places. Picking a result
+/// looks it up and opens it as a real `Destination`.
 struct PlaceSearchView: View {
     @Environment(AppRouter.self) private var router
     @State private var search: PlaceSearchViewModel
     @State private var showsAllSaved = false
     @State private var showsAllRecents = false
+    @State private var confirmsClearRecents = false
+    @State private var renamingPlace: SavedPlace?
+    @State private var renameText = ""
     @FocusState private var focusedField: PlaceSearchViewModel.Field?
 
     private static let collapsedCount = 2
 
-    init(services: AppServices? = nil) {
-        _search = State(initialValue: PlaceSearchViewModel(services: services))
+    private var showsRenameAlert: Binding<Bool> {
+        Binding(
+            get: { renamingPlace != nil },
+            set: { if !$0 { renamingPlace = nil } }
+        )
+    }
+
+    init(services: AppServices? = nil, savedPlaces: SavedPlacesStore? = nil, recentPlaces: RecentPlacesStore? = nil) {
+        _search = State(initialValue: PlaceSearchViewModel(
+            services: services,
+            savedPlaces: savedPlaces,
+            recentPlaces: recentPlaces
+        ))
     }
 
     var body: some View {
@@ -31,22 +45,39 @@ struct PlaceSearchView: View {
                     categoryChips
                     if search.isFiltering {
                         filterSummary
+                        if !search.matchingSavedPlaces.isEmpty {
+                            savedPlacesSection(
+                                "Saved Places",
+                                places: search.matchingSavedPlaces,
+                                highlight: search.settledQuery,
+                                isExpanded: .constant(true)
+                            )
+                        }
                         resultsList
+                        if !search.matchingRecentPlaces.isEmpty {
+                            recentPlacesSection(
+                                "Recents",
+                                places: search.matchingRecentPlaces,
+                                highlight: search.settledQuery,
+                                isExpanded: .constant(true),
+                                showsClearAction: false
+                            )
+                        }
+                    } else {
+                        savedPlacesSection(
+                            "Saved Places",
+                            places: search.savedPlaces,
+                            highlight: "",
+                            isExpanded: $showsAllSaved
+                        )
+                        recentPlacesSection(
+                            "Recents",
+                            places: search.recentPlaces,
+                            highlight: "",
+                            isExpanded: $showsAllRecents,
+                            showsClearAction: true
+                        )
                     }
-                    placeSection(
-                        "Saved Locations",
-                        systemImage: "bookmark.fill",
-                        places: SampleContent.savedPlaces,
-                        isExpanded: $showsAllSaved,
-                        moreLabel: "More saved locations"
-                    )
-                    placeSection(
-                        "Recents",
-                        systemImage: "clock.arrow.circlepath",
-                        places: SampleContent.recentPlaces,
-                        isExpanded: $showsAllRecents,
-                        moreLabel: "More recent locations"
-                    )
                 }
             }
             .padding(.horizontal, 24)
@@ -67,6 +98,25 @@ struct PlaceSearchView: View {
         .onChange(of: search.selectedDestination) { _, destination in
             guard let destination else { return }
             router.push(.destination(destination, origin: search.origin.place))
+        }
+        .alert("Rename saved place", isPresented: showsRenameAlert) {
+            TextField("Label, e.g. Home or Class", text: $renameText)
+            Button("Save") { commitRename() }
+            Button("Cancel", role: .cancel) { renamingPlace = nil }
+        } message: {
+            if let renamingPlace {
+                Text("Leave blank to use \(renamingPlace.name).")
+            }
+        }
+        .alert("Clear recent places?", isPresented: $confirmsClearRecents) {
+            Button("Clear", role: .destructive) {
+                showsAllRecents = false
+                search.clearRecents()
+                AccessibilityNotification.Announcement("Cleared recent places").post()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("All recent destinations will be removed. Saved places stay.")
         }
     }
 
@@ -175,14 +225,14 @@ struct PlaceSearchView: View {
     }
 
     private var originName: String {
-        search.origin.place?.name ?? "My Location, \(search.locationDetail)"
+        search.origin.place?.displayName ?? "My Location, \(search.locationDetail)"
     }
 
     /// "My Location" with the street and accuracy, or the chosen place.
     private var originTag: some View {
         HStack(spacing: 8) {
             if let place = search.origin.place {
-                Text(place.name)
+                Text(place.displayName)
                     .font(.title3)
                     .lineLimit(1)
             } else {
@@ -268,19 +318,23 @@ struct PlaceSearchView: View {
                 search.originQuery.isEmpty ? "Saved places" : "Matches",
                 systemImage: search.originQuery.isEmpty ? "bookmark.fill" : "magnifyingglass"
             )
-            ForEach(search.originResults) { place in
-                PlaceRow(
-                    place: place,
+            ForEach(search.originSavedPlaces) { saved in
+                SavedPlaceRow(
+                    place: saved,
                     highlight: search.settledOriginQuery,
-                    distance: search.distanceText(to: place),
-                    hint: "Plans from here. A live trip still starts where you are."
-                ) {
-                    search.chooseOrigin(.place(place))
-                    focusedField = .destination
-                }
+                    distance: search.distanceText(to: saved),
+                    hint: "Plans from here. A live trip still starts where you are.",
+                    action: {
+                        search.chooseOrigin(.place(saved.asSamplePlace()))
+                        focusedField = .destination
+                    },
+                    onRename: { beginRename(saved) },
+                    onDelete: { deleteSavedPlace(saved) }
+                )
             }
             if search.originResults.isEmpty {
-                Text("No places match.").foregroundStyle(.white)
+                Text(search.originQuery.isEmpty ? "No saved places yet." : "No places match.")
+                    .foregroundStyle(.white)
             }
             Text("Walking directions start where you are. Another starting point is for looking at the route.")
                 .font(.footnote)
@@ -382,11 +436,12 @@ struct PlaceSearchView: View {
                         .buttonStyle(.pill(.outline, size: .compact))
                 }
             }
-            ForEach(search.suggestions) { suggestion in
+            ForEach(Array(search.suggestions.enumerated()), id: \.element.id) { index, suggestion in
                 SuggestionRow(
                     suggestion: suggestion,
                     highlight: search.settledQuery,
-                    isResolving: search.isResolving(suggestion)
+                    isResolving: search.isResolving(suggestion),
+                    spokenLabel: search.spokenLabel(for: suggestion, at: index)
                 ) {
                     search.select(suggestion)
                 }
@@ -424,35 +479,123 @@ struct PlaceSearchView: View {
             .accessibilityAddTraits(.isHeader)
     }
 
-    private func placeSection(
+    private func savedPlacesSection(
         _ title: String,
-        systemImage: String,
-        places: [SamplePlace],
-        isExpanded: Binding<Bool>,
-        moreLabel: String
+        places: [SavedPlace],
+        highlight: String,
+        isExpanded: Binding<Bool>
     ) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            sectionTitle(title, systemImage: systemImage)
-            ForEach(isExpanded.wrappedValue ? places : Array(places.prefix(Self.collapsedCount))) { place in
-                PlaceRow(place: place, distance: search.distanceText(to: place)) {
-                    router.push(.place(place, origin: search.origin.place))
+            sectionTitle(title, systemImage: "bookmark.fill")
+            if places.isEmpty {
+                Text("No saved places yet. Save a place from its details screen.")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.75))
+            } else {
+                ForEach(isExpanded.wrappedValue ? places : Array(places.prefix(Self.collapsedCount))) { saved in
+                    SavedPlaceRow(
+                        place: saved,
+                        highlight: highlight,
+                        distance: search.distanceText(to: saved),
+                        action: {
+                            router.push(.savedPlace(saved, origin: search.origin.place))
+                        },
+                        onRename: { beginRename(saved) },
+                        onDelete: { deleteSavedPlace(saved) }
+                    )
+                }
+                if places.count > Self.collapsedCount {
+                    Button {
+                        isExpanded.wrappedValue.toggle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(isExpanded.wrappedValue ? "Fewer locations" : "More saved places")
+                            Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+                                .accessibilityHidden(true)
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                        .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
-            if places.count > Self.collapsedCount {
-                Button {
-                    isExpanded.wrappedValue.toggle()
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(isExpanded.wrappedValue ? "Fewer locations" : moreLabel)
-                        Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
-                            .accessibilityHidden(true)
-                    }
-                    .font(.subheadline)
-                    .foregroundStyle(.white)
+        }
+        .padding(.top, 8)
+    }
+
+    private func beginRename(_ place: SavedPlace) {
+        renamingPlace = place
+        renameText = place.label ?? place.name
+    }
+
+    private func commitRename() {
+        guard let place = renamingPlace else { return }
+        search.savedPlacesStore.rename(id: place.id, to: renameText)
+        let updatedName = search.savedPlacesStore.savedPlace(id: place.id)?.displayName ?? place.displayName
+        renamingPlace = nil
+        AccessibilityNotification.Announcement("Renamed to \(updatedName)").post()
+    }
+
+    private func deleteSavedPlace(_ place: SavedPlace) {
+        let deletedName = place.displayName
+        search.savedPlacesStore.delete(id: place.id)
+        AccessibilityNotification.Announcement("Deleted \(deletedName)").post()
+    }
+
+    private func recentPlacesSection(
+        _ title: String,
+        places: [RecentPlace],
+        highlight: String,
+        isExpanded: Binding<Bool>,
+        showsClearAction: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                sectionTitle(title, systemImage: "clock.arrow.circlepath")
+                Spacer()
+                if showsClearAction && !places.isEmpty {
+                    Button("Clear recents") { confirmsClearRecents = true }
+                    .buttonStyle(.plain)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Theme.cyan)
                     .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
                     .contentShape(Rectangle())
+                    .accessibilityHint("Removes all recent destinations")
                 }
-                .buttonStyle(.plain)
+            }
+
+            if places.isEmpty {
+                Text("No recent destinations yet. Start a trip to add one.")
+                    .font(.subheadline)
+                    .foregroundStyle(.white.opacity(0.65))
+            } else {
+                ForEach(isExpanded.wrappedValue ? places : Array(places.prefix(Self.collapsedCount))) { place in
+                    RecentPlaceRow(
+                        place: place,
+                        highlight: highlight,
+                        distance: search.distanceText(to: place)
+                    ) {
+                        router.push(.place(place.asSamplePlace(), origin: search.origin.place))
+                    }
+                }
+                if places.count > Self.collapsedCount {
+                    Button {
+                        isExpanded.wrappedValue.toggle()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Text(isExpanded.wrappedValue ? "Fewer locations" : "More recent locations")
+                            Image(systemName: isExpanded.wrappedValue ? "chevron.up" : "chevron.down")
+                                .accessibilityHidden(true)
+                        }
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                        .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         .padding(.top, 8)
@@ -484,6 +627,7 @@ private struct SuggestionRow: View {
     let suggestion: SearchSuggestion
     var highlight = ""
     var isResolving = false
+    var spokenLabel: String?
     let action: () -> Void
 
     var body: some View {
@@ -520,7 +664,7 @@ private struct SuggestionRow: View {
         .buttonStyle(.plain)
         .disabled(isResolving)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([suggestion.title, suggestion.subtitle].filter { !$0.isEmpty }.joined(separator: ", "))
+        .accessibilityLabel(spokenLabel ?? [suggestion.title, suggestion.subtitle].filter { !$0.isEmpty }.joined(separator: ", "))
         .accessibilityValue(isResolving ? "Loading details" : "")
         .accessibilityHint("Opens this place")
         .accessibilityAddTraits(.isButton)
@@ -538,37 +682,46 @@ private struct SuggestionRow: View {
     }
 }
 
-private struct PlaceRow: View {
-    let place: SamplePlace
+private struct SavedPlaceRow: View {
+    let place: SavedPlace
     var highlight = ""
     var distance: String?
     var hint: String?
     let action: () -> Void
+    let onRename: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 16) {
                 ZStack {
                     PlaceThumbnail()
-                    Image(systemName: place.category.systemImage)
+                    Image(systemName: "bookmark.fill")
                         .font(.title2)
                         .foregroundStyle(Theme.navy)
                         .accessibilityHidden(true)
                 }
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(highlightedName)
+                    Text(highlightedTitle)
                         .font(.title3)
                         .multilineTextAlignment(.leading)
+                    if let subtitle = place.subtitle {
+                        Text(subtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.8))
+                            .lineLimit(1)
+                    }
+                    if let detailAddress = place.detailAddress {
+                        Text(detailAddress)
+                            .font(.caption)
+                            .foregroundStyle(.white.opacity(0.65))
+                            .lineLimit(1)
+                    }
                     if let distance {
                         Label(distance, systemImage: "figure.walk")
                             .font(.subheadline)
                             .foregroundStyle(.white.opacity(0.8))
                     }
-                    if place.recordedRouteCount > 0 {
-                        Text(recordedRoutesText)
-                            .font(.subheadline)
-                    }
-                    RatingView(rating: place.rating, reviewCount: place.reviewCount)
                 }
                 .foregroundStyle(.white)
                 Spacer(minLength: 0)
@@ -578,30 +731,91 @@ private struct PlaceRow: View {
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityText)
-        .accessibilityHint(hint ?? "")
+        .accessibilityHint(hint ?? "Opens saved place details")
         .accessibilityAddTraits(.isButton)
-    }
-
-    /// The name with the letters that matched the search lit in cyan.
-    private var highlightedName: AttributedString {
-        var name = AttributedString(place.name)
-        for range in PlaceSearchViewModel.matchedRanges(in: place.name, for: highlight) {
-            guard let attributed = Range(range, in: name) else { continue }
-            name[attributed].foregroundColor = Theme.cyan
-            name[attributed].inlinePresentationIntent = .stronglyEmphasized
+        .accessibilityAction(named: "Rename", onRename)
+        .accessibilityAction(named: "Delete", onDelete)
+        .contextMenu {
+            Button("Rename", systemImage: "pencil", action: onRename)
+            Button("Delete", systemImage: "trash", role: .destructive, action: onDelete)
         }
-        return name
     }
 
-    private var recordedRoutesText: String {
-        place.recordedRouteCount == 1 ? "1 recorded route" : "\(place.recordedRouteCount) recorded routes"
+    private var highlightedTitle: AttributedString {
+        var title = AttributedString(place.displayName)
+        for range in PlaceSearchViewModel.matchedRanges(in: place.displayName, for: highlight) {
+            guard let attributed = Range(range, in: title) else { continue }
+            title[attributed].foregroundColor = Theme.cyan
+            title[attributed].inlinePresentationIntent = .stronglyEmphasized
+        }
+        return title
     }
 
     private var accessibilityText: String {
-        var parts = [place.name]
+        var parts = [place.accessibilitySummary]
         if let distance { parts.append(distance.replacingOccurrences(of: " · ", with: ", ")) }
-        if place.recordedRouteCount > 0 { parts.append(recordedRoutesText) }
-        parts.append("rated \(place.rating.formatted(.number.precision(.fractionLength(1)))) out of 5, \(place.reviewCount) reviews")
+        return parts.joined(separator: ", ")
+    }
+}
+
+private struct RecentPlaceRow: View {
+    let place: RecentPlace
+    var highlight = ""
+    let distance: String?
+    let onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack(spacing: 16) {
+                ZStack {
+                    PlaceThumbnail()
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(Theme.cyan)
+                        .accessibilityHidden(true)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(highlightedTitle)
+                        .font(.title3.weight(.semibold))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    if let address = place.address, !address.isEmpty {
+                        Text(address)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.72))
+                            .lineLimit(2)
+                    }
+                    if let distance {
+                        Label(distance, systemImage: "figure.walk")
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.8))
+                    }
+                }
+                .foregroundStyle(.white)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHint("Opens place details")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    private var highlightedTitle: AttributedString {
+        var title = AttributedString(place.name)
+        for range in PlaceSearchViewModel.matchedRanges(in: place.name, for: highlight) {
+            guard let attributed = Range(range, in: title) else { continue }
+            title[attributed].foregroundColor = Theme.cyan
+            title[attributed].inlinePresentationIntent = .stronglyEmphasized
+        }
+        return title
+    }
+
+    private var accessibilityText: String {
+        var parts = [place.accessibilitySummary]
+        if let distance { parts.append(distance.replacingOccurrences(of: " · ", with: ", ")) }
         return parts.joined(separator: ", ")
     }
 }

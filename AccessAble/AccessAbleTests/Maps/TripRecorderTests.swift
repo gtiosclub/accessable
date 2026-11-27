@@ -87,6 +87,24 @@ struct TripRecorderTests {
     }
 
     @Test
+    func recordsAndListsInAFolderWithASpaceInItsName() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "Trip Recorder Tests \(UUID())/Trip Recordings")
+        defer { try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        let recorder = TripRecorder(directory: directory, battery: FakeBattery(level: nil), clock: ManualClock())
+        recorder.setEnabled(true)
+        recorder.tripStarted(at: start)
+        #expect(recorder.isRecording)
+        #expect(recorder.lastError == nil)
+        recorder.record(announcement: "Starting directions.", at: start)
+        await recorder.tripEnded(at: start).value
+
+        let recordings = try recorder.recordings()
+        #expect(recordings.map(\.lastPathComponent) == ["trip-2023-11-14T22-13-20Z.csv"])
+        #expect(try lines(of: try #require(recordings.first)).count == 2)
+    }
+
+    @Test
     func keepsRecordingsOutOfBackups() async throws {
         try await withRecorder { recorder in
             recorder.setEnabled(true)

@@ -21,7 +21,10 @@ final class TripViewModel {
     @ObservationIgnored private let services: AppServices
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let warnsOfPassedReports: @MainActor () -> Bool
+    @ObservationIgnored private let recentPlaces: RecentPlacesStore?
     @ObservationIgnored private var routeRequestedAt: Date?
+    /// Those `route` was found with, which the trip keeps to if the settings change before or during it.
+    @ObservationIgnored private var routePreferences = RoutePreferences()
     /// The resumed trip's next step, while `route` is its saved route.
     @ObservationIgnored private var resumingAtStep: Int?
     @ObservationIgnored private var latestPreciseFix: LocationSample?
@@ -44,14 +47,18 @@ final class TripViewModel {
     // older than this, the user has likely walked on from where the fix puts them
     private static let maximumReportFixAge: TimeInterval = 10
 
-    /// - Parameter warnsOfPassedReports: Whether a route that passes a report says so when it lands, asked then. The
-    ///   route picker's summary says which reports it passes, to VoiceOver only, so it asks for this without it.
+    /// - Parameters:
+    ///   - recentPlaces: Where the destination is recorded when the trip starts.
+    ///   - warnsOfPassedReports: Whether a route that passes a report says so when it lands, asked then. The route
+    ///     picker's summary says which reports it passes, to VoiceOver only, so it asks for this without it.
     init(
         services: AppServices,
+        recentPlaces: RecentPlacesStore? = nil,
         now: @escaping () -> Date = { .now },
         warnsOfPassedReports: @escaping @MainActor () -> Bool = { true }
     ) {
         self.services = services
+        self.recentPlaces = recentPlaces
         self.now = now
         self.warnsOfPassedReports = warnsOfPassedReports
     }
@@ -71,6 +78,7 @@ final class TripViewModel {
         destination = planned.destination
         route = planned.route
         routeRequestedAt = planned.requestedAt
+        routePreferences = planned.preferences
         resumingAtStep = planned.resumingAtStep
         routeError = nil
     }
@@ -88,7 +96,8 @@ final class TripViewModel {
     /// The route found so far, to hand on to the next screen.
     var plannedRoute: PlannedRoute? {
         guard let destination, let route, let routeRequestedAt else { return nil }
-        return PlannedRoute(destination: destination, route: route, requestedAt: routeRequestedAt)
+        return PlannedRoute(destination: destination, route: route, requestedAt: routeRequestedAt,
+                            preferences: routePreferences)
     }
 
     func retryRoute() {
@@ -223,7 +232,9 @@ final class TripViewModel {
         }
         // the destination or route may have changed during the refresh
         guard let route = self.route, let destination, tripState.phase == .planning else { return false }
-        await services.trip.startTrip(route: route, destination: destination, resumingAtStep: resumingAtStep)
+        await services.trip.startTrip(route: route, destination: destination, preferences: routePreferences,
+                                      resumingAtStep: resumingAtStep)
+        recentPlaces?.record(destination: destination)
         return true
     }
 
@@ -290,16 +301,18 @@ final class TripViewModel {
         routeTask = nil
         guard let destination, let origin = lastLocation else { return }
         let requestedAt = now()
+        let preferences = services.routePreferences.current
         routeTask = Task {
             // a finished request no longer blocks new ones; a cancelled one has already been replaced
             defer { if !Task.isCancelled { routeTask = nil } }
             do {
                 let route = try await services.routing.route(
-                    from: origin, to: destination.coordinate, options: RouteOptions()
+                    from: origin, to: destination.coordinate, options: preferences.routeOptions
                 )
                 guard !Task.isCancelled else { return }
                 self.route = route
                 routeRequestedAt = requestedAt
+                routePreferences = preferences
                 // a fresh route starts where the user is
                 resumingAtStep = nil
                 // a refresh for Start leaves the warnings to the trip's start announcement

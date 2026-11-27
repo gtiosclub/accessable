@@ -57,6 +57,8 @@ actor TripManager: TripStateProviding {
     private var resumedStart: ResumedStart?
     private var destination: Destination?
     private var route: NavigationRoute?
+    /// Those the trip started with, kept for its reroutes whatever the settings say now.
+    private var preferences = RoutePreferences()
     private var tracker: RouteProgressTracker?
     /// The current route's crossings, in the order the tracker's `.crossing` indices refer to.
     private var routeCrossings: [RouteCrossing] = []
@@ -218,7 +220,8 @@ actor TripManager: TripStateProviding {
         shownReports.stream()
     }
 
-    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async {
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {
         generation += 1
         let generation = generation
         cancelTasks()
@@ -229,6 +232,7 @@ actor TripManager: TripStateProviding {
         resumedStart = resumingAtStep.map { _ in .delayed }
         self.destination = destination
         self.route = route
+        self.preferences = preferences
         routeCrossings = RouteCrossings.along(route, crossings: campusCrossings())
         let tracker = RouteProgressTracker(route: route, startedAt: now(),
                                            crossings: routeCrossings.map(\.distanceAlongRoute),
@@ -537,7 +541,7 @@ actor TripManager: TripStateProviding {
         guard let savedTrips, let route, let destination, let progress else { return }
         savedTrips.save(SavedTrip(tripID: tripID, route: route, routeSource: route.source,
                                   destination: destination, passedStepCount: progress.nextStepIndex,
-                                  startedAt: tripStartedAt, savedAt: now()))
+                                  startedAt: tripStartedAt, savedAt: now(), preferences: preferences))
     }
 
     private var offRouteInstruction: String {
@@ -826,6 +830,8 @@ actor TripManager: TripStateProviding {
         if triggers.isEmpty { rerouteCount += 1 } else { reportRerouteCount += 1 }
         lastRerouteRequest = now()
         let version = routeVersion
+        var tripOptions = preferences.routeOptions
+        tripOptions.reports = triggers + others
         rerouteTask = Task { [routing] in
             // not after a pause that came first
             for announcement in announcements where !Task.isCancelled && self.phase == .active {
@@ -834,7 +840,7 @@ actor TripManager: TripStateProviding {
             let result: Result<NavigationRoute, any Error>
             do {
                 result = .success(try await routing.route(from: origin, to: destination.coordinate,
-                                                          options: RouteOptions(reports: triggers + others)))
+                                                          options: tripOptions))
             } catch {
                 result = .failure(error)
             }
@@ -881,7 +887,8 @@ actor TripManager: TripStateProviding {
             publishMapReports()
             subscribeToReports(along: newRoute, generation: generation)
             guard phase == .active else { return }
-            await submit(maneuver("New route. " + Self.reportWarning(on: newRoute) + sourceChange
+            await submit(maneuver("New route. " + preferenceWarning(on: newRoute) + Self.reportWarning(on: newRoute)
+                                      + sourceChange
                                       + departure(on: newRoute), .high, expiresIn: 15, key: "reroute"))
         case .failure(let error):
             guard !(error is CancellationError) else { return }
@@ -922,7 +929,7 @@ actor TripManager: TripStateProviding {
                 await announceResumedStart(on: route, to: destination)
             } else {
                 let text = "Starting directions to \(destination.name), \(spoken(route.totalDistance)). "
-                    + Self.reportWarning(on: route)
+                    + preferenceWarning(on: route) + Self.reportWarning(on: route)
                     + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "") + departure(on: route)
                 await submit(maneuver(text, .high, expiresIn: 15, key: "start"))
             }
@@ -948,7 +955,8 @@ actor TripManager: TripStateProviding {
     private func announceResumedStart(on route: NavigationRoute, to destination: Destination) async {
         let placement = tracker?.placement
         let remaining = placement == .onRoute ? progress.map { ", " + spoken($0.distanceRemaining) } : nil
-        var text = "Resuming directions to \(destination.name)\(remaining ?? ""). " + Self.reportWarning(on: route)
+        var text = "Resuming directions to \(destination.name)\(remaining ?? ""). " + preferenceWarning(on: route)
+            + Self.reportWarning(on: route)
             + (route.source == .appleMaps ? RouteSource.backupNotice + " " : "")
         if placement == .awaitingFix {
             resumedStart = .awaitingPlacement
@@ -1112,6 +1120,11 @@ actor TripManager: TripStateProviding {
                                         cumulativeDistances: route.cumulativeDistances)
         guard let direction = direction(to: target) else { return nil }
         return direction == .behind ? "Turn around, the path is behind you." : "The path is \(direction.phrase)."
+    }
+
+    /// Said before setting off on a route that still has stairs or elevators the trip's preferences asked to avoid.
+    private func preferenceWarning(on route: NavigationRoute) -> String {
+        RouteSummary.preferenceWarnings(on: route, preferences: preferences).map { $0 + " " }.joined()
     }
 
     /// Said before setting off on a route that passes reports it couldn't avoid.

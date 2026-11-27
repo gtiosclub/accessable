@@ -210,7 +210,7 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     @MainActor
     func resumeAfterCall(_ token: UUID) throws {
-        perception.reset()
+        resetPerceptionKeepingNavigation()
         try sessionManager.endCallCameraOwnership(token)
     }
 

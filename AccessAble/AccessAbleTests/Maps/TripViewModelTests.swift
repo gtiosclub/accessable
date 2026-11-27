@@ -86,6 +86,7 @@ private final class ControlledTripProvider: TripStateProviding, Sendable {
     private let states = Broadcaster<TripState>(replaysLatest: true)
     private let routes = Broadcaster<NavigationRoute?>(replaysLatest: true)
     private let started = Mutex<[NavigationRoute]>([])
+    private let preferences = Mutex<[RoutePreferences]>([])
 
     init(_ state: TripState = .idle) {
         states.send(state)
@@ -100,11 +101,14 @@ private final class ControlledTripProvider: TripStateProviding, Sendable {
     }
 
     var startedRoutes: [NavigationRoute] { started.withLock { $0 } }
+    var startedPreferences: [RoutePreferences] { preferences.withLock { $0 } }
 
     func tripStates() -> AsyncStream<TripState> { states.stream() }
     func tripRoutes() -> AsyncStream<NavigationRoute?> { routes.stream() }
-    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async {
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {
         started.withLock { $0.append(route) }
+        self.preferences.withLock { $0.append(preferences) }
     }
     func pauseTrip() async {}
     func resumeTrip() async {}
@@ -140,6 +144,7 @@ private struct ScriptedLocationProvider: LocationProvider {
 /// Answers every request with the same route and counts them. While holding, answers wait for `release()`.
 private actor CountingRouting: RoutingService {
     private(set) var requestCount = 0
+    private(set) var options: [RouteOptions] = []
     let route: NavigationRoute
     private var isHolding = false
     private var held: [CheckedContinuation<Void, Never>] = []
@@ -152,6 +157,7 @@ private actor CountingRouting: RoutingService {
         from origin: GeoCoordinate, to destination: GeoCoordinate, options: RouteOptions
     ) async throws -> NavigationRoute {
         requestCount += 1
+        self.options.append(options)
         if isHolding {
             await withCheckedContinuation { held.append($0) }
         }
@@ -207,6 +213,8 @@ private final class TripScreen {
     let trip: ControlledTripProvider
     let routing: CountingRouting
     let announcements = SubmittedAnnouncements()
+    private let preferencesSuite = "TripScreen-\(UUID())"
+    let preferences: RoutePreferencesStore
     let viewModel: TripViewModel
     private let clock = ManualDate()
     private var running: Task<Void, Never>?
@@ -214,20 +222,25 @@ private final class TripScreen {
     /// - Parameter trip: Pass another screen's to open this one on a trip already running.
     init(fixes: [GeoCoordinate] = [origin], accuracy: Double = 5,
          authorization: LocationAuthorization = .authorized(preciseAccuracy: true),
-         trip: ControlledTripProvider = ControlledTripProvider(), route: NavigationRoute = plannedRoute) {
+         trip: ControlledTripProvider = ControlledTripProvider(), route: NavigationRoute = plannedRoute,
+         recentPlaces: RecentPlacesStore? = nil) {
         self.trip = trip
         routing = CountingRouting(route: route)
         var services = AppServices.preview
         services.trip = trip
         services.routing = routing
         services.announcements = announcements
+        preferences = RoutePreferencesStore(defaults: UserDefaults(suiteName: preferencesSuite)!)
+        services.routePreferences = preferences
         let time = clock.now
         services.location = ScriptedLocationProvider(
             samples: fixes.map { LocationSample(coordinate: $0, horizontalAccuracy: accuracy, timestamp: time) },
             authorization: authorization
         )
-        viewModel = TripViewModel(services: services, now: { [clock] in clock.now })
+        viewModel = TripViewModel(services: services, recentPlaces: recentPlaces, now: { [clock] in clock.now })
     }
+
+    deinit { UserDefaults.standard.removePersistentDomain(forName: preferencesSuite) }
 
     func advance(by seconds: TimeInterval) {
         clock.advance(by: seconds)
@@ -276,6 +289,8 @@ private func state(_ phase: TripPhase, maneuver: Maneuver? = nil, distance: Doub
 
 private let turn = Maneuver(kind: .turnRight, instruction: "Turn right onto Ferst Drive.", coordinate: origin)
 
+private let stepFree = RoutePreferences(avoidStairs: true, walkingSpeed: .slow)
+
 @MainActor
 @Suite(.timeLimit(.minutes(1)))
 struct TripStartTests {
@@ -310,6 +325,18 @@ struct TripStartTests {
         await screen.viewModel.startTrip()
         #expect(await screen.routing.requestCount == 1)
         #expect(screen.trip.startedRoutes == [plannedRoute])
+        screen.stop()
+    }
+
+    @Test
+    func startingTheTripRecordsTheDestinationAsRecent() async {
+        let recents = RecentPlacesStore(places: [])
+        let screen = TripScreen(recentPlaces: recents)
+        await screen.plan()
+        #expect(recents.places.isEmpty)
+
+        #expect(await screen.viewModel.startTrip())
+        #expect(recents.places.map(\.name) == [library.name])
         screen.stop()
     }
 
@@ -515,6 +542,70 @@ struct TripStartTests {
 
         #expect(await screen.routing.requestCount == 2)
         #expect(await screen.announcements.texts == [RouteSource.backupNotice])
+        screen.stop()
+    }
+
+    @Test
+    func aBackupRouteWithPreferencesOnSaysTheNotice() async {
+        var route = plannedRoute
+        route.source = .appleMaps
+        let screen = TripScreen(route: route)
+        screen.preferences.update(stepFree)
+        await screen.plan()
+
+        while await screen.announcements.texts.isEmpty { await Task.yield() }
+        #expect(await screen.routing.options == [stepFree.routeOptions])
+        #expect(await screen.announcements.texts == [RouteSource.backupNotice])
+        screen.stop()
+    }
+
+    @Test
+    func theRouteIsFoundWithTheUsersPreferences() async {
+        let screen = TripScreen()
+        screen.preferences.update(stepFree)
+        await screen.plan()
+
+        #expect(await screen.routing.options == [stepFree.routeOptions])
+        #expect(screen.viewModel.plannedRoute?.preferences == stepFree)
+        screen.stop()
+    }
+
+    @Test
+    func theTripKeepsThePreferencesItsRouteWasFoundWith() async {
+        let screen = TripScreen()
+        screen.preferences.update(stepFree)
+        await screen.plan()
+        screen.preferences.update(RoutePreferences())
+
+        await screen.viewModel.startTrip()
+        screen.preferences.update(RoutePreferences(avoidSteepHills: true))
+
+        #expect(await screen.routing.requestCount == 1)
+        #expect(screen.trip.startedPreferences == [stepFree])
+        screen.stop()
+    }
+
+    @Test
+    func aHandedOnRouteStartsWithItsOwnPreferences() async {
+        let screen = TripScreen()
+        await screen.plan(using: PlannedRoute(destination: library, route: pickedRoute, requestedAt: screen.now,
+                                              preferences: stepFree))
+
+        await screen.viewModel.startTrip()
+        #expect(screen.trip.startedPreferences == [stepFree])
+        screen.stop()
+    }
+
+    @Test
+    func aRefreshForStartUsesTheCurrentPreferences() async {
+        let screen = TripScreen()
+        await screen.plan()
+        screen.preferences.update(stepFree)
+        screen.advance(by: 121)
+
+        await screen.viewModel.startTrip()
+        #expect(await screen.routing.options == [RouteOptions(), stepFree.routeOptions])
+        #expect(screen.trip.startedPreferences == [stepFree])
         screen.stop()
     }
 

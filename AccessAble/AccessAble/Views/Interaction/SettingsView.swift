@@ -28,24 +28,23 @@ struct SettingsView: View {
                 }
                 .padding(.leading, 8)
 
-                SettingsCard("Volunteer calls") {
-                    SettingsToggleRow("Flashlight on start", isOn: $viewModel.callerPreferences.flashlightOnStart)
-                        .accessibilityHint("Turns on the back camera light when a call connects, if this phone supports it")
-                    SettingsToggleRow("Critical obstacle alerts during calls", isOn: $viewModel.callerPreferences.criticalObstacleAlerts)
-                        .accessibilityHint("Allows critical obstacle announcements received during a call")
-                    SettingsRow {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Call announcement volume").foregroundStyle(.white).accessibilityHidden(true)
-                            Slider(value: $viewModel.callerPreferences.announcementVolume, in: CallerPreferences.minimumVolume...1, step: 0.1) {
-                                Text("Call announcement volume")
-                            }
-                            .accessibilityValue("\(Int((viewModel.callerPreferences.announcementVolume * 100).rounded())) percent")
-                            .accessibilityHint("Adjusts AccessAble's spoken call prompts, not the volunteer or VoiceOver")
-                        }
+                NavigationLink {
+                    RoutePreferencesView(store: app.services.routePreferences)
+                } label: {
+                    HStack {
+                        Text("Route preferences")
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .accessibilityHidden(true)
                     }
-                    Text("VoiceOver and the volunteer use system volume. Camera-based obstacle detection pauses while LiveKit owns the camera; this setting does not restart it.")
-                        .font(.footnote).foregroundStyle(.white).padding(.vertical, 12)
+                    .font(.body)
+                    .foregroundStyle(.white)
+                    .frame(minHeight: AccessibilityMetrics.minimumTapTarget)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 8)
+                .accessibilityHint("Stairs, hills, lighting and walking speed for your routes")
 
                 SettingsSectionTitle("Navigation Info Output")
                 SettingsCard("Auto Repeat Announcements") {
@@ -324,7 +323,7 @@ struct SettingsView: View {
 
 // MARK: - Styling
 
-private enum SettingsPalette {
+enum SettingsPalette {
     static let background = Color(red: 0.11, green: 0.16, blue: 0.23)
     static let card = Color(white: 0.29)
     static let done = Color(red: 0.22, green: 0.55, blue: 0.24)
@@ -344,7 +343,7 @@ private extension View {
     }
 }
 
-private struct SettingsSectionTitle: View {
+struct SettingsSectionTitle: View {
     let title: String
 
     init(_ title: String) { self.title = title }
@@ -375,7 +374,7 @@ private struct SettingsRow<Content: View>: View {
     }
 }
 
-private struct SettingsToggleRow: View {
+struct SettingsToggleRow: View {
     let title: String
     @Binding var isOn: Bool
 
@@ -394,7 +393,7 @@ private struct SettingsToggleRow: View {
     }
 }
 
-private struct SettingsPickerRow<Value: Hashable, Options: View>: View {
+struct SettingsPickerRow<Value: Hashable, Options: View>: View {
     let title: String
     @Binding var selection: Value
     var footnote: String?

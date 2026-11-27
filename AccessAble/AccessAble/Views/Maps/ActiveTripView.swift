@@ -19,8 +19,8 @@ struct ActiveTripView: View {
     @State private var reportsAfterCommands = false
     private let services: AppServices?
 
-    init(plan: TripPlan, services: AppServices? = nil) {
-        _session = State(initialValue: TripSessionViewModel(plan: plan, services: services))
+    init(plan: TripPlan, services: AppServices? = nil, recentPlaces: RecentPlacesStore? = nil) {
+        _session = State(initialValue: TripSessionViewModel(plan: plan, services: services, recentPlaces: recentPlaces))
         self.services = services
     }
 
@@ -95,18 +95,22 @@ struct ActiveTripView: View {
                 Color.black.opacity(0.55)
                     .ignoresSafeArea()
                     .accessibilityHidden(true)
-                TripPausedCard(
-                    isRecording: session.plan.isRecording,
-                    onContinue: { session.resume() },
-                    onExit: {
-                        session.exit()
-                        router.popToRoot()
-                    },
-                    onSettings: { router.push(.settings) },
-                    onCallHelp: { router.push(.callHelp) }
-                )
-                .padding(.horizontal, 24)
-                .frame(maxHeight: .infinity)
+                // scrolls at the largest text sizes, where the card is taller than the screen
+                ScrollView {
+                    TripPausedCard(
+                        isRecording: session.plan.isRecording,
+                        onContinue: { session.resume() },
+                        onExit: {
+                            session.exit()
+                            router.popToRoot()
+                        },
+                        onSettings: { router.push(.settings) },
+                        onCallHelp: { router.push(.callHelp) }
+                    )
+                    .padding(.horizontal, 24)
+                }
+                .defaultScrollAnchor(.center, for: .alignment)
+                .scrollBounceBehavior(.basedOnSize)
                 .transition(.scale(scale: 0.95).combined(with: .opacity))
             }
         }
@@ -255,8 +259,7 @@ struct ActiveTripView: View {
     private var background: some View {
         if session.showsMap {
             CampusMap(
-                routeLine: session.directions?.route?.coordinates.map(\.clCoordinate)
-                    ?? (services == nil ? SampleContent.sampleRouteLine : nil),
+                routeLine: session.directions?.route?.coordinates.map(\.clCoordinate),
                 destination: session.directions?.destination ?? Destination(
                     name: session.plan.place.name,
                     coordinate: GeoCoordinate(latitude: session.plan.place.latitude, longitude: session.plan.place.longitude)
@@ -271,8 +274,9 @@ struct ActiveTripView: View {
         }
     }
 
+    /// The recording badge has its own row: beside the switch, one of the two is cut off or wraps a letter a line.
     private var topBar: some View {
-        HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             if session.plan.isRecording {
                 Label("Recording", systemImage: "record.circle")
                     .font(.subheadline.weight(.semibold))
@@ -282,11 +286,13 @@ struct ActiveTripView: View {
                     .background(Theme.red, in: Capsule())
                     .accessibilityLabel("Recording route")
             }
-            Spacer(minLength: 0)
-            viewSwitch
-            Spacer(minLength: 0)
-            CircleIconButton(systemImage: "info", label: "Voice commands") {
-                showsCommands = true
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+                viewSwitch
+                Spacer(minLength: 0)
+                CircleIconButton(systemImage: "info", label: "Voice commands") {
+                    showsCommands = true
+                }
             }
         }
     }
@@ -320,25 +326,36 @@ struct RouteBlockedScreen: View {
             Color.black.opacity(0.85)
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
-            VStack(spacing: 0) {
-                Spacer()
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 88, weight: .semibold))
-                    .foregroundStyle(Theme.red)
-                    .accessibilityHidden(true)
-                Spacer()
-                RouteBlockedCard(
-                    postsAnnouncement: postsAnnouncement,
-                    onCallHelp: onCallHelp,
-                    onReroute: onReroute,
-                    onPause: onPause,
-                    onContinue: onContinue,
-                    onReport: onReport
-                )
+            // at the largest text sizes the card is taller than the screen, so it scrolls and the icon goes
+            ViewThatFits(in: .vertical) {
+                VStack(spacing: 0) {
+                    Spacer()
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 88, weight: .semibold))
+                        .foregroundStyle(Theme.red)
+                        .accessibilityHidden(true)
+                    Spacer()
+                    card
+                }
+                ScrollView {
+                    card
+                }
+                .defaultScrollAnchor(.bottom, for: .alignment)
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
+    }
+
+    private var card: some View {
+        RouteBlockedCard(
+            postsAnnouncement: postsAnnouncement,
+            onCallHelp: onCallHelp,
+            onReroute: onReroute,
+            onPause: onPause,
+            onContinue: onContinue,
+            onReport: onReport
+        )
     }
 }
 
@@ -404,6 +421,7 @@ struct RouteBlockedCard: View {
             VStack(spacing: 14) {
                 Text("Route Blocked Ahead")
                     .font(.title.bold())
+                    .multilineTextAlignment(.center)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityFocused($isTitleFocused)
                 Text("Something is blocking the path ahead. Would you like a safer route?")
@@ -436,13 +454,15 @@ struct RouteBlockedCard: View {
     }
 }
 
+#if DEBUG
 #Preview("Walking") {
     NavigationStack {
-        ActiveTripView(plan: TripPlan(place: SampleContent.places[0], route: nil, isRecording: false))
+        ActiveTripView(plan: TripPlan(place: MapsPreviewData.place, route: nil, isRecording: false))
     }
     .environment(AppRouter())
     .preferredColorScheme(.dark)
 }
+#endif
 
 #Preview("Paused card") {
     ZStack {

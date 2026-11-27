@@ -15,6 +15,9 @@ struct SavedTrip: Codable, Equatable, Sendable {
     var passedStepCount: Int
     var startedAt: Date
     var savedAt: Date
+    /// The trip's route preferences, so a resumed trip reroutes as it did. Nil in a file saved before trips had
+    /// them, whose trip used the defaults.
+    var preferences: RoutePreferences?
 }
 
 /// Keeps one `SavedTrip` as JSON in Application Support.
