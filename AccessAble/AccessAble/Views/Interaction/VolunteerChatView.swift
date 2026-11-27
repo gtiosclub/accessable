@@ -5,11 +5,13 @@ struct VolunteerChatView: View {
     @Environment(AppRouter.self) private var router
     let volunteer: Volunteer
     @State private var model: ChatViewModel
+    @State private var star: SaveStarModel
 
     init(volunteer: Volunteer, services: AppServices) {
         self.volunteer = volunteer
         _model = State(initialValue: ChatViewModel(
             service: services.chat, target: .volunteer(id: volunteer.id), partnerName: volunteer.name))
+        _star = State(initialValue: SaveStarModel(service: services.saves, personID: volunteer.id))
     }
 
     var body: some View {
@@ -24,10 +26,14 @@ struct VolunteerChatView: View {
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
+        .task { await star.start() }
+        .onChange(of: star.errorMessage) { _, text in
+            if let text { AccessibilityNotification.Announcement(text).post() }
+        }
     }
 
     private var header: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             Button { router.pop() } label: {
                 Image(systemName: "chevron.left")
                     .font(.title.weight(.semibold))
@@ -37,32 +43,36 @@ struct VolunteerChatView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Back")
 
-            HelperAvatar(isOnline: volunteer.isOnline, size: 64)
-            VStack(alignment: .leading, spacing: 4) {
+            PersonAvatar(isOnline: isOnline, size: 48)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(volunteer.name)
-                    .font(.title3.bold())
+                    .font(.headline)
                     .accessibilityAddTraits(.isHeader)
-                if !volunteer.availableUntil.isEmpty {
-                    Text(volunteer.availableUntil)
-                        .font(.subheadline)
-                }
+                Text(subtitle)
+                    .font(.footnote)
             }
             .foregroundStyle(.white)
             .accessibilityElement(children: .combine)
             Spacer()
-            CircleIconButton(
-                systemImage: "phone",
-                label: "Video call \(volunteer.name)",
-                fill: Theme.red,
-                foreground: .white,
-                diameter: 54
-            ) {
-                // The real call flow: consent screen first, then rings this volunteer.
-                router.push(.call(volunteer))
+            if isOnline {
+                CircleIconButton(systemImage: "phone.fill", label: "Video call \(volunteer.name)", diameter: 44) {
+                    // The real call flow: consent screen first, then rings this volunteer.
+                    router.push(.call(volunteer))
+                }
+            }
+            SaveStarButton(name: volunteer.name, isSaved: star.isSaved, isBusy: star.isBusy) {
+                Task { await star.toggle() }
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private var isOnline: Bool { volunteer.isReachable() }
+
+    private var subtitle: String {
+        if !volunteer.availableUntil.isEmpty { return volunteer.availableUntil }
+        return isOnline ? "Online now" : "Offline"
     }
 }
 

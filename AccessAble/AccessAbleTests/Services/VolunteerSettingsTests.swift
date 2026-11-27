@@ -186,3 +186,36 @@ private final class SettingsScreen: ScreenAwakeControlling {
     var awake = false
     func setAwake(_ awake: Bool) { self.awake = awake }
 }
+
+@MainActor
+struct VolunteerAvailabilityScheduleTests {
+    @Test func alwaysGoesOnlineAndIsSavedToTheProfile() async throws {
+        let h = SettingsHarness()
+        await h.start()
+        defer { h.stop() }
+        await h.model.setOnline(false)
+        for _ in 0..<50 where h.model.isOnline { await Task.yield() }
+        #expect(!h.model.isOnline)
+
+        await h.model.setAvailability(.always)
+
+        #expect(h.model.availability == .always)
+        #expect(h.model.message == "Availability saved.")
+        let saved = try await h.profiles.load(userID: h.profile.userID)
+        #expect(saved?.details.availability == .always)
+        for _ in 0..<50 where !h.model.isOnline { await Task.yield() }
+        #expect(h.model.isOnline)
+    }
+
+    @Test func manualKeepsTheTogglesChoice() async throws {
+        let h = SettingsHarness()
+        await h.start()
+        defer { h.stop() }
+        await h.model.setOnline(false)
+        for _ in 0..<50 where h.model.isOnline { await Task.yield() }
+        await h.model.setAvailability(.manual)
+        for _ in 0..<20 { await Task.yield() }
+        #expect(!h.model.isOnline)
+        #expect(h.model.availability == .manual)
+    }
+}

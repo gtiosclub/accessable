@@ -128,9 +128,17 @@ service cloud.firestore {
             && languages[i].size() <= 40 && languages[i].matches('.*[^ ].*'));
     }
 
+    // PROFILE-1: optional details shown on the Profile tab. Availability is a volunteer's schedule.
+    function isValidProfileDetails(data) {
+      return (!('location' in data) || (data.location is string && data.location.size() <= 80))
+        && (!('condition' in data) || (data.condition is string && data.condition.size() <= 200))
+        && (!('availability' in data) || data.availability in ['always', 'weekdays', 'manual']);
+    }
+
     function isValidUser(data) {
       return data.keys().hasAll(['role', 'displayName', 'languages', 'createdAt'])
-        && data.keys().hasOnly(['role', 'displayName', 'languages', 'createdAt'])
+        && data.keys().hasOnly(['role', 'displayName', 'languages', 'createdAt', 'location', 'condition', 'availability'])
+        && isValidProfileDetails(data)
         && data.role in ['caller', 'volunteer']
         && data.displayName is string && data.displayName.size() >= 1
         && data.displayName.size() <= 80 && data.displayName.matches('.*[^ ].*')
@@ -151,7 +159,7 @@ service cloud.firestore {
       allow update: if signedIn() && request.auth.uid == userId
         && isValidUser(request.resource.data)
         && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['role', 'displayName', 'languages']);
+             .hasOnly(['role', 'displayName', 'languages', 'location', 'condition', 'availability']);
       allow delete: if signedIn() && request.auth.uid == userId;
     }
     
@@ -356,6 +364,9 @@ service cloud.firestore {
       }
 
       allow get: if signedIn() && isParty();
+      // HISTORY-1: each side's own calls; the query must filter on the reader's id.
+      allow list: if signedIn() && request.query.limit <= 100
+        && (resource.data.callerId == request.auth.uid || resource.data.volunteerId == request.auth.uid);
 
       allow create: if signedIn()
         && request.resource.data.keys().hasAll(['callerId', 'volunteerId', 'status', 'roomName', 'createdAt', 'updatedAt'])
@@ -374,8 +385,11 @@ service cloud.firestore {
         && hasFreshReservation();
 
       allow update: if signedIn()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'acceptedAt'])
         && request.resource.data.updatedAt == request.time
+        // HISTORY-1: answering may stamp when the call began, once, at server time.
+        && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['acceptedAt'])
+            || (moves('ringing', 'accepted') && request.resource.data.acceptedAt == request.time))
         && (
           // Caller: skip or give up while ringing; hang up once accepted.
           (request.auth.uid == resource.data.callerId
@@ -391,49 +405,82 @@ service cloud.firestore {
 
     // CHAT-1: text chat between one caller and one volunteer. The id is `<callerId>_<volunteerId>`,
     // so who may read a chat is known before it exists, and nobody else can read or join it.
-    function isChatParty(chatId) {
-      let parts = chatId.split('_');
+    function isPairParty(pairId) {
+      let parts = pairId.split('_');
       return parts.size() == 2 && request.auth.uid in parts;
     }
 
-    // Only a caller starts a chat, with a volunteer account that hasn't been blocked. The names are
-    // projected here because neither side may read the other's users doc.
+    function firstNameOf(uid) {
+      return get(/databases/$(database)/documents/users/$(uid)).data.displayName.replace('^\\s+', '').split('\\s+')[0];
+    }
+
+    function isMutualSave(a, b) {
+      return exists(/databases/$(database)/documents/saves/$(a + '_' + b))
+        && exists(/databases/$(database)/documents/saves/$(b + '_' + a));
+    }
+
+    // A caller starts a chat with a volunteer account that hasn't been blocked; a volunteer may start
+    // one only once both have saved each other. The names are projected here because neither side
+    // may read the other's users doc.
     function isValidNewChat(chatId, data) {
       let name = data.get('callerFirstName', null);
       return data.keys().hasAll(['callerId', 'volunteerId', 'volunteerName', 'createdAt', 'updatedAt'])
         && data.keys().hasOnly(['callerId', 'volunteerId', 'volunteerName', 'callerFirstName', 'createdAt', 'updatedAt'])
-        && data.callerId == request.auth.uid
-        && data.volunteerId is string && data.volunteerId != data.callerId
+        && data.callerId is string && data.volunteerId is string && data.volunteerId != data.callerId
         && !data.callerId.matches('.*_.*') && !data.volunteerId.matches('.*_.*')
         && chatId == data.callerId + '_' + data.volunteerId
-        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'caller'
+        && get(/databases/$(database)/documents/users/$(data.callerId)).data.role == 'caller'
+        && (data.callerId == request.auth.uid
+            || (data.volunteerId == request.auth.uid && isMutualSave(data.callerId, data.volunteerId)))
         && isVolunteerAccount(data.volunteerId)
         && !blocked(data.callerId, data.volunteerId)
         && data.volunteerName == get(/databases/$(database)/documents/volunteers/$(data.volunteerId)).data.displayName
         && (!('callerFirstName' in data) || (name is string && name.size() > 0 && name.size() <= 80
-          && name == get(/databases/$(database)/documents/users/$(request.auth.uid))
-            .data.displayName.replace('^\\s+', '').split('\\s+')[0]))
+          && name == firstNameOf(data.callerId)))
         && data.createdAt == request.time
         && data.updatedAt == request.time;
     }
 
+    // SAVE-1: a caller starring a volunteer, or a volunteer starring a caller. The id is
+    // `<saverId>_<savedId>`, and either person may read it, so saves in both directions show each
+    // of them a mutual save. Both first names are projected, checked against the profiles.
+    match /saves/{saveId} {
+      allow get: if signedIn() && isPairParty(saveId);
+      allow list: if signedIn() && request.query.limit <= 200 && resource.data.saverId == request.auth.uid;
+      allow create: if signedIn()
+        && request.resource.data.keys().hasAll(['saverId', 'savedId', 'saverName', 'savedName', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['saverId', 'savedId', 'saverName', 'savedName', 'createdAt'])
+        && request.resource.data.saverId == request.auth.uid
+        && request.resource.data.savedId is string
+        && request.resource.data.savedId != request.auth.uid
+        && !request.auth.uid.matches('.*_.*') && !request.resource.data.savedId.matches('.*_.*')
+        && saveId == request.auth.uid + '_' + request.resource.data.savedId
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role
+          != get(/databases/$(database)/documents/users/$(request.resource.data.savedId)).data.role
+        && request.resource.data.saverName == firstNameOf(request.auth.uid)
+        && request.resource.data.savedName == firstNameOf(request.resource.data.savedId)
+        && request.resource.data.createdAt == request.time;
+      allow delete: if signedIn() && resource.data.saverId == request.auth.uid;
+      allow update: if false;
+    }
+
     match /chats/{chatId} {
-      allow get: if signedIn() && isChatParty(chatId);
+      allow get: if signedIn() && isPairParty(chatId);
       // A volunteer's inbox, or a caller's chats: the query must filter on the reader's own id.
       allow list: if signedIn() && request.query.limit <= 50
         && (resource.data.callerId == request.auth.uid || resource.data.volunteerId == request.auth.uid);
       allow create: if signedIn() && isValidNewChat(chatId, request.resource.data);
       // Only the inbox order moves, and only with a new message (checked by the message rule).
-      allow update: if signedIn() && isChatParty(chatId)
+      allow update: if signedIn() && isPairParty(chatId)
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])
         && request.resource.data.updatedAt == request.time;
       allow delete: if false;
 
       match /messages/{messageId} {
         // Readable before the chat exists, so the caller's screen can listen from the start.
-        allow get, list: if signedIn() && isChatParty(chatId);
+        allow get, list: if signedIn() && isPairParty(chatId);
         // Sent in one write with the chat's updatedAt, which also requires the chat to exist.
-        allow create: if signedIn() && isChatParty(chatId)
+        allow create: if signedIn() && isPairParty(chatId)
           && request.resource.data.keys().hasAll(['senderId', 'text', 'sentAt'])
           && request.resource.data.keys().hasOnly(['senderId', 'text', 'sentAt'])
           && request.resource.data.senderId == request.auth.uid

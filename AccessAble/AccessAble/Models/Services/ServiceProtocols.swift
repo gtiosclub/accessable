@@ -335,4 +335,18 @@ protocol UserProfileStore: Sendable {
     func load(userID: String) async throws -> UserProfile?
     func save(userID: String, role: UserRole, displayName: String,
               languages: [String]) async throws -> UserProfile
+    /// Updates the optional profile details of an existing profile (PROFILE-1).
+    func saveDetails(userID: String, details: ProfileDetails) async throws
+}
+
+/// Starring people (SAVE-1). A caller stars volunteers; a volunteer stars callers.
+protocol SavesService: Sendable {
+    /// Everyone the signed-in user has starred, with whether they starred back, replaced on each change.
+    func savedPeople() -> AsyncThrowingStream<[SavedPerson], Error>
+    func setSaved(_ saved: Bool, personID: String) async throws
+}
+
+/// The signed-in user's past calls (HISTORY-1), newest first.
+protocol CallHistoryProviding: Sendable {
+    func pastCalls(as role: UserRole) async throws -> [PastCall]
 }

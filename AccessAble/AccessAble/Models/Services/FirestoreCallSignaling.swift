@@ -135,8 +135,11 @@ struct FirestoreCallSignaling: CallSignaling {
                 guard call["status"] as? String == "ringing",
                       call["volunteerId"] as? String == me,
                       mine["ringingCallId"] as? String == callID else { return "taken" }
-                transaction.updateData(
-                    ["status": "accepted", "updatedAt": FieldValue.serverTimestamp()], forDocument: callRef)
+                // acceptedAt is when the call began, for call history (HISTORY-1).
+                transaction.updateData([
+                    "status": "accepted", "updatedAt": FieldValue.serverTimestamp(),
+                    "acceptedAt": FieldValue.serverTimestamp(),
+                ], forDocument: callRef)
                 transaction.updateData([
                     "inCall": true, "ringingCallId": NSNull(), "ringingSince": NSNull(),
                     "lastSeen": FieldValue.serverTimestamp(),

@@ -52,7 +52,7 @@ struct LandingView: View {
     
     private var volunteersButton: some View {
         Button {
-            router.push(.volunteers)
+            router.push(.callHelp)
         } label: {
             Label("Volunteers", systemImage: "person.2.fill")
         }

@@ -37,6 +37,9 @@ final class LiveKitVideoCallSession: VideoCallSession {
             .compactMap { $0.track as? VideoTrack }.first
     }
 
+    /// The caller's own camera, shown behind their call controls.
+    var localVideoTrack: VideoTrack? { cameraTrack }
+
     init(
         auth: any AuthService,
         pauseCamera: @escaping @MainActor () throws -> UUID?,
