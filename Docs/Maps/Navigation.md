@@ -10,6 +10,11 @@ How a trip is guided, in `AccessAble/AccessAble/Models/Maps/`:
 The doc comments and the constants in the code are the source of truth. Distances are metres along the route unless
 stated otherwise.
 
+## Place search
+
+At accessibility Dynamic Type sizes, the From/To card stacks the fields, places clear and dictation controls below each
+field, and puts Swap on its own row. The origin label and address can wrap without truncating at those sizes.
+
 ## Tracker
 
 The tracker is a pure struct. All time comes from fix timestamps, so a recorded walk always replays the same way. A
