@@ -28,14 +28,6 @@ private final class HeldAvailabilityCheck: Sendable {
     }
 }
 
-/// A date the test moves by hand.
-private final class ManualDate: Sendable {
-    private let date = Mutex(Date(timeIntervalSince1970: 1_000_000))
-
-    func now() -> Date { date.withLock { $0 } }
-    func advance(by interval: TimeInterval) { date.withLock { $0 += interval } }
-}
-
 private struct NoImageryHere: Error {}
 
 struct GeoTrackingTests {
@@ -265,7 +257,7 @@ struct GeoTrackingTests {
     @Test
     func theAnswerExpiresAndIsAskedAgain() {
         let date = ManualDate()
-        let manager = ARSessionManager(clock: ManualClock(), now: date.now)
+        let manager = ARSessionManager(clock: ManualClock(), now: { date.now })
         let held = HeldAvailabilityCheck()
         manager.refreshGeoAvailability(check: held.check)
         held.answer(true)

@@ -18,6 +18,8 @@ final class CommandViewModel {
     private(set) var lastReply: String?
     private(set) var isWorking = false
     let dictation = SpeechDictation()
+    /// Starts a call with a volunteer; set by the screen, which owns navigation.
+    @ObservationIgnored var onCallVolunteer: (() -> Void)?
 
     @ObservationIgnored private let services: AppServices
 
@@ -86,6 +88,12 @@ final class CommandViewModel {
         case .endTrip:
             await services.trip.endTrip()
             await reply("Trip ended.")
+        case .callVolunteer:
+            if let onCallVolunteer {
+                onCallVolunteer()
+            } else {
+                await reply("To call a volunteer, choose Call a volunteer on the Home screen.")
+            }
         case .ask(let question) where VisualQuestion.needsCamera(question):
             await askAboutCamera(question)
         case .ask(let question):

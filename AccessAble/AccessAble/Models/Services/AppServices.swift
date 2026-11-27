@@ -19,16 +19,29 @@ struct AppServices: Sendable {
     var locationContext: any LocationContextProviding
     var commands: any CommandInterpreting
     var auth: any AuthService
+    var reports: any ReportService = PlaceholderReportService()
     var userProfiles: any UserProfileStore = UnconfiguredUserProfileStore()
+    var callSafety: any CallSafetyService = UnavailableCallSettings()
+    var volunteerSettings: any VolunteerSettingsStore = UnavailableCallSettings()
+    var callerSettings = CallerSettings()
     /// False without REPORT-1's Firebase config; the app then runs without accounts, as before.
     var accountsAvailable = false
-    // TODO(CV LAND-1): ARSceneAnalyzer once it emits landmarks
+    /// True once a real report service is wired (REPORT-3); until then the trip screen offers no reporting.
+    var reportsAvailable = false
     var landmarks: any LandmarkObserving = PlaceholderLandmarkProvider()
-    // TODO(MATCH-x): replace these four placeholders with the real call services.
+    // Defaults for lightweight initializers; live() explicitly replaces every call dependency.
     var volunteers: any VolunteerDirectory = PlaceholderVolunteerDirectory()
     var presence: any PresenceService = PlaceholderPresenceService()
     var callSignaling: any CallSignaling = PlaceholderCallSignaling()
+    var incomingCalls: any IncomingCallProviding = PlaceholderIncomingCalls()
     var videoCall: any VideoCallSession = PlaceholderVideoCallSession()
+    /// Caller–volunteer text chat (CHAT-1); on this phone only without Firebase.
+    var chat: any ChatService = PlaceholderChatService()
+    /// Starred people (SAVE-1) and past calls (HISTORY-1) for the Call Help tabs.
+    var saves: any SavesService = PlaceholderSavesService()
+    var callHistory: any CallHistoryProviding = PlaceholderCallHistory()
+    /// Profile pictures (PROFILE-2).
+    var avatars: any AvatarStore = PlaceholderAvatarStore()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
     var askAISettings = AskAISettings()
@@ -40,13 +53,18 @@ struct AppServices: Sendable {
     var distanceSettings = DistanceSettings()
     /// Field-test recording of trips, off until turned on in Developer Tools.
     var tripRecorder = TripRecorder()
+    /// The trip in progress, kept for resuming after the app closes; nil where trips aren't kept.
+    var savedTrips: SavedTripStore?
+    /// The user's route choices, synced with their account where accounts are available.
+    var routePreferences = RoutePreferencesStore()
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor
     static func live(performance: PerformanceModeMonitor) -> AppServices {
         // One renderer, so the engine's haptics and anyone else's replace each other rather than overlap.
         let haptics = CoreHapticsRenderer()
-        let announcements = AnnouncementEngine(speech: SpeechOutput(), haptics: haptics)
+        let callerSettings = CallerSettings()
+        let announcements = AnnouncementEngine(speech: SpeechOutput(), haptics: haptics, callSettings: callerSettings)
         let askAISettings = AskAISettings()
         let alertSettings = AlertSettings()
         let distanceSettings = DistanceSettings()
@@ -68,7 +86,11 @@ struct AppServices: Sendable {
             scene: scene,
             sceneDescriber: scene,
             location: location,
-            routing: ValhallaRoutingService(),
+            // Apple Maps when every Valhalla server fails or is slow; its routes don't know about stairs, so the user is told
+            routing: FallbackRoutingService(
+                primaries: RoutingConfig.servers.map { ValhallaRoutingService(endpoint: $0) },
+                fallback: AppleMapsRoutingService()
+            ),
             destinationSearch: DestinationAutocompleter(region: .georgiaTech),
             trip: trip,
             tripActivity: ActivityKitTripActivityClient(),
@@ -76,23 +98,71 @@ struct AppServices: Sendable {
             locationContext: LocationDescriber(location: gps, distances: distanceSettings),
             commands: FoundationModelCommandInterpreter(),
             auth: FirebaseApp.app() != nil ? FirebaseAuthService() : PlaceholderAuthService(signedIn: false),
+            callerSettings: callerSettings,
             askAISettings: askAISettings,
             alertSettings: alertSettings,
             distanceSettings: distanceSettings
         )
+        let unavailable = UnavailableCallServices(message: "Calls require the shared Firebase configuration on this phone.")
+        services.volunteers = unavailable
+        services.presence = unavailable
+        services.callSignaling = unavailable
+        services.incomingCalls = unavailable
         services.geoTracking = geoTracking
+        if let analyzer = scene as? ARSceneAnalyzer {
+            let perception = analyzer.perception
+            services.landmarks = CameraLandmarkProvider(
+                scene: analyzer,
+                setReadsText: { perception.setReadsLandmarkText($0) },
+                // Find and Read speak the signs SignInterpreter knows, so Maps doesn't name them again
+                isAnnouncedByCamera: { perception.mode.announcesSigns && SignInterpreter.interpret($0) != nil }
+            )
+        }
         if FirebaseApp.app() != nil {
+            services.reports = FirestoreReportService(auth: services.auth)
+            services.reportsAvailable = true
+            services.routing = ReportAwareRoutingService(base: services.routing, reports: services.reports)
             services.userProfiles = FirestoreUserProfileStore()
+            services.routePreferences = RoutePreferencesStore(sync: FirestoreRoutePreferencesStore())
+            services.callSafety = FirestoreCallSafety(auth: services.auth)
+            services.volunteerSettings = FirestoreVolunteerSettings(auth: services.auth)
             services.volunteers = FirestoreVolunteerDirectory()
+            services.chat = FirestoreChatService(auth: services.auth)
+            services.saves = FirestoreSavesService(auth: services.auth)
+            services.callHistory = FirestoreCallHistory(auth: services.auth)
+            services.avatars = FirestoreAvatarStore(auth: services.auth)
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
+            if let tokenURL = LiveKitConfig.callTokenURL {
+                services.callSignaling = FirestoreCallSignaling(auth: services.auth, tokenURL: tokenURL)
+                services.incomingCalls = FirestoreIncomingCalls(presence: services.presence)
+            } else {
+                // Without the token Worker nobody can place or accept a call, so a volunteer can't go
+                // Online either: they would be rung for calls whose Accept can only fail.
+                let unconfigured = UnavailableCallServices(
+                    message: CallSignalingError.notConfigured.localizedDescription)
+                services.presence = unconfigured
+                services.callSignaling = unconfigured
+                services.incomingCalls = unconfigured
+            }
         }
+        services.savedTrips = SavedTripStore()
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
+            reports: services.reportsAvailable ? services.reports : nil,
             landmarks: services.landmarks,
             setTripTracking: { await gps.setTripTracking($0) },
             distances: distanceSettings,
-            recorder: services.tripRecorder
+            recorder: services.tripRecorder,
+            savedTrips: services.savedTrips,
+            battery: BatteryMonitor(battery: DeviceBattery())
+        )
+
+        let analyzer = scene as? ARSceneAnalyzer
+        services.videoCall = LiveKitVideoCallSession(
+            auth: services.auth,
+            pauseCamera: { try analyzer?.pauseForCall() },
+            resumeCamera: { try analyzer?.resumeAfterCall($0) }
         )
         return services
     }
@@ -125,28 +195,36 @@ struct AppServices: Sendable {
     /// For SwiftUI previews and unit tests.
     @MainActor
     static var preview: AppServices {
-        var services = live(performance: PerformanceModeMonitor())
-        // Nor speak aloud: tests build many of these at once, and real speech from several of them has frozen
-        // the whole test run inside the system's speech framework.
-        services.announcements = PlaceholderAnnouncementEngine()
-        // Previews and tests must not reach the network or spend the public server's fair-use budget.
-        services.routing = PlaceholderRoutingService()
-        // A real trip would start GPS tracking and background location from a preview or test.
-        services.trip = PlaceholderTripProvider()
-        // Nor put a trip on the simulator's lock screen.
-        services.tripActivity = PlaceholderTripActivityClient()
-        // Nor wait on GPS and Apple Maps for "where am I".
-        services.locationContext = PlaceholderTripProvider()
-        // Wording that doesn't change with the simulator's region.
+        let scene = PlaceholderSceneProvider()
+        let callerSettings = CallerSettings()
+        // Construct previews directly: never initialize Firebase listeners, LiveKit, GPS or speech.
+        var services = AppServices(
+            announcements: PlaceholderAnnouncementEngine(callSettings: callerSettings), haptics: PlaceholderHaptics(),
+            performance: PerformanceModeMonitor(), scene: scene, sceneDescriber: scene,
+            location: PlaceholderLocationProvider(), routing: PlaceholderRoutingService(),
+            destinationSearch: PlaceholderDestinationSearch(), trip: PlaceholderTripProvider(),
+            tripActivity: PlaceholderTripActivityClient(), locationContext: PlaceholderTripProvider(),
+            commands: FoundationModelCommandInterpreter(), auth: PlaceholderAuthService()
+        )
         services.distanceSettings = DistanceSettings(units: .metres)
-        // Nor sign in to the real Firebase project.
-        services.auth = PlaceholderAuthService()
+        services.callerSettings = callerSettings
+        services.callSafety = PlaceholderCallSafety()
+        services.volunteerSettings = PlaceholderVolunteerSettings()
         services.userProfiles = PlaceholderUserProfileStore(profiles: [
             UserProfile(userID: PlaceholderAuthService.sampleUser.id, role: .caller,
                         displayName: "Preview caller", languages: ["English"], createdAt: .now)
         ])
+        services.routePreferences = RoutePreferencesStore(
+            defaults: UserDefaults(suiteName: "preview-routePreferences") ?? .standard,
+            sync: PlaceholderRoutePreferencesSync())
         services.volunteers = PlaceholderVolunteerDirectory()
         services.presence = PlaceholderPresenceService()
+        services.videoCall = PlaceholderVideoCallSession()
+        services.callSignaling = PlaceholderCallSignaling()
+        services.incomingCalls = PlaceholderIncomingCalls()
+        // Reports stay in memory, so previews and tests can report a problem.
+        services.reports = PlaceholderReportService()
+        services.reportsAvailable = true
         return services
     }
 }

@@ -53,22 +53,25 @@ struct TripSessionViewModelTests {
         #expect(session.announcements.first?.text == "Note 2")
     }
 
-    @Test
+    // a timer that never fires fails the test instead of hanging the run
+    @Test(.timeLimit(.minutes(1)))
     func barsFadeAwayAfterTheirLifetime() async throws {
-        // Lifetimes far apart, so a busy test machine can't blur them.
+        let clock = ManualClock()
         let session = TripSessionViewModel(
-            plan: plan, warningLifetime: .milliseconds(50), infoLifetime: .seconds(30)
+            plan: plan, warningLifetime: .seconds(8), infoLifetime: .seconds(12), clock: clock
         )
         session.add(TripAnnouncement(text: "Pillar ahead", kind: .warning))
         session.add(TripAnnouncement(text: "Turn left", kind: .info))
-        try await Task.sleep(for: .seconds(1))
+        try await clock.waitForSleepers(2)
+
         // The warning has gone; the direction lasts longer.
+        clock.advance(by: .seconds(8) + .milliseconds(1))
+        while session.announcements.count > 1 { await Task.yield() }
         #expect(session.announcements.map(\.text) == ["Turn left"])
 
-        let directions = TripSessionViewModel(plan: plan, infoLifetime: .milliseconds(50))
-        directions.add(TripAnnouncement(text: "Turn left", kind: .info))
-        try await Task.sleep(for: .seconds(1))
-        #expect(directions.announcements.isEmpty)
+        clock.advance(by: .seconds(4))
+        while !session.announcements.isEmpty { await Task.yield() }
+        #expect(session.announcements.isEmpty)
     }
 
     @Test
@@ -86,6 +89,60 @@ struct TripSessionViewModelTests {
         #expect(TripSessionViewModel.asksToRepeat("Repeat") == false)
         #expect(TripSessionViewModel.asksToRepeat("say that again") == false)
         #expect(TripSessionViewModel.asksToRepeat("Is there a warning sign?") == nil)
+    }
+
+    @Test(arguments: [
+        ("Report construction.", ReportKind.construction),
+        ("report a work zone", .construction),
+        ("Report road work", .construction),
+        ("report roadwork, please", .construction),
+        ("Report blocked path", .blockedPath),
+        ("report something blocking the sidewalk", .blockedPath),
+        ("Report an obstruction", .blockedPath),
+        ("report obstacle", .blockedPath),
+        ("Report closed entrance", .closedEntrance),
+        ("report the door is locked", .closedEntrance),
+        ("Report doorway closed", .closedEntrance),
+        ("Report elevator", .elevatorOut),
+        ("report the lift is out", .elevatorOut),
+        ("Report other.", .other),
+        ("report other problem", .other),
+        ("Report something else", .other),
+        ("I want to report construction", .construction),
+        ("Please report blocked path", .blockedPath),
+        ("I\u{2019}d like to report a closed entrance.", .closedEntrance),
+        ("i need to report the elevator", .elevatorOut),
+        ("Can I report something else?", .other),
+        ("REPORT   construction", .construction),
+        ("Okay, report construction", .construction),
+        ("I would like to report a blocked path", .blockedPath),
+        ("Report the elevator door is closed", .elevatorOut),
+    ])
+    func reportCommandsNameTheirKind(_ text: String, kind: ReportKind) {
+        #expect(TripSessionViewModel.reportCommand(for: text) == .kind(kind))
+    }
+
+    /// A closed entrance is often blocked too; it is reported as the closed entrance.
+    @Test
+    func aClosedEntranceIsNotABlockedPath() {
+        #expect(TripSessionViewModel.reportCommand(for: "Report blocked entrance, it's closed") == .kind(.closedEntrance))
+        #expect(TripSessionViewModel.reportCommand(for: "Report blocked entrance") == .kind(.blockedPath))
+    }
+
+    @Test(arguments: ["Report a problem", "Report.", "report", "I want to report"])
+    func aReportWithoutAKindIsUnknown(_ text: String) {
+        #expect(TripSessionViewModel.reportCommand(for: text) == .unknown)
+    }
+
+    @Test(arguments: [
+        "What does this report say?",
+        "Is there a construction sign?",
+        "reporter on the corner",
+        "Describe surroundings",
+        "",
+    ])
+    func otherWordsAreNotAReport(_ text: String) {
+        #expect(TripSessionViewModel.reportCommand(for: text) == nil)
     }
 
     @Test
@@ -169,40 +226,6 @@ struct AppRouterTests {
         let router = AppRouter()
         router.pop()
         #expect(router.path.isEmpty)
-    }
-}
-
-struct SampleContentSearchTests {
-    @Test
-    func emptyQueryWithoutCategoryFindsNothing() {
-        #expect(SampleContent.search("  ", category: nil).isEmpty)
-    }
-
-    @Test
-    func buildingInitialsMatch() {
-        let names = SampleContent.search("CULC", category: nil).map(\.name)
-        #expect(names.contains("Clough Undergraduate Learning Commons"))
-        #expect(names.contains("CULC Room 152"))
-    }
-
-    @Test
-    func categoryAloneFiltersPlaces() {
-        let parks = SampleContent.search("", category: .parks)
-        #expect(!parks.isEmpty)
-        #expect(parks.allSatisfy { $0.category == .parks })
-    }
-
-    @Test
-    func queryAndCategoryCombine() {
-        let results = SampleContent.search("North", category: .publicTransit)
-        #expect(results.map(\.id) == ["na-station"])
-    }
-
-    @Test
-    func recordedRoutesAlwaysOfferAtLeastOne() {
-        let place = SampleContent.places.first { $0.recordedRouteCount == 0 }!
-        #expect(SampleContent.routes(to: place, mode: .recorded).count == 1)
-        #expect(SampleContent.routes(to: place, mode: .new).count == 3)
     }
 }
 

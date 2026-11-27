@@ -12,10 +12,15 @@ struct ActiveTripView: View {
     @Environment(AppRouter.self) private var router
     @State private var session: TripSessionViewModel
     @State private var showsCommands = false
+    /// Where a report goes, set by the button that opens the choices, so it is what that button said.
+    @State private var reportSource: ReportSource?
+    /// Report was tried from Voice Commands: its choices open once the sheet has closed, since a
+    /// dialog can't open while the sheet is still going.
+    @State private var reportsAfterCommands = false
     private let services: AppServices?
 
-    init(plan: TripPlan, services: AppServices? = nil) {
-        _session = State(initialValue: TripSessionViewModel(plan: plan, services: services))
+    init(plan: TripPlan, services: AppServices? = nil, recentPlaces: RecentPlacesStore? = nil) {
+        _session = State(initialValue: TripSessionViewModel(plan: plan, services: services, recentPlaces: recentPlaces))
         self.services = services
     }
 
@@ -38,10 +43,23 @@ struct ActiveTripView: View {
                         .accessibilityAddTraits(.updatesFrequently)
                 }
 
+                if session.isReportingAvailable {
+                    Button("Report a problem here") {
+                        reportSource = .here
+                    }
+                    .buttonStyle(.pill(.outline, size: .compact))
+                    .accessibilityHint("Choose the problem at your location")
+                }
+
                 Spacer()
 
                 AnnouncementStack(announcements: session.announcements)
                     .padding(.horizontal, 24)
+                if let question = session.reportQuestion {
+                    reportQuestionBar(question)
+                        .padding(.horizontal, 24)
+                        .transition(.opacity)
+                }
                 if let state = voiceState {
                     voiceCaption(state)
                         .padding(.horizontal, 24)
@@ -51,7 +69,12 @@ struct ActiveTripView: View {
                     isMicMuted: session.isMicOff,
                     onCallHelp: { router.push(.callHelp) },
                     onMicrophone: { Task { await session.toggleMicrophone() } },
-                    onPauseTrip: { session.pause() }
+                    onPauseTrip: { session.pause() },
+                    hasArrived: session.hasArrived,
+                    onEndTrip: {
+                        session.exit()
+                        router.popToRoot()
+                    }
                 )
             }
             .accessibilityHidden(session.isRouteBlocked || session.isPaused)
@@ -62,7 +85,8 @@ struct ActiveTripView: View {
                     onCallHelp: { router.push(.callHelp) },
                     onReroute: { session.reroute() },
                     onPause: { session.pause() },
-                    onContinue: { session.resume() }
+                    onContinue: { session.resume() },
+                    onReport: session.isReportingAvailable ? { reportSource = .routeAhead } : nil
                 )
                 .transition(.opacity)
             }
@@ -71,18 +95,22 @@ struct ActiveTripView: View {
                 Color.black.opacity(0.55)
                     .ignoresSafeArea()
                     .accessibilityHidden(true)
-                TripPausedCard(
-                    isRecording: session.plan.isRecording,
-                    onContinue: { session.resume() },
-                    onExit: {
-                        session.exit()
-                        router.popToRoot()
-                    },
-                    onSettings: { router.push(.settings) },
-                    onCallHelp: { router.push(.callHelp) }
-                )
-                .padding(.horizontal, 24)
-                .frame(maxHeight: .infinity)
+                // scrolls at the largest text sizes, where the card is taller than the screen
+                ScrollView {
+                    TripPausedCard(
+                        isRecording: session.plan.isRecording,
+                        onContinue: { session.resume() },
+                        onExit: {
+                            session.exit()
+                            router.popToRoot()
+                        },
+                        onSettings: { router.push(.settings) },
+                        onCallHelp: { router.push(.callHelp) }
+                    )
+                    .padding(.horizontal, 24)
+                }
+                .defaultScrollAnchor(.center, for: .alignment)
+                .scrollBounceBehavior(.basedOnSize)
                 .transition(.scale(scale: 0.95).combined(with: .opacity))
             }
         }
@@ -94,9 +122,10 @@ struct ActiveTripView: View {
             session.showsMap.toggle()
         }
         .animation(.easeInOut(duration: 0.2), value: voiceState)
+        .animation(.easeInOut(duration: 0.2), value: session.reportQuestion)
         .toolbar(.hidden, for: .navigationBar)
         .task {
-            session.onCallHelp = { router.push(.callHelp) }
+            session.onCallHelp = { router.push(.call(nil)) }
             await session.run()
         }
         .onChange(of: session.latestAnnouncement) { _, announcement in
@@ -105,20 +134,51 @@ struct ActiveTripView: View {
             guard let announcement, !session.isSpokenByEngine else { return }
             AccessibilityNotification.Announcement(announcement.text).post()
         }
-        .sheet(isPresented: $showsCommands) {
+        .confirmationDialog(
+            "What kind of problem?",
+            isPresented: Binding(get: { reportSource != nil }, set: { if !$0 { reportSource = nil } }),
+            titleVisibility: .visible,
+            presenting: reportSource
+        ) { source in
+            ForEach(ReportKind.allCases) { kind in
+                Button(kind.title) {
+                    Task { await session.submitReport(kind: kind, useRouteAhead: source == .routeAhead) }
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { source in
+            Text(source == .routeAhead
+                 ? "Choose the problem just ahead on your route."
+                 : "Choose the problem at your location.")
+        }
+        .sheet(isPresented: $showsCommands, onDismiss: {
+            guard reportsAfterCommands else { return }
+            reportsAfterCommands = false
+            reportSource = .here
+        }) {
             VoiceCommandsSheet(
                 onTry: { command in
                     showsCommands = false
-                    if !session.run(command), command == .callHelp {
-                        router.push(.callHelp)
+                    guard !session.run(command) else { return }
+                    switch command {
+                    case .callHelp: router.push(.callHelp)
+                    case .reportProblem: reportsAfterCommands = true
+                    default: break
                     }
                 },
                 onSimulateBlockedRoute: {
                     showsCommands = false
                     session.simulateBlockedRoute()
-                }
+                },
+                listsReport: session.isReportingAvailable
             )
         }
+    }
+
+    /// Where the person is, or just ahead on the route (from Route Blocked Ahead).
+    private enum ReportSource {
+        case here
+        case routeAhead
     }
 
     private enum VoiceState: Equatable {
@@ -163,30 +223,60 @@ struct ActiveTripView: View {
         .accessibilityHidden(true)
     }
 
+    /// Yes and No for the report question that was just said, while its answer is waited for. Not a dialog, so the
+    /// trip screen stays usable and the question goes away by itself.
+    private func reportQuestionBar(_ question: OpenReportQuestion) -> some View {
+        VStack(spacing: 10) {
+            Text(question.text)
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.white)
+                .multilineTextAlignment(.center)
+                // said aloud already; the buttons carry it for VoiceOver
+                .accessibilityHidden(true)
+            HStack(spacing: 12) {
+                Button("Yes") { Task { await session.answer(question, isStillPresent: true) } }
+                    .buttonStyle(.pill(.primary, size: .compact))
+                    .accessibilityLabel("Yes, still there")
+                    .accessibilityHint(question.text)
+                Button("No") { Task { await session.answer(question, isStillPresent: false) } }
+                    .buttonStyle(.pill(.outline, size: .compact))
+                    .accessibilityLabel("No, it's gone")
+                    .accessibilityHint(question.text)
+            }
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(.black.opacity(0.75), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(.white.opacity(0.4)))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(question.text)
+    }
+
     /// The live camera, or the map with the real route once there is one. Leaving the camera
     /// view doesn't stop obstacle warnings: the session holds the camera for the whole trip.
     @ViewBuilder
     private var background: some View {
         if session.showsMap {
             CampusMap(
-                routeLine: session.directions?.route?.coordinates.map(\.clCoordinate)
-                    ?? (services == nil ? SampleContent.sampleRouteLine : nil),
+                routeLine: session.directions?.route?.coordinates.map(\.clCoordinate),
                 destination: session.directions?.destination ?? Destination(
                     name: session.plan.place.name,
                     coordinate: GeoCoordinate(latitude: session.plan.place.latitude, longitude: session.plan.place.longitude)
                 ),
-                accessibilityLabel: session.directions?.mapAccessibilityLabel
-                    ?? "Map showing walking directions to \(session.destinationName)."
+                accessibilityLabel: session.mapAccessibilityLabel,
+                reports: session.mapReports
             )
-        } else if let services {
+        } else if let services, session.isCameraReady {
             LiveSceneView(services: services, mode: .walk, chrome: .cameraOnly)
         } else {
             CameraBackdrop()
         }
     }
 
+    /// The recording badge has its own row: beside the switch, one of the two is cut off or wraps a letter a line.
     private var topBar: some View {
-        HStack(spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             if session.plan.isRecording {
                 Label("Recording", systemImage: "record.circle")
                     .font(.subheadline.weight(.semibold))
@@ -196,11 +286,13 @@ struct ActiveTripView: View {
                     .background(Theme.red, in: Capsule())
                     .accessibilityLabel("Recording route")
             }
-            Spacer(minLength: 0)
-            viewSwitch
-            Spacer(minLength: 0)
-            CircleIconButton(systemImage: "info", label: "Voice commands") {
-                showsCommands = true
+            HStack(spacing: 12) {
+                Spacer(minLength: 0)
+                viewSwitch
+                Spacer(minLength: 0)
+                CircleIconButton(systemImage: "info", label: "Voice commands") {
+                    showsCommands = true
+                }
             }
         }
     }
@@ -226,30 +318,44 @@ struct RouteBlockedScreen: View {
     let onReroute: () -> Void
     let onPause: () -> Void
     let onContinue: () -> Void
+    /// Nil hides the report button, where reporting isn't available.
+    let onReport: (() -> Void)?
 
     var body: some View {
         ZStack(alignment: .bottom) {
             Color.black.opacity(0.85)
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
-            VStack(spacing: 0) {
-                Spacer()
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 88, weight: .semibold))
-                    .foregroundStyle(Theme.red)
-                    .accessibilityHidden(true)
-                Spacer()
-                RouteBlockedCard(
-                    postsAnnouncement: postsAnnouncement,
-                    onCallHelp: onCallHelp,
-                    onReroute: onReroute,
-                    onPause: onPause,
-                    onContinue: onContinue
-                )
+            // at the largest text sizes the card is taller than the screen, so it scrolls and the icon goes
+            ViewThatFits(in: .vertical) {
+                VStack(spacing: 0) {
+                    Spacer()
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 88, weight: .semibold))
+                        .foregroundStyle(Theme.red)
+                        .accessibilityHidden(true)
+                    Spacer()
+                    card
+                }
+                ScrollView {
+                    card
+                }
+                .defaultScrollAnchor(.bottom, for: .alignment)
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(.isModal)
+    }
+
+    private var card: some View {
+        RouteBlockedCard(
+            postsAnnouncement: postsAnnouncement,
+            onCallHelp: onCallHelp,
+            onReroute: onReroute,
+            onPause: onPause,
+            onContinue: onContinue,
+            onReport: onReport
+        )
     }
 }
 
@@ -305,6 +411,8 @@ struct RouteBlockedCard: View {
     let onReroute: () -> Void
     let onPause: () -> Void
     let onContinue: () -> Void
+    /// Nil hides the report button, where reporting isn't available.
+    let onReport: (() -> Void)?
 
     @AccessibilityFocusState private var isTitleFocused: Bool
 
@@ -313,6 +421,7 @@ struct RouteBlockedCard: View {
             VStack(spacing: 14) {
                 Text("Route Blocked Ahead")
                     .font(.title.bold())
+                    .multilineTextAlignment(.center)
                     .accessibilityAddTraits(.isHeader)
                     .accessibilityFocused($isTitleFocused)
                 Text("Something is blocking the path ahead. Would you like a safer route?")
@@ -320,6 +429,11 @@ struct RouteBlockedCard: View {
                     .multilineTextAlignment(.center)
                 Button("Call Help", action: onCallHelp)
                     .buttonStyle(.pill(.outline))
+                if let onReport {
+                    Button("Report the blockage", action: onReport)
+                        .buttonStyle(.pill(.outline))
+                        .accessibilityHint("Reports the problem just ahead on your route")
+                }
                 Button("Re-Route", action: onReroute)
                     .buttonStyle(.pill(.destructive))
                     .accessibilityHint("Finds a safer route")
@@ -340,13 +454,15 @@ struct RouteBlockedCard: View {
     }
 }
 
+#if DEBUG
 #Preview("Walking") {
     NavigationStack {
-        ActiveTripView(plan: TripPlan(place: SampleContent.places[0], route: nil, isRecording: false))
+        ActiveTripView(plan: TripPlan(place: MapsPreviewData.place, route: nil, isRecording: false))
     }
     .environment(AppRouter())
     .preferredColorScheme(.dark)
 }
+#endif
 
 #Preview("Paused card") {
     ZStack {

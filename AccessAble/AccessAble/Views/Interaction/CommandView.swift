@@ -11,6 +11,8 @@ import SwiftUI
 /// Owner: User Interaction (3.1). Type a command or question; the reply is spoken and shown.
 struct CommandView: View {
     @State private var viewModel: CommandViewModel
+    /// Optional so previews without a router still work; "call a volunteer" then gets the spoken hint.
+    @Environment(AppRouter.self) private var router: AppRouter?
  
     init(services: AppServices) {
         _viewModel = State(initialValue: CommandViewModel(services: services))
@@ -63,6 +65,10 @@ struct CommandView: View {
             }
         }
         .navigationTitle("Commands")
+        .onAppear {
+            // "Call a volunteer" opens the same call flow as the Home button, consent screen first.
+            if let router { viewModel.onCallVolunteer = { router.push(.call(nil)) } }
+        }
         .onDisappear { viewModel.cancelDictation() }
     }
 }

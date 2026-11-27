@@ -18,10 +18,11 @@ struct RootView: View {
         }
         // The redesign is dark throughout; this also keeps the status bar light.
         .preferredColorScheme(.dark)
+        .environment(\.avatars, app.services.avatars)
     }
 
     @ViewBuilder private var appContent: some View {
-        if app.services.accountsAvailable { AccountGateView(services: app.services) }
+        if app.services.accountsAvailable { AccountGateView(app: app) }
         else if app.hasCompletedOnboarding { MainFlowView() }
         else { OnboardingView(includesAccount: false) }
     }
@@ -32,9 +33,13 @@ private struct AccountGateView: View {
     @State private var session: AccountSessionViewModel
     @State private var signOutError: String?
 
-    init(services: AppServices) {
+    init(app: AppViewModel) {
+        let services = app.services
         _session = State(initialValue: AccountSessionViewModel(
-            auth: services.auth, profiles: services.userProfiles, presence: services.presence))
+            auth: services.auth, profiles: services.userProfiles, presence: services.presence,
+            savedTrips: services.savedTrips, trip: services.trip,
+            savedPlaces: app.savedPlacesStore, recentPlaces: app.recentPlacesStore,
+            routePreferences: services.routePreferences))
     }
 
     var body: some View {
@@ -51,7 +56,7 @@ private struct AccountGateView: View {
                 .id(user.id)
             case .ready(let profile):
                 if profile.role == .volunteer {
-                    VolunteerHomeView(profile: profile, presence: app.services.presence, signOut: { try await session.signOut() })
+                    VolunteerCallHostView(profile: profile, services: app.services, signOut: { try await session.signOut() })
                         .id(profile.userID)
                 } else if app.hasCompletedOnboarding {
                     MainFlowView().id(profile.userID)
@@ -85,6 +90,7 @@ private struct AccountGateView: View {
 struct MainFlowView: View {
     @Environment(AppViewModel.self) private var app
     @State private var router = AppRouter()
+    @State private var resumeTrip: ResumeTripViewModel?
     private let intents = IntentsModel.shared
 
     var body: some View {
@@ -96,6 +102,31 @@ struct MainFlowView: View {
                 }
         }
         .environment(router)
+        .overlay(alignment: .top) {
+            VolunteerRingBanner(services: app.services) { volunteer, ring in
+                router.push(.answerCall(volunteer, ring))
+            }
+        }
+        .task {
+            let resume = ResumeTripViewModel(store: app.services.savedTrips, trip: app.services.trip)
+            resumeTrip = resume
+            await resume.check()
+        }
+        .alert(
+            resumeTrip?.title ?? "",
+            isPresented: Binding(
+                get: { resumeTrip?.offer != nil },
+                // SwiftUI can close the alert before running a button's action, so closing isn't an answer
+                set: { if !$0 { resumeTrip?.dismiss() } }
+            ),
+            presenting: resumeTrip?.offer
+        ) { offer in
+            Button("Resume trip") {
+                guard let plan = resumeTrip?.resume(offer) else { return }
+                router.path = [.trip(plan)]
+            }
+            Button("No thanks", role: .cancel) { resumeTrip?.decline() }
+        }
         .onChange(of: intents.pending, initial: true) { _, destination in
             guard let destination else { return }
             router.path = [.feature(destination)]
@@ -107,29 +138,35 @@ struct MainFlowView: View {
     private func destination(for route: AppRoute) -> some View {
         switch route {
         case .search:
-            PlaceSearchView(services: app.services)
+            PlaceSearchView(services: app.services, savedPlaces: app.savedPlacesStore, recentPlaces: app.recentPlacesStore)
         case .place(let place, let origin):
             PlaceDetailView(place: place, origin: origin, services: app.services)
         case .destination(let destination, let origin):
             PlaceDetailView(destination: destination, origin: origin, services: app.services)
+        case .savedPlace(let savedPlace, let origin):
+            PlaceDetailView(savedPlace: savedPlace, origin: origin, services: app.services)
         case .routes(let place, let mode, let origin, let planned):
             RoutePickerView(place: place, mode: mode, origin: origin, planned: planned, services: app.services)
         case .trip(let plan):
-            ActiveTripView(plan: plan, services: app.services)
+            ActiveTripView(plan: plan, services: app.services, recentPlaces: app.recentPlacesStore)
         case .settings:
             SettingsView(app: app)
         case .callHelp:
             CallHelpView()
         case .volunteers:
             VolunteerListView(services: app.services)
+        case .call(let volunteer):
+            CallFlowView(volunteer: volunteer)
+        case .answerCall(let volunteer, let ring):
+            CallFlowView(volunteer: volunteer, answering: ring)
         case .chat(let volunteer):
-            VolunteerChatView(volunteer: volunteer)
+            VolunteerChatView(volunteer: volunteer, services: app.services)
         case .developerTools:
             DeveloperToolsView()
         case .feature(.scene):
             LiveSceneView(services: app.services, mode: .walk)
         case .feature(.trip):
-            TripView(services: app.services)
+            TripView(services: app.services, recentPlaces: app.recentPlacesStore)
         }
     }
 }

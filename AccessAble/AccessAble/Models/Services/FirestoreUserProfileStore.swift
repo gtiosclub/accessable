@@ -30,8 +30,12 @@ struct FirestoreUserProfileStore: UserProfileStore {
               UserProfileValidation.isValid(displayName: name, languages: languages) else {
             throw UserProfileError.invalidProfile
         }
+        let details = ProfileDetails(
+            location: data["location"] as? String ?? "",
+            condition: data["condition"] as? String ?? "",
+            availability: (data["availability"] as? String).flatMap(VolunteerAvailability.init(rawValue:)))
         return UserProfile(userID: userID, role: role, displayName: name,
-                           languages: languages, createdAt: createdAt.dateValue())
+                           languages: languages, createdAt: createdAt.dateValue(), details: details)
     }
 
     func save(userID: String, role: UserRole, displayName: String,
@@ -58,10 +62,23 @@ struct FirestoreUserProfileStore: UserProfileStore {
         guard let profile = try await load(userID: userID) else { throw UserProfileError.invalidProfile }
         return profile
     }
+
+    func saveDetails(userID: String, details: ProfileDetails) async throws {
+        guard details.isValid else { throw UserProfileError.invalidProfile }
+        var values: [String: Any] = [
+            "location": details.location.trimmingCharacters(in: .whitespacesAndNewlines),
+            "condition": details.condition.trimmingCharacters(in: .whitespacesAndNewlines),
+        ]
+        if let availability = details.availability { values["availability"] = availability.rawValue }
+        do {
+            try await Firestore.firestore().collection("users").document(userID).updateData(values)
+        } catch { throw mapped(error) }
+    }
 }
 
 struct UnconfiguredUserProfileStore: UserProfileStore {
     func load(userID: String) async throws -> UserProfile? { throw UserProfileError.notConfigured }
     func save(userID: String, role: UserRole, displayName: String,
               languages: [String]) async throws -> UserProfile { throw UserProfileError.notConfigured }
+    func saveDetails(userID: String, details: ProfileDetails) async throws { throw UserProfileError.notConfigured }
 }

@@ -1,17 +1,17 @@
 import SwiftUI
 
-/// Owner: User Interaction (3.x). Text chat with a volunteer. Messages stay on this screen
-/// until a messaging backend exists.
+/// Owner: User Interaction (3.x). Text chat with a volunteer, sent through `ChatService` (CHAT-1).
 struct VolunteerChatView: View {
     @Environment(AppRouter.self) private var router
     let volunteer: Volunteer
-    @State private var messages: [ChatMessage]
-    @State private var draft = ""
-    @State private var isCalling = false
+    @State private var model: ChatViewModel
+    @State private var star: SaveStarModel
 
-    init(volunteer: Volunteer) {
+    init(volunteer: Volunteer, services: AppServices) {
         self.volunteer = volunteer
-        _messages = State(initialValue: SampleContent.conversation(with: volunteer))
+        _model = State(initialValue: ChatViewModel(
+            service: services.chat, target: .volunteer(id: volunteer.id), partnerName: volunteer.name))
+        _star = State(initialValue: SaveStarModel(service: services.saves, personID: volunteer.id))
     }
 
     var body: some View {
@@ -21,28 +21,19 @@ struct VolunteerChatView: View {
                 .fill(.white.opacity(0.6))
                 .frame(height: 1)
                 .accessibilityHidden(true)
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(messages) { message in
-                        bubble(message)
-                    }
-                }
-                .padding(20)
-            }
-            .defaultScrollAnchor(.bottom)
-            .scrollDismissesKeyboard(.interactively)
-            composer
+            ChatConversationView(model: model)
         }
         .background(Color.black.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }
-        .fullScreenCover(isPresented: $isCalling) {
-            CallingView(volunteer: volunteer) { isCalling = false }
+        .task { await star.start() }
+        .onChange(of: star.errorMessage) { _, text in
+            if let text { AccessibilityNotification.Announcement(text).post() }
         }
     }
 
     private var header: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: 12) {
             Button { router.pop() } label: {
                 Image(systemName: "chevron.left")
                     .font(.title.weight(.semibold))
@@ -52,61 +43,113 @@ struct VolunteerChatView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Back")
 
-            HelperAvatar(isOnline: volunteer.isOnline, size: 64)
-            VStack(alignment: .leading, spacing: 4) {
+            PersonAvatar(userID: volunteer.id, isOnline: isOnline, size: 48)
+            VStack(alignment: .leading, spacing: 2) {
                 Text(volunteer.name)
-                    .font(.title3.bold())
+                    .font(.headline)
                     .accessibilityAddTraits(.isHeader)
-                Text(volunteer.availableUntil)
-                    .font(.subheadline)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.footnote)
+                }
             }
             .foregroundStyle(.white)
             .accessibilityElement(children: .combine)
             Spacer()
-            CircleIconButton(
-                systemImage: "phone",
-                label: "Video call \(volunteer.name)",
-                fill: Theme.red,
-                foreground: .white,
-                diameter: 54
-            ) {
-                isCalling = true
+            if isOnline {
+                CircleIconButton(systemImage: "phone.fill", label: "Video call \(volunteer.name)", diameter: 44) {
+                    // The real call flow: consent screen first, then rings this volunteer.
+                    router.push(.call(volunteer))
+                }
+            }
+            SaveStarButton(name: volunteer.name, isSaved: star.isSaved, isBusy: star.isBusy) {
+                Task { await star.toggle() }
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private var isOnline: Bool { volunteer.isReachable() }
+
+    private var subtitle: String {
+        if !volunteer.availableUntil.isEmpty { return volunteer.availableUntil }
+        return ""
+    }
+}
+
+/// The messages and the composer, shared by the caller's screen and the volunteer's inbox.
+struct ChatConversationView: View {
+    @Bindable var model: ChatViewModel
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(model.messages) { message in
+                        bubble(message)
+                    }
+                }
+                .padding(20)
+            }
+            .defaultScrollAnchor(.bottom)
+            .scrollDismissesKeyboard(.interactively)
+            if let error = model.errorMessage {
+                HStack {
+                    Text(error)
+                        .font(.callout)
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Button("Dismiss") { model.dismissError() }
+                        .foregroundStyle(Theme.cyan)
+                        .minimumTapTarget()
+                }
+                .padding(.horizontal, 20)
+            }
+            composer
+        }
+        .background(Color.black.ignoresSafeArea())
+        .task { await model.start() }
+        .onChange(of: model.lastIncoming) { _, message in
+            guard let message else { return }
+            AccessibilityNotification.Announcement("\(model.partnerName): \(message.text)").post()
+        }
+        .onChange(of: model.errorMessage) { _, text in
+            if let text { AccessibilityNotification.Announcement(text).post() }
+        }
     }
 
     private func bubble(_ message: ChatMessage) -> some View {
-        HStack {
-            if message.isFromMe { Spacer(minLength: 60) }
+        let isFromMe = model.isFromMe(message)
+        return HStack {
+            if isFromMe { Spacer(minLength: 60) }
             Text(message.text)
                 .font(.callout)
                 .foregroundStyle(.white)
                 .padding(12)
                 .background(Theme.bubble, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .accessibilityLabel(message.isFromMe ? "You: \(message.text)" : "\(volunteer.name): \(message.text)")
-            if !message.isFromMe { Spacer(minLength: 60) }
+                .accessibilityLabel(isFromMe ? "You: \(message.text)" : "\(model.partnerName): \(message.text)")
+            if !isFromMe { Spacer(minLength: 60) }
         }
     }
 
     private var composer: some View {
         HStack {
-            TextField("Message", text: $draft, prompt: Text("Enter message").foregroundStyle(.white.opacity(0.85)), axis: .vertical)
+            TextField("Message", text: $model.draft, prompt: Text("Enter message").foregroundStyle(.white.opacity(0.85)), axis: .vertical)
                 .font(.title3)
                 .foregroundStyle(.white)
                 .lineLimit(1...4)
                 .submitLabel(.send)
-                .onSubmit(send)
-            Button(action: send) {
+                .onSubmit { Task { await model.send() } }
+            Button { Task { await model.send() } } label: {
                 Image(systemName: "paperplane")
                     .font(.title2)
                     .foregroundStyle(.white)
                     .minimumTapTarget()
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("Send")
-            .disabled(trimmedDraft.isEmpty)
+            .accessibilityLabel(model.isSending ? "Sending" : "Send")
+            .disabled(!model.canSend)
         }
         .padding(.leading, 20)
         .padding(.trailing, 8)
@@ -115,21 +158,11 @@ struct VolunteerChatView: View {
         .padding(.horizontal, 20)
         .padding(.vertical, 12)
     }
-
-    private var trimmedDraft: String {
-        draft.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func send() {
-        guard !trimmedDraft.isEmpty else { return }
-        messages.append(ChatMessage(text: trimmedDraft, isFromMe: true))
-        draft = ""
-    }
 }
 
 #Preview {
     NavigationStack {
-        VolunteerChatView(volunteer: SampleContent.activeVolunteers[0])
+        VolunteerChatView(volunteer: SampleContent.activeVolunteers[0], services: .preview)
     }
     .environment(AppRouter())
     .preferredColorScheme(.dark)

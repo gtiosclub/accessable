@@ -24,10 +24,30 @@ protocol AnnouncementSink: Sendable {
 protocol AnnouncementEngineProtocol: AnnouncementSink {
     /// Events as they are actually delivered (after filtering/dedup). UI uses this for the visual banner.
     func deliveredEvents() -> AsyncStream<AnnouncementEvent>
+    /// Delivered events once they have been said, or cut off, so a listener can wait for the end of speech. An event
+    /// dropped before delivery never comes.
+    func finishedEvents() -> AsyncStream<FinishedAnnouncement>
     func repeatLast() async
     func pause() async
     func resume() async
     func updateProfile(_ profile: GuidanceProfile) async
+    func setInCall(_ inCall: Bool) async
+}
+
+/// An announcement whose speech has ended.
+struct FinishedAnnouncement: Equatable, Sendable {
+    let id: UUID
+    /// Cut off, by a more urgent announcement or a pause, rather than said to the end.
+    let wasInterrupted: Bool
+    /// Nothing else was waiting to be said.
+    let isIdle: Bool
+}
+
+extension AnnouncementEngineProtocol {
+    /// Ends at once, for engines that don't speak, so a listener goes on without waiting.
+    func finishedEvents() -> AsyncStream<FinishedAnnouncement> {
+        AsyncStream { $0.finish() }
+    }
 }
 
 /// Renders a haptic from the shared vocabulary (3.2).
@@ -81,6 +101,20 @@ protocol LocationProvider: Sendable {
     func requestAuthorization() async
 }
 
+/// The phone's battery, read for the low-battery warnings on a trip.
+protocol BatteryReading: Sendable {
+    func status() async -> BatteryStatus
+    /// Lets the system stop tracking the battery until the next `status()`.
+    func stopReading() async
+}
+
+struct BatteryStatus: Equatable, Sendable {
+    /// From 0 to 1; nil when the system doesn't know it.
+    let level: Float?
+    /// Plugged in, so a low level isn't worth warning about.
+    let isChargingOrFull: Bool
+}
+
 /// Computes a route without starting navigation or delivering speech.
 protocol RoutingService: Sendable {
     /// - Throws: `RoutingError`, or `CancellationError` if the task is cancelled.
@@ -104,12 +138,36 @@ protocol TripStateProviding: Sendable {
     func tripRoutes() -> AsyncStream<NavigationRoute?>
     /// Starts guidance along `route`, replacing any trip in progress. Progress arrives on `tripStates()`.
     /// Voice "start trip" needs a planned route first; a future `planTrip`/`startTrip()` split is expected.
-    func startTrip(route: NavigationRoute, destination: Destination) async
+    /// - Parameters:
+    ///   - preferences: The preferences `route` was found with. Every reroute this trip uses them, even if the user's
+    ///     settings change meanwhile.
+    ///   - resumingAtStep: For a trip resumed after the app closed, the step of `route` that was next, so the trip
+    ///     places the user along the route from their first fix rather than at its start; nil starts at the start.
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async
     func pauseTrip() async
     func resumeTrip() async
     func endTrip() async
     /// A new route from where the user is now, for a running trip, when they ask for one.
     func reroute() async
+    /// Someone else's report the user has just walked past, to ask whether it is still there; once a report a trip,
+    /// and only as it happens: a new subscriber hears none from before.
+    func reportQuestions() -> AsyncStream<ReportQuestion>
+    /// The active reports near the trip's route, the user's own included, to show on the map: on each report snapshot
+    /// and route change, and empty from the start and end of each trip. A new subscriber hears the latest.
+    func mapReports() -> AsyncStream<[Report]>
+    /// The screen is done with the question about `reportID`. The next question waits for this.
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async
+}
+
+extension TripStateProviding {
+    func reportQuestions() -> AsyncStream<ReportQuestion> {
+        AsyncStream { $0.finish() }
+    }
+
+    func mapReports() -> AsyncStream<[Report]> {
+        AsyncStream { $0.finish() }
+    }
 }
 
 /// The trip's Live Activity on the lock screen and in the Dynamic Island; one at a time.
@@ -141,12 +199,32 @@ protocol LocationContextProviding: Sendable {
     func currentLocationDescription() async -> String?
 }
 
+/// Stores community reports and streams changes in the requested area.
+protocol ReportService: Sendable {
+    func submit(_ report: Report) async throws
+    func reports(near coordinate: GeoCoordinate, radius: Double) async throws -> [Report]
+    /// The signed-in user's one vote on someone else's report: a "yes" moves its expiry to one lifetime from now,
+    /// never earlier, and the second "no" since the last "yes" ends it now. Returns whether the expiry moved later.
+    /// - Throws: `ReportServiceError`: `.notSignedIn`; `.rateLimited` within a minute of their last vote;
+    ///   `.permissionDenied` for their own report, a second vote, an expired report, or a "no" on a report under
+    ///   ten minutes old; `.unavailable` when the server can't be reached in time.
+    @discardableResult
+    func confirm(_ reportID: String, isStillPresent: Bool) async throws -> Bool
+    func reportChanges(near coordinate: GeoCoordinate, radius: Double) -> AsyncStream<[Report]>
+}
+
 protocol AuthService: Sendable {
     func userChanges() -> AsyncStream<AuthUser?>
     func currentUser() async -> AuthUser?
     func signIn(email: String, password: String) async throws -> AuthUser
     func createAccount(email: String, password: String) async throws -> AuthUser
     func signOut() async throws
+    func idToken() async throws -> String
+}
+
+extension AuthService {
+    /// Stand-ins have no real sign-in to prove.
+    func idToken() async throws -> String { throw AuthError.unknown }
 }
 
 // MARK: - Calls (MATCH-x)
@@ -168,17 +246,100 @@ protocol PresenceService: Sendable {
     /// Turns the Online toggle on or off. While on and the app is on screen, the implementation
     /// refreshes `lastSeen` about every 30 seconds.
     func setOnline(_ isOnline: Bool) async throws
+    func refreshProfile() async throws
 }
 
-/// Ringing: asking a volunteer for a call and answering one.
+extension PresenceService {
+    func refreshProfile() async throws {} // In-memory/test services have no separate directory copy.
+}
+
+/// Volunteer-side read model. Cancel the stream when the app is no longer on screen.
+/// Nil dismisses a withdrawn/ended ring. Errors must not silently become a missing call.
+protocol IncomingCallProviding: Sendable {
+    @MainActor
+    func incomingCalls(volunteerID: String) -> AsyncThrowingStream<IncomingCall?, Error>
+}
+
+
+/// Text chat between a caller and one volunteer (CHAT-1). firestore.rules decide who may write.
+protocol ChatService: Sendable {
+    func currentUserID() async -> String?
+    /// The chat's messages, oldest first, replaced on each change. Works before the chat exists.
+    func messages(chatID: String) -> AsyncThrowingStream<[ChatMessage], Error>
+    /// Sends from the signed-in user. A caller's first message starts the chat.
+    func send(_ text: String, chatID: String) async throws
+    /// The signed-in volunteer's chats, most recent first.
+    func volunteerChats() -> AsyncThrowingStream<[ChatThread], Error>
+}
+
+protocol CallSafetyService: Sendable {
+    func hasConsent() async throws -> Bool
+    func acceptConsent() async throws
+    func report(callID: String, subjectID: String, reason: CallReportReason, details: String) async throws
+    func block(volunteerID: String, callID: String) async throws
+}
+
+protocol VolunteerSettingsStore: Sendable {
+    func preferences() async throws -> VolunteerPreferences
+    func save(_ preferences: VolunteerPreferences) async throws
+    func isInvited() async throws -> Bool
+}
+
+/// What a caller hears while `requestCall` works (VOLUNTEER-7).
+enum CallRequestProgress: Equatable, Sendable {
+    enum Miss: Equatable, Sendable { case noAnswer, declined }
+    /// Ringing a volunteer; `attempt` counts from 1.
+    case ringing(attempt: Int)
+    /// The last volunteer declined or didn't answer in 30 seconds; the next one is about to ring.
+    case tryingNext(after: Miss)
+}
+
+/// Matching (VOLUNTEER-6): the caller's app rings one volunteer at a time as Firestore transactions,
+/// and firestore.rules enforce every step. Tickets come only from the getCallToken Worker.
 protocol CallSignaling: Sendable {
-    /// Calls for the signed-in volunteer. Silent while the app is off screen (no push, no CallKit).
-    func incomingCalls() -> AsyncStream<CallTicket>
-    /// Asks `getCallToken` for a ticket and rings the volunteer.
-    func startCall(to volunteerID: String) async throws -> CallTicket
-    func accept(_ ticket: CallTicket) async throws
-    func decline(_ ticket: CallTicket) async throws
-    func end(_ ticket: CallTicket) async
+    /// Caller: rings online volunteers one at a time (`volunteerID` first, if given) until one accepts,
+    /// then returns the ticket. A decline or 30 seconds moves on to the next volunteer, reported on `progress`.
+    func requestCall(
+        preferring volunteerID: String?,
+        progress: @Sendable (CallRequestProgress) -> Void
+    ) async throws -> CallTicket
+    /// Volunteer: answers a call that's ringing them. Throws if it was taken or ended.
+    func accept(callID: String) async throws -> CallTicket
+    /// Volunteer: turns down a call that's ringing them.
+    func decline(callID: String) async throws
+    /// Caller: stops ringing this volunteer. Fails if they already picked up.
+    func skip(callID: String) async throws
+    /// Either side: hangs up, or gives up while it's still ringing.
+    func endCall(callID: String) async
+
+    // CALLBACK-1: a volunteer calling a caller who saved them back.
+    /// Volunteer: rings the caller for 30 seconds and returns the ticket once they answer.
+    func callCaller(_ callerID: String) async throws -> CallTicket
+    /// Caller: volunteer rings meant for them, replaced on each change.
+    func volunteerRings(callerID: String) -> AsyncThrowingStream<[VolunteerRing], Error>
+    /// Caller: answers a volunteer's ring.
+    func answerVolunteerRing(callID: String) async throws -> CallTicket
+    /// Caller: turns a volunteer's ring down.
+    func declineVolunteerRing(callID: String) async throws
+}
+
+/// A volunteer ringing a caller (CALLBACK-1).
+struct VolunteerRing: Identifiable, Hashable, Sendable {
+    let id: String
+    let volunteerID: String
+    let createdAt: Date
+
+    /// Rings older than this are left alone; the volunteer gives up after 30 seconds.
+    static let lifetime: TimeInterval = 30
+}
+
+extension CallSignaling {
+    func callCaller(_ callerID: String) async throws -> CallTicket { throw CallSignalingError.notConfigured }
+    func volunteerRings(callerID: String) -> AsyncThrowingStream<[VolunteerRing], Error> {
+        AsyncThrowingStream { $0.yield([]) }
+    }
+    func answerVolunteerRing(callID: String) async throws -> CallTicket { throw CallSignalingError.notConfigured }
+    func declineVolunteerRing(callID: String) async throws {}
 }
 
 /// The live video call. While connected it owns the camera: `ARSessionManager` pauses, CV and AR
@@ -187,6 +348,19 @@ protocol VideoCallSession: Sendable {
     func states() -> AsyncStream<CallState>
     func connect(with ticket: CallTicket) async throws
     func disconnect() async
+    /// Mutes or unmutes this phone's microphone.
+    func setMicrophoneMuted(_ muted: Bool) async throws
+    /// Switches between the back and front camera. Calls start on the back camera.
+    func flipCamera() async throws
+    /// Turns the back camera's light on or off. Throws when the current camera has no light.
+    func setFlashlight(_ on: Bool) async throws
+    /// Starts or stops sending this phone's camera. The caller starts with it on (back camera);
+    /// the volunteer starts with it off and turns on the front camera.
+    func setCameraEnabled(_ on: Bool) async throws
+}
+
+extension VideoCallSession {
+    func setCameraEnabled(_ on: Bool) async throws {}
 }
 
 // MARK: - Signed-in account profiles (VOLUNTEER-2)
@@ -197,4 +371,26 @@ protocol UserProfileStore: Sendable {
     func load(userID: String) async throws -> UserProfile?
     func save(userID: String, role: UserRole, displayName: String,
               languages: [String]) async throws -> UserProfile
+    /// Updates the optional profile details of an existing profile (PROFILE-1).
+    func saveDetails(userID: String, details: ProfileDetails) async throws
+}
+
+/// Starring people (SAVE-1). A caller stars volunteers; a volunteer stars callers.
+protocol SavesService: Sendable {
+    /// Everyone the signed-in user has starred, with whether they starred back, replaced on each change.
+    func savedPeople() -> AsyncThrowingStream<[SavedPerson], Error>
+    func setSaved(_ saved: Bool, personID: String) async throws
+}
+
+/// The signed-in user's past calls (HISTORY-1), newest first.
+protocol CallHistoryProviding: Sendable {
+    func pastCalls(as role: UserRole) async throws -> [PastCall]
+}
+
+// MARK: - Route preferences (PREF-2)
+
+/// The signed-in user's route preferences on the server. A missing document loads as nil; a failed read throws.
+protocol RoutePreferencesSyncing: Sendable {
+    func load(userID: String) async throws -> RoutePreferences?
+    func save(_ preferences: RoutePreferences, userID: String) async throws
 }

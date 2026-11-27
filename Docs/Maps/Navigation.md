@@ -150,7 +150,37 @@ Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at e
 
 - A `fix` row for every location fix: time, position, accuracy, where the fix came from (`gps` or `ar`), speed, course and its accuracy, the heading used and where it came from (`ar`, `walkingDirection` or `compass`), the compass accuracy, progress along the route, the tracker's side offset, the next step, whether off route, and the tracker's events.
 - An `announcement` row for everything submitted to the announcement engine, whether or not it was then spoken.
+- A `battery` row when the trip starts, ahead of every other row, then once a minute and when it ends: the level in percent in the announcement column, and `pluggedIn` or `unplugged` in events. There are none while the level is unknown, as on the simulator.
 - `TripManager` builds no fix row unless the recorder is recording, so it costs nothing while off. Rows are written as they happen, under the recorder's lock. A file that can't be written is logged, stops, and its error shows on the recorder screen; the trip carries on.
+
+## Battery
+
+Measures how much battery a walk drains with guidance running. Run walks on a real device; the simulator has no battery.
+
+### Protocol
+
+- Same phone for every walk in a comparison.
+- Start charge 80–100 %; note the exact percentage.
+- Screen brightness fixed at the same level for each walk.
+- Low Power Mode off.
+- Same route, same start point.
+- 20 minutes each condition.
+- Record the phone model, iOS version, ambient temperature, and battery % at start and end.
+- Before the walk, turn on Developer Tools > Trip recorder; it is off at every launch. Each trip writes its own file.
+- Keep the phone unplugged for the whole walk. A `pluggedIn` battery row means the run doesn't count.
+- After the walk, share the trip's CSV from Developer Tools > Trip recorder, which lists the recordings newest first, to Files, AirDrop or Mail; the drain is the first `battery` row's level minus the last's.
+
+### Conditions
+
+| | Camera off | Camera on | AR on |
+| --- | --- | --- | --- |
+| Phone model | | | |
+| iOS version | | | |
+| Temperature | | | |
+| Battery start % | | | |
+| Battery end % | | | |
+| Drain % | | | |
+| Notes | | | |
 
 ## Crosswalks
 
@@ -167,6 +197,20 @@ Developer Tools > Trip recorder turns on `TripRecorder`, off by default and at e
 - Turns are left, right, slight and U-turns. With none it says "No turns", as in "About 6 minutes, 450 feet. No turns, 2 crosswalks."
 - Stairs, elevators, escalators and crosswalks are listed only when there are some.
 - Place details counts a route's crossings once, when the route arrives, and words the summary in the user's current units each time it is read.
+
+## Routing servers
+
+`FallbackRoutingService` asks the Valhalla servers named in the `ROUTING_SERVERS` build setting in order, then Apple Maps, which is always last and can't be configured away. Changing the servers needs no code change.
+
+- **Configuration.** `ROUTING_SERVERS` is set to `stadia,fossgis` in `Config/Shared.xcconfig`; a member's `Secrets.xcconfig` can override it. It reaches the app as `RoutingServers` in `Info.plist`, read by `RoutingConfig.servers(from:apiKey:)`.
+  - Names are separated by commas; spaces and case don't matter. `stadia` is Stadia Maps' hosted Valhalla, `fossgis` the free FOSSGIS demo server (fair use only, no uptime guarantee).
+  - `stadia` is dropped without a usable `STADIA_API_KEY`, and unknown names are ignored; both are logged. If dropping `stadia` leaves no server (`ROUTING_SERVERS = stadia` without a key), FOSSGIS is asked instead and that is logged as an error, so routing never silently becomes Apple Maps only. A name given twice is asked once, at its first place. A value naming no known server gives the default, `stadia,fossgis`.
+- **Each Valhalla server** gets 6 s to answer, and all of them together 8 s (`FallbackRoutingService.defaultChainBudget`): a server waits at most what is left, and once the 8 s are spent no later server is asked. So the worst case, Stadia and FOSSGIS both hanging (common on weak cellular), is 8 s of silence after "Finding a new route" before Apple Maps is asked, not 12 s, plus however long Apple Maps takes. With exclusions the request is rejected at 8 s instead (see below). A server cut short by the 8 s (FOSSGIS here, after 2 s) only fails that request and isn't remembered, since it never had its full 6 s: the next request within 2 minutes (a staged report try or a reroute) skips Stadia and gives FOSSGIS its full 6 s, so a trip whose servers both hang waits at most 8 s once and then 6 s once more before every request goes straight to Apple Maps. After a timeout of the full 6 s, a rejected key (`.notAuthorized`) or an exhausted usage limit (`.usageLimitReached`), that server is skipped for 2 minutes, so each staged report try and each reroute doesn't wait on it or spend the request again. An answer from it clears that.
+- **Exclusions.** A request that avoids reported places never reaches Apple Maps, which can't avoid them. When every Valhalla server fails it throws `.noRouteFound` if one found no route, else `.exclusionsRejected`, so `ReportAwareRoutingService` (which wraps the chain) tries again with fewer exclusions. Its last try has none, so a route from Apple Maps still lists the reports it passes.
+- **Errors.** When every server fails, the most informative error wins: no route, then rejected exclusions, then unavailable, then usage limit, then rejected key, then a bad response.
+- **Cancellation** by the caller cancels the request in flight and asks no later server.
+- **Speech.** Moving from Stadia to FOSSGIS is silent: both are Valhalla, with the same step-free routing. Only a route from Apple Maps (`source` `.appleMaps`) is announced, as backup directions that may include stairs. The routing layer itself never speaks.
+- **Stadia credits.** Every Stadia route request spends the team's credits, and one trip can send about 27 requests or more (see `ValhallaEndpoint.stadia`). FOSSGIS and Apple Maps cost none.
 
 ## TripManager
 
@@ -231,6 +275,17 @@ The path sentence is "The path is {direction}.", or "Turn around, the path is be
 | arrived | "Arriving at {name}. {name} is {direction}.", when the latest fix is at least `max(5 m, 2 × accuracy)` from the destination. Otherwise, or with the heading unknown: "Arriving at {name}. {arrive instruction}" | high | 15 s |
 | weak / back | "Location signal is weak. Directions may be delayed." / "Location signal is back." (system category) | high / normal | 10 s / 6 s |
 | pause, resume, end | "Trip paused." / "Trip resumed." / "Trip ended.", with no dedup key, so the engine merges them with the voice command's | high | none |
+
+## Resuming a trip
+
+If the app is closed mid-trip, the next launch offers to pick it up again.
+
+- **Saving.** `TripManager` saves the trip through `SavedTripStore` when it starts, each time the next step changes, and after a reroute, so the saved route always goes with its saved step. The file is `SavedTrip.json` in Application Support, written atomically on the store's own queue so fix handling never waits on the disk, protected until the phone's first unlock, and left out of iCloud and computer backups. It holds the route and which service found it (`NavigationRoute` doesn't encode its source, so a backup route resumes as one), the destination, the route preferences the trip started with (so a resumed trip reroutes as it did; a file saved before trips had them resumes with the defaults), and the next step. The trip ID and start and save times are there for the record: a resumed trip is a new trip with its own, and only the save time is read, for the 2-hour limit. `NavigationRoute` encodes no reports, and nothing names the user. A failed write is logged and the trip carries on.
+- **Deleting.** Ending the trip or arriving, paused or not, deletes the file. So do "No thanks" and signing out, which also ends a running trip so it can't save itself again, so the next account on the phone isn't offered the trip, and so does loading one saved 2 hours or more ago, or one that can't be read, which is logged.
+- **Offering.** Once past sign-in and onboarding, the main screen asks "Resume your trip to {destination}?" with "Resume trip" and "No thanks", when a file under 2 hours old is there and no trip is running. It is a standard alert: VoiceOver reads it out and moves to it, and anyone else sees it. The alert closing by itself isn't an answer and keeps the file.
+- **Resuming** opens the trip screen as a normal start would, with the saved route counted as just found, so the start doesn't swap it for a new one because of its age. The trip screen's usual start rule still applies: a precise fix over 20 m from the route asks for a fresh route, and the trip then starts from its beginning as any other.
+- **Placing the user.** A resumed trip starts a fresh tracker at the saved next step, with progress at the step before it. The user may have walked on since, further than the tracker's 100 m forward window and its walking-speed progress gate could follow, so the first usable fix (25 m or better) within the off-route limit (30 m, or 1.5 times the fix's accuracy) of the route places them: progress goes where that fix projects onto the route, and any steps behind it count as passed. Where the route comes back near itself, so the fix is about as near two legs (within its accuracy), the first leg at or past the last step passed wins. Until a fix places them, only the off-route rules apply, measured from the whole route, so a user far from it is found off route and rerouted as on any trip.
+- **Announcing.** The start announcement and turn cues wait for the placement, so neither gives the distance or next step from the wrong place and there is no wrong-way warning for a user walking on along the route. If the fix came within the start delay: "Resuming directions to {destination}, {remaining}.", any report or backup-route notice, then which way the path is (with a heading) and the next step's prepare, unless it is within 8 m, where the next fix's cue says it. Otherwise "Resuming directions to {destination}." first, and the way on when the fix comes. Pausing before then keeps it so: "Trip resumed." gives no step, since none can be measured yet, and the way on comes with the placing fix. Pausing after leaves the way on to "Trip resumed.".
 
 ## Live Activity
 

@@ -27,21 +27,48 @@ final class TripRecorder: Sendable {
         var events: [RouteProgressTracker.GuidanceEvent]
     }
 
+    /// A trip's file taken from the recorder to finish, with the rows held for it and its battery logging to stop.
+    private struct Taken {
+        var file: FileHandle?
+        var held: [Data] = []
+        var batteryTask: Task<Void, Never>?
+    }
+
     private struct State {
         var isEnabled = false
         var file: FileHandle?
+        /// Rows written before the trip's first battery reading, held so that reading's row comes first.
+        var heldRows: [Data]?
+        var batteryTask: Task<Void, Never>?
         var lastError: String?
+
+        mutating func takeFile() -> Taken {
+            defer {
+                file = nil
+                heldRows = nil
+                batteryTask = nil
+            }
+            return Taken(file: file, held: heldRows ?? [], batteryTask: batteryTask)
+        }
     }
+
+    /// How often a trip logs the battery between its start and end rows.
+    static let batteryInterval: Duration = .seconds(60)
 
     static let header = "kind,time,latitude,longitude,horizontal_accuracy_m,location_source,speed_mps,course_deg,"
         + "course_accuracy_deg,heading_deg,heading_source,compass_accuracy_deg,progress_m,side_offset_m,next_step,"
         + "off_route,events,announcement"
 
     let directory: URL
+    private let battery: any BatteryReading
+    private let clock: any Clock<Duration>
     private let state = Mutex(State())
 
-    init(directory: URL = .documentsDirectory.appending(path: "TripRecordings")) {
+    init(directory: URL = .documentsDirectory.appending(path: "TripRecordings"),
+         battery: any BatteryReading = DeviceBattery(), clock: any Clock<Duration> = ContinuousClock()) {
         self.directory = directory
+        self.battery = battery
+        self.clock = clock
     }
 
     var isEnabled: Bool {
@@ -60,23 +87,17 @@ final class TripRecorder: Sendable {
 
     /// Turning it off finishes the file being written; turning it on records from the next trip.
     func setEnabled(_ enabled: Bool) {
-        let file = state.withLock { state in
+        let taken = state.withLock { state in
             state.isEnabled = enabled
-            guard !enabled else { return FileHandle?.none }
-            defer { state.file = nil }
-            return state.file
+            return enabled ? Taken() : state.takeFile()
         }
-        close(file)
+        finish(taken)
     }
 
     /// Starts a new file for a trip, when recording is on.
     func tripStarted(at time: Date) {
         // a trip replacing one that never ended finishes that one's file, so rows never mix two trips
-        let previous = state.withLock { state -> FileHandle? in
-            defer { state.file = nil }
-            return state.file
-        }
-        close(previous)
+        finish(state.withLock { $0.takeFile() })
         guard isEnabled else { return }
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -87,26 +108,36 @@ final class TripRecorder: Sendable {
             try excluded.setResourceValues(values)
             let name = "trip-" + Self.fileTime.format(time).replacingOccurrences(of: ":", with: "-") + ".csv"
             let url = directory.appending(path: name)
-            guard FileManager.default.createFile(atPath: url.path(), contents: Data((Self.header + "\n").utf8)) else {
-                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: url.path()])
+            let path = url.path(percentEncoded: false)
+            guard FileManager.default.createFile(atPath: path, contents: Data((Self.header + "\n").utf8)) else {
+                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: path])
             }
             let file = try FileHandle(forWritingTo: url)
             try file.seekToEnd()
             state.withLock { state in
                 state.file = file
+                state.heldRows = []
                 state.lastError = nil
+                state.batteryTask = Task { await self.logBattery(from: time, to: file) }
             }
         } catch {
             fail(error)
         }
     }
 
-    func tripEnded() {
-        let file = state.withLock { state -> FileHandle? in
-            defer { state.file = nil }
-            return state.file
+    /// Finishes the trip's file after a last battery row, which is read without making the trip wait: the file is
+    /// taken at once, so a trip started meanwhile records to its own.
+    /// - Returns: The task finishing the file, for a caller that reads it next.
+    @discardableResult
+    func tripEnded(at time: Date) -> Task<Void, Never> {
+        let taken = state.withLock { $0.takeFile() }
+        taken.batteryTask?.cancel()
+        guard let file = taken.file else { return Task {} }
+        write(taken.held, to: file)
+        return Task {
+            if let row = await batteryRow(at: time) { write([row], to: file) }
+            close(file)
         }
-        close(file)
     }
 
     func record(_ fix: Fix) {
@@ -128,9 +159,17 @@ final class TripRecorder: Sendable {
         write(["announcement", Self.rowTime.format(time)] + Array(repeating: "", count: 15) + [text])
     }
 
+    /// A sign the camera read, matched or not, so a walk's missed buildings can be told from its misreads (LAND-5).
+    /// The text goes in the announcement column, and its kind and confidence in events.
+    func record(sighting: LandmarkObservation, progress: Double, at time: Date) {
+        write(["sighting", Self.rowTime.format(time)] + Array(repeating: "", count: 10)
+            + [Self.format(progress), "", "", "", "\(sighting.kind.rawValue) \(Self.format(Double(sighting.confidence), digits: 2))",
+               sighting.text ?? ""])
+    }
+
     /// The recordings on this phone, newest first.
     func recordings() throws -> [URL] {
-        guard FileManager.default.fileExists(atPath: directory.path()) else { return [] }
+        guard FileManager.default.fileExists(atPath: directory.path(percentEncoded: false)) else { return [] }
         return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
             .filter { $0.pathExtension == "csv" }
             .sorted { $0.lastPathComponent > $1.lastPathComponent }
@@ -138,9 +177,48 @@ final class TripRecorder: Sendable {
 
     /// Deletes every recording, finishing the one being written first.
     func deleteRecordings() throws {
-        tripEnded()
+        finish(state.withLock { $0.takeFile() })
         for url in try recordings() {
             try FileManager.default.removeItem(at: url)
+        }
+    }
+
+    /// The battery when the trip started, before any other row, then every `batteryInterval` until the file is
+    /// finished. Writes only to the trip's own file, so a reading that lands after it ended goes nowhere.
+    private func logBattery(from start: Date, to file: FileHandle) async {
+        var time = start
+        while true {
+            let row = await batteryRow(at: time)
+            guard release(row, into: file) else { return }
+            do { try await clock.sleep(for: Self.batteryInterval) } catch { return }
+            time = .now
+        }
+    }
+
+    /// Level as a percentage in the announcement column, and whether plugged in, which spoils a drain measurement,
+    /// in events. Nil when the level is unknown, as on the simulator.
+    private func batteryRow(at time: Date) async -> Data? {
+        let status = await battery.status()
+        guard let level = status.level else { return nil }
+        return Self.line(["battery", Self.rowTime.format(time)] + Array(repeating: "", count: 14)
+            + [status.isChargingOrFull ? "pluggedIn" : "unplugged", Self.format(Double(level) * 100)])
+    }
+
+    /// Writes `row`, then any rows held for it, while `file` is still the trip's.
+    /// - Returns: Whether it is.
+    private func release(_ row: Data?, into file: FileHandle) -> Bool {
+        do {
+            return try state.withLock { state in
+                guard state.file === file else { return false }
+                for line in [row].compactMap({ $0 }) + (state.heldRows ?? []) {
+                    try file.write(contentsOf: line)
+                }
+                state.heldRows = nil
+                return true
+            }
+        } catch {
+            fail(error)
+            return false
         }
     }
 
@@ -148,27 +226,48 @@ final class TripRecorder: Sendable {
     /// keeps rows in the order they happened.
     private func write(_ fields: [String]) {
         guard isRecording else { return }
-        let line = Data((fields.map(Self.escape).joined(separator: ",") + "\n").utf8)
+        let line = Self.line(fields)
         do {
-            try state.withLock { state in try state.file?.write(contentsOf: line) }
+            try state.withLock { state in
+                if state.heldRows != nil {
+                    state.heldRows?.append(line)
+                } else {
+                    try state.file?.write(contentsOf: line)
+                }
+            }
         } catch {
             fail(error)
+        }
+    }
+
+    /// For a file taken from the recorder, which nothing else writes to now.
+    private func write(_ rows: [Data], to file: FileHandle) {
+        do {
+            for line in rows { try file.write(contentsOf: line) }
+        } catch {
+            log.error("Trip recording's last rows weren't written: \(error.localizedDescription, privacy: .public)")
+            state.withLock { $0.lastError = error.localizedDescription }
         }
     }
 
     /// Stops this file rather than the trip: guidance matters more than its record.
     private func fail(_ error: any Error) {
         log.error("Trip recording stopped: \(error.localizedDescription, privacy: .public)")
-        let file = state.withLock { state -> FileHandle? in
+        let taken = state.withLock { state in
             state.lastError = error.localizedDescription
-            defer { state.file = nil }
-            return state.file
+            return state.takeFile()
         }
+        finish(taken)
+    }
+
+    private func finish(_ taken: Taken) {
+        taken.batteryTask?.cancel()
+        guard let file = taken.file else { return }
+        write(taken.held, to: file)
         close(file)
     }
 
-    private func close(_ file: FileHandle?) {
-        guard let file else { return }
+    private func close(_ file: FileHandle) {
         do {
             try file.close()
         } catch {
@@ -198,6 +297,10 @@ final class TripRecorder: Sendable {
         case .backOnRoute: "backOnRoute"
         case .arrived: "arrived"
         }
+    }
+
+    private static func line(_ fields: [String]) -> Data {
+        Data((fields.map(escape).joined(separator: ",") + "\n").utf8)
     }
 
     /// RFC 4180: a field with a comma, quote or line break is quoted, with its quotes doubled.

@@ -1,5 +1,6 @@
 import FirebaseFirestore
 import Foundation
+import Synchronization
 import UIKit
 
 
@@ -7,12 +8,17 @@ import UIKit
 final class FirestorePresenceService: PresenceService {
 
     static let heartbeatInterval: Duration = .seconds(45)
+    /// Heartbeats in a row that may fail before giving up: two missed beats pass the rules'
+    /// 90-second online window, so callers can't reach this volunteer anyway.
+    private static let maxFailedBeats = 2
 
     private nonisolated let states = Broadcaster<Bool>(replaysLatest: true)
     private let auth: any AuthService
     private let profiles: any UserProfileStore
+    private let writes = PresenceWriteQueue()
     private var isOnline = false
     private var heartbeat: Task<Void, Never>?
+    private var failedBeats = 0
     private var authWatcher: Task<Void, Never>?
     private var backgroundObserver: (any NSObjectProtocol)?
     private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
@@ -47,15 +53,38 @@ final class FirestorePresenceService: PresenceService {
         try await update(isOnline: isOnline)
     }
 
+    nonisolated func refreshProfile() async throws {
+        guard let user = await auth.currentUser(), let profile = try await profiles.load(userID: user.id) else {
+            throw PresenceError.noProfile
+        }
+        let ref = document(user.id)
+        let data = try await ref.getDocument(source: .server).data()
+        guard let data else { return }
+        guard data["displayName"] as? String != profile.displayName || data["languages"] as? [String] != profile.languages else { return }
+        try await ref.updateData(["displayName": profile.displayName, "languages": profile.languages,
+                                  "lastSeen": FieldValue.serverTimestamp()])
+    }
+
 
 
     private func update(isOnline newValue: Bool) async throws {
-        guard newValue != isOnline else { return }
+        try await writes.run { [self] in try await performUpdate(isOnline: newValue) }
+    }
+
+    private func performUpdate(isOnline newValue: Bool) async throws {
+        // Offline still writes when already locally off: a previous network write may have
+        // succeeded on the server even if its acknowledgement failed.
+        if newValue && isOnline { return }
         guard let user = await auth.currentUser() else { throw PresenceError.signedOut }
 
         if newValue {
             guard let profile = try await profiles.load(userID: user.id) else { throw PresenceError.noProfile }
             try await writeOnline(userID: user.id, profile: profile)
+            guard UIApplication.shared.applicationState == .active else {
+                try? await writeOffline(userID: user.id)
+                stopLocally()
+                return
+            }
             isOnline = true
             states.send(true)
             startHeartbeat(userID: user.id)
@@ -67,11 +96,25 @@ final class FirestorePresenceService: PresenceService {
 
     private func startHeartbeat(userID: String) {
         heartbeat?.cancel()
+        failedBeats = 0
         heartbeat = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.heartbeatInterval)
-                guard !Task.isCancelled else { return }
-                try? await self?.writeHeartbeat(userID: userID)
+                guard !Task.isCancelled, let self else { return }
+                do {
+                    try await writeHeartbeat(userID: userID)
+                    failedBeats = 0
+                } catch {
+                    // One refusal is normal: the rules reject a heartbeat within 20 seconds of
+                    // another write that set lastSeen (declining a call, saving the profile), so
+                    // skip this beat. Only keep failing past the 90-second online window means
+                    // really gone; then say so on the server too, so callers stop ringing.
+                    failedBeats += 1
+                    guard failedBeats >= Self.maxFailedBeats else { continue }
+                    stopLocally()
+                    try? await writeOffline(userID: userID)
+                    return
+                }
             }
         }
     }
@@ -106,7 +149,12 @@ final class FirestorePresenceService: PresenceService {
         Firestore.firestore().collection("volunteers").document(userID)
     }
 
+    /// Whether this launch already cleared a stale inCall (see writeOnline).
+    private nonisolated static let clearedStaleCallThisLaunch = Mutex(false)
+
     private nonisolated func writeOnline(userID: String, profile: UserProfile) async throws {
+        // No invites for the demo: any volunteer account may go Online.
+        guard profile.role == .volunteer else { throw CallSafetyError.invitationRequired }
         var fields: [String: Any] = [
             "displayName": profile.displayName,
             "languages": profile.languages,
@@ -117,7 +165,12 @@ final class FirestorePresenceService: PresenceService {
         // so check existence on the server first.
         let existing = try await document(userID).getDocument(source: .server)
         if existing.exists {
+            // A freshly launched app can't be in a call, so the first time it goes Online, clear
+            // an inCall left by a call that was cut off (app killed, crashed or rebuilt mid-call).
+            // Later in the same launch, coming back from the background mid-call must keep it.
+            if !Self.clearedStaleCallThisLaunch.withLock({ $0 }) { fields["inCall"] = false }
             try await document(userID).updateData(fields)
+            Self.clearedStaleCallThisLaunch.withLock { $0 = true }
         } else {
             fields["bio"] = ""
             fields["inCall"] = false

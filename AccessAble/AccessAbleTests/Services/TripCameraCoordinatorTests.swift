@@ -13,11 +13,13 @@ private struct ScriptedTrip: TripStateProviding {
     }
 
     func tripRoutes() -> AsyncStream<NavigationRoute?> { AsyncStream { $0.finish() } }
-    func startTrip(route: NavigationRoute, destination: Destination) async {}
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {}
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
     func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 }
 
 private actor RecordingScene: SceneObservationProviding {
@@ -254,5 +256,45 @@ struct TripScreenCameraTests {
         await session.closeCamera(camera)
 
         #expect(await scene.calls.isEmpty)
+        #expect(!session.isCameraReady)
+    }
+
+    // the camera view takes its own hold, so it shows only once the session has started on world tracking
+    @Test
+    func theCameraPictureShowsAtOnceWhileTheAnswerIsUnknown() async {
+        let scene = GeoScene()
+        let camera = camera(scene)
+        let session = TripSessionViewModel(plan: plan)
+        #expect(!session.isCameraReady)
+
+        await session.openCamera(camera)
+
+        #expect(session.isCameraReady)
+        #expect(await scene.calls == ["start"])
+        await session.closeCamera(camera)
+        #expect(!session.isCameraReady)
+    }
+
+    @Test
+    func theCameraPictureFollowsTheGeoAskAndStart() async {
+        let scene = GeoScene(known: true)
+        let camera = camera(scene)
+        let session = TripSessionViewModel(plan: plan)
+
+        await session.openCamera(camera)
+
+        #expect(session.isCameraReady)
+        #expect(await scene.calls == ["geo", "start"])
+        await session.closeCamera(camera)
+    }
+
+    @Test
+    func aFailedStartStillShowsTheCameraViewForItsError() async {
+        let camera = camera(GeoScene(startFails: true, known: true))
+        let session = TripSessionViewModel(plan: plan)
+
+        await session.openCamera(camera)
+
+        #expect(session.isCameraReady)
     }
 }
