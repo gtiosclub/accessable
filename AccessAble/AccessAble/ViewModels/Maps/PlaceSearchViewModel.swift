@@ -20,9 +20,10 @@ enum SearchOrigin: Hashable, Sendable {
 ///
 /// The To field searches real places through `DestinationSearchViewModel` (MapKit
 /// autocomplete biased to campus), which owns the results, "no results", errors, the spoken
-/// count and resolving a pick into a `Destination`. Typing is debounced, so results settle
-/// once the user pauses rather than jumping on every letter, and `isSearching` says when they
-/// are about to change. The From field and saved places still search `SampleContent`.
+/// count and resolving a pick into a `Destination`, alongside user-saved places in
+/// `SavedPlacesStore` (shown first). Typing is debounced, so results settle once the user
+/// pauses rather than jumping on every letter, and `isSearching` says when they are about to
+/// change.
 @MainActor
 @Observable
 final class PlaceSearchViewModel {
@@ -49,6 +50,7 @@ final class PlaceSearchViewModel {
     let destinationSearch: DestinationSearchViewModel
 
     private(set) var location: LocationSample?
+    private(set) var heading: UserHeading?
     private(set) var authorization: LocationAuthorization = .notDetermined
     /// The street the user is on, from reverse geocoding: "Ferst Dr NW".
     private(set) var locationName: String?
@@ -62,25 +64,55 @@ final class PlaceSearchViewModel {
     static let renameDistance: Double = 30
 
     @ObservationIgnored private let services: AppServices?
+    @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private let places: [SamplePlace]
+    let savedPlacesStore: SavedPlacesStore
+    let recentPlacesStore: RecentPlacesStore
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     @ObservationIgnored private var namedAt: GeoCoordinate?
+    @ObservationIgnored private var headingEstimator = HeadingEstimator()
+    @ObservationIgnored private var newestReadingTime: Date?
 
     /// `search` overrides `services.destinationSearch`; without either it searches a few
-    /// sample places, for previews and tests.
+    /// sample places, for previews and tests. `now` is the time, for how old a fix or heading is.
     init(
         services: AppServices? = nil,
         search: (any DestinationSearching)? = nil,
-        places: [SamplePlace] = SampleContent.places
+        places: [SamplePlace] = SampleContent.places,
+        savedPlaces: SavedPlacesStore? = nil,
+        recentPlaces: RecentPlacesStore? = nil,
+        now: @escaping () -> Date = { .now }
     ) {
         self.services = services
+        self.now = now
         self.places = places
+        self.savedPlacesStore = savedPlaces ?? SavedPlacesStore(places: [])
+        self.recentPlacesStore = recentPlaces ?? RecentPlacesStore(places: [])
         destinationSearch = DestinationSearchViewModel(
             search: search ?? services?.destinationSearch ?? PlaceholderDestinationSearch()
         )
     }
 
     // MARK: - Results
+
+    var savedPlaces: [SavedPlace] { savedPlacesStore.places }
+    var recentPlaces: [RecentPlace] { recentPlacesStore.places }
+
+    /// Saved places matching the active search text or category, shown ahead of live results.
+    var matchingSavedPlaces: [SavedPlace] {
+        guard isFiltering else { return [] }
+        return savedPlacesStore.matching(query: settledQuery, category: category)
+    }
+
+    /// Recent places matching the active search text or category.
+    var matchingRecentPlaces: [RecentPlace] {
+        guard isFiltering else { return [] }
+        return recentPlacesStore.matching(query: settledQuery, category: category)
+    }
+
+    func clearRecents() {
+        recentPlacesStore.clear()
+    }
 
     var isFiltering: Bool {
         !settledQuery.trimmingCharacters(in: .whitespaces).isEmpty || category != nil
@@ -91,7 +123,13 @@ final class PlaceSearchViewModel {
 
     var suggestions: [SearchSuggestion] { destinationSearch.suggestions }
     var problem: SearchProblem? { destinationSearch.problem }
-    var showsNoResults: Bool { isFiltering && !isSettling && destinationSearch.showsNoResults }
+    var showsNoResults: Bool {
+        isFiltering
+            && !isSettling
+            && matchingSavedPlaces.isEmpty
+            && matchingRecentPlaces.isEmpty
+            && destinationSearch.showsNoResults
+    }
 
     /// The picked result once it has been looked up. Opening it is up to the view.
     var selectedDestination: Destination? { destinationSearch.selectedDestination }
@@ -116,6 +154,20 @@ final class PlaceSearchViewModel {
     /// "3 results for Clough", "Searching…", or "No results" when suggestions can't load.
     var resultsSummary: String {
         if isSearching { return "Searching…" }
+        let savedCount = matchingSavedPlaces.count
+        let recentCount = matchingRecentPlaces.count
+        if savedCount > 0 {
+            let savedLabel = savedCount == 1 ? "1 saved place" : "\(savedCount) saved places"
+            if problem == .suggestionsUnavailable || suggestions.isEmpty {
+                return savedLabel
+            }
+            let liveCount = suggestions.count
+            let liveLabel = liveCount == 1 ? "1 result" : "\(liveCount) results"
+            return "\(savedLabel), \(liveLabel)"
+        }
+        if (problem == .suggestionsUnavailable || suggestions.isEmpty), recentCount > 0 {
+            return recentCount == 1 ? "1 recent place" : "\(recentCount) recent places"
+        }
         if problem == .suggestionsUnavailable { return "No results" }
         if let announcement = destinationSearch.resultsAnnouncement { return announcement }
         // Once a result is picked the announcement goes quiet; the count still shows.
@@ -123,17 +175,61 @@ final class PlaceSearchViewModel {
         return count == 1 ? "1 result" : "\(count) results"
     }
 
-    /// For the From field: matches for what was typed, or saved places when nothing was.
+    /// For the From field: saved places first, plus matching campus places when typed.
     var originResults: [SamplePlace] {
         let trimmed = settledOriginQuery.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return places.filter(\.isSaved) }
-        return nearestFirst(Self.search(trimmed, category: nil, in: places))
+        guard !trimmed.isEmpty else { return savedPlaces.map { $0.asSamplePlace() } }
+        let savedMatches = savedPlacesStore.matching(query: trimmed).map { $0.asSamplePlace() }
+        let otherMatches = nearestFirst(Self.search(trimmed, category: nil, in: places)).filter { candidate in
+            !savedMatches.contains { $0.name.caseInsensitiveCompare(candidate.name) == .orderedSame }
+        }
+        return savedMatches + otherMatches
+    }
+
+    /// Saved places matching the From query (used when the From field is focused).
+    var originSavedPlaces: [SavedPlace] {
+        let trimmed = settledOriginQuery.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return savedPlaces }
+        return savedPlacesStore.matching(query: trimmed)
     }
 
     /// Straight-line distance and an estimated walk, or nil without a location.
     func distanceText(to place: SamplePlace) -> String? {
-        guard let metres = distance(to: place) else { return nil }
+        distanceText(to: GeoCoordinate(latitude: place.latitude, longitude: place.longitude))
+    }
+
+    func distanceText(to savedPlace: SavedPlace) -> String? {
+        distanceText(to: savedPlace.coordinate)
+    }
+
+    func distanceText(to recentPlace: RecentPlace) -> String? {
+        distanceText(to: recentPlace.coordinate)
+    }
+
+    private func distanceText(to coordinate: GeoCoordinate) -> String? {
+        guard let metres = distance(to: coordinate) else { return nil }
         return Self.distanceText(metres: metres, distances: services?.distanceSettings.formatter ?? .metric)
+    }
+
+    /// VoiceOver label for a live search result: includes distance (WIRE-7 units) and direction
+    /// (relative when NAV-2 knows the heading, otherwise cardinal) for the top 5 results only.
+    func spokenLabel(for suggestion: SearchSuggestion, at index: Int) -> String {
+        let time = now()
+        return SearchResultSpeech.label(
+            for: suggestion,
+            at: index,
+            from: searchOriginCoordinate(at: time),
+            // Reads the observed `heading` so a heading change alone re-renders the rows.
+            heading: origin == .myLocation && heading != nil ? headingEstimator.heading(at: time) : nil,
+            distances: services?.distanceSettings.formatter ?? DistanceSettings().formatter
+        )
+    }
+
+    private func searchOriginCoordinate(at time: Date) -> GeoCoordinate? {
+        if let place = origin.place {
+            return GeoCoordinate(latitude: place.latitude, longitude: place.longitude)
+        }
+        return SearchResultSpeech.origin(of: location, at: time)
     }
 
     static func distanceText(metres: Double, distances: DistanceFormatter) -> String {
@@ -144,11 +240,12 @@ final class PlaceSearchViewModel {
     }
 
     private func distance(to place: SamplePlace) -> Double? {
+        distance(to: GeoCoordinate(latitude: place.latitude, longitude: place.longitude))
+    }
+
+    private func distance(to coordinate: GeoCoordinate) -> Double? {
         guard let location else { return nil }
-        return GeoMath.distance(
-            from: location.coordinate,
-            to: GeoCoordinate(latitude: place.latitude, longitude: place.longitude)
-        )
+        return GeoMath.distance(from: location.coordinate, to: coordinate)
     }
 
     private func nearestFirst(_ places: [SamplePlace]) -> [SamplePlace] {
@@ -265,6 +362,11 @@ final class PlaceSearchViewModel {
                     await self.receive(sample)
                 }
             }
+            group.addTask {
+                for await sample in services.location.headingSamples() {
+                    await self.receive(sample)
+                }
+            }
         }
     }
 
@@ -276,9 +378,22 @@ final class PlaceSearchViewModel {
         // A fix this rough would put the user in the wrong building.
         guard sample.horizontalAccuracy <= 100 else { return }
         location = sample
+        headingEstimator.update(with: sample)
+        updateHeading(readingTime: sample.timestamp)
         if let namedAt, GeoMath.distance(from: namedAt, to: sample.coordinate) < Self.renameDistance { return }
         namedAt = sample.coordinate
         Task { await self.name(sample.coordinate) }
+    }
+
+    private func receive(_ sample: HeadingSample) {
+        headingEstimator.update(with: sample)
+        updateHeading(readingTime: sample.timestamp)
+    }
+
+    private func updateHeading(readingTime: Date) {
+        let now = max(newestReadingTime ?? readingTime, readingTime)
+        newestReadingTime = now
+        heading = headingEstimator.heading(at: now)
     }
 
     private func name(_ coordinate: GeoCoordinate) async {

@@ -56,6 +56,7 @@ struct RoutePickerView: View {
             }
             .defaultScrollAnchor(.bottom)
             .scrollBounceBehavior(.basedOnSize)
+            .blackToBottomEdge()
         }
         .toolbar(.hidden, for: .navigationBar)
         .accessibilityAction(.escape) { router.pop() }

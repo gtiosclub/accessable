@@ -209,6 +209,20 @@ struct BottomCard<Content: View>: View {
     }
 }
 
+extension View {
+    /// Fills the bottom safe area with black under a scrolling `BottomCard`. A ScrollView clips its
+    /// content's background at the safe area, which would leave a strip of the backdrop there; a
+    /// zero-height inset outside the scroll view is not clipped, and the buttons stay in the scroll
+    /// content so they remain reachable in landscape and at large text sizes.
+    func blackToBottomEdge() -> some View {
+        safeAreaInset(edge: .bottom, spacing: 0) {
+            Color.clear
+                .frame(height: 0)
+                .background(Color.black.ignoresSafeArea(edges: .bottom))
+        }
+    }
+}
+
 /// Light-gray rounded square where a place photo will go.
 struct PlaceThumbnail: View {
     var size: CGFloat = 72

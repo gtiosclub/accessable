@@ -6,8 +6,7 @@ struct ReportTests {
     private let report = Report(
         id: "r1", kind: .blockedPath,
         coordinate: GeoCoordinate(latitude: 33.7756, longitude: -84.3963),
-        createdAt: Date(timeIntervalSince1970: 0), expiresAt: Date(timeIntervalSince1970: 86_400),
-        reporterID: "user-1"
+        createdAt: Date(timeIntervalSince1970: 0), expiresAt: Date(timeIntervalSince1970: 86_400)
     )
 
     /// `firebase/firestore.rules` rejects a report with any other field name.
@@ -17,7 +16,7 @@ struct ReportTests {
         let fields = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
 
         #expect(Set(fields.keys) == [
-            "id", "kind", "coordinate", "createdAt", "expiresAt", "confirmations", "reporterID",
+            "id", "kind", "coordinate", "createdAt", "expiresAt", "confirmations",
             "negativeConfirmations", "negativesSinceConfirm"
         ])
         #expect(fields["kind"] as? String == "blockedPath")

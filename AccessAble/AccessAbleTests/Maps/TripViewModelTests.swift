@@ -222,7 +222,8 @@ private final class TripScreen {
     /// - Parameter trip: Pass another screen's to open this one on a trip already running.
     init(fixes: [GeoCoordinate] = [origin], accuracy: Double = 5,
          authorization: LocationAuthorization = .authorized(preciseAccuracy: true),
-         trip: ControlledTripProvider = ControlledTripProvider(), route: NavigationRoute = plannedRoute) {
+         trip: ControlledTripProvider = ControlledTripProvider(), route: NavigationRoute = plannedRoute,
+         recentPlaces: RecentPlacesStore? = nil) {
         self.trip = trip
         routing = CountingRouting(route: route)
         var services = AppServices.preview
@@ -236,7 +237,7 @@ private final class TripScreen {
             samples: fixes.map { LocationSample(coordinate: $0, horizontalAccuracy: accuracy, timestamp: time) },
             authorization: authorization
         )
-        viewModel = TripViewModel(services: services, now: { [clock] in clock.now })
+        viewModel = TripViewModel(services: services, recentPlaces: recentPlaces, now: { [clock] in clock.now })
     }
 
     deinit { UserDefaults.standard.removePersistentDomain(forName: preferencesSuite) }
@@ -324,6 +325,18 @@ struct TripStartTests {
         await screen.viewModel.startTrip()
         #expect(await screen.routing.requestCount == 1)
         #expect(screen.trip.startedRoutes == [plannedRoute])
+        screen.stop()
+    }
+
+    @Test
+    func startingTheTripRecordsTheDestinationAsRecent() async {
+        let recents = RecentPlacesStore(places: [])
+        let screen = TripScreen(recentPlaces: recents)
+        await screen.plan()
+        #expect(recents.places.isEmpty)
+
+        #expect(await screen.viewModel.startTrip())
+        #expect(recents.places.map(\.name) == [library.name])
         screen.stop()
     }
 
@@ -477,8 +490,7 @@ struct TripStartTests {
     func aRouteThatPassesAReportWarnsOfIt() async {
         var route = plannedRoute
         route.unavoidedReports = [Report(id: "blocked-1", kind: .blockedPath, coordinate: library.coordinate,
-                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600),
-                                         reporterID: "user-1")]
+                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600))]
         let screen = TripScreen(route: route)
         await screen.plan()
 
@@ -492,8 +504,7 @@ struct TripStartTests {
     func aRefreshForStartLeavesTheWarningToTheTrip() async {
         var route = plannedRoute
         route.unavoidedReports = [Report(id: "blocked-1", kind: .blockedPath, coordinate: library.coordinate,
-                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600),
-                                         reporterID: "user-1")]
+                                         createdAt: .now, expiresAt: .now.addingTimeInterval(3600))]
         let screen = TripScreen(route: route)
         await screen.plan()
         while await screen.announcements.texts.isEmpty { await Task.yield() }

@@ -37,6 +37,8 @@ struct AppServices: Sendable {
     var callSignaling: any CallSignaling = PlaceholderCallSignaling()
     var incomingCalls: any IncomingCallProviding = PlaceholderIncomingCalls()
     var videoCall: any VideoCallSession = PlaceholderVideoCallSession()
+    /// Caller–volunteer text chat (CHAT-1); on this phone only without Firebase.
+    var chat: any ChatService = PlaceholderChatService()
     /// The user's Ask AI ranking (T23), read by Ask AI per question. AppViewModel keeps it
     /// in step with the profile.
     var askAISettings = AskAISettings()
@@ -122,6 +124,7 @@ struct AppServices: Sendable {
             services.callSafety = FirestoreCallSafety(auth: services.auth)
             services.volunteerSettings = FirestoreVolunteerSettings(auth: services.auth)
             services.volunteers = FirestoreVolunteerDirectory()
+            services.chat = FirestoreChatService(auth: services.auth)
             services.presence = FirestorePresenceService(auth: services.auth, profiles: services.userProfiles)
             services.accountsAvailable = true
             if let tokenURL = LiveKitConfig.callTokenURL {
@@ -141,7 +144,6 @@ struct AppServices: Sendable {
         services.trip = TripManager(
             location: location, routing: services.routing, announcements: services.announcements,
             reports: services.reportsAvailable ? services.reports : nil,
-            currentUserID: { [auth = services.auth] in await auth.currentUser()?.id },
             landmarks: services.landmarks,
             setTripTracking: { await gps.setTripTracking($0) },
             distances: distanceSettings,

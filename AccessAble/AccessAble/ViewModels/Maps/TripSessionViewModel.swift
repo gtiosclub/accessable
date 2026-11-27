@@ -68,10 +68,12 @@ final class TripSessionViewModel {
 
     @ObservationIgnored private let services: AppServices?
     @ObservationIgnored private let now: () -> Date
+    @ObservationIgnored private let recentPlaces: RecentPlacesStore?
     @ObservationIgnored private let warningLifetime: Duration
     @ObservationIgnored private let infoLifetime: Duration
     @ObservationIgnored private var blockDetector = RouteBlockDetector()
     @ObservationIgnored private var hasSetDestination = false
+    @ObservationIgnored private var hasRecordedRecent = false
     @ObservationIgnored private var conversation = AskAIConversation()
     /// The last obstacle warning and the last thing said on this trip, for "repeat".
     @ObservationIgnored private var lastWarning: String?
@@ -97,6 +99,7 @@ final class TripSessionViewModel {
 
     /// - Parameters:
     ///   - services: The app's services, for a real trip; nil for front end only.
+    ///   - recentPlaces: Where destinations are recorded when the trip starts.
     ///   - warningLifetime, infoLifetime: How long a red or blue bar stays before it fades.
     ///   - now: The time, for how old a location fix is and when a report is made.
     ///   - clock: Times a report question's answer window.
@@ -105,6 +108,7 @@ final class TripSessionViewModel {
     init(
         plan: TripPlan,
         services: AppServices? = nil,
+        recentPlaces: RecentPlacesStore? = nil,
         announcements: [TripAnnouncement] = [],
         warningLifetime: Duration = .seconds(8),
         infoLifetime: Duration = .seconds(12),
@@ -114,6 +118,7 @@ final class TripSessionViewModel {
     ) {
         self.plan = plan
         self.services = services
+        self.recentPlaces = recentPlaces
         self.now = now
         self.clock = clock
         self.mayListenForAnswers = mayListenForAnswers
@@ -193,6 +198,10 @@ final class TripSessionViewModel {
     /// the calling task is cancelled. The trip itself carries on in `TripManager` until
     /// `exit()`, so opening Settings from the paused card doesn't end it.
     func run() async {
+        if !hasRecordedRecent {
+            hasRecordedRecent = true
+            recentPlaces?.record(plan: plan)
+        }
         guard let services, let directions else { return }
         if !hasSetDestination {
             hasSetDestination = true
@@ -327,7 +336,7 @@ final class TripSessionViewModel {
         guard isReportingAvailable, reportQuestion == nil,
               directions?.tripState.phase == .active,
               now().timeIntervalSince(question.askedAt) <= Self.questionFreshness,
-              let user = await services.auth.currentUser(), user.id != report.reporterID,
+              !report.isOwn, await services.auth.currentUser() != nil,
               // checked again after the await
               reportQuestion == nil else {
             await services.trip.reportQuestionEnded(report.id, outcome: .notAsked)
@@ -687,7 +696,7 @@ final class TripSessionViewModel {
             return
         }
 
-        guard let user = await services.auth.currentUser() else {
+        guard await services.auth.currentUser() != nil else {
             await say("Sign in to report a problem.", category: .system)
             return
         }
@@ -703,8 +712,7 @@ final class TripSessionViewModel {
             kind: kind,
             coordinate: useRouteAhead ? pointAhead(of: location) : location,
             createdAt: createdAt,
-            expiresAt: createdAt.addingTimeInterval(kind.lifetime),
-            reporterID: user.id
+            expiresAt: createdAt.addingTimeInterval(kind.lifetime)
         )
 
         do {

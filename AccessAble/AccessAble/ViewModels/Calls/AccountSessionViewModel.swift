@@ -21,12 +21,16 @@ final class AccountSessionViewModel {
     private let savedTrips: SavedTripStore?
     private let trip: any TripStateProviding
     private let routePreferences: RoutePreferencesStore?
+    /// Kept on the phone, not in the account, so they go with it.
+    private let savedPlaces: SavedPlacesStore?
+    private let recentPlaces: RecentPlacesStore?
     private var activeUser: AuthUser?
     private var loadTask: Task<Void, Never>?
     private var generation = UUID()
 
     init(auth: any AuthService, profiles: any UserProfileStore, presence: any PresenceService = PlaceholderPresenceService(),
          savedTrips: SavedTripStore? = nil, trip: any TripStateProviding = PlaceholderTripProvider(),
+         savedPlaces: SavedPlacesStore? = nil, recentPlaces: RecentPlacesStore? = nil,
          routePreferences: RoutePreferencesStore? = nil) {
         self.auth = auth
         self.profiles = profiles
@@ -34,6 +38,8 @@ final class AccountSessionViewModel {
         self.savedTrips = savedTrips
         self.trip = trip
         self.routePreferences = routePreferences
+        self.savedPlaces = savedPlaces
+        self.recentPlaces = recentPlaces
     }
 
     func listen() async {
@@ -100,6 +106,8 @@ final class AccountSessionViewModel {
         await trip.endTrip()
         savedTrips?.clear()
         routePreferences?.signedOut()
+        savedPlaces?.clear()
+        recentPlaces?.clear()
         loadTask?.cancel()
         generation = UUID()
         activeUser = nil
