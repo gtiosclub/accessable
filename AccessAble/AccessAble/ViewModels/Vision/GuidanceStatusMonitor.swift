@@ -2,8 +2,8 @@ import Foundation
 import UIKit
 
 /// Owner: Computer Vision (1.1 / task T27). Keeps the display awake while camera guidance
-/// runs, announces when guidance stops or comes back, and asks for one restart when a
-/// session cannot recover on its own.
+/// runs, and holds the shared `GuidanceRecovery`, which announces when guidance stops or
+/// comes back and asks for one restart when a session cannot recover on its own.
 ///
 /// Used by the camera screen (`LiveSceneViewModel`). Kept separate from it because it is
 /// about the one shared `ARSession`, which trips and Describe also run.
@@ -11,25 +11,29 @@ import UIKit
 final class GuidanceStatusMonitor {
     private(set) var status: GuidanceStatus = .idle
 
+    private let recovery: GuidanceRecovery
     private let announcements: any AnnouncementSink
     private var task: Task<Void, Never>?
-    /// One automatic restart per failure. A session that fails again straight away is a
-    /// device or permission problem, and retrying it in a loop only delays telling the user.
-    private var hasRetried = false
+    private var holdsRecovery = false
 
-    init(announcements: any AnnouncementSink) {
+    init(recovery: GuidanceRecovery, announcements: any AnnouncementSink) {
+        self.recovery = recovery
         self.announcements = announcements
     }
 
     /// Starts watching `provider`, replacing any previous subscription.
     func watch(_ provider: any GuidanceStatusProviding) {
         task?.cancel()
+        if !holdsRecovery {
+            recovery.hold(provider, announcements: announcements)
+            holdsRecovery = true
+        }
         status = provider.guidanceStatus
         setIdleTimerDisabled(status.keepsScreenAwake)
         task = Task { [weak self] in
             for await next in provider.guidanceStatuses() {
                 guard let self else { return }
-                self.apply(next, from: provider)
+                self.apply(next)
             }
         }
     }
@@ -38,40 +42,18 @@ final class GuidanceStatusMonitor {
     func stop() {
         task?.cancel()
         task = nil
+        if holdsRecovery {
+            recovery.release()
+            holdsRecovery = false
+        }
         status = .idle
-        hasRetried = false
         setIdleTimerDisabled(false)
     }
 
-    private func apply(_ next: GuidanceStatus, from provider: any GuidanceStatusProviding) {
-        let previous = status
-        guard next != previous else { return }
+    private func apply(_ next: GuidanceStatus) {
+        guard next != status else { return }
         status = next
         setIdleTimerDisabled(next.keepsScreenAwake)
-
-        if let event = next.announcement(after: previous) {
-            Task { [announcements] in await announcements.submit(event) }
-        }
-        if case .running = next { hasRetried = false }
-        guard case .stopped = next, !hasRetried else { return }
-        hasRetried = true
-        Task { [weak self] in
-            do {
-                try await provider.restartGuidance()
-            } catch {
-                await self?.announceRestartFailure(error)
-            }
-        }
-    }
-
-    private func announceRestartFailure(_ error: Error) async {
-        await announcements.submit(AnnouncementEvent(
-            category: .system,
-            priority: .critical,
-            text: "Camera guidance could not restart. \(error.localizedDescription)",
-            source: .system,
-            dedupKey: "guidance-restart-failed"
-        ))
     }
 
     /// `isIdleTimerDisabled` is app-wide, so it is set from one place and always released:

@@ -57,6 +57,8 @@ struct AppServices: Sendable {
     var savedTrips: SavedTripStore?
     /// The user's route choices, synced with their account where accounts are available.
     var routePreferences = RoutePreferencesStore()
+    /// Restarts camera guidance that stops, for the trip and the camera screen alike, so only one of them does.
+    let guidanceRecovery = GuidanceRecovery()
 
     /// Real services used by the app. Swap each placeholder as the owning subteam ships.
     @MainActor

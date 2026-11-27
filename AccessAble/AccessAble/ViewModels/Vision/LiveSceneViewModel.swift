@@ -160,7 +160,7 @@ final class LiveSceneViewModel {
         self.mode = mode
         analyzer = services.scene as? ARSceneAnalyzer
         announcements = services.announcements
-        guidance = GuidanceStatusMonitor(announcements: services.announcements)
+        guidance = GuidanceStatusMonitor(recovery: services.guidanceRecovery, announcements: services.announcements)
     }
 
     func toggleRecording() {

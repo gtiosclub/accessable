@@ -22,6 +22,29 @@ private struct ScriptedTrip: TripStateProviding {
     func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
 }
 
+/// A trip the test moves phase by phase.
+private struct SteppedTrip: TripStateProviding {
+    private let states: AsyncStream<TripState>
+    private let continuation: AsyncStream<TripState>.Continuation
+
+    init() {
+        (states, continuation) = AsyncStream.makeStream()
+    }
+
+    func go(_ phase: TripPhase) { continuation.yield(TripState(phase: phase, updatedAt: .now)) }
+    func finish() { continuation.finish() }
+
+    func tripStates() -> AsyncStream<TripState> { states }
+    func tripRoutes() -> AsyncStream<NavigationRoute?> { AsyncStream { $0.finish() } }
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {}
+    func pauseTrip() async {}
+    func resumeTrip() async {}
+    func endTrip() async {}
+    func reroute() async {}
+    func reportQuestionEnded(_ reportID: String, outcome: ReportQuestionOutcome) async {}
+}
+
 private actor RecordingScene: SceneObservationProviding {
     struct Unavailable: Error {}
 
@@ -188,6 +211,112 @@ struct TripCameraCoordinatorTests {
     func aFailedStartIsNotBalancedWithAStop() async {
         let calls = await calls(for: [.active, .planning], scene: RecordingScene(startFails: true))
         #expect(calls == ["start"])
+    }
+}
+
+/// Guidance that stops mid-trip is restarted with the map showing, where no camera screen exists.
+@MainActor
+struct TripGuidanceRecoveryTests {
+    private let guidance = FakeGuidance()
+    private let sink = RecordingSink()
+    private let recovery = GuidanceRecovery()
+    private let trip = SteppedTrip()
+
+    private func startRunning() -> Task<Void, Never> {
+        let coordinator = TripCameraCoordinator(
+            trip: trip, camera: TripCamera(scene: guidance, geoTracking: nil),
+            recovery: recovery, announcements: sink
+        )
+        return Task { await coordinator.run() }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func aStopMidTripIsRestartedOnce() async throws {
+        let running = startRunning()
+        trip.go(.active)
+        try await guidance.waitForSubscribers(1)
+
+        guidance.send(.stopped(reason: "Tracking could not be recovered."))
+        guidance.send(.running)
+        await sink.waitFor("guidance-restored")
+        trip.go(.arrived)
+        trip.finish()
+        await running.value
+
+        #expect(guidance.restartCount == 1)
+        #expect(sink.keys == ["guidance-stopped", "guidance-restored"])
+        #expect(guidance.calls == ["start", "stop"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func withTheCameraScreenOpenTooItIsStillRestartedOnce() async throws {
+        let running = startRunning()
+        trip.go(.active)
+        try await guidance.waitForSubscribers(1)
+        let screen = GuidanceStatusMonitor(recovery: recovery, announcements: sink)
+        screen.watch(guidance)
+        // the screen's own subscription, for keeping the display awake
+        try await guidance.waitForSubscribers(2)
+
+        guidance.send(.stopped(reason: "Tracking could not be recovered."))
+        guidance.send(.running)
+        await sink.waitFor("guidance-restored")
+        screen.stop()
+        trip.go(.arrived)
+        trip.finish()
+        await running.value
+
+        #expect(guidance.restartCount == 1)
+        #expect(sink.keys == ["guidance-stopped", "guidance-restored"])
+    }
+
+    // leaving the camera screen mid-trip, for the map, keeps the trip's recovery
+    @Test(.timeLimit(.minutes(1)))
+    func closingTheCameraScreenLeavesTheTripsRestart() async throws {
+        let running = startRunning()
+        trip.go(.active)
+        try await guidance.waitForSubscribers(1)
+        let screen = GuidanceStatusMonitor(recovery: recovery, announcements: sink)
+        screen.watch(guidance)
+        try await guidance.waitForSubscribers(2)
+        screen.stop()
+        try await guidance.waitForSubscribers(1)
+
+        guidance.send(.stopped(reason: "Tracking could not be recovered."))
+        for await _ in guidance.restarts { break }
+        trip.finish()
+        await running.value
+
+        #expect(guidance.restartCount == 1)
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [TripPhase.paused, .arrived, .planning])
+    func afterTheTripLetsGoAStopDoesNothing(phase: TripPhase) async throws {
+        let running = startRunning()
+        trip.go(.active)
+        try await guidance.waitForSubscribers(1)
+        trip.go(phase)
+        try await guidance.waitForSubscribers(0)
+
+        guidance.send(.stopped(reason: "Tracking could not be recovered."))
+        trip.finish()
+        await running.value
+
+        #expect(guidance.restartCount == 0)
+        #expect(sink.keys.isEmpty)
+        #expect(guidance.calls == ["start", "stop"])
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func theRecoveryIsLetGoWhenTheTripStreamEnds() async throws {
+        let running = startRunning()
+        trip.go(.active)
+        try await guidance.waitForSubscribers(1)
+        trip.finish()
+        await running.value
+
+        try await guidance.waitForSubscribers(0)
+        #expect(guidance.calls == ["start", "stop"])
     }
 }
 
