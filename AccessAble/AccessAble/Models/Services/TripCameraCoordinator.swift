@@ -16,7 +16,7 @@ struct TripCameraCoordinator: Sendable {
     var announcements: (any AnnouncementSink)?
     /// Whether Settings → Phone Aiming Help is on; nil skips the AR-5 hold-up prompt.
     var phoneAimingHelp: (@Sendable () -> Bool)?
-    /// Wall clock for the hold-up prompt cooldown; tests inject a fixed clock.
+    /// Wall clock for the hold-up prompt cooldown; tests inject a `ManualDate`.
     var now: @Sendable () -> Date = { .now }
 
     func run() async {
@@ -25,7 +25,9 @@ struct TripCameraCoordinator: Sendable {
         /// Apple's answer for this trip, kept once it is in; nil until then, so the next start asks again.
         var canGeoTrack: Bool?
         var holdsRecovery = false
-        var aimingTask: Task<Void, Never>?
+        var geoWatch: GeoWatch?
+        // for the whole run, so the hold-up prompt's cooldown outlasts camera restarts, pauses and trips
+        var coach = GeoAimingCoach()
         for await state in trip.tripStates() {
             // between trips, so the answer is in before the next one opens the camera
             if state.phase == .planning { await camera.prepare() }
@@ -37,13 +39,13 @@ struct TripCameraCoordinator: Sendable {
                     try await camera.start(geoTracking: geoTracking)
                     held = geoTracking
                     holdsRecovery = holdRecovery()
-                    aimingTask = startAimingHelp(geoTracking: geoTracking)
+                    geoWatch = watchGeo(geoTracking: geoTracking)
                 } catch {
                     log.error("No obstacle detection on this trip: \(error.localizedDescription, privacy: .public)")
                 }
             } else if !wantsCamera, let geoTracking = held {
-                aimingTask?.cancel()
-                aimingTask = nil
+                geoWatch?.task.cancel()
+                geoWatch = nil
                 if holdsRecovery { recovery?.release() }
                 holdsRecovery = false
                 await camera.stop(geoTracking: geoTracking)
@@ -51,8 +53,9 @@ struct TripCameraCoordinator: Sendable {
             }
             // the next trip may start somewhere else
             if state.phase == .planning || state.phase == .arrived { canGeoTrack = nil }
+            await promptToAim(state, coach: &coach, geo: geoWatch?.latest)
         }
-        aimingTask?.cancel()
+        geoWatch?.task.cancel()
         if holdsRecovery { recovery?.release() }
         if let geoTracking = held { await camera.stop(geoTracking: geoTracking) }
     }
@@ -66,50 +69,37 @@ struct TripCameraCoordinator: Sendable {
         return true
     }
 
-    /// Watches trip state and geo updates for the AR-5 hold-up prompt while the trip holds the camera.
-    private func startAimingHelp(geoTracking: Bool) -> Task<Void, Never>? {
-        guard geoTracking, let announcements, let phoneAimingHelp,
-              let geo = camera.geoTracking else { return nil }
-        let trip = trip
-        let now = now
-        return Task {
-            // Heap box so both child tasks can share the latest update under Swift 6 sending rules.
-            let latestGeo = LatestGeo()
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { [latestGeo] in
-                    for await update in geo.geoTrackingUpdates() {
-                        guard !Task.isCancelled else { return }
-                        latestGeo.value.withLock { $0 = update }
-                    }
-                }
-                group.addTask { [latestGeo] in
-                    var coach = GeoAimingCoach()
-                    for await state in trip.tripStates() {
-                        guard !Task.isCancelled else { return }
-                        if state.phase != .active {
-                            coach.tripEnded()
-                            continue
-                        }
-                        let geoUpdate = latestGeo.value.withLock { $0 }
-                        if let event = coach.update(
-                            enabled: phoneAimingHelp(),
-                            tripActive: true,
-                            geo: geoUpdate,
-                            trip: state,
-                            now: now()
-                        ) {
-                            await announcements.submit(event)
-                        }
-                    }
-                }
-                await group.next()
-                group.cancelAll()
-            }
+    /// Keeps the latest geo update for the AR-5 hold-up prompt while the trip holds the camera with geo-tracking.
+    private func watchGeo(geoTracking: Bool) -> GeoWatch? {
+        guard geoTracking, announcements != nil, phoneAimingHelp != nil, let geo = camera.geoTracking else {
+            return nil
+        }
+        let latest = LatestGeo()
+        let task = Task {
+            for await update in geo.geoTrackingUpdates() { latest.value.withLock { $0 = update } }
+        }
+        return GeoWatch(latest: latest, task: task)
+    }
+
+    /// The AR-5 hold-up prompt, given on trip updates only, so it follows the trip's own cues for the same update.
+    private func promptToAim(_ state: TripState, coach: inout GeoAimingCoach, geo: LatestGeo?) async {
+        guard state.phase == .active, let geo, let announcements, let phoneAimingHelp else {
+            coach.tripEnded()
+            return
+        }
+        let update = geo.value.withLock { $0 }
+        if let event = coach.update(enabled: phoneAimingHelp(), geo: update, trip: state, now: now()) {
+            await announcements.submit(event)
         }
     }
 }
 
-/// Latest geo update shared by the AR-5 aiming watchers.
+private struct GeoWatch {
+    let latest: LatestGeo
+    let task: Task<Void, Never>
+}
+
+/// Latest geo update, written by the watching task and read on trip updates.
 private final class LatestGeo: Sendable {
     let value = Mutex<GeoTrackingUpdate?>(nil)
 }
