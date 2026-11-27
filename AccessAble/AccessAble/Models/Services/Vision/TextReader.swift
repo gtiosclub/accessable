@@ -14,7 +14,9 @@ import os
 final class TextReader: Sendable {
     private let detector: TextDetector
     private let interval: TimeInterval
-    private let queue = DispatchQueue(label: "AccessAble.TextReader", qos: .utility)
+    private let queue: DispatchQueue
+    /// Full resolution: small text needs every pixel.
+    private let copier = PixelBufferCopier()
     private let log = Logger(subsystem: "AccessAble", category: "TextReader")
 
     private struct State {
@@ -25,9 +27,15 @@ final class TextReader: Sendable {
 
     private let state = Mutex(State())
 
-    init(detector: TextDetector = TextDetector(), interval: TimeInterval = 1) {
+    /// `queue` runs the reads; tests pass one they can suspend.
+    init(
+        detector: TextDetector = TextDetector(),
+        interval: TimeInterval = 1,
+        queue: DispatchQueue = DispatchQueue(label: "AccessAble.TextReader", qos: .utility)
+    ) {
         self.detector = detector
         self.interval = interval
+        self.queue = queue
     }
 
     /// A function placing an upright, normalized text box in the world, built from the
@@ -52,9 +60,10 @@ final class TextReader: Sendable {
         }
         guard isDue else { return }
 
-        guard let copy = PixelBufferCopy.copy(image) else {
+        let copy: CVPixelBuffer
+        do { copy = try copier.copy(image) } catch {
             state.withLock { $0.isReading = false }
-            log.error("text recognition skipped: could not copy camera buffer")
+            log.error("text recognition skipped: could not copy camera buffer: \(String(describing: error), privacy: .public)")
             return
         }
         let request = ReadRequest(image: copy, orientation: orientation, time: time)

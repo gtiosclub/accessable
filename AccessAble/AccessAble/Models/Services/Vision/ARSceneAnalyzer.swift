@@ -2,6 +2,7 @@ import ARKit
 import Foundation
 import Synchronization
 import UIKit
+import os
 
 /// Owner: Computer Vision (1.4). The live `SceneObservationProviding` service: subscribes to
 /// the shared `ARSessionManager`, runs `ScenePerception` on its frames, publishes one
@@ -31,6 +32,12 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
     private let setMeshReconstruction: @MainActor @Sendable (Bool) -> Bool
     /// `ARSessionManager.start()`.
     private let startSession: @MainActor @Sendable () throws -> Void
+    /// Calls the handler with each camera image; `ARSessionManager.addFrameHandler` (tests
+    /// hand in images directly). Removed with `ARSessionManager.removeFrameHandler`.
+    private let addImageHandler: @Sendable (@escaping @Sendable (CVPixelBuffer) -> Void) -> ARSessionManager.Subscription
+    /// Copies Ask AI stills so encoding never holds ARKit's buffer.
+    private let stillCopier = PixelBufferCopier()
+    private let log = Logger(subsystem: "AccessAble", category: "ARSceneAnalyzer")
     /// Times the mesh debounce.
     private let clock: any Clock<Duration>
     /// Announcements go through a stream drained by one task, so they reach the sink in
@@ -69,11 +76,15 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
         steering: SteeringTones? = nil,
         setMeshReconstruction: (@MainActor @Sendable (Bool) -> Bool)? = nil,
         startSession: (@MainActor @Sendable () throws -> Void)? = nil,
+        addImageHandler: (@Sendable (@escaping @Sendable (CVPixelBuffer) -> Void) -> ARSessionManager.Subscription)? = nil,
         clock: any Clock<Duration> = ContinuousClock()
     ) {
         self.sessionManager = sessionManager
         self.setMeshReconstruction = setMeshReconstruction ?? { sessionManager.setMeshReconstruction($0) }
         self.startSession = startSession ?? { try sessionManager.start() }
+        self.addImageHandler = addImageHandler ?? { handler in
+            sessionManager.addFrameHandler { handler($0.capturedImage) }
+        }
         self.clock = clock
         self.perception = perception
         self.performance = performance
@@ -334,16 +345,25 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
 
     /// The next frame from the shared session as an upright JPEG. Frames only flow while
     /// the session runs, so this gives up after `timeout` rather than waiting forever.
-    /// The frame handler is removed as soon as the first buffer arrives, and the JPEG is
-    /// encoded from a copy so ARKit's pool buffer is not held during encode.
     @concurrent
-    private func captureStillImage(timeout: Duration = .seconds(1)) async throws -> Data {
+    func captureStillImage(timeout: Duration = .seconds(1)) async throws -> Data {
         let orientation = CGImagePropertyOrientation(cameraImageIn: state.withLock { $0.interfaceOrientation })
+        guard let image = await nextCameraImage(timeout: timeout) else { throw AskAIError.noCameraImage }
+        return try stillImageJPEG(from: image.pixelBuffer, orientation: orientation)
+    }
+
+    /// A copy of the next camera image, or nil after `timeout`. The frame handler is removed
+    /// before this returns, so nothing is copied while the still is encoded.
+    @concurrent
+    func nextCameraImage(timeout: Duration) async -> CapturedImage? {
         let (frames, continuation) = AsyncStream.makeStream(of: CapturedImage.self, bufferingPolicy: .bufferingNewest(1))
-        let subscription = sessionManager.addFrameHandler { frame in
-            // Copy on the frame queue; skip the frame if the copy fails rather than hold ARKit's buffer.
-            guard let buffer = PixelBufferCopy.copy(frame.capturedImage) else { return }
-            continuation.yield(CapturedImage(pixelBuffer: buffer))
+        // Copies on the frame queue, so ARKit gets its buffer back as soon as the handler returns.
+        let subscription = addImageHandler { [stillCopier, log] image in
+            do {
+                continuation.yield(CapturedImage(pixelBuffer: try stillCopier.copy(image)))
+            } catch {
+                log.error("still skipped: could not copy camera buffer: \(String(describing: error), privacy: .public)")
+            }
         }
         let timeoutTask = Task {
             try? await Task.sleep(for: timeout)
@@ -355,13 +375,10 @@ final class ARSceneAnalyzer: SceneObservationProviding, SceneDescribing, AskedIm
             timeoutTask.cancel()
         }
 
-        // Unsubscribe as soon as the first copy arrives, before JPEG encode.
-        guard let image = await FirstFrame.take(frames, onFirst: {
-            sessionManager.removeFrameHandler(subscription)
-            timeoutTask.cancel()
-            continuation.finish()
-        }) else { throw AskAIError.noCameraImage }
-        return try stillImageJPEG(from: image.pixelBuffer, orientation: orientation)
+        for await image in frames {
+            return image
+        }
+        return nil
     }
 
     // MARK: - AskedImageProviding
@@ -447,11 +464,12 @@ private struct CapturedFrame: @unchecked Sendable {
     let interfaceOrientation: UIInterfaceOrientation
 }
 
-/// Carries one camera image from the session's queue to an Ask AI question.
+/// Carries a copy of one camera image from the session's queue to an Ask AI question.
 ///
-/// `@unchecked Sendable` because `CVPixelBuffer` is not `Sendable`. It is safe because ARKit
-/// never writes to a delivered image and Ask AI only reads it, once, to encode the still.
-private struct CapturedImage: @unchecked Sendable {
+/// `@unchecked Sendable` because `CVPixelBuffer` is not `Sendable`. It is safe because the
+/// buffer is our copy, nothing writes to it after it is yielded, and Ask AI only reads it,
+/// once, to encode the still.
+struct CapturedImage: @unchecked Sendable {
     let pixelBuffer: CVPixelBuffer
 }
 
