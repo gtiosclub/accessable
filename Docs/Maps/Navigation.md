@@ -102,6 +102,9 @@ The events are `prepare`, `now`, `passedTurnConfirmation`, `missedTurn`, `crossi
 
 Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, stairs, escalator, enter building and exit building, each with the attention haptic. Merges and roundabouts (25 to 27) are treated as straight; their instruction still names them.
 
+The decoder drops Valhalla's generic “the walkway” label from simple walking and turning cues. The action, heading,
+distance, named paths and joined cues are kept. This changes the text, not the route or when a turn is announced.
+
 ## Location source
 
 `FusedLocationProvider` (AR-3) passes on GPS, or ARKit geo-tracking's position while it is locked on, never both, and marks each fix's `source`. Outside trips the camera doesn't geo-track, so it is GPS alone. `LocationFusion` decides, from reading timestamps only:
