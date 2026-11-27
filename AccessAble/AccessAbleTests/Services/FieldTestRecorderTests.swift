@@ -296,4 +296,22 @@ struct FieldTestRecorderTests {
         let delivery = try #require(records(at: url).first { $0["kind"] as? String == "delivered" })
         #expect(delivery["elevationScenarioID"] as? String == scenario.scenarioID.uuidString)
     }
+
+    @Test("records into a folder with a space in its name")
+    func recordsInAFolderWithASpaceInItsName() throws {
+        let parent = FileManager.default.temporaryDirectory.appending(path: "Field Test Recorder \(UUID())")
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let recorder = FieldTestRecorder(directory: parent.appending(path: "Field Tests", directoryHint: .isDirectory))
+
+        let url = try recorder.start()
+        defer {
+            recorder.stop()
+            recorder.flush()
+        }
+        recorder.mark("step 1")
+        recorder.flush()
+
+        #expect(url.path(percentEncoded: false).contains("Field Tests"))
+        #expect(try records(at: url).map { $0["kind"] as? String } == ["mark"])
+    }
 }
