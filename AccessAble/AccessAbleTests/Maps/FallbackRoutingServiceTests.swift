@@ -175,6 +175,20 @@ struct FallbackRoutingServiceTests {
         #expect(await fallback.receivedOptions == [RouteOptions()])
     }
 
+    /// Apple can't weigh them, but preferences aren't places to avoid, so a backup route still beats none.
+    @Test
+    func routePreferencesStillFallBackToApple() async throws {
+        let preferences = RoutePreferences(avoidStairs: true, walkingSpeed: .slow).routeOptions
+        let primary = FakeRouting(.fails(RoutingError.serverUnavailable))
+        let fallback = FakeRouting(.returns(Self.backupRoute))
+        let service = FallbackRoutingService(primary: primary, fallback: fallback, clock: ManualClock())
+
+        let route = try await request(service, options: preferences).value
+
+        #expect(route.source == .appleMaps)
+        #expect(await fallback.receivedOptions == [preferences])
+    }
+
     @Test
     func deadValhallaServerStillGivesARouteTheTripCanStart() async throws {
         let dead = ValhallaEndpoint(baseURL: URL(string: "https://dead.valhalla.invalid")!, userAgent: "tests")

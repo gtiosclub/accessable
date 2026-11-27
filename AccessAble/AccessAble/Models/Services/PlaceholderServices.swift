@@ -201,7 +201,8 @@ struct PlaceholderTripProvider: TripStateProviding, LocationContextProviding {
         AsyncStream { $0.finish() }
     }
 
-    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async {}
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {}
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
@@ -236,7 +237,8 @@ struct PreviewTripProvider: TripStateProviding {
         AsyncStream { $0.finish() }
     }
 
-    func startTrip(route: NavigationRoute, destination: Destination, resumingAtStep: Int?) async {}
+    func startTrip(route: NavigationRoute, destination: Destination, preferences: RoutePreferences,
+                   resumingAtStep: Int?) async {}
     func pauseTrip() async {}
     func resumeTrip() async {}
     func endTrip() async {}
