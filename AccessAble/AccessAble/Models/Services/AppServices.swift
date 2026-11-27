@@ -93,7 +93,7 @@ struct AppServices: Sendable {
                 primaries: RoutingConfig.servers.map { ValhallaRoutingService(endpoint: $0) },
                 fallback: AppleMapsRoutingService()
             ),
-            destinationSearch: DestinationAutocompleter(region: .georgiaTech),
+            destinationSearch: DestinationAutocompleter(region: .georgiaTech, location: location),
             trip: trip,
             tripActivity: ActivityKitTripActivityClient(),
             // GPS alone: "where am I" is asked outside trips too, where the camera doesn't geo-track

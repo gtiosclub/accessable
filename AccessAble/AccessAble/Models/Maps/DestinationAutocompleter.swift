@@ -11,10 +11,13 @@ protocol MapKitAutocompleting: AnyObject {
     func cancel()
     func resolve(_ suggestion: SearchSuggestion) async throws -> Destination
     func coordinate(for suggestion: SearchSuggestion) async -> GeoCoordinate?
+    /// Recentres MapKit bias; nicknames stay campus-only and ignore this.
+    func setSearchRegion(_ region: SearchRegion)
 }
 
 extension MapKitAutocompleting {
     func coordinate(for suggestion: SearchSuggestion) async -> GeoCoordinate? { nil }
+    func setSearchRegion(_ region: SearchRegion) {}
 }
 
 @MainActor
@@ -28,15 +31,29 @@ final class DestinationAutocompleter: DestinationSearching {
     private var dictionaryDestinations: [SearchSuggestion.ID: Destination] = [:]
     private var resolvedCoordinates: [SearchSuggestion.ID: GeoCoordinate] = [:]
     private var coordinateTask: Task<Void, Never>?
+    private var locationTask: Task<Void, Never>?
     private var resultsGeneration = 0
+    /// MapKit bias centre; campus until a fix arrives, then the user (updated every ~1 km).
+    private(set) var searchRegion: SearchRegion
+    private var lastUserCenter: GeoCoordinate?
 
-    convenience init(region: SearchRegion, dictionary: CampusNicknameDictionary = .bundled) {
-        self.init(dictionary: dictionary, mapKit: LiveMapKitAutocompleter(region: region))
+    convenience init(
+        region: SearchRegion = .georgiaTech,
+        dictionary: CampusNicknameDictionary = .bundled,
+        location: (any LocationProvider)? = nil
+    ) {
+        self.init(dictionary: dictionary, mapKit: LiveMapKitAutocompleter(region: region), region: region)
+        if let location { follow(location) }
     }
 
-    init(dictionary: CampusNicknameDictionary = .bundled, mapKit: any MapKitAutocompleting) {
+    init(
+        dictionary: CampusNicknameDictionary = .bundled,
+        mapKit: any MapKitAutocompleting,
+        region: SearchRegion = .georgiaTech
+    ) {
         self.dictionary = dictionary
         self.mapKit = mapKit
+        self.searchRegion = region
 
         mapKit.onResults = { [weak self] mapKitResults in
             self?.applyMapKitResults(mapKitResults)
@@ -44,6 +61,37 @@ final class DestinationAutocompleter: DestinationSearching {
         mapKit.onError = { [weak self] error in
             self?.applyMapKitFailure(error)
         }
+    }
+
+    /// Keeps MapKit centred on the user when fixes arrive; falls back to campus when they stop.
+    func follow(_ location: any LocationProvider) {
+        locationTask?.cancel()
+        locationTask = Task { [weak self] in
+            for await sample in location.locationSamples() {
+                guard !Task.isCancelled else { return }
+                self?.updateRegion(for: sample.coordinate)
+            }
+            self?.updateRegion(for: nil)
+        }
+    }
+
+    /// Recentres when the user has moved about a kilometre, or restores campus when `coordinate` is nil.
+    func updateRegion(for coordinate: GeoCoordinate?) {
+        guard let coordinate else {
+            guard searchRegion != .georgiaTech || lastUserCenter != nil else { return }
+            lastUserCenter = nil
+            searchRegion = .georgiaTech
+            mapKit.setSearchRegion(.georgiaTech)
+            return
+        }
+        if let last = lastUserCenter,
+           GeoMath.distance(from: last, to: coordinate) < SearchRegion.recenterDistance {
+            return
+        }
+        lastUserCenter = coordinate
+        let next = SearchRegion.around(coordinate)
+        searchRegion = next
+        mapKit.setSearchRegion(next)
     }
 
     func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>> {
@@ -165,20 +213,30 @@ private final class LiveMapKitAutocompleter: NSObject, MapKitAutocompleting, MKL
     private let completer = MKLocalSearchCompleter()
     private var completions: [SearchSuggestion.ID: MKLocalSearchCompletion] = [:]
     private var resolvedDestinations: [SearchSuggestion.ID: Destination] = [:]
-    private let region: MKCoordinateRegion
+    private var region: MKCoordinateRegion
 
     init(region: SearchRegion) {
         // MKCoordinateRegion takes a full width/height, so double the radius
-        self.region = MKCoordinateRegion(
-            center: CLLocationCoordinate2D(latitude: region.center.latitude, longitude: region.center.longitude),
-            latitudinalMeters: region.radius * 2,
-            longitudinalMeters: region.radius * 2
-        )
+        self.region = Self.coordinateRegion(region)
         super.init()
         completer.delegate = self
         completer.resultTypes = [.address, .pointOfInterest]
         completer.region = self.region
-        completer.regionPriority = .required
+        // Prefer nearby results but still return named places far away (Chicago, etc.).
+        completer.regionPriority = .default
+    }
+
+    func setSearchRegion(_ region: SearchRegion) {
+        self.region = Self.coordinateRegion(region)
+        completer.region = self.region
+    }
+
+    private static func coordinateRegion(_ region: SearchRegion) -> MKCoordinateRegion {
+        MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: region.center.latitude, longitude: region.center.longitude),
+            latitudinalMeters: region.radius * 2,
+            longitudinalMeters: region.radius * 2
+        )
     }
 
     func update(fragment: String) {
@@ -200,7 +258,7 @@ private final class LiveMapKitAutocompleter: NSObject, MapKitAutocompleting, MKL
         }
         let request = MKLocalSearch.Request(completion: completion)
         request.region = region
-        request.regionPriority = .required
+        request.regionPriority = .default
         let response: MKLocalSearch.Response
         do {
             response = try await MKLocalSearch(request: request).start()

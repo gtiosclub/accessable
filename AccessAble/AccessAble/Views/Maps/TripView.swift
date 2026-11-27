@@ -187,10 +187,15 @@ private struct TripMapView: View {
     let showsUserLocation: Bool
     let accessibilityLabel: String
     @Environment(\.colorSchemeContrast) private var contrast
-    // .automatic zooms out to the whole continent when there's nothing on the map yet
-    @State private var cameraPosition: MapCameraPosition = .region(
-        MKCoordinateRegion(center: SearchRegion.georgiaTech.center.clCoordinate,
-                           latitudinalMeters: 1_500, longitudinalMeters: 1_500)
+    // Prefer the user when a fix exists; campus is only the fallback before location arrives.
+    @State private var cameraPosition: MapCameraPosition = .userLocation(
+        followsHeading: false,
+        fallback: .region(
+            MKCoordinateRegion(
+                center: SearchRegion.georgiaTech.center.clCoordinate,
+                latitudinalMeters: 1_500, longitudinalMeters: 1_500
+            )
+        )
     )
 
     var body: some View {
