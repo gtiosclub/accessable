@@ -65,7 +65,11 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// Apple's last availability answer, found in the background so a trip's camera needn't wait on it.
     private let geoAvailability = Mutex<GeoAvailability?>(nil)
     /// The background check in flight, so overlapping requests share it.
-    private let geoAvailabilityCheck = Mutex<Task<Void, Never>?>(nil)
+    private let geoAvailabilityCheck = Mutex(GeoAvailabilityChecks())
+    /// Times out the availability check.
+    private let clock: any Clock<Duration>
+    /// Dates availability answers, so they go stale.
+    private let now: @Sendable () -> Date
     /// What the running session uses; nil while stopped or a call has the camera.
     private let runningTracking = Mutex<SessionTracking?>(nil)
     private let geoBroadcaster = Broadcaster<GeoTrackingUpdate>()
@@ -82,6 +86,12 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
     /// declared stopped (T27). Relocalization normally lands in a second or two; past this
     /// the user is standing still waiting for guidance that is not coming back.
     private static let relocalizationTimeout: Duration = .seconds(5)
+
+    init(clock: any Clock<Duration> = ContinuousClock(), now: @escaping @Sendable () -> Date = { .now }) {
+        self.clock = clock
+        self.now = now
+        super.init()
+    }
 
     // MARK: - Lifecycle
 
@@ -274,25 +284,59 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
 
     /// The answer `refreshGeoAvailability()` found, while it is fresh; nil before then.
     var knownGeoAvailability: Bool? {
-        geoAvailability.withLock { known in known.flatMap { $0.isFresh(at: .now) ? $0.isAvailable : nil } }
+        geoAvailability.withLock { known in known.flatMap { $0.isFresh(at: now()) ? $0.isAvailable : nil } }
     }
+
+    /// How long a check may go unanswered before a refresh gives up on it and asks again.
+    static let geoAvailabilityTimeout: Duration = .seconds(30)
 
     /// Asks Apple in the background whether geo-tracking is available here, unless a fresh answer
     /// is kept or a check is running. Returns at once, since the camera never waits on it.
     func refreshGeoAvailability(check: @escaping GeoAvailabilityCheck = checkGeoAvailabilityWithARKit) {
         guard knownGeoAvailability == nil else { return }
-        geoAvailabilityCheck.withLock { running in
-            guard running == nil else { return }
-            running = Task { [weak self] in
-                let available = await withCheckedContinuation { continuation in
-                    check { available, _ in continuation.resume(returning: available) }
-                }
-                guard let self else { return }
-                geoAvailability.withLock { $0 = GeoAvailability(isAvailable: available, checkedAt: .now) }
-                geoAvailabilityCheck.withLock { $0 = nil }
-                log.notice("geo-tracking available here: \(available, privacy: .public)")
+        let clock = self.clock
+        let isOverdue = Self.deadline(after: Self.geoAvailabilityTimeout, on: clock)
+        let started = geoAvailabilityCheck.withLock { checks -> Int? in
+            if let running = checks.running {
+                guard running.isOverdue() else { return nil }
+                Self.availabilityLog.notice("geo-tracking availability check timed out")
             }
+            checks.started += 1
+            checks.running = (checks.started, isOverdue)
+            return checks.started
         }
+        guard let started else { return }
+        check { [weak self] available, error in
+            self?.finishGeoAvailabilityCheck(started, available: available, error: error)
+        }
+    }
+
+    /// Keeps check `id`'s answer, unless a refresh has given up on it. A failed check isn't a "no":
+    /// it keeps nothing, so the next refresh asks again.
+    private func finishGeoAvailabilityCheck(_ id: Int, available: Bool, error: (any Error)?) {
+        geoAvailabilityCheck.withLock { checks in
+            guard checks.running?.id == id else { return }
+            checks.running = nil
+            if let error {
+                Self.availabilityLog.error("geo-tracking availability check failed: \(error.localizedDescription, privacy: .public)")
+                return
+            }
+            geoAvailability.withLock { $0 = GeoAvailability(isAvailable: available, checkedAt: now()) }
+            log.notice("geo-tracking available here: \(available, privacy: .public)")
+        }
+    }
+
+    /// The availability checks started so far, and the one in flight.
+    private struct GeoAvailabilityChecks {
+        var started = 0
+        /// nil while no check is in flight.
+        var running: (id: Int, isOverdue: @Sendable () -> Bool)?
+    }
+
+    /// Whether `timeout` has passed on `clock` since this was called.
+    private static func deadline<C: Clock<Duration>>(after timeout: Duration, on clock: C) -> @Sendable () -> Bool {
+        let deadline = clock.now.advanced(by: timeout)
+        return { clock.now >= deadline }
     }
 
     /// ARKit's check, where the device can geo-track at all.

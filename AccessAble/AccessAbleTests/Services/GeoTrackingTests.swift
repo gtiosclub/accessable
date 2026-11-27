@@ -11,17 +11,29 @@ private func camera(yaw: Float, pitch: Float = 0) -> simd_float4x4 {
     return simd_float4x4(turn * tilt)
 }
 
-/// Keeps ARKit's callback, so the test answers when it likes, or never.
+/// Keeps ARKit's callbacks, so the test answers when it likes, or never.
 private final class HeldAvailabilityCheck: Sendable {
-    private let completion = Mutex<(@Sendable (Bool, (any Error)?) -> Void)?>(nil)
+    private let completions = Mutex<[@Sendable (Bool, (any Error)?) -> Void]>([])
+
+    var timesAsked: Int { completions.withLock { $0.count } }
 
     func check(_ completion: @escaping @Sendable (Bool, (any Error)?) -> Void) {
-        self.completion.withLock { $0 = completion }
+        completions.withLock { $0.append(completion) }
     }
 
-    func answer(_ available: Bool) {
-        completion.withLock { $0 }?(available, nil)
+    /// Answers the check asked `index`th, counting from 0; the latest by default.
+    func answer(_ available: Bool, error: (any Error)? = nil, check index: Int? = nil) {
+        let completion = completions.withLock { completions in index.map { completions[$0] } ?? completions.last }
+        completion?(available, error)
     }
+}
+
+/// A date the test moves by hand.
+private final class ManualDate: Sendable {
+    private let date = Mutex(Date(timeIntervalSince1970: 1_000_000))
+
+    func now() -> Date { date.withLock { $0 } }
+    func advance(by interval: TimeInterval) { date.withLock { $0 += interval } }
 }
 
 private struct NoImageryHere: Error {}
@@ -173,21 +185,99 @@ struct GeoTrackingTests {
         #expect(!answer.isFresh(at: checked.addingTimeInterval(GeoAvailability.lifetime + 1)))
     }
 
-    @Test(.timeLimit(.minutes(1)))
-    func theBackgroundCheckIsAskedOnceAndKept() async throws {
-        let manager = ARSessionManager()
-        let asked = Mutex(0)
-        let check: ARSessionManager.GeoAvailabilityCheck = { completion in
-            asked.withLock { $0 += 1 }
-            completion(true, nil)
-        }
+    @Test
+    func theBackgroundCheckIsAskedOnceAndKept() {
+        let manager = ARSessionManager(clock: ManualClock())
+        let held = HeldAvailabilityCheck()
         #expect(manager.knownGeoAvailability == nil)
 
-        manager.refreshGeoAvailability(check: check)
-        while manager.knownGeoAvailability == nil { try await Task.sleep(for: .milliseconds(5)) }
-        manager.refreshGeoAvailability(check: check)
+        manager.refreshGeoAvailability(check: held.check)
+        // shares the check in flight
+        manager.refreshGeoAvailability(check: held.check)
+        held.answer(true)
+        manager.refreshGeoAvailability(check: held.check)
 
         #expect(manager.knownGeoAvailability == true)
-        #expect(asked.withLock { $0 } == 1)
+        #expect(held.timesAsked == 1)
+    }
+
+    @Test
+    func aRealNoIsKept() {
+        let manager = ARSessionManager(clock: ManualClock())
+        let held = HeldAvailabilityCheck()
+
+        manager.refreshGeoAvailability(check: held.check)
+        held.answer(false)
+        manager.refreshGeoAvailability(check: held.check)
+
+        #expect(manager.knownGeoAvailability == false)
+        #expect(held.timesAsked == 1)
+    }
+
+    // e.g. location not allowed yet: that says nothing about Apple's imagery here
+    @Test
+    func aFailedCheckIsNotANo() {
+        let manager = ARSessionManager(clock: ManualClock())
+        let held = HeldAvailabilityCheck()
+
+        manager.refreshGeoAvailability(check: held.check)
+        held.answer(false, error: NoImageryHere())
+        #expect(manager.knownGeoAvailability == nil)
+
+        manager.refreshGeoAvailability(check: held.check)
+        #expect(held.timesAsked == 2)
+    }
+
+    @Test
+    func aCheckThatNeverAnswersIsAskedAgainAfterTheTimeout() {
+        let clock = ManualClock()
+        let manager = ARSessionManager(clock: clock)
+        let held = HeldAvailabilityCheck()
+
+        manager.refreshGeoAvailability(check: held.check)
+        clock.advance(by: ARSessionManager.geoAvailabilityTimeout - .milliseconds(1))
+        manager.refreshGeoAvailability(check: held.check)
+        #expect(held.timesAsked == 1)
+
+        clock.advance(by: .milliseconds(1))
+        manager.refreshGeoAvailability(check: held.check)
+        #expect(held.timesAsked == 2)
+        #expect(manager.knownGeoAvailability == nil)
+    }
+
+    @Test
+    func aLateAnswerFromAGivenUpCheckIsDropped() {
+        let clock = ManualClock()
+        let manager = ARSessionManager(clock: clock)
+        let held = HeldAvailabilityCheck()
+        manager.refreshGeoAvailability(check: held.check)
+        clock.advance(by: ARSessionManager.geoAvailabilityTimeout)
+        manager.refreshGeoAvailability(check: held.check)
+
+        held.answer(true, check: 0)
+        #expect(manager.knownGeoAvailability == nil)
+
+        held.answer(false, check: 1)
+        held.answer(true, check: 0)
+        #expect(manager.knownGeoAvailability == false)
+    }
+
+    @Test
+    func theAnswerExpiresAndIsAskedAgain() {
+        let date = ManualDate()
+        let manager = ARSessionManager(clock: ManualClock(), now: date.now)
+        let held = HeldAvailabilityCheck()
+        manager.refreshGeoAvailability(check: held.check)
+        held.answer(true)
+
+        date.advance(by: GeoAvailability.lifetime - 1)
+        manager.refreshGeoAvailability(check: held.check)
+        #expect(manager.knownGeoAvailability == true)
+        #expect(held.timesAsked == 1)
+
+        date.advance(by: 1)
+        #expect(manager.knownGeoAvailability == nil)
+        manager.refreshGeoAvailability(check: held.check)
+        #expect(held.timesAsked == 2)
     }
 }
