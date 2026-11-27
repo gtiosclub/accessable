@@ -532,6 +532,10 @@ private struct Harness {
                                       speed: speed ?? course.map { _ in 1.4 }, course: course, source: source),
                        toStream: location.streamCount - 1)
         let state = await states.waitFor { $0.updatedAt == time || $0.phase == .arrived }
+        // The manager reads the clock after publishing, for when a reroute may go out and which way the arrival is,
+        // so the clock waits until it reaches its next await. Resuming does nothing unless paused, and so returns
+        // only then; while paused it would resume, and nothing after the publish reads the clock.
+        if state.phase != .paused { await manager.resumeTrip() }
         clock.advance(by: seconds)
         return state
     }
