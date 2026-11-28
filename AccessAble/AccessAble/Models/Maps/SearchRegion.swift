@@ -14,6 +14,13 @@ struct SearchRegion: Equatable, Sendable {
         radius: 5_000
     )
 
+    /// Campus nicknames are offered only while the search is centred this close to campus (metres).
+    static let campusNicknameRange: Double = 50_000
+
+    var isNearCampus: Bool {
+        GeoMath.distance(from: center, to: Self.georgiaTech.center) <= Self.campusNicknameRange
+    }
+
     /// Region centred on `coordinate` with the campus search radius.
     static func around(_ coordinate: GeoCoordinate) -> SearchRegion {
         SearchRegion(center: coordinate, radius: georgiaTech.radius)

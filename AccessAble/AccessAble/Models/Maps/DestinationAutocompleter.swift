@@ -123,8 +123,9 @@ final class DestinationAutocompleter: DestinationSearching {
             return
         }
 
-        // Check the campus nickname dictionary before querying MapKit.
-        let matches = dictionary.matches(for: trimmed)
+        // Check the campus nickname dictionary before querying MapKit. Far from campus its matches would
+        // only crowd out local results.
+        let matches = searchRegion.isNearCampus ? dictionary.matches(for: trimmed) : []
         dictionaryMatches = matches
         dictionaryDestinations = Dictionary(
             matches.map { ($0.suggestion.id, $0.destination) },
