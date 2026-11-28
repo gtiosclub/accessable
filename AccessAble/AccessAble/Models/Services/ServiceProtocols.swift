@@ -129,6 +129,12 @@ protocol DestinationSearching: Sendable {
     func suggestions() -> AsyncStream<Result<[SearchSuggestion], DestinationSearchError>>
     func update(query: String)
     func resolve(_ suggestion: SearchSuggestion) async throws -> Destination
+    /// Biases results toward the user's location while a search screen runs this. Returns when cancelled.
+    func followLocation(_ location: any LocationProvider) async
+}
+
+extension DestinationSearching {
+    func followLocation(_ location: any LocationProvider) async {}
 }
 
 protocol TripStateProviding: Sendable {

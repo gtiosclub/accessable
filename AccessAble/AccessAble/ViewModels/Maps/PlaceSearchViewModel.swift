@@ -313,6 +313,7 @@ final class PlaceSearchViewModel {
         await services.location.requestAuthorization()
         await withDiscardingTaskGroup { group in
             group.addTask { await destinationSearch.start() }
+            group.addTask { await destinationSearch.followLocation(services.location) }
             group.addTask {
                 for await authorization in services.location.authorizationStates() {
                     await self.receive(authorization)

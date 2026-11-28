@@ -11,7 +11,7 @@ protocol MapKitAutocompleting: AnyObject {
     func cancel()
     func resolve(_ suggestion: SearchSuggestion) async throws -> Destination
     func coordinate(for suggestion: SearchSuggestion) async -> GeoCoordinate?
-    /// Recentres MapKit bias; nicknames stay campus-only and ignore this.
+    /// Recentres MapKit's bias toward `region`.
     func setSearchRegion(_ region: SearchRegion)
 }
 
@@ -31,19 +31,14 @@ final class DestinationAutocompleter: DestinationSearching {
     private var dictionaryDestinations: [SearchSuggestion.ID: Destination] = [:]
     private var resolvedCoordinates: [SearchSuggestion.ID: GeoCoordinate] = [:]
     private var coordinateTask: Task<Void, Never>?
-    private var locationTask: Task<Void, Never>?
+    private var followGeneration = 0
     private var resultsGeneration = 0
     /// MapKit bias centre; campus until a fix arrives, then the user (updated every ~1 km).
     private(set) var searchRegion: SearchRegion
     private var lastUserCenter: GeoCoordinate?
 
-    convenience init(
-        region: SearchRegion = .georgiaTech,
-        dictionary: CampusNicknameDictionary = .bundled,
-        location: (any LocationProvider)? = nil
-    ) {
+    convenience init(region: SearchRegion = .georgiaTech, dictionary: CampusNicknameDictionary = .bundled) {
         self.init(dictionary: dictionary, mapKit: LiveMapKitAutocompleter(region: region), region: region)
-        if let location { follow(location) }
     }
 
     init(
@@ -63,16 +58,31 @@ final class DestinationAutocompleter: DestinationSearching {
         }
     }
 
-    /// Keeps MapKit centred on the user when fixes arrive; falls back to campus when they stop.
-    func follow(_ location: any LocationProvider) {
-        locationTask?.cancel()
-        locationTask = Task { [weak self] in
-            for await sample in location.locationSamples() {
-                guard !Task.isCancelled else { return }
-                self?.updateRegion(for: sample.coordinate)
+    /// Centres MapKit on the user while a search screen runs this, and on campus without a fix or permission.
+    /// Returns when cancelled; a later call supersedes an earlier one still running.
+    func followLocation(_ location: any LocationProvider) async {
+        followGeneration += 1
+        let generation = followGeneration
+        // A centre from an earlier search may be stale; campus until this one's first fix.
+        updateRegion(for: nil)
+        await withDiscardingTaskGroup { group in
+            group.addTask {
+                for await authorization in location.authorizationStates() {
+                    if case .authorized = authorization { continue }
+                    await self.followed(nil, generation: generation)
+                }
             }
-            self?.updateRegion(for: nil)
+            group.addTask {
+                for await sample in location.locationSamples() {
+                    await self.followed(sample.coordinate, generation: generation)
+                }
+            }
         }
+    }
+
+    private func followed(_ coordinate: GeoCoordinate?, generation: Int) {
+        guard !Task.isCancelled, generation == followGeneration else { return }
+        updateRegion(for: coordinate)
     }
 
     /// Recentres when the user has moved about a kilometre, or restores campus when `coordinate` is nil.
