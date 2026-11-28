@@ -54,6 +54,8 @@ struct SettingsPreferences: Codable, Hashable, Sendable {
     var promptedTopics: Set<InfoTopic>
     var usesSystemScreenReader: Bool
     var quickSettingsEnabled: Bool
+    /// Names nearby places while the user holds the phone flat on the home screen and turns.
+    var pointToScan: Bool
 
     /// Defaults for a new user. Metric follows the device's region.
     static var `default`: SettingsPreferences {
@@ -65,7 +67,35 @@ struct SettingsPreferences: Codable, Hashable, Sendable {
             unpromptedTopics: [.directions, .trafficAndCrowds, .openingsAndObstacles],
             promptedTopics: [.trafficAndCrowds, .signsAndText, .partiallyVisibleObjects, .structureBasics],
             usesSystemScreenReader: true,
-            quickSettingsEnabled: true
+            quickSettingsEnabled: true,
+            pointToScan: false
+        )
+    }
+}
+
+// Settings saved before a field existed still load, with that field's default.
+extension SettingsPreferences {
+    private enum CodingKeys: String, CodingKey {
+        case phoneAimingHelp, usesMetricUnits, autoRepeat, prioritizedTopics, unpromptedTopics, promptedTopics,
+             usesSystemScreenReader, quickSettingsEnabled, pointToScan
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            phoneAimingHelp: try container.decodeIfPresent(Bool.self, forKey: .phoneAimingHelp) ?? true,
+            usesMetricUnits: try container.decodeIfPresent(Bool.self, forKey: .usesMetricUnits)
+                ?? (Locale.current.measurementSystem == .metric),
+            autoRepeat: try container.decodeIfPresent(AutoRepeat.self, forKey: .autoRepeat) ?? .onlyWhenAsked,
+            prioritizedTopics: try container.decodeIfPresent(Set<InfoTopic>.self, forKey: .prioritizedTopics)
+                ?? [.detailedDescription, .trafficAndCrowds],
+            unpromptedTopics: try container.decodeIfPresent(Set<InfoTopic>.self, forKey: .unpromptedTopics)
+                ?? [.directions, .trafficAndCrowds, .openingsAndObstacles],
+            promptedTopics: try container.decodeIfPresent(Set<InfoTopic>.self, forKey: .promptedTopics)
+                ?? [.trafficAndCrowds, .signsAndText, .partiallyVisibleObjects, .structureBasics],
+            usesSystemScreenReader: try container.decodeIfPresent(Bool.self, forKey: .usesSystemScreenReader) ?? true,
+            quickSettingsEnabled: try container.decodeIfPresent(Bool.self, forKey: .quickSettingsEnabled) ?? true,
+            pointToScan: try container.decodeIfPresent(Bool.self, forKey: .pointToScan) ?? false
         )
     }
 }
