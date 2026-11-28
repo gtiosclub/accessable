@@ -39,7 +39,11 @@ final class SurfaceReader: @unchecked Sendable {
     private let side = 56
     /// A map older than this is stale, so the ground ahead is treated as unknown.
     private let freshness: TimeInterval = 1.5
-    private let queue = DispatchQueue(label: "AccessAble.SurfaceReader", qos: .utility)
+    private let queue: DispatchQueue
+    /// Copies are scaled to this many pixels a side, the largest bundled model input (DETR
+    /// takes 448, SegFormer 512). `.scaleFill` stretches to the model's square input anyway.
+    private static let inputSide = 512
+    private let copier = PixelBufferCopier(size: (SurfaceReader.inputSide, SurfaceReader.inputSide))
     private let log = Logger(subsystem: "AccessAble", category: "SurfaceReader")
 
     private struct State {
@@ -58,10 +62,16 @@ final class SurfaceReader: @unchecked Sendable {
         self.init(compiledModelURL: url, interval: interval)
     }
 
-    /// From a compiled model anywhere on disk (tests).
-    init(compiledModelURL: URL, interval: TimeInterval = 0.4) {
+    /// From a compiled model anywhere on disk (tests). `queue` runs the segmentations; tests
+    /// pass one they can suspend.
+    init(
+        compiledModelURL: URL,
+        interval: TimeInterval = 0.4,
+        queue: DispatchQueue = DispatchQueue(label: "AccessAble.SurfaceReader", qos: .utility)
+    ) {
         modelURL = compiledModelURL
         self.interval = interval
+        self.queue = queue
     }
 
     /// Loads the model the first time; on `queue` only.
@@ -93,7 +103,13 @@ final class SurfaceReader: @unchecked Sendable {
         }
         guard isDue else { return }
 
-        let request = SegmentRequest(image: image, orientation: orientation, time: time)
+        let copy: CVPixelBuffer
+        do { copy = try copier.copy(image) } catch {
+            state.withLock { $0.isReading = false }
+            log.error("segmentation skipped: could not copy camera buffer: \(String(describing: error), privacy: .public)")
+            return
+        }
+        let request = SegmentRequest(image: copy, orientation: orientation, time: time)
         queue.async { [self] in
             let kinds = segment(request)
             state.withLock { state in
@@ -156,8 +172,9 @@ final class SurfaceReader: @unchecked Sendable {
     }
 }
 
-/// Carries the image to the segmentation queue. `@unchecked Sendable` for the same reason as
-/// `TextReader`'s request: the buffer is only read, and ARKit doesn't reuse it while retained.
+/// Carries a scaled copy of the image to the segmentation queue. `@unchecked Sendable` for
+/// the same reason as `TextReader`'s request: the buffer is our copy, only read, on the
+/// segmentation queue.
 private struct SegmentRequest: @unchecked Sendable {
     let image: CVPixelBuffer
     let orientation: CGImagePropertyOrientation

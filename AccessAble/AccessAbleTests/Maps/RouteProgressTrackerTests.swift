@@ -52,6 +52,27 @@ private func straightOn(past route: NavigationRoute, count: Int, start: Date,
     }, start: start)
 }
 
+/// A correct walk through vertex 1 at 1.4 m a second: on `overshoot` metres straight past it, then along the outgoing
+/// leg that far to its side. Each fix is `lead` metres further on in the walking direction than the walker, and off
+/// by up to `noise` metres each way.
+private func overshootingTurn(of route: NavigationRoute, overshoot: Double, lead: Double, noise: Double,
+                              accuracy: Double, source: LocationSource) -> [LocationSample] {
+    var generator = SeededGenerator(seed: 7)
+    let vertex = route.coordinates[1]
+    let incoming = GeoMath.bearing(from: route.coordinates[0], to: vertex)
+    let outgoing = GeoMath.bearing(from: vertex, to: route.coordinates[2])
+    let corner = TripWalk.destination(from: vertex, bearing: incoming, distance: overshoot)
+    let legs = TripWalk.distances(from: 0, to: 100 + overshoot).map { (route.coordinates[0], incoming, $0) }
+        + TripWalk.distances(from: 1.4, to: 100).map { (corner, outgoing, $0) }
+    let points = legs.map { origin, bearing, distance in
+        let along = distance + lead + noise * Double.random(in: -1...1, using: &generator)
+        let ahead = TripWalk.destination(from: origin, bearing: bearing, distance: along)
+        return TripWalk.destination(from: ahead, bearing: bearing + 90,
+                                    distance: noise * Double.random(in: -1...1, using: &generator))
+    }
+    return sourced(TripWalk.fixes(at: points, accuracy: accuracy)) { _ in source }
+}
+
 /// The fixes with a walking `speed` and `course`, as Core Location gives them while walking that way.
 private func walking(_ fixes: [LocationSample], course: Double?, speed: Double? = 1.4) -> [LocationSample] {
     fixes.map { fix in
@@ -813,6 +834,34 @@ struct RouteProgressTrackerTests {
         })
         #expect(cueKinds(walk.logged) == [
             .prepare(step: 1, distance: 0), .now(step: 1), .prepare(step: 2, distance: 0), .arrived,
+        ])
+    }
+
+    // nothing puts an AR fix ahead of the camera, so only ARKit's error can: a few metres of overshoot plus a few of
+    // lead stay well short of the 15 m from the route a missed turn needs
+    @Test(arguments: [61.0, 90], [LocationSource.ar, .gps])
+    func correctTurnWithAFewMetresOfOvershootIsNotAMissedTurn(_ bearing: Double, _ source: LocationSource) throws {
+        let route = try turnRoute(bearing)
+        var walk = Walk(route)
+        // AR: precise fixes 3 m ahead of the walker; GPS: noisy fixes with no lead
+        walk.feed(source == .ar
+            ? overshootingTurn(of: route, overshoot: 8, lead: 3, noise: 1, accuracy: 5, source: .ar)
+            : overshootingTurn(of: route, overshoot: 5, lead: 0, noise: 5, accuracy: 10, source: .gps))
+        #expect(!walk.logged.contains { isMovement($0) })
+        #expect(walk.states.contains { $0.nextStepIndex == 2 })
+        #expect(walk.logged.last?.event == .arrived)
+    }
+
+    @Test
+    func walkingStraightPastATurnOnFixesALittleAheadIsAMissedTurn() throws {
+        let route = try turnRoute(90)
+        var walk = Walk(route)
+        walk.feed(sourced(TripWalk.fixes(on: route, path: onRoute(TripWalk.distances(from: 0, to: 100)))) { _ in .ar })
+        let start = walk.fixCount
+        walk.feed(sourced(straightOn(past: route, count: 18, start: walk.nextTime) { _ in (3, 0) }) { _ in .ar })
+        // 15 m from the route first at 15.6 m, confirmed 2 s later at 18.4 m: the lead only brings it two fixes sooner
+        #expect(Array(walk.logged.drop { $0.fix < start }) == [
+            Logged(start + 10, .missedTurn(step: 1, distanceBack: 18.4)),
         ])
     }
 

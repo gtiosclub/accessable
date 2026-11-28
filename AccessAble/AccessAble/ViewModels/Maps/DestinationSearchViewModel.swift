@@ -96,8 +96,10 @@ final class DestinationSearchViewModel {
             await listenForSuggestions()
             return
         }
+        let search = search
         await withDiscardingTaskGroup { group in
             group.addTask { await self.listenForSuggestions() }
+            group.addTask { await search.followLocation(locationProvider) }
             group.addTask {
                 for await sample in locationProvider.locationSamples() {
                     await self.receive(sample)
@@ -109,6 +111,11 @@ final class DestinationSearchViewModel {
                 }
             }
         }
+    }
+
+    /// Centres the search on the user until cancelled, for a screen that reads the location itself.
+    func followLocation(_ location: any LocationProvider) async {
+        await search.followLocation(location)
     }
 
     private func listenForSuggestions() async {

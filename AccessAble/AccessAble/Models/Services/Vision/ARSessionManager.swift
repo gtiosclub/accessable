@@ -461,6 +461,9 @@ final class ARSessionManager: NSObject, @unchecked Sendable {
         handlers.withLock { $0[subscription.id] = nil }
     }
 
+    /// How many frame handlers are subscribed (tests).
+    var frameHandlerCount: Int { handlers.withLock { $0.count } }
+
     /// Called when the system takes the camera away (phone locked, app in the background, a
     /// call) and when it gives it back. Not called for `stop()`.
     func setInterruptionHandler(_ handler: (@Sendable (_ isInterrupted: Bool) -> Void)?) {

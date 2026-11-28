@@ -10,6 +10,11 @@ How a trip is guided, in `AccessAble/AccessAble/Models/Maps/`:
 The doc comments and the constants in the code are the source of truth. Distances are metres along the route unless
 stated otherwise.
 
+## Place search
+
+At accessibility Dynamic Type sizes, the From/To card stacks the fields, places clear and dictation controls below each
+field, and puts Swap on its own row. The origin label and address can wrap without truncating at those sizes.
+
 ## Tracker
 
 The tracker is a pure struct. All time comes from fix timestamps, so a recorded walk always replays the same way. A
@@ -101,6 +106,9 @@ The events are `prepare`, `now`, `passedTurnConfirmation`, `missedTurn`, `crossi
 ### Turn types
 
 Valhalla's maneuver types map onto `ManeuverKind`. Types 39 to 43 are elevator, stairs, escalator, enter building and exit building, each with the attention haptic. Merges and roundabouts (25 to 27) are treated as straight; their instruction still names them.
+
+The decoder drops Valhalla's generic “the walkway” label from simple walking and turning cues. The action, heading,
+distance, named paths and joined cues are kept. This changes the text, not the route or when a turn is announced.
 
 ## Location source
 

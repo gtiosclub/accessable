@@ -10,11 +10,13 @@ import os
 /// Text recognition is too slow to run on every frame without delaying obstacle warnings,
 /// and signs don't change from one frame to the next. So reads happen at most once per
 /// `interval`, on their own queue, and each frame picks up whatever has been read so far.
-/// The image being read keeps one of ARKit's frame buffers alive for the length of a read.
+/// The pixels are copied before going async so ARKit's camera-buffer pool is not held.
 final class TextReader: Sendable {
     private let detector: TextDetector
     private let interval: TimeInterval
-    private let queue = DispatchQueue(label: "AccessAble.TextReader", qos: .utility)
+    private let queue: DispatchQueue
+    /// Full resolution: small text needs every pixel.
+    private let copier = PixelBufferCopier()
     private let log = Logger(subsystem: "AccessAble", category: "TextReader")
 
     private struct State {
@@ -25,9 +27,15 @@ final class TextReader: Sendable {
 
     private let state = Mutex(State())
 
-    init(detector: TextDetector = TextDetector(), interval: TimeInterval = 1) {
+    /// `queue` runs the reads; tests pass one they can suspend.
+    init(
+        detector: TextDetector = TextDetector(),
+        interval: TimeInterval = 1,
+        queue: DispatchQueue = DispatchQueue(label: "AccessAble.TextReader", qos: .utility)
+    ) {
         self.detector = detector
         self.interval = interval
+        self.queue = queue
     }
 
     /// A function placing an upright, normalized text box in the world, built from the
@@ -52,7 +60,13 @@ final class TextReader: Sendable {
         }
         guard isDue else { return }
 
-        let request = ReadRequest(image: image, orientation: orientation, time: time)
+        let copy: CVPixelBuffer
+        do { copy = try copier.copy(image) } catch {
+            state.withLock { $0.isReading = false }
+            log.error("text recognition skipped: could not copy camera buffer: \(String(describing: error), privacy: .public)")
+            return
+        }
+        let request = ReadRequest(image: copy, orientation: orientation, time: time)
         queue.async { [self] in
             var texts: [RecognizedText]
             do {
@@ -84,10 +98,10 @@ final class TextReader: Sendable {
     }
 }
 
-/// Carries the image to the OCR queue.
+/// Carries a copied image to the OCR queue.
 ///
 /// `@unchecked Sendable` because `CVPixelBuffer` is not `Sendable`. It is safe because the
-/// buffer is only read, and ARKit does not reuse it while it is retained here.
+/// buffer is our copy, only read, and only touched on the OCR queue.
 private struct ReadRequest: @unchecked Sendable {
     let image: CVPixelBuffer
     let orientation: CGImagePropertyOrientation

@@ -19,9 +19,33 @@ struct ValhallaManeuverDecoderTests {
             .depart, .slightRight, .turnRight, .straight, .slightLeft,
             .straight, .turnRight, .turnLeft, .arrive
         ])
-        #expect(leg.steps.first?.instruction == "Walk south on the walkway.")
         let arrival = try #require(leg.steps.last)
         #expect(leg.coordinates[arrival.coordinateIndex] == leg.coordinates.last)
+    }
+
+    @Test
+    func unnamedWalkwaysKeepTheDepartureAndJoinedTurn() throws {
+        let steps = try ValhallaGeometryDecoder.decodeLegsWithManeuvers(from: fixture())[0].steps
+        #expect(steps[0].instruction == "Walk south.")
+        #expect(steps[0].spokenInstruction == "Walk south. Then keep right.")
+        #expect(steps[0].announcesNextStep)
+        #expect(steps[2].spokenInstruction == "Turn right. Then continue.")
+        #expect(steps[5].spokenInstruction == "Continue.")
+    }
+
+    @Test(arguments: [
+        ("Walk east on the walkway for 50 meters.", "Walk east for 50 meters."),
+        ("Continue on Skiles Walkway.", "Continue on Skiles Walkway."),
+        ("Turn right onto the walkway by Tech Green.", "Turn right onto the walkway by Tech Green."),
+        ("Cross the walkway at Ferst Drive.", "Cross the walkway at Ferst Drive."),
+        ("Take the stairs down to the walkway.", "Take the stairs down to the walkway."),
+        ("Take the elevator to the walkway.", "Take the elevator to the walkway."),
+        ("Turn left onto the walkway. Then Cross Ferst Drive.", "Turn left. Then cross Ferst Drive."),
+    ])
+    func keepsNamesDistancesAndSafetyCues(_ input: String, _ spoken: String) throws {
+        let data = try alteredFixture { $0[1]["verbal_pre_transition_instruction"] = input }
+        let steps = try ValhallaGeometryDecoder.decodeLegsWithManeuvers(from: data)[0].steps
+        #expect(steps[1].spokenInstruction == spoken)
     }
 
     @Test
@@ -63,7 +87,7 @@ struct ValhallaManeuverDecoderTests {
     func fallsBackToWrittenInstruction() throws {
         let data = try alteredFixture { $0[0].removeValue(forKey: "verbal_pre_transition_instruction") }
         let legs = try ValhallaGeometryDecoder.decodeLegsWithManeuvers(from: data)
-        #expect(legs[0].steps[0].spokenInstruction == legs[0].steps[0].instruction)
+        #expect(legs[0].steps[0].spokenInstruction == "Walk south.")
     }
 
     @Test
