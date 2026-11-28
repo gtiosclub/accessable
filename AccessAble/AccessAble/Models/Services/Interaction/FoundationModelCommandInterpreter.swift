@@ -78,11 +78,11 @@ struct FoundationModelCommandInterpreter: CommandInterpreting {
 struct GeneratedCommand {
     @Guide(description: "The single action the user wants.")
     var action: GeneratedAction
-
+ 
     @Guide(description: "For askQuestion, the user's question as a complete sentence. For navigateToPlace, the place name only. Otherwise an empty string.")
     var detail: String
 }
-
+ 
 @Generable
 enum GeneratedAction {
     case describeSurroundings
@@ -96,7 +96,7 @@ enum GeneratedAction {
     case askQuestion
     case unknown
 }
-
+ 
 extension GeneratedCommand {
     func voiceCommand(original: String) -> VoiceCommand {
         switch action {
@@ -107,7 +107,10 @@ extension GeneratedCommand {
         case .resumeTrip: .resumeTrip
         case .endTrip: .endTrip
         case .callVolunteer: .callVolunteer
-        case .navigateToPlace: .navigate(to: detail.isEmpty ? original : detail)
+        case .navigateToPlace:
+            .navigate(to: detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? KeywordCommandInterpreter.navigateDestination(in: original) ?? original
+                : detail)
         case .askQuestion: .ask(detail.isEmpty ? original : detail)
         case .unknown: .unknown(original)
         }

@@ -23,7 +23,7 @@ struct CommandRoutingTests {
         var services = AppServices.preview
         services.commands = AskEverything()
         services.sceneDescriber = scene
-        return CommandViewModel(services: services)
+        return CommandViewModel(services: services, destinations: .fixed())
     }
 
     @Test

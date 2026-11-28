@@ -14,11 +14,10 @@ struct CommandView: View {
     /// Optional so previews without a router still work; "call a volunteer" then gets the spoken hint.
     @Environment(AppRouter.self) private var router: AppRouter?
  
-    init(services: AppServices, savedPlaces: SavedPlacesStore? = nil) {
+    init(services: AppServices, savedPlaces: SavedPlacesStore) {
         let destinations = DestinationLookup(
             nicknames: CampusNicknameDictionary.bundled,
-            saved: savedPlaces.map { SavedPlacesDestinationSource(store: $0) }
-                ?? SavedPlacesDestinationSource { _ in [] },
+            saved: SavedPlacesDestinationSource(store: savedPlaces),
             mapKit: MapKitDestinationSource(region: .georgiaTech)
         )
         _viewModel = State(initialValue: CommandViewModel(services: services, destinations: destinations))
