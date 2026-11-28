@@ -34,6 +34,8 @@ final class CommandViewModel {
     /// The places just read out, for "number two" or a name; until `choicesExpired` says they're stale.
     @ObservationIgnored private var choices: [Destination] = []
     @ObservationIgnored private var choicesExpired: () -> Bool = { true }
+    /// Centred on the user's latest fix while `followLocation()` runs; campus before that.
+    @ObservationIgnored private(set) var searchRegion = SearchRegion.georgiaTech
 
     /// How long the places read out can still be picked by number or name.
     static let choiceLifetime: Duration = .seconds(60)
@@ -67,6 +69,13 @@ final class CommandViewModel {
             dictation.stop()
         } else {
             await dictation.start()
+        }
+    }
+
+    /// Centres place lookups on the user, like typed search, while the screen runs this.
+    func followLocation() async {
+        for await sample in services.location.locationSamples() {
+            searchRegion = .around(sample.coordinate)
         }
     }
 
@@ -151,7 +160,7 @@ final class CommandViewModel {
             await openHome()
             return
         }
-        let task = Task { [destinations] in try await destinations.lookUp(name) }
+        let task = Task { [destinations, searchRegion] in try await destinations.lookUp(name, in: searchRegion) }
         lookup = task
         let result: DestinationLookupResult
         do {

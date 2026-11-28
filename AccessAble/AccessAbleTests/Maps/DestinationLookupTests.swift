@@ -39,6 +39,19 @@ struct DestinationLookupTests {
         #expect(result == .one(mapKitClough))
     }
 
+    /// Like typed search (#390): far from campus a campus nickname is no match, and MapKit searches near the user.
+    @Test
+    func farFromCampusNicknamesAreSkipped() async throws {
+        let chicago = SearchRegion.around(GeoCoordinate(latitude: 41.8789, longitude: -87.6359))
+        let mapKit = FixedMapKit([DestinationCandidate(mapKitClough)])
+        let result = try await DestinationLookup.fixed(
+            nicknames: [DestinationCandidate(nicknameClough, names: ["Clough"])],
+            mapKit: mapKit
+        ).lookUp("Clough", in: chicago)
+        #expect(result == .one(mapKitClough))
+        #expect(mapKit.regions == [chicago])
+    }
+
     @Test
     func anExactNameBeatsOtherMatches() async throws {
         let annex = Destination.at("Clough Commons Annex", 1, 1)

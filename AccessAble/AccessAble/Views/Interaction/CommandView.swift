@@ -18,7 +18,7 @@ struct CommandView: View {
         let destinations = DestinationLookup(
             nicknames: CampusNicknameDictionary.bundled,
             saved: SavedPlacesDestinationSource(store: savedPlaces),
-            mapKit: MapKitDestinationSource(region: .georgiaTech)
+            mapKit: MapKitDestinationSource()
         )
         _viewModel = State(initialValue: CommandViewModel(services: services, destinations: destinations))
     }
@@ -77,6 +77,7 @@ struct CommandView: View {
                 viewModel.onOpenDestination = { router.push(.destination($0, origin: nil)) }
             }
         }
+        .task { await viewModel.followLocation() }
         .onDisappear { viewModel.cancelDictation() }
     }
 }

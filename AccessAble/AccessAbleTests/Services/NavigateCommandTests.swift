@@ -29,6 +29,21 @@ private final class CountingCommands: CommandInterpreting {
     func answer(_ question: String, context: String?) async throws -> String { "" }
 }
 
+/// Gives one fix, then ends.
+private struct OneFix: LocationProvider {
+    let coordinate: GeoCoordinate
+
+    func locationSamples() -> AsyncStream<LocationSample> {
+        AsyncStream { continuation in
+            continuation.yield(LocationSample(coordinate: coordinate, horizontalAccuracy: 5, timestamp: .now))
+            continuation.finish()
+        }
+    }
+    func headingSamples() -> AsyncStream<HeadingSample> { AsyncStream { $0.finish() } }
+    func authorizationStates() -> AsyncStream<LocationAuthorization> { AsyncStream { $0.finish() } }
+    func requestAuthorization() async {}
+}
+
 /// A trip whose state never arrives.
 private final class SilentTrip: TripStateProviding {
     private let states = AsyncStream.makeStream(of: TripState.self)
@@ -138,11 +153,13 @@ struct NavigateCommandTests {
     private func commands(
         _ lookup: DestinationLookup,
         trip: (any TripStateProviding)? = nil,
+        location: (any LocationProvider)? = nil,
         clock: any Clock<Duration> = ContinuousClock()
     ) -> CommandViewModel {
         var services = AppServices.preview
         services.commands = KeywordCommandInterpreter()
         if let trip { services.trip = trip }
+        if let location { services.location = location }
         return CommandViewModel(services: services, destinations: lookup, clock: clock)
     }
 
@@ -155,6 +172,26 @@ struct NavigateCommandTests {
         await viewModel.run("take me to Clough")
 
         #expect(opened == clough)
+    }
+
+    @Test
+    func searchesCentreOnTheUser() async {
+        let chicago = GeoCoordinate(latitude: 41.8789, longitude: -87.6359)
+        let mapKit = FixedMapKit([DestinationCandidate(.at("Willis Tower"))])
+        let viewModel = commands(.fixed(mapKit: mapKit), location: OneFix(coordinate: chicago))
+
+        await viewModel.followLocation()
+        await viewModel.run("take me to Willis Tower")
+
+        #expect(mapKit.regions == [.around(chicago)])
+    }
+
+    @Test
+    func withoutAFixSearchesCentreOnCampus() async {
+        let mapKit = FixedMapKit([DestinationCandidate(.at("Willis Tower"))])
+        let viewModel = commands(.fixed(mapKit: mapKit))
+        await viewModel.run("take me to Willis Tower")
+        #expect(mapKit.regions == [.georgiaTech])
     }
 
     @Test

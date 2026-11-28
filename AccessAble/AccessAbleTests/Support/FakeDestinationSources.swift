@@ -17,21 +17,22 @@ struct FixedSaved: SavedDestinationSource {
     func destinations(matching query: String) async -> [DestinationCandidate] { filtered(candidates, by: query) }
 }
 
-/// MapKit results the test sets, or an error to throw; counts its searches.
+/// MapKit results the test sets, or an error to throw; records the regions it searched in.
 final class FixedMapKit: MapDestinationSource {
     private let candidates: [DestinationCandidate]
     private let error: (any Error & Sendable)?
-    private let searchCount = Mutex(0)
+    private let searchedRegions = Mutex<[SearchRegion]>([])
 
     init(_ candidates: [DestinationCandidate] = [], error: (any Error & Sendable)? = nil) {
         self.candidates = candidates
         self.error = error
     }
 
-    var searches: Int { searchCount.withLock { $0 } }
+    var searches: Int { regions.count }
+    var regions: [SearchRegion] { searchedRegions.withLock { $0 } }
 
-    func destinations(matching query: String) async throws -> [DestinationCandidate] {
-        searchCount.withLock { $0 += 1 }
+    func destinations(matching query: String, in region: SearchRegion) async throws -> [DestinationCandidate] {
+        searchedRegions.withLock { $0.append(region) }
         if let error { throw error }
         return filtered(candidates, by: query)
     }
@@ -42,7 +43,7 @@ final class GatedMapKit: MapDestinationSource {
     private let pending = Mutex<CheckedContinuation<[DestinationCandidate], Never>?>(nil)
     private let started = AsyncStream.makeStream(of: Void.self)
 
-    func destinations(matching query: String) async throws -> [DestinationCandidate] {
+    func destinations(matching query: String, in region: SearchRegion) async throws -> [DestinationCandidate] {
         await withCheckedContinuation { continuation in
             pending.withLock { $0 = continuation }
             started.continuation.yield()

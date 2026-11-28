@@ -36,10 +36,10 @@ protocol SavedDestinationSource: Sendable {
     func destinations(matching query: String) async -> [DestinationCandidate]
 }
 
-/// One-shot MapKit place search for voice destination lookup. Throws `PlaceLookupError`
-/// or `CancellationError` when the search couldn't run; an empty result means nothing was found.
+/// One-shot MapKit place search for voice destination lookup, biased toward `region`. Throws
+/// `PlaceLookupError` or `CancellationError` when the search couldn't run; an empty result means nothing was found.
 protocol MapDestinationSource: Sendable {
-    func destinations(matching query: String) async throws -> [DestinationCandidate]
+    func destinations(matching query: String, in region: SearchRegion) async throws -> [DestinationCandidate]
 }
 
 extension CampusNicknameDictionary: NicknameDestinationSource {
@@ -65,11 +65,9 @@ struct SavedPlacesDestinationSource: SavedDestinationSource {
     }
 }
 
-/// `MKLocalSearch` natural-language query around a region.
+/// `MKLocalSearch` natural-language query, preferring places near the region like typed search.
 struct MapKitDestinationSource: MapDestinationSource {
-    var region: SearchRegion
-
-    func destinations(matching query: String) async throws -> [DestinationCandidate] {
+    func destinations(matching query: String, in region: SearchRegion) async throws -> [DestinationCandidate] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
         let request = MKLocalSearch.Request()
@@ -80,7 +78,8 @@ struct MapKitDestinationSource: MapDestinationSource {
             latitudinalMeters: region.radius * 2,
             longitudinalMeters: region.radius * 2
         )
-        request.regionPriority = .required
+        // As in typed search: prefer nearby results but still find named places far away.
+        request.regionPriority = .default
         do {
             let response = try await MKLocalSearch(request: request).start()
             return response.mapItems.map {
@@ -103,7 +102,7 @@ struct MapKitDestinationSource: MapDestinationSource {
     }
 }
 
-/// Looks up a spoken place name: nicknames, then saved places, then MapKit.
+/// Looks up a spoken place name: nicknames (near campus only), then saved places, then MapKit.
 struct DestinationLookup: Sendable {
     var nicknames: any NicknameDestinationSource
     var saved: any SavedDestinationSource
@@ -111,14 +110,16 @@ struct DestinationLookup: Sendable {
 
     static let maxSpoken = 3
 
+    /// - Parameter region: Where the user is searching from; campus nicknames only apply near campus.
     /// - Throws: What the MapKit source throws when the search couldn't run.
-    func lookUp(_ spokenName: String) async throws -> DestinationLookupResult {
+    func lookUp(_ spokenName: String, in region: SearchRegion = .georgiaTech) async throws -> DestinationLookupResult {
         let trimmed = spokenName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return .none }
 
-        if let result = Self.classify(nicknames.destinations(matching: trimmed), for: trimmed) { return result }
+        if region.isNearCampus,
+           let result = Self.classify(nicknames.destinations(matching: trimmed), for: trimmed) { return result }
         if let result = Self.classify(await saved.destinations(matching: trimmed), for: trimmed) { return result }
-        return Self.classify(try await mapKit.destinations(matching: trimmed), for: trimmed) ?? .none
+        return Self.classify(try await mapKit.destinations(matching: trimmed, in: region), for: trimmed) ?? .none
     }
 
     /// The saved place labelled (or named) Home, if there is one.
