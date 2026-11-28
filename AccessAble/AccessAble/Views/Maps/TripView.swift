@@ -187,7 +187,8 @@ private struct TripMapView: View {
     let showsUserLocation: Bool
     let accessibilityLabel: String
     @Environment(\.colorSchemeContrast) private var contrast
-    // Prefer the user when a fix exists; campus is only the fallback before location arrives.
+    // The user (campus without a fix) until the route, destination or maneuver below sets the camera, which
+    // replaces this rather than competing with it; .automatic would zoom out to the whole continent.
     @State private var cameraPosition: MapCameraPosition = .userLocation(
         followsHeading: false,
         fallback: .region(
