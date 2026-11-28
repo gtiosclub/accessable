@@ -216,14 +216,15 @@ final class DestinationAutocompleter: DestinationSearching {
 }
 
 @MainActor
-private final class LiveMapKitAutocompleter: NSObject, MapKitAutocompleting, MKLocalSearchCompleterDelegate {
+final class LiveMapKitAutocompleter: NSObject, MapKitAutocompleting, MKLocalSearchCompleterDelegate {
     var onResults: (([SearchSuggestion]) -> Void)?
     var onError: ((DestinationSearchError) -> Void)?
 
-    private let completer = MKLocalSearchCompleter()
+    /// Internal so tests can check its configuration.
+    let completer = MKLocalSearchCompleter()
     private var completions: [SearchSuggestion.ID: MKLocalSearchCompletion] = [:]
     private var resolvedDestinations: [SearchSuggestion.ID: Destination] = [:]
-    private var region: MKCoordinateRegion
+    private(set) var region: MKCoordinateRegion
 
     init(region: SearchRegion) {
         // MKCoordinateRegion takes a full width/height, so double the radius
@@ -239,6 +240,12 @@ private final class LiveMapKitAutocompleter: NSObject, MapKitAutocompleting, MKL
     func setSearchRegion(_ region: SearchRegion) {
         self.region = Self.coordinateRegion(region)
         completer.region = self.region
+    }
+
+    /// Biases the place lookup toward `region` without dropping places outside it.
+    static func configure(_ request: MKLocalSearch.Request, region: MKCoordinateRegion) {
+        request.region = region
+        request.regionPriority = .default
     }
 
     private static func coordinateRegion(_ region: SearchRegion) -> MKCoordinateRegion {
@@ -267,8 +274,7 @@ private final class LiveMapKitAutocompleter: NSObject, MapKitAutocompleting, MKL
             throw DestinationSearchError.staleSuggestion
         }
         let request = MKLocalSearch.Request(completion: completion)
-        request.region = region
-        request.regionPriority = .default
+        Self.configure(request, region: region)
         let response: MKLocalSearch.Response
         do {
             response = try await MKLocalSearch(request: request).start()
