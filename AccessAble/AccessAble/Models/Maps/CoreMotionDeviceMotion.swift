@@ -17,10 +17,13 @@ final class CoreMotionDeviceMotion: DeviceMotionProviding, @unchecked Sendable {
                 continuation.finish()
                 return
             }
-            manager.deviceMotionUpdateInterval = 1.0 / 20.0
+            // plenty to tell flat from tilted
+            manager.deviceMotionUpdateInterval = 1.0 / 10.0
             manager.startDeviceMotionUpdates(to: queue) { motion, _ in
                 guard let motion else { return }
-                continuation.yield(DeviceGravitySample(gravityZ: motion.gravity.z, timestamp: .now))
+                // `timestamp` is seconds since boot
+                let timestamp = Date(timeIntervalSinceNow: motion.timestamp - ProcessInfo.processInfo.systemUptime)
+                continuation.yield(DeviceGravitySample(gravityZ: motion.gravity.z, timestamp: timestamp))
             }
             continuation.onTermination = { [weak self] _ in
                 self?.stop()
