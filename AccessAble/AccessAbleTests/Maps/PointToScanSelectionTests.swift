@@ -55,6 +55,58 @@ struct PointToScanSelectionTests {
         #expect(match?.source == .campus)
     }
 
+    /// A place `metres` from the origin, straight along `bearing`.
+    private func place(_ id: String, _ source: PointToScanPlaceSource, metres: Double, bearing: Double = 90) -> PointToScanPlace {
+        let radians = bearing * .pi / 180
+        let latitude = origin.latitude + metres * cos(radians) / 111_320
+        let longitude = origin.longitude + metres * sin(radians) / (111_320 * cos(origin.latitude * .pi / 180))
+        return PointToScanPlace(
+            id: id,
+            name: id,
+            coordinate: GeoCoordinate(latitude: latitude, longitude: longitude),
+            source: source
+        )
+    }
+
+    @Test
+    func nearerMapKitPlaceBeatsFartherCampusBuilding() {
+        let cafe = place("cafe", .mapKit, metres: 50)
+        let hall = place("hall", .campus, metres: 300)
+        let match = PointToScanSelection.bestMatch(origin: origin, headingDegrees: 90, places: [hall, cafe])
+        #expect(match?.id == cafe.id)
+    }
+
+    @Test
+    func nearSavedPlaceBeatsFarCampusBuilding() {
+        let home = place("home", .saved, metres: 10)
+        let hall = place("hall", .campus, metres: 390)
+        let match = PointToScanSelection.bestMatch(origin: origin, headingDegrees: 90, places: [hall, home])
+        #expect(match?.id == home.id)
+    }
+
+    @Test
+    func campusBuildingWinsWithinTheSlack() {
+        let cafe = place("cafe", .mapKit, metres: 100)
+        let hall = place("hall", .campus, metres: 100 + PointToScanSelection.preferredSourceSlack - 1)
+        let match = PointToScanSelection.bestMatch(origin: origin, headingDegrees: 90, places: [cafe, hall])
+        #expect(match?.id == hall.id)
+    }
+
+    @Test
+    func ignoresPlacesBeyondRange() {
+        let far = place("far", .campus, metres: PointToScanSelection.maxDistance + 10)
+        #expect(PointToScanSelection.bestMatch(origin: origin, headingDegrees: 90, places: [far]) == nil)
+    }
+
+    @Test
+    func turnedAwayOnlyWellOutsideTheWindow() {
+        let hall = place("hall", .campus, metres: 100, bearing: 90)
+        let edge = PointToScanSelection.bearingWindow + PointToScanSelection.turnAwayMargin
+        #expect(!PointToScanSelection.isTurnedAway(origin: origin, headingDegrees: 90 + edge - 1, from: hall))
+        #expect(PointToScanSelection.isTurnedAway(origin: origin, headingDegrees: 90 + edge + 1, from: hall))
+        #expect(PointToScanSelection.isTurnedAway(origin: origin, headingDegrees: 90 - edge - 1, from: hall))
+    }
+
     @Test
     func dropsMapKitPlaceNearCampus() {
         let nearDuplicate = PointToScanPlace(
@@ -76,9 +128,9 @@ struct PointToScanSelectionTests {
 
     @Test
     func refetchesPOIsAfterMoving() {
-        let first = GeoCoordinate(latitude: 1, longitude: 1)
-        let nearby = GeoCoordinate(latitude: 1.0002, longitude: 1)
-        let far = GeoCoordinate(latitude: 1.001, longitude: 1)
+        let first = origin
+        let nearby = place("nearby", .mapKit, metres: PointToScanSelection.poiRefetchDistance - 5).coordinate
+        let far = place("far", .mapKit, metres: PointToScanSelection.poiRefetchDistance + 5).coordinate
         #expect(PointToScanSelection.shouldRefetchPOIs(from: nil, to: first))
         #expect(!PointToScanSelection.shouldRefetchPOIs(from: first, to: nearby))
         #expect(PointToScanSelection.shouldRefetchPOIs(from: first, to: far))
