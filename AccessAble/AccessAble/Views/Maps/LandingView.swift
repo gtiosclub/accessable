@@ -32,16 +32,20 @@ struct LandingView: View {
         }
         .onAppear {
             ensureScanModel()
-            scanModel?.setHomeVisible(true)
             scanModel?.setEnabled(app.preferences.pointToScan)
             scanModel?.setSceneActive(scenePhase == .active)
-            scanModel?.startIfNeeded()
+            scanModel?.setHomeCovered(showsCommands)
+            scanModel?.setHomeVisible(true)
         }
         .onDisappear {
             scanModel?.setHomeVisible(false)
         }
         .onChange(of: scenePhase) { _, phase in
             scanModel?.setSceneActive(phase == .active)
+        }
+        // a sheet doesn't fire onDisappear
+        .onChange(of: showsCommands) { _, shown in
+            scanModel?.setHomeCovered(shown)
         }
         .onChange(of: app.preferences.pointToScan) { _, enabled in
             scanModel?.setEnabled(enabled)
@@ -70,7 +74,6 @@ struct LandingView: View {
                 .frame(maxWidth: .infinity, minHeight: AccessibilityMetrics.minimumTapTarget)
         }
         .buttonStyle(.pill(.outline))
-        .accessibilityLabel(muted ? "Unmute scan" : "Mute scan")
     }
 
     private var topBar: some View {
