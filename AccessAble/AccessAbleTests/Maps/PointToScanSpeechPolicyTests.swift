@@ -1,44 +1,111 @@
 import Foundation
-import Synchronization
 import Testing
 @testable import AccessAble
 
 @MainActor
+@Suite(.timeLimit(.minutes(1)))
 struct PointToScanSpeechPolicyTests {
-    @Test
-    func holdsBeforeAnnouncing() async throws {
-        let clock = ManualClock()
-        let policy = PointToScanSpeechPolicy(clock: clock)
-        var announced: [String] = []
-        policy.schedule(placeID: "a") { announced.append($0) }
+    private let clock = ManualClock()
+    private let date = ManualDate()
+    private let policy: PointToScanSpeechPolicy
+    private let spoken = SpokenPlaces()
+
+    init() {
+        policy = PointToScanSpeechPolicy(clock: clock, now: { [date] in date.now })
+    }
+
+    private func update(_ target: String?, turnedAway: Bool = false) {
+        policy.update(target: target, turnedAwayFromLastSpoken: turnedAway) { [spoken] in spoken.ids.append($0) }
+    }
+
+    /// Fires the hold that is waiting and returns once it has run.
+    private func finishHold() async throws {
         try await clock.waitForSleepers(1)
-        #expect(announced.isEmpty)
-        clock.advance(by: .milliseconds(300))
-        try await Task.yield()
-        #expect(announced == ["a"])
+        clock.advance(by: PointToScanSpeechPolicy.holdDuration)
+        await policy.holdTask?.value
+    }
+
+    /// Points at `target` until it is named.
+    private func speak(_ target: String) async throws {
+        update(target)
+        try await finishHold()
     }
 
     @Test
-    func doesNotRepeatWithinCooldownUnlessTurnedAway() async throws {
-        let clock = ManualClock()
-        let dates = Mutex([Date(timeIntervalSinceReferenceDate: 0)])
-        let policy = PointToScanSpeechPolicy(clock: clock) { dates.withLock { $0[0] } }
-        var announced: [String] = []
-        policy.schedule(placeID: "a") { announced.append($0) }
+    func steadyPointSpeaksOnceAfterTheHold() async throws {
+        update("a")
         try await clock.waitForSleepers(1)
-        clock.advance(by: .milliseconds(300))
-        try await Task.yield()
-        policy.schedule(placeID: "a") { announced.append($0) }
-        try await clock.waitForSleepers(1)
-        clock.advance(by: .milliseconds(300))
-        try await Task.yield()
-        #expect(announced == ["a"])
-        policy.userTurnedAway()
-        dates.withLock { $0[0] = $0[0].addingTimeInterval(11) }
-        policy.schedule(placeID: "a") { announced.append($0) }
-        try await clock.waitForSleepers(1)
-        clock.advance(by: .milliseconds(300))
-        try await Task.yield()
-        #expect(announced == ["a", "a"])
+        for _ in 0..<2 {
+            clock.advance(by: .milliseconds(100))
+            update("a")
+            #expect(spoken.ids.isEmpty)
+        }
+        clock.advance(by: .milliseconds(100))
+        await policy.holdTask?.value
+        #expect(spoken.ids == ["a"])
+        for _ in 0..<5 {
+            date.advance(by: 1)
+            update("a")
+        }
+        #expect(spoken.ids == ["a"])
+        #expect(clock.sleeperCount == 0)
     }
+
+    @Test
+    func newTargetRestartsTheHold() async throws {
+        update("a")
+        try await clock.waitForSleepers(1)
+        clock.advance(by: .milliseconds(200))
+        update("b")
+        try await clock.waitForSleepers(1)
+        clock.advance(by: .milliseconds(200))
+        #expect(spoken.ids.isEmpty)
+        clock.advance(by: .milliseconds(100))
+        await policy.holdTask?.value
+        #expect(spoken.ids == ["b"])
+    }
+
+    @Test
+    func repeatsAStillPointedPlaceOnlyAfterTheRepeatInterval() async throws {
+        try await speak("a")
+        date.advance(by: PointToScanSpeechPolicy.repeatInterval - 1)
+        update("a")
+        #expect(spoken.ids == ["a"])
+        date.advance(by: 1)
+        update("a")
+        #expect(spoken.ids == ["a", "a"])
+    }
+
+    @Test
+    func turningAwayAndBackSpeaksAgain() async throws {
+        try await speak("a")
+        update(nil, turnedAway: true)
+        date.advance(by: PointToScanSpeechPolicy.turnAwayDuration)
+        update(nil, turnedAway: true)
+        try await speak("a")
+        #expect(spoken.ids == ["a", "a"])
+    }
+
+    @Test
+    func briefWiggleAwayDoesNotSpeakAgain() async throws {
+        try await speak("a")
+        update(nil, turnedAway: true)
+        date.advance(by: PointToScanSpeechPolicy.turnAwayDuration / 2)
+        update(nil, turnedAway: true)
+        try await speak("a")
+        #expect(spoken.ids == ["a"])
+    }
+
+    @Test
+    func newScanSessionSpeaksTheSamePlace() async throws {
+        try await speak("a")
+        policy.resetScanSession()
+        try await speak("a")
+        #expect(spoken.ids == ["a", "a"])
+    }
+}
+
+@MainActor
+private final class SpokenPlaces {
+    var ids: [String] = []
 }
