@@ -71,7 +71,7 @@ struct DeveloperToolsView: View {
             Section("Interaction") {
                 link("Commands", systemImage: "text.bubble",
                      hint: "Type a command or ask a question") {
-                    CommandView(services: app.services)
+                    CommandView(services: app.services, savedPlaces: app.savedPlacesStore)
                 }
             }
         }

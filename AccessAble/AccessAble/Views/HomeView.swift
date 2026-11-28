@@ -62,7 +62,7 @@ struct HomeView: View {
                 .accessibilityHint("Plan or continue a walking trip")
                 
                 NavigationLink {
-                    CommandView(services: app.services)
+                    CommandView(services: app.services, savedPlaces: app.savedPlacesStore)
                 } label: {
                     Label("Commands", systemImage: "text.bubble")
                         .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)

@@ -819,6 +819,8 @@ final class TripSessionViewModel {
             await say("Trip paused. To end it, choose Exit Trip.", category: .system)
         case .callVolunteer:
             onCallHelp?()
+        case .navigate:
+            await say("You're already on a trip. End it first to go somewhere else.", category: .system)
         case .ask(let question):
             await ask(question, with: services)
         case .unknown:

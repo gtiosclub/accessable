@@ -13,8 +13,10 @@ struct FoundationModelCommandInterpreter: CommandInterpreting {
     private static let commandInstructions = """
         You turn what a blind or low-vision pedestrian says to a walking-guidance app into exactly one action.
         Choose the action that best matches what they want. If they want to talk to a person, call a volunteer, \
-        or get help from someone, choose callVolunteer. If they ask a general question, choose askQuestion \
-        and put the question in detail. If nothing fits, choose unknown.
+        or get help from someone, choose callVolunteer. If they want walking directions to a place \
+        ("take me to…", "navigate to…", "go to…", "directions to…"), choose navigateToPlace and put the \
+        place name alone in detail. If they ask a general question, choose askQuestion and put the question \
+        in detail. If nothing fits, choose unknown.
         """
  
     private static let answerInstructions = """
@@ -77,7 +79,7 @@ struct GeneratedCommand {
     @Guide(description: "The single action the user wants.")
     var action: GeneratedAction
  
-    @Guide(description: "For askQuestion, the user's question as a complete sentence. Otherwise an empty string.")
+    @Guide(description: "For askQuestion, the user's question as a complete sentence. For navigateToPlace, the place name only. Otherwise an empty string.")
     var detail: String
 }
  
@@ -90,6 +92,7 @@ enum GeneratedAction {
     case resumeTrip
     case endTrip
     case callVolunteer
+    case navigateToPlace
     case askQuestion
     case unknown
 }
@@ -104,6 +107,10 @@ extension GeneratedCommand {
         case .resumeTrip: .resumeTrip
         case .endTrip: .endTrip
         case .callVolunteer: .callVolunteer
+        case .navigateToPlace:
+            .navigate(to: detail.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? KeywordCommandInterpreter.navigateDestination(in: original) ?? original
+                : detail)
         case .askQuestion: .ask(detail.isEmpty ? original : detail)
         case .unknown: .unknown(original)
         }

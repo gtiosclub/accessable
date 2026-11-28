@@ -9,6 +9,8 @@ enum VoiceCommand: Equatable, Sendable {
     case resumeTrip
     case endTrip
     case callVolunteer
+    /// Open the route summary for a spoken place name (SEARCH-13).
+    case navigate(to: String)
     /// A general question to answer in words.
     case ask(String)
     /// Nothing matched. Carries the original text for logging.
